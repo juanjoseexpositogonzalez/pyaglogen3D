@@ -1,5 +1,8 @@
 //! Deterministic random number generation.
 
+use std::f64::consts::PI;
+
+use rand::Rng;
 use rand::SeedableRng;
 use rand_pcg::Pcg64;
 
@@ -9,9 +12,7 @@ pub fn create_rng(seed: u64) -> Pcg64 {
 }
 
 /// Generate a random point on a unit sphere.
-pub fn random_point_on_sphere(rng: &mut Pcg64) -> (f64, f64, f64) {
-    use rand::Rng;
-    use std::f64::consts::PI;
+pub fn random_point_on_sphere<R: Rng>(rng: &mut R) -> (f64, f64, f64) {
 
     let theta = rng.gen_range(0.0..2.0 * PI);
     let phi = (1.0 - 2.0 * rng.gen::<f64>()).acos();
@@ -24,7 +25,7 @@ pub fn random_point_on_sphere(rng: &mut Pcg64) -> (f64, f64, f64) {
 }
 
 /// Generate a random direction for 3D random walk.
-pub fn random_direction(rng: &mut Pcg64) -> (f64, f64, f64) {
+pub fn random_direction<R: Rng>(rng: &mut R) -> (f64, f64, f64) {
     random_point_on_sphere(rng)
 }
 

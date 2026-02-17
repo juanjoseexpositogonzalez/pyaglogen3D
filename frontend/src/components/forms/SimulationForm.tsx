@@ -18,6 +18,7 @@ const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'dla', label: 'DLA (Diffusion-Limited Aggregation)' },
   { value: 'cca', label: 'CCA (Cluster-Cluster Aggregation)' },
   { value: 'ballistic', label: 'Ballistic Aggregation' },
+  { value: 'tunable', label: 'Tunable Df (Filippov method)' },
 ]
 
 interface FormParams {
@@ -25,26 +26,39 @@ interface FormParams {
   sticking_probability: number
   // DLA specific
   lattice_size: number
-  seed_radius: number
-  // CCA/Ballistic specific
-  particle_radius: number
+  // CCA specific
   box_size: number
+  single_agglomerate: boolean
+  // Tunable specific
+  target_df: number
+  target_kf: number
+  // Primary particle size for display scaling
+  primary_particle_radius_nm: number
+  // Polydisperse radius ratio (all algorithms)
+  radius_ratio_min: number  // ratio relative to primary (1.0 = same size)
+  radius_ratio_max: number
+  polydisperse: boolean
 }
 
 const defaultParams: FormParams = {
   n_particles: 1000,
   sticking_probability: 1.0,
   lattice_size: 200,
-  seed_radius: 1.0,
-  particle_radius: 1.0,
   box_size: 100.0,
+  single_agglomerate: true,
+  target_df: 1.8,
+  target_kf: 1.3,
+  primary_particle_radius_nm: 25.0,  // typical soot primary particle
+  radius_ratio_min: 1.0,
+  radius_ratio_max: 1.0,
+  polydisperse: false,
 }
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   dla: 'Diffusion-Limited Aggregation: Particles undergo random walks and stick upon contact. Produces fractal structures with Df ~ 2.4-2.6.',
   cca: 'Cluster-Cluster Aggregation: Multiple clusters move and merge upon collision. Produces more open structures with Df ~ 1.8-2.0.',
   ballistic: 'Ballistic Aggregation: Particles travel in straight lines until contact. Produces denser structures with Df ~ 2.8-3.0.',
-  tunable: 'DLA with adjustable sticking probability to tune fractal dimension.',
+  tunable: 'Tunable Df (Filippov method): Generate aggregates with target fractal dimension and prefactor. Based on N = kf × (Rg/rp)^Df power law.',
 }
 
 export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
@@ -64,30 +78,33 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     e.preventDefault()
 
     // Build algorithm-specific parameters
-    let algorithmParams: Record<string, number>
-
-    if (algorithm === 'dla' || algorithm === 'tunable') {
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        lattice_size: params.lattice_size,
-        seed_radius: params.seed_radius,
-      }
-    } else if (algorithm === 'cca') {
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        particle_radius: params.particle_radius,
-        box_size: params.box_size,
-      }
-    } else {
-      // ballistic
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        particle_radius: params.particle_radius,
-      }
+    // Backend uses dimensionless units (radius ~1.0), we store nm for display
+    let algorithmParams: Record<string, number | boolean | undefined> = {
+      n_particles: params.n_particles,
+      sticking_probability: params.sticking_probability,
+      // Store primary particle size in nm for result scaling
+      primary_particle_radius_nm: params.primary_particle_radius_nm,
+      // Send dimensionless ratios to backend
+      radius_min: params.radius_ratio_min,
+      // Only include radius_max if polydisperse
+      radius_max: params.polydisperse ? params.radius_ratio_max : undefined,
     }
+
+    // Add algorithm-specific parameters
+    if (algorithm === 'dla') {
+      algorithmParams.lattice_size = params.lattice_size
+    } else if (algorithm === 'cca') {
+      algorithmParams.box_size = params.box_size
+      algorithmParams.single_agglomerate = params.single_agglomerate
+    } else if (algorithm === 'tunable') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+    }
+
+    // Remove undefined values (keep false for booleans)
+    algorithmParams = Object.fromEntries(
+      Object.entries(algorithmParams).filter(([, v]) => v !== undefined)
+    ) as Record<string, number | boolean>
 
     onSubmit({
       algorithm,
@@ -154,54 +171,144 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </p>
           </div>
 
+          {/* Primary Particle Radius in nm */}
+          <div className="space-y-2">
+            <Label htmlFor="primary_radius">Primary Particle Radius (nm)</Label>
+            <Input
+              id="primary_radius"
+              type="number"
+              min={1}
+              max={1000}
+              step={1}
+              value={params.primary_particle_radius_nm}
+              onChange={(e) => updateParam('primary_particle_radius_nm', parseFloat(e.target.value) || 25.0)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Physical size of primary particles. Results (Rg, coordinates) will be displayed in nm.
+            </p>
+          </div>
+
+          {/* Polydisperse Section */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>Size Distribution</Label>
+              <Button
+                type="button"
+                variant={params.polydisperse ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  updateParam('polydisperse', !params.polydisperse)
+                  if (!params.polydisperse) {
+                    // Enable polydisperse: set ratio range
+                    updateParam('radius_ratio_min', 0.8)
+                    updateParam('radius_ratio_max', 1.2)
+                  } else {
+                    // Disable: reset to monodisperse
+                    updateParam('radius_ratio_min', 1.0)
+                    updateParam('radius_ratio_max', 1.0)
+                  }
+                }}
+              >
+                {params.polydisperse ? 'Polydisperse' : 'Monodisperse'}
+              </Button>
+            </div>
+
+            {params.polydisperse && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="radius_ratio_min">
+                    Min Ratio ({(params.radius_ratio_min * params.primary_particle_radius_nm).toFixed(1)} nm)
+                  </Label>
+                  <Input
+                    id="radius_ratio_min"
+                    type="number"
+                    min={0.5}
+                    max={1.0}
+                    step={0.05}
+                    value={params.radius_ratio_min}
+                    onChange={(e) => updateParam('radius_ratio_min', parseFloat(e.target.value) || 0.8)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="radius_ratio_max">
+                    Max Ratio ({(params.radius_ratio_max * params.primary_particle_radius_nm).toFixed(1)} nm)
+                  </Label>
+                  <Input
+                    id="radius_ratio_max"
+                    type="number"
+                    min={1.0}
+                    max={2.0}
+                    step={0.05}
+                    value={params.radius_ratio_max}
+                    onChange={(e) => updateParam('radius_ratio_max', parseFloat(e.target.value) || 1.2)}
+                  />
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {params.polydisperse
+                ? `Particle radii will vary from ${(params.radius_ratio_min * params.primary_particle_radius_nm).toFixed(1)} to ${(params.radius_ratio_max * params.primary_particle_radius_nm).toFixed(1)} nm`
+                : `All particles will have radius ${params.primary_particle_radius_nm} nm`
+              }
+            </p>
+          </div>
+
           {/* Algorithm-specific parameters */}
-          {(algorithm === 'dla' || algorithm === 'tunable') && (
+          {algorithm === 'dla' && (
+            <div className="space-y-2">
+              <Label htmlFor="lattice_size">Lattice Size</Label>
+              <Input
+                id="lattice_size"
+                type="number"
+                min={50}
+                max={2000}
+                value={params.lattice_size}
+                onChange={(e) => updateParam('lattice_size', parseInt(e.target.value) || 200)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Size of the simulation domain
+              </p>
+            </div>
+          )}
+
+          {algorithm === 'tunable' && (
             <>
               <div className="space-y-2">
-                <Label htmlFor="lattice_size">Lattice Size</Label>
-                <Input
-                  id="lattice_size"
-                  type="number"
-                  min={50}
-                  max={2000}
-                  value={params.lattice_size}
-                  onChange={(e) => updateParam('lattice_size', parseInt(e.target.value) || 200)}
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.4}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Size of the simulation domain
+                  Target fractal dimension (1.4 = open/fluffy, 3.0 = compact/dense)
                 </p>
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="seed_radius">Seed Radius</Label>
-                <Input
-                  id="seed_radius"
-                  type="number"
-                  min={0.1}
-                  max={10}
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.5}
                   step={0.1}
-                  value={params.seed_radius}
-                  onChange={(e) => updateParam('seed_radius', parseFloat(e.target.value) || 1.0)}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
                 />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
               </div>
             </>
           )}
 
           {algorithm === 'cca' && (
             <>
-              <div className="space-y-2">
-                <Label htmlFor="particle_radius">Particle Radius</Label>
-                <Input
-                  id="particle_radius"
-                  type="number"
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  value={params.particle_radius}
-                  onChange={(e) => updateParam('particle_radius', parseFloat(e.target.value) || 1.0)}
-                />
-              </div>
-
               <div className="space-y-2">
                 <Label htmlFor="box_size">Box Size</Label>
                 <Input
@@ -216,22 +323,27 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   Size of the periodic simulation box
                 </p>
               </div>
-            </>
-          )}
 
-          {algorithm === 'ballistic' && (
-            <div className="space-y-2">
-              <Label htmlFor="particle_radius">Particle Radius</Label>
-              <Input
-                id="particle_radius"
-                type="number"
-                min={0.1}
-                max={10}
-                step={0.1}
-                value={params.particle_radius}
-                onChange={(e) => updateParam('particle_radius', parseFloat(e.target.value) || 1.0)}
-              />
-            </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Agglomerate Mode</Label>
+                  <Button
+                    type="button"
+                    variant={params.single_agglomerate ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => updateParam('single_agglomerate', !params.single_agglomerate)}
+                  >
+                    {params.single_agglomerate ? 'Single Agglomerate' : 'Multiple Agglomerates'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.single_agglomerate
+                    ? 'Iterate until all particles form ONE connected agglomerate'
+                    : 'Stop at iteration limit (may produce multiple separate clusters)'
+                  }
+                </p>
+              </div>
+            </>
           )}
 
           {/* Random Seed */}

@@ -1,6 +1,6 @@
 'use client'
 
-import { useViewerStore } from '@/stores/viewerStore'
+import { useViewerStore, type BackgroundPreset } from '@/stores/viewerStore'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
@@ -22,6 +22,12 @@ const colorModeOptions: { value: ColorMode; label: string }[] = [
   { value: 'coordination', label: 'Coordination Number' },
 ]
 
+const backgroundOptions: { value: BackgroundPreset; label: string }[] = [
+  { value: 'dark', label: 'Dark Blue' },
+  { value: 'black', label: 'Black' },
+  { value: 'white', label: 'White' },
+]
+
 export function ViewerControls() {
   const {
     colorMode,
@@ -36,6 +42,8 @@ export function ViewerControls() {
     setRotateSpeed,
     particleOpacity,
     setParticleOpacity,
+    background,
+    setBackground,
     reset,
   } = useViewerStore()
 
@@ -50,6 +58,16 @@ export function ViewerControls() {
           value={colorMode}
           onChange={(e) => setColorMode(e.target.value as ColorMode)}
           options={colorModeOptions}
+        />
+      </div>
+
+      {/* Background */}
+      <div className="space-y-2">
+        <Label>Background</Label>
+        <Select
+          value={background}
+          onChange={(e) => setBackground(e.target.value as BackgroundPreset)}
+          options={backgroundOptions}
         />
       </div>
 

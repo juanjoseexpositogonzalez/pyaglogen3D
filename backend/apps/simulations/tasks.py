@@ -34,37 +34,46 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             f"with {params.get('n_particles', 1000)} particles"
         )
 
+        # Get radius parameters (support both old and new parameter names)
+        radius_min = params.get("radius_min") or params.get("seed_radius") or params.get("particle_radius") or 1.0
+        radius_max = params.get("radius_max")  # None means monodisperse (same as radius_min)
+
         # Run the appropriate algorithm
         if algorithm == "dla":
             result = aglogen_core.run_dla(
                 n_particles=params.get("n_particles", 1000),
                 sticking_probability=params.get("sticking_probability", 1.0),
                 lattice_size=params.get("lattice_size", 200),
-                seed_radius=params.get("seed_radius", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
                 seed=seed,
             )
         elif algorithm == "cca":
             result = aglogen_core.run_cca(
                 n_particles=params.get("n_particles", 1000),
                 sticking_probability=params.get("sticking_probability", 1.0),
-                particle_radius=params.get("particle_radius", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
                 box_size=params.get("box_size", 100.0),
+                single_agglomerate=params.get("single_agglomerate", True),
                 seed=seed,
             )
         elif algorithm == "ballistic":
             result = aglogen_core.run_ballistic(
                 n_particles=params.get("n_particles", 1000),
                 sticking_probability=params.get("sticking_probability", 1.0),
-                particle_radius=params.get("particle_radius", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
                 seed=seed,
             )
         elif algorithm == "tunable":
-            # Tunable uses DLA with varying sticking probability
-            result = aglogen_core.run_dla(
+            # Tunable PC with controllable fractal dimension
+            result = aglogen_core.run_tunable(
                 n_particles=params.get("n_particles", 1000),
-                sticking_probability=params.get("sticking_probability", 0.5),
-                lattice_size=params.get("lattice_size", 200),
-                seed_radius=params.get("seed_radius", 1.0),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                radius_min=radius_min,
+                radius_max=radius_max,
                 seed=seed,
             )
         else:

@@ -22,10 +22,14 @@ use super::result::{PySimulationResult, SimulationResult};
 pub struct CcaParams {
     pub n_particles: usize,
     pub sticking_probability: f64,
-    pub particle_radius: f64,
+    pub radius_min: f64,
+    pub radius_max: f64,
     pub box_size: f64,
     pub max_iterations: usize,
     pub step_size_factor: f64,
+    /// If true (default), iterate until ONE agglomerate remains.
+    /// If false, stop at max_iterations (multi-agglomerate mode).
+    pub single_agglomerate: bool,
 }
 
 impl Default for CcaParams {
@@ -33,11 +37,34 @@ impl Default for CcaParams {
         Self {
             n_particles: 1000,
             sticking_probability: 1.0,
-            particle_radius: 1.0,
+            radius_min: 1.0,
+            radius_max: 1.0,
             box_size: 100.0,
             max_iterations: 100_000,
             step_size_factor: 0.5,
+            single_agglomerate: true,
         }
+    }
+}
+
+impl CcaParams {
+    /// Check if particles are polydisperse.
+    pub fn is_polydisperse(&self) -> bool {
+        (self.radius_max - self.radius_min).abs() > 1e-10
+    }
+
+    /// Generate a random radius within the range.
+    pub fn random_radius<R: Rng>(&self, rng: &mut R) -> f64 {
+        if self.is_polydisperse() {
+            rng.gen_range(self.radius_min..=self.radius_max)
+        } else {
+            self.radius_min
+        }
+    }
+
+    /// Get the mean radius.
+    pub fn mean_radius(&self) -> f64 {
+        (self.radius_min + self.radius_max) / 2.0
     }
 }
 
@@ -105,23 +132,38 @@ impl Cluster {
 }
 
 /// Run CCA simulation.
+///
+/// # Arguments
+/// * `n_particles` - Number of particles
+/// * `sticking_probability` - Probability of adhesion on contact (0-1)
+/// * `radius_min` - Minimum particle radius
+/// * `radius_max` - Maximum particle radius (defaults to radius_min for monodisperse)
+/// * `box_size` - Size of the periodic simulation box
+/// * `single_agglomerate` - If true (default), iterate until ONE agglomerate forms.
+///                          If false, may produce multiple agglomerates.
+/// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, sticking_probability=1.0, particle_radius=1.0, box_size=100.0, seed=None))]
+#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, box_size=100.0, single_agglomerate=true, seed=None))]
 pub fn run_cca(
     py: Python<'_>,
     n_particles: usize,
     sticking_probability: f64,
-    particle_radius: f64,
+    radius_min: f64,
+    radius_max: Option<f64>,
     box_size: f64,
+    single_agglomerate: bool,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
+    let radius_max = radius_max.unwrap_or(radius_min);
 
     let params = CcaParams {
         n_particles,
         sticking_probability,
-        particle_radius,
+        radius_min,
+        radius_max,
         box_size,
+        single_agglomerate,
         ..Default::default()
     };
 
@@ -137,12 +179,14 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
     let mut rng = create_rng(seed);
 
     // Initialize all particles as individual clusters randomly distributed
+    // Each particle gets a random radius if polydisperse
     let mut clusters: Vec<Cluster> = (0..params.n_particles)
         .map(|_| {
             let x = (rng.gen::<f64>() - 0.5) * params.box_size;
             let y = (rng.gen::<f64>() - 0.5) * params.box_size;
             let z = (rng.gen::<f64>() - 0.5) * params.box_size;
-            Cluster::new(Sphere::new(Vector3::new(x, y, z), params.particle_radius))
+            let radius = params.random_radius(&mut rng);
+            Cluster::new(Sphere::new(Vector3::new(x, y, z), radius))
         })
         .collect();
 
@@ -150,13 +194,30 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
     let mut rg_evolution = Vec::new();
     let mut n_values = Vec::new();
 
-    let step_size = params.particle_radius * params.step_size_factor;
+    let step_size = params.mean_radius() * params.step_size_factor;
 
-    // Iterate until only one cluster remains or max iterations reached
-    for _ in 0..params.max_iterations {
+    // Iterate until only one cluster remains (single_agglomerate mode)
+    // or max iterations reached (multi-agglomerate mode)
+    let mut iteration = 0;
+    // Safety limit for single_agglomerate mode to prevent infinite loops
+    let max_iters = if params.single_agglomerate {
+        10_000_000 // Very high limit - should always converge before this
+    } else {
+        params.max_iterations
+    };
+
+    loop {
+        // Stop when only one cluster remains
         if clusters.len() <= 1 {
             break;
         }
+
+        // Respect iteration limit
+        if iteration >= max_iters {
+            break;
+        }
+
+        iteration += 1;
 
         // Move all clusters with Brownian motion
         for cluster in &mut clusters {
@@ -233,7 +294,7 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
 
     let (df, kf, _r2) = calculate_fractal_dimension(&n_values, &rg_evolution);
     let porosity = calculate_porosity(&coords, &radii);
-    let coordination = calculate_coordination(&coords, &radii, params.particle_radius * 0.1);
+    let coordination = calculate_coordination(&coords, &radii, params.mean_radius() * 0.1);
 
     let coord_mean = coordination.iter().map(|&c| c as f64).sum::<f64>() / coordination.len().max(1) as f64;
     let coord_std = if coordination.len() > 1 {
@@ -311,7 +372,7 @@ mod tests {
         let params = CcaParams {
             n_particles: 20,
             box_size: 20.0,
-            max_iterations: 1000,
+            single_agglomerate: true,
             ..Default::default()
         };
 
@@ -322,19 +383,62 @@ mod tests {
     }
 
     #[test]
-    fn test_cca_produces_aggregates() {
+    fn test_cca_single_agglomerate() {
+        // Test that single_agglomerate=true produces ONE connected agglomerate
         let params = CcaParams {
-            n_particles: 30,
-            box_size: 20.0,
-            max_iterations: 2000,
+            n_particles: 50,
+            box_size: 30.0,
+            single_agglomerate: true,
             ..Default::default()
         };
 
         let result = run_cca_internal(params, 123);
 
-        // Should produce particles (all particles are returned)
+        // Should have all particles
+        assert_eq!(result.coordinates.len(), 50);
+        // Fractal dimension should be meaningful (> 1 for a real agglomerate)
+        assert!(result.fractal_dimension > 1.0, "Df should be > 1 for a connected agglomerate");
+        // Coordination should show connectivity
+        assert!(result.coordination_mean > 0.5, "Particles should be connected");
+    }
+
+    #[test]
+    fn test_cca_multi_agglomerate() {
+        // Test that single_agglomerate=false can produce multiple clusters
+        let params = CcaParams {
+            n_particles: 30,
+            box_size: 100.0, // Large box makes merging slow
+            max_iterations: 100, // Very few iterations
+            single_agglomerate: false,
+            ..Default::default()
+        };
+
+        let result = run_cca_internal(params, 456);
+
+        // Should still have all particles
         assert_eq!(result.coordinates.len(), 30);
-        // Fractal dimension might not be well-defined for small clusters
-        assert!(result.fractal_dimension > 0.5);
+    }
+
+    #[test]
+    fn test_cca_polydisperse() {
+        let params = CcaParams {
+            n_particles: 30,
+            radius_min: 0.8,
+            radius_max: 1.2,
+            box_size: 30.0,
+            single_agglomerate: true,
+            ..Default::default()
+        };
+
+        assert!(params.is_polydisperse());
+
+        let result = run_cca_internal(params, 789);
+
+        let min_r = result.radii.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_r = result.radii.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        assert!(max_r > min_r, "Radii should vary");
+        assert!(min_r >= 0.8 - 1e-10);
+        assert!(max_r <= 1.2 + 1e-10);
     }
 }

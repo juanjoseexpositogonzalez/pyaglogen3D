@@ -15,15 +15,17 @@ use fractal::result::PyFractalResult;
 use simulation::ballistic::run_ballistic;
 use simulation::cca::run_cca;
 use simulation::dla::run_dla;
+use simulation::tunable::run_tunable;
 use simulation::result::PySimulationResult;
 
 /// Python module for aglogen_core
 #[pymodule]
-fn aglogen_core(_py: Python, m: &PyModule) -> PyResult<()> {
+fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Simulation functions
     m.add_function(wrap_pyfunction!(run_dla, m)?)?;
     m.add_function(wrap_pyfunction!(run_cca, m)?)?;
     m.add_function(wrap_pyfunction!(run_ballistic, m)?)?;
+    m.add_function(wrap_pyfunction!(run_tunable, m)?)?;
 
     // Fractal analysis functions
     m.add_function(wrap_pyfunction!(box_counting, m)?)?;

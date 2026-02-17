@@ -121,11 +121,15 @@ export function Particles({
       ref={meshRef}
       args={[undefined, undefined, count]}
       frustumCulled={false}
+      castShadow
+      receiveShadow
     >
-      <sphereGeometry args={[1, 16, 16]} />
-      <meshStandardMaterial
-        roughness={0.3}
-        metalness={0.1}
+      {/* Higher resolution spheres like Matlab's sphere(30) */}
+      <sphereGeometry args={[1, 32, 32]} />
+      <meshPhongMaterial
+        color="#ffffff"
+        shininess={80}
+        specular="#444444"
         transparent={opacity < 1}
         opacity={opacity}
       />

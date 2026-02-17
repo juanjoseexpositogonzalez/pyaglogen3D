@@ -24,6 +24,7 @@ dependencies = [
     "python-decouple>=3.8",
     "gunicorn>=21.0",
     "whitenoise>=6.6",
+    "redis-cli>=1.0.1",
 ]
 
 [project.optional-dependencies]

@@ -61,6 +61,7 @@ class Simulation(models.Model):
     execution_time_ms = models.PositiveIntegerField(null=True, blank=True)
     engine_version = models.CharField(max_length=20, blank=True)
     error_message = models.TextField(blank=True)
+    task_id = models.CharField(max_length=50, blank=True, help_text="Celery task ID")
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

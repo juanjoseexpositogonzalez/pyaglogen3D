@@ -4,7 +4,7 @@ import { Suspense, useMemo } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Environment, Grid, GizmoHelper, GizmoViewport } from '@react-three/drei'
 import { Particles } from './Particles'
-import { useViewerStore } from '@/stores/viewerStore'
+import { useViewerStore, backgroundColors } from '@/stores/viewerStore'
 import { cn } from '@/lib/utils'
 import type { ColorMode } from '@/lib/types'
 
@@ -30,68 +30,104 @@ export function AgglomerateViewer({
     autoRotate,
     rotateSpeed,
     particleOpacity,
+    background,
   } = useViewerStore()
 
   const colorMode = propColorMode ?? storeColorMode
+  const bgColor = backgroundColors[background]
 
-  // Calculate camera position based on aggregate size
-  const cameraPosition = useMemo(() => {
-    if (coordinates.length === 0) return [0, 0, 100] as [number, number, number]
+  // Center coordinates and calculate camera position
+  const { centeredCoords, cameraPosition, maxRadius } = useMemo(() => {
+    if (coordinates.length === 0) {
+      return {
+        centeredCoords: [],
+        cameraPosition: [0, 0, 100] as [number, number, number],
+        maxRadius: 1,
+      }
+    }
 
-    // Find bounding box
-    let maxDist = 0
+    // Calculate center of mass
+    let cx = 0, cy = 0, cz = 0
     for (const [x, y, z] of coordinates) {
-      const dist = Math.sqrt(x * x + y * y + z * z)
+      cx += x
+      cy += y
+      cz += z
+    }
+    cx /= coordinates.length
+    cy /= coordinates.length
+    cz /= coordinates.length
+
+    // Center the coordinates
+    const centered = coordinates.map(([x, y, z]) => [x - cx, y - cy, z - cz])
+
+    // Find max distance from center (bounding sphere radius)
+    let maxDist = 0
+    for (let i = 0; i < centered.length; i++) {
+      const [x, y, z] = centered[i]
+      const r = radii[i] || 1
+      const dist = Math.sqrt(x * x + y * y + z * z) + r
       maxDist = Math.max(maxDist, dist)
     }
 
-    // Position camera at 2.5x the max distance
-    const cameraDist = Math.max(maxDist * 2.5, 50)
-    return [cameraDist * 0.7, cameraDist * 0.5, cameraDist] as [number, number, number]
-  }, [coordinates])
+    // Position camera to see the whole agglomerate
+    const cameraDist = Math.max(maxDist * 3, 20)
+
+    return {
+      centeredCoords: centered,
+      cameraPosition: [cameraDist * 0.6, cameraDist * 0.4, cameraDist * 0.8] as [number, number, number],
+      maxRadius: maxDist,
+    }
+  }, [coordinates, radii])
 
   if (coordinates.length === 0) {
     return (
-      <div className={cn('w-full h-[500px] bg-slate-900 rounded-lg flex items-center justify-center', className)}>
+      <div
+        className={cn('w-full h-[500px] rounded-lg flex items-center justify-center', className)}
+        style={{ backgroundColor: bgColor }}
+      >
         <p className="text-muted-foreground">No geometry data available</p>
       </div>
     )
   }
 
   return (
-    <div className={cn('w-full h-[500px] bg-slate-900 rounded-lg overflow-hidden', className)}>
+    <div
+      className={cn('w-full h-[500px] rounded-lg overflow-hidden', className)}
+      style={{ backgroundColor: bgColor }}
+    >
       <Canvas
-        camera={{ position: cameraPosition, fov: 50 }}
+        camera={{ position: cameraPosition, fov: 45, near: 0.1, far: maxRadius * 20 }}
         gl={{ antialias: true, alpha: false }}
       >
         <Suspense fallback={null}>
-          <color attach="background" args={['#0f172a']} />
+          <color attach="background" args={[bgColor]} />
 
-          {/* Lighting */}
-          <ambientLight intensity={0.4} />
-          <directionalLight position={[10, 10, 10]} intensity={0.8} />
-          <directionalLight position={[-10, -10, -5]} intensity={0.3} />
+          {/* Lighting - improved for better 3D appearance */}
+          <ambientLight intensity={0.5} />
+          <directionalLight position={[1, 1, 1]} intensity={0.8} />
+          <directionalLight position={[-1, -1, -0.5]} intensity={0.4} />
+          <pointLight position={[0, 0, maxRadius * 2]} intensity={0.3} />
 
-          {/* Particles */}
+          {/* Particles - using centered coordinates */}
           <Particles
-            coordinates={coordinates}
+            coordinates={centeredCoords}
             radii={radii}
             colorMode={colorMode}
             coordination={coordination}
             opacity={particleOpacity}
           />
 
-          {/* Grid */}
+          {/* Grid - scaled to agglomerate size */}
           {showGrid && (
             <Grid
-              args={[200, 200]}
-              cellSize={10}
+              args={[maxRadius * 4, maxRadius * 4]}
+              cellSize={maxRadius / 5}
               cellThickness={0.5}
               cellColor="#334155"
-              sectionSize={50}
+              sectionSize={maxRadius}
               sectionThickness={1}
               sectionColor="#475569"
-              fadeDistance={400}
+              fadeDistance={maxRadius * 8}
               fadeStrength={1}
               followCamera={false}
               infiniteGrid
@@ -108,12 +144,17 @@ export function AgglomerateViewer({
             </GizmoHelper>
           )}
 
-          {/* Controls */}
+          {/* Controls - orbit around center */}
           <OrbitControls
             enablePan={true}
             enableZoom={true}
             enableRotate={true}
-            zoomSpeed={0.5}
+            zoomSpeed={0.8}
+            panSpeed={0.8}
+            rotateSpeed={0.8}
+            minDistance={maxRadius * 0.5}
+            maxDistance={maxRadius * 10}
+            target={[0, 0, 0]}
             autoRotate={autoRotate}
             autoRotateSpeed={rotateSpeed}
           />

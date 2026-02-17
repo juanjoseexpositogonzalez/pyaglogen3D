@@ -24,7 +24,8 @@ use super::result::{PySimulationResult, SimulationResult};
 pub struct BallisticParams {
     pub n_particles: usize,
     pub sticking_probability: f64,
-    pub particle_radius: f64,
+    pub radius_min: f64,
+    pub radius_max: f64,
     pub launch_distance_factor: f64,
     pub max_ray_steps: usize,
 }
@@ -34,29 +35,61 @@ impl Default for BallisticParams {
         Self {
             n_particles: 1000,
             sticking_probability: 1.0,
-            particle_radius: 1.0,
+            radius_min: 1.0,
+            radius_max: 1.0,
             launch_distance_factor: 2.0,
             max_ray_steps: 10000,
         }
     }
 }
 
+impl BallisticParams {
+    /// Check if particles are polydisperse (variable radius).
+    pub fn is_polydisperse(&self) -> bool {
+        (self.radius_max - self.radius_min).abs() > 1e-10
+    }
+
+    /// Generate a random radius within the range.
+    pub fn random_radius<R: Rng>(&self, rng: &mut R) -> f64 {
+        if self.is_polydisperse() {
+            rng.gen_range(self.radius_min..=self.radius_max)
+        } else {
+            self.radius_min
+        }
+    }
+
+    /// Get the mean radius for calculations.
+    pub fn mean_radius(&self) -> f64 {
+        (self.radius_min + self.radius_max) / 2.0
+    }
+}
+
 /// Run Ballistic Aggregation simulation.
+///
+/// # Arguments
+/// * `n_particles` - Number of particles in the agglomerate
+/// * `sticking_probability` - Probability of adhesion on contact (0-1)
+/// * `radius_min` - Minimum particle radius (for polydisperse)
+/// * `radius_max` - Maximum particle radius (for polydisperse, defaults to radius_min)
+/// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, sticking_probability=1.0, particle_radius=1.0, seed=None))]
+#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, seed=None))]
 pub fn run_ballistic(
     py: Python<'_>,
     n_particles: usize,
     sticking_probability: f64,
-    particle_radius: f64,
+    radius_min: f64,
+    radius_max: Option<f64>,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
+    let radius_max = radius_max.unwrap_or(radius_min);
 
     let params = BallisticParams {
         n_particles,
         sticking_probability,
-        particle_radius,
+        radius_min,
+        radius_max,
         ..Default::default()
     };
 
@@ -71,22 +104,28 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
     let start_time = Instant::now();
     let mut rng = create_rng(seed);
 
-    // Initialize with seed particle at origin
-    let mut particles: Vec<Sphere> = vec![Sphere::new(Vector3::zero(), params.particle_radius)];
-    let mut spatial_hash = SpatialHash::new(params.particle_radius * 4.0);
+    // Initialize with seed particle at origin (use mean radius for seed)
+    let seed_radius = params.mean_radius();
+    let mut particles: Vec<Sphere> = vec![Sphere::new(Vector3::zero(), seed_radius)];
+
+    // Use max radius for spatial hash cell size to handle polydisperse particles
+    let mut spatial_hash = SpatialHash::new(params.radius_max * 4.0);
     spatial_hash.insert(0, &particles[0]);
 
     // Track Rg evolution
-    let mut rg_evolution = vec![params.particle_radius * (3.0 / 5.0_f64).sqrt()];
+    let mut rg_evolution = vec![seed_radius * (3.0 / 5.0_f64).sqrt()];
     let mut n_values = vec![1usize];
 
     // Cluster properties
-    let mut cluster_rg = params.particle_radius;
+    let mut cluster_rg = seed_radius;
 
     // Add particles one by one
     while particles.len() < params.n_particles {
+        // Generate radius for new particle
+        let new_radius = params.random_radius(&mut rng);
+
         // Launch distance based on current cluster size
-        let launch_distance = params.launch_distance_factor * cluster_rg + params.particle_radius * 5.0;
+        let launch_distance = params.launch_distance_factor * cluster_rg + params.radius_max * 5.0;
 
         // Generate random starting position on launch sphere
         let (dx, dy, dz) = random_direction(&mut rng);
@@ -102,8 +141,8 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
         let target = Vector3::new(rx * randomness, ry * randomness, rz * randomness);
         let direction = (target - start_pos).normalize();
 
-        // Ray-march towards cluster
-        let step_size = params.particle_radius * 0.5;
+        // Ray-march towards cluster (step size based on new particle radius)
+        let step_size = new_radius * 0.5;
         let mut pos = start_pos;
         let mut stuck = false;
 
@@ -116,13 +155,13 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
             }
 
             // Check for collision with existing particles
-            let test_sphere = Sphere::new(pos, params.particle_radius);
+            let test_sphere = Sphere::new(pos, new_radius);
             let candidates = spatial_hash.query_potential_collisions(&test_sphere);
 
             for &idx in &candidates {
                 let other = &particles[idx];
                 let dist = pos.distance_to(&other.center);
-                let contact_dist = params.particle_radius + other.radius;
+                let contact_dist = new_radius + other.radius;
 
                 if dist < contact_dist {
                     // Collision! Check sticking probability
@@ -149,8 +188,8 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
         }
 
         if stuck {
-            // Add new particle
-            let new_sphere = Sphere::new(pos, params.particle_radius);
+            // Add new particle with its random radius
+            let new_sphere = Sphere::new(pos, new_radius);
             let idx = particles.len();
             particles.push(new_sphere);
             spatial_hash.insert(idx, &new_sphere);
@@ -177,7 +216,7 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
 
     let (df, kf, _r2) = calculate_fractal_dimension(&n_values, &rg_evolution);
     let porosity = calculate_porosity(&coords, &radii);
-    let coordination = calculate_coordination(&coords, &radii, params.particle_radius * 0.1);
+    let coordination = calculate_coordination(&coords, &radii, params.mean_radius() * 0.1);
 
     let coord_mean = coordination.iter().map(|&c| c as f64).sum::<f64>() / coordination.len() as f64;
     let coord_std = (coordination
@@ -238,5 +277,47 @@ mod tests {
         // Ballistic typically produces Df ~ 2.8-3.0 (denser than DLA)
         assert!(result.fractal_dimension > 2.0);
         assert!(result.fractal_dimension <= 3.0);
+    }
+
+    #[test]
+    fn test_ballistic_polydisperse() {
+        let params = BallisticParams {
+            n_particles: 30,
+            radius_min: 0.8,
+            radius_max: 1.2,
+            ..Default::default()
+        };
+
+        assert!(params.is_polydisperse());
+
+        let result = run_ballistic_internal(params, 456);
+
+        // Check that we have variable radii
+        let min_r = result.radii.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_r = result.radii.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+
+        // With polydisperse particles, we should have different radii
+        assert!(max_r > min_r, "Radii should vary: min={}, max={}", min_r, max_r);
+        assert!(min_r >= 0.8 - 1e-10, "Min radius should be >= 0.8");
+        assert!(max_r <= 1.2 + 1e-10, "Max radius should be <= 1.2");
+    }
+
+    #[test]
+    fn test_ballistic_monodisperse() {
+        let params = BallisticParams {
+            n_particles: 20,
+            radius_min: 1.0,
+            radius_max: 1.0,
+            ..Default::default()
+        };
+
+        assert!(!params.is_polydisperse());
+
+        let result = run_ballistic_internal(params, 789);
+
+        // All radii should be equal
+        for r in &result.radii {
+            assert!((r - 1.0).abs() < 1e-10);
+        }
     }
 }
