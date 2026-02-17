@@ -101,6 +101,12 @@ export const simulationsApi = {
       method: 'DELETE',
     }),
 
+  cancel: (projectId: string, id: string) =>
+    request<{ status: string; simulation_id: string }>(
+      `/projects/${projectId}/simulations/${id}/cancel/`,
+      { method: 'POST' }
+    ),
+
   /**
    * Fetch geometry data as binary numpy array.
    * Returns coordinates and radii parsed from .npy format.

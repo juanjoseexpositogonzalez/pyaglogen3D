@@ -1,16 +1,20 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulation, useSimulationGeometry } from '@/hooks/useSimulations'
+import { simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
 import { ViewerControls } from '@/components/viewer3d/ViewerControls'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Clock, Hash, Settings } from 'lucide-react'
+import { ArrowLeft, Clock, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
 
 export default function SimulationDetailPage({
@@ -19,12 +23,43 @@ export default function SimulationDetailPage({
   params: { id: string; simId: string }
 }) {
   const { id, simId } = params
+  const router = useRouter()
   const { data: project } = useProject(id)
-  const { data: simulation, isLoading, error } = useSimulation(id, simId)
+  const { data: simulation, isLoading, error, refetch } = useSimulation(id, simId)
   const { data: geometry } = useSimulationGeometry(
     simId,
     simulation?.status === 'completed'
   )
+
+  const [isCancelling, setIsCancelling] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  const handleCancel = async () => {
+    if (!simulation) return
+    setIsCancelling(true)
+    try {
+      await simulationsApi.cancel(id, simId)
+      refetch()
+    } catch (err) {
+      console.error('Failed to cancel simulation:', err)
+    } finally {
+      setIsCancelling(false)
+    }
+  }
+
+  const handleDelete = async () => {
+    if (!simulation) return
+    setIsDeleting(true)
+    try {
+      await simulationsApi.delete(id, simId)
+      router.push(`/projects/${id}`)
+    } catch (err) {
+      console.error('Failed to delete simulation:', err)
+      setIsDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }
 
   if (isLoading) {
     return (
@@ -96,6 +131,49 @@ export default function SimulationDetailPage({
               </span>
             </div>
           </div>
+
+          {/* Action Buttons */}
+          <div className="flex gap-2">
+            {(simulation.status === 'queued' || simulation.status === 'running') && (
+              <Button
+                variant="outline"
+                onClick={handleCancel}
+                disabled={isCancelling}
+              >
+                <StopCircle className="h-4 w-4 mr-2" />
+                {isCancelling ? 'Cancelling...' : 'Cancel'}
+              </Button>
+            )}
+            {showDeleteConfirm ? (
+              <div className="flex gap-2 items-center">
+                <span className="text-sm text-muted-foreground">Delete?</span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                >
+                  {isDeleting ? 'Deleting...' : 'Confirm'}
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowDeleteConfirm(false)}
+                  disabled={isDeleting}
+                >
+                  Cancel
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete
+              </Button>
+            )}
+          </div>
         </div>
 
         {/* Running State */}
@@ -108,10 +186,32 @@ export default function SimulationDetailPage({
               <h3 className="text-lg font-medium mb-2">
                 {simulation.status === 'queued' ? 'Simulation Queued' : 'Simulation Running'}
               </h3>
-              <p className="text-muted-foreground">
+              <p className="text-muted-foreground mb-4">
                 {simulation.status === 'queued'
                   ? 'Your simulation is in the queue and will start shortly...'
                   : 'Generating agglomerate structure... This page will update automatically.'}
+              </p>
+              <Button
+                variant="outline"
+                onClick={handleCancel}
+                disabled={isCancelling}
+              >
+                <StopCircle className="h-4 w-4 mr-2" />
+                {isCancelling ? 'Cancelling...' : 'Cancel Simulation'}
+              </Button>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Cancelled State */}
+        {simulation.status === 'cancelled' && (
+          <Card className="mb-8 border-yellow-500">
+            <CardContent className="p-6">
+              <h3 className="text-lg font-medium text-yellow-600 mb-2">
+                Simulation Cancelled
+              </h3>
+              <p className="text-muted-foreground">
+                {simulation.error_message || 'This simulation was cancelled.'}
               </p>
             </CardContent>
           </Card>
