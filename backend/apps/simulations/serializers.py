@@ -1,11 +1,20 @@
 """Simulation serializers."""
+import random
+
 from rest_framework import serializers
 
 from .models import ParametricStudy, Simulation
 
 
+def generate_seed():
+    """Generate a random seed."""
+    return random.randint(0, 2**31 - 1)
+
+
 class SimulationSerializer(serializers.ModelSerializer):
     """Serializer for Simulation model."""
+
+    seed = serializers.IntegerField(required=False, default=generate_seed)
 
     class Meta:
         model = Simulation
@@ -26,6 +35,7 @@ class SimulationSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "project",
             "status",
             "metrics",
             "execution_time_ms",

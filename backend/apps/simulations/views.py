@@ -37,10 +37,20 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create simulation and enqueue task."""
+        from django.conf import settings
+
         project_id = self.kwargs.get("project_pk")
         simulation = serializer.save(project_id=project_id)
-        # Enqueue Celery task
-        run_simulation_task.delay(str(simulation.id))
+
+        # Try Celery, fall back to sync execution in development
+        try:
+            run_simulation_task.delay(str(simulation.id))
+        except Exception as e:
+            if settings.DEBUG:
+                # Run synchronously in development if Celery unavailable
+                run_simulation_task(str(simulation.id))
+            else:
+                raise
 
     @action(detail=True, methods=["get"])
     def geometry(self, request: Request, pk=None, **kwargs) -> HttpResponse:

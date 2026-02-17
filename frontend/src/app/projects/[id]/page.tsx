@@ -1,6 +1,5 @@
 'use client'
 
-import { use } from 'react'
 import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
@@ -15,9 +14,9 @@ import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 export default function ProjectDetailPage({
   params,
 }: {
-  params: Promise<{ id: string }>
+  params: { id: string }
 }) {
-  const { id } = use(params)
+  const { id } = params
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading } = useSimulations(id)
 

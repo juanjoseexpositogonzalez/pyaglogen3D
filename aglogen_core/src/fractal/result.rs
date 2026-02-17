@@ -28,19 +28,19 @@ pub struct PyFractalResult {
 impl PyFractalResult {
     /// Get log of scales/sizes as numpy array.
     #[getter]
-    fn log_scales<'py>(&self, py: Python<'py>) -> &'py PyArray1<f64> {
+    fn log_scales<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.log_scales_data.clone())
     }
 
     /// Get log of counts/values as numpy array.
     #[getter]
-    fn log_values<'py>(&self, py: Python<'py>) -> &'py PyArray1<f64> {
+    fn log_values<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.log_values_data.clone())
     }
 
     /// Get fit residuals as numpy array.
     #[getter]
-    fn residuals<'py>(&self, py: Python<'py>) -> &'py PyArray1<f64> {
+    fn residuals<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.residuals_data.clone())
     }
 }

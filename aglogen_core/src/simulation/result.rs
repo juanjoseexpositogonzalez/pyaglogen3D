@@ -1,6 +1,6 @@
 //! Simulation result types.
 
-use numpy::{PyArray1, PyArray2};
+use numpy::{PyArray1, PyArray2, PyArrayMethods};
 use pyo3::prelude::*;
 
 /// Python wrapper for simulation results.
@@ -36,7 +36,7 @@ pub struct PySimulationResult {
 impl PySimulationResult {
     /// Get particle coordinates as numpy array (N, 3).
     #[getter]
-    fn coordinates<'py>(&self, py: Python<'py>) -> &'py PyArray2<f64> {
+    fn coordinates<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray2<f64>> {
         let n = self.radii_data.len();
         let arr: Vec<Vec<f64>> = (0..n)
             .map(|i| {
@@ -52,13 +52,13 @@ impl PySimulationResult {
 
     /// Get particle radii as numpy array (N,).
     #[getter]
-    fn radii<'py>(&self, py: Python<'py>) -> &'py PyArray1<f64> {
+    fn radii<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.radii_data.clone())
     }
 
     /// Get radius of gyration evolution as numpy array (N,).
     #[getter]
-    fn rg_evolution<'py>(&self, py: Python<'py>) -> &'py PyArray1<f64> {
+    fn rg_evolution<'py>(&self, py: Python<'py>) -> Bound<'py, PyArray1<f64>> {
         PyArray1::from_vec(py, self.rg_evolution_data.clone())
     }
 }

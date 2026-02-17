@@ -1,6 +1,5 @@
 'use client'
 
-import { use } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
@@ -14,9 +13,9 @@ import type { CreateSimulationInput } from '@/lib/types'
 export default function NewSimulationPage({
   params,
 }: {
-  params: Promise<{ id: string }>
+  params: { id: string }
 }) {
-  const { id } = use(params)
+  const { id } = params
   const router = useRouter()
   const { data: project, isLoading } = useProject(id)
   const createSimulation = useCreateSimulation(id)

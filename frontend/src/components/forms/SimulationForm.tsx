@@ -25,19 +25,22 @@ interface FormParams {
   sticking_probability: number
   // DLA specific
   lattice_size: number
-  seed_radius: number
-  // CCA/Ballistic specific
-  particle_radius: number
+  // CCA specific
   box_size: number
+  // Polydisperse radius (all algorithms)
+  radius_min: number
+  radius_max: number
+  polydisperse: boolean
 }
 
 const defaultParams: FormParams = {
   n_particles: 1000,
   sticking_probability: 1.0,
   lattice_size: 200,
-  seed_radius: 1.0,
-  particle_radius: 1.0,
   box_size: 100.0,
+  radius_min: 1.0,
+  radius_max: 1.0,
+  polydisperse: false,
 }
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
@@ -64,30 +67,25 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     e.preventDefault()
 
     // Build algorithm-specific parameters
-    let algorithmParams: Record<string, number>
-
-    if (algorithm === 'dla' || algorithm === 'tunable') {
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        lattice_size: params.lattice_size,
-        seed_radius: params.seed_radius,
-      }
-    } else if (algorithm === 'cca') {
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        particle_radius: params.particle_radius,
-        box_size: params.box_size,
-      }
-    } else {
-      // ballistic
-      algorithmParams = {
-        n_particles: params.n_particles,
-        sticking_probability: params.sticking_probability,
-        particle_radius: params.particle_radius,
-      }
+    let algorithmParams: Record<string, number | undefined> = {
+      n_particles: params.n_particles,
+      sticking_probability: params.sticking_probability,
+      radius_min: params.radius_min,
+      // Only include radius_max if polydisperse
+      radius_max: params.polydisperse ? params.radius_max : undefined,
     }
+
+    // Add algorithm-specific parameters
+    if (algorithm === 'dla' || algorithm === 'tunable') {
+      algorithmParams.lattice_size = params.lattice_size
+    } else if (algorithm === 'cca') {
+      algorithmParams.box_size = params.box_size
+    }
+
+    // Remove undefined values
+    algorithmParams = Object.fromEntries(
+      Object.entries(algorithmParams).filter(([, v]) => v !== undefined)
+    ) as Record<string, number>
 
     onSubmit({
       algorithm,
@@ -154,83 +152,110 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </p>
           </div>
 
-          {/* Algorithm-specific parameters */}
-          {(algorithm === 'dla' || algorithm === 'tunable') && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="lattice_size">Lattice Size</Label>
-                <Input
-                  id="lattice_size"
-                  type="number"
-                  min={50}
-                  max={2000}
-                  value={params.lattice_size}
-                  onChange={(e) => updateParam('lattice_size', parseInt(e.target.value) || 200)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Size of the simulation domain
-                </p>
-              </div>
+          {/* Particle Radius Section (all algorithms) */}
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>Particle Radius</Label>
+              <Button
+                type="button"
+                variant={params.polydisperse ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  updateParam('polydisperse', !params.polydisperse)
+                  if (!params.polydisperse) {
+                    // Enable polydisperse: set max to min + 20%
+                    updateParam('radius_max', params.radius_min * 1.2)
+                  }
+                }}
+              >
+                {params.polydisperse ? 'Polydisperse' : 'Monodisperse'}
+              </Button>
+            </div>
 
+            {params.polydisperse ? (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="radius_min">Min Radius</Label>
+                  <Input
+                    id="radius_min"
+                    type="number"
+                    min={0.1}
+                    max={10}
+                    step={0.1}
+                    value={params.radius_min}
+                    onChange={(e) => updateParam('radius_min', parseFloat(e.target.value) || 1.0)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="radius_max">Max Radius</Label>
+                  <Input
+                    id="radius_max"
+                    type="number"
+                    min={0.1}
+                    max={10}
+                    step={0.1}
+                    value={params.radius_max}
+                    onChange={(e) => updateParam('radius_max', parseFloat(e.target.value) || 1.0)}
+                  />
+                </div>
+              </div>
+            ) : (
               <div className="space-y-2">
-                <Label htmlFor="seed_radius">Seed Radius</Label>
                 <Input
-                  id="seed_radius"
+                  id="radius"
                   type="number"
                   min={0.1}
                   max={10}
                   step={0.1}
-                  value={params.seed_radius}
-                  onChange={(e) => updateParam('seed_radius', parseFloat(e.target.value) || 1.0)}
+                  value={params.radius_min}
+                  onChange={(e) => {
+                    const val = parseFloat(e.target.value) || 1.0
+                    updateParam('radius_min', val)
+                    updateParam('radius_max', val)
+                  }}
                 />
               </div>
-            </>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {params.polydisperse
+                ? 'Particles will have random radii between min and max'
+                : 'All particles will have the same radius'
+              }
+            </p>
+          </div>
+
+          {/* Algorithm-specific parameters */}
+          {(algorithm === 'dla' || algorithm === 'tunable') && (
+            <div className="space-y-2">
+              <Label htmlFor="lattice_size">Lattice Size</Label>
+              <Input
+                id="lattice_size"
+                type="number"
+                min={50}
+                max={2000}
+                value={params.lattice_size}
+                onChange={(e) => updateParam('lattice_size', parseInt(e.target.value) || 200)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Size of the simulation domain
+              </p>
+            </div>
           )}
 
           {algorithm === 'cca' && (
-            <>
-              <div className="space-y-2">
-                <Label htmlFor="particle_radius">Particle Radius</Label>
-                <Input
-                  id="particle_radius"
-                  type="number"
-                  min={0.1}
-                  max={10}
-                  step={0.1}
-                  value={params.particle_radius}
-                  onChange={(e) => updateParam('particle_radius', parseFloat(e.target.value) || 1.0)}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="box_size">Box Size</Label>
-                <Input
-                  id="box_size"
-                  type="number"
-                  min={10}
-                  max={1000}
-                  value={params.box_size}
-                  onChange={(e) => updateParam('box_size', parseFloat(e.target.value) || 100.0)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Size of the periodic simulation box
-                </p>
-              </div>
-            </>
-          )}
-
-          {algorithm === 'ballistic' && (
             <div className="space-y-2">
-              <Label htmlFor="particle_radius">Particle Radius</Label>
+              <Label htmlFor="box_size">Box Size</Label>
               <Input
-                id="particle_radius"
+                id="box_size"
                 type="number"
-                min={0.1}
-                max={10}
-                step={0.1}
-                value={params.particle_radius}
-                onChange={(e) => updateParam('particle_radius', parseFloat(e.target.value) || 1.0)}
+                min={10}
+                max={1000}
+                value={params.box_size}
+                onChange={(e) => updateParam('box_size', parseFloat(e.target.value) || 100.0)}
               />
+              <p className="text-xs text-muted-foreground">
+                Size of the periodic simulation box
+              </p>
             </div>
           )}
 

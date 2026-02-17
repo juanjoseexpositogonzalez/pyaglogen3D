@@ -19,7 +19,7 @@ use simulation::result::PySimulationResult;
 
 /// Python module for aglogen_core
 #[pymodule]
-fn aglogen_core(_py: Python, m: &PyModule) -> PyResult<()> {
+fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Simulation functions
     m.add_function(wrap_pyfunction!(run_dla, m)?)?;
     m.add_function(wrap_pyfunction!(run_cca, m)?)?;

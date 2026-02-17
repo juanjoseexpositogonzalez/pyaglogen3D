@@ -1,6 +1,5 @@
 'use client'
 
-import { use } from 'react'
 import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulation, useSimulationGeometry } from '@/hooks/useSimulations'
@@ -17,9 +16,9 @@ import { formatNumber } from '@/lib/utils'
 export default function SimulationDetailPage({
   params,
 }: {
-  params: Promise<{ id: string; simId: string }>
+  params: { id: string; simId: string }
 }) {
-  const { id, simId } = use(params)
+  const { id, simId } = params
   const { data: project } = useProject(id)
   const { data: simulation, isLoading, error } = useSimulation(id, simId)
   const { data: geometry } = useSimulationGeometry(

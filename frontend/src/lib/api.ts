@@ -103,7 +103,7 @@ export const simulationsApi = {
 
   /**
    * Fetch geometry data as binary numpy array.
-   * Returns Float64Array with format [x, y, z, radius, x, y, z, radius, ...]
+   * Returns coordinates and radii parsed from .npy format.
    */
   getGeometry: async (id: string): Promise<GeometryData> => {
     const res = await fetch(`${API_BASE}/simulations/${id}/geometry/`)
@@ -111,9 +111,30 @@ export const simulationsApi = {
       throw new ApiError('Failed to fetch geometry', res.status)
     }
     const buffer = await res.arrayBuffer()
-    const data = new Float64Array(buffer)
+    const bytes = new Uint8Array(buffer)
 
-    // Parse numpy array - skip numpy header (128 bytes typical)
+    // Parse numpy .npy header
+    // Magic: \x93NUMPY (6 bytes)
+    // Version: 1 byte major, 1 byte minor
+    // Header length: 2 bytes (v1) or 4 bytes (v2)
+    const major = bytes[6]
+    let headerLen: number
+    let dataOffset: number
+
+    if (major === 1) {
+      // Version 1.0: 2-byte header length (little endian)
+      headerLen = bytes[8] | (bytes[9] << 8)
+      dataOffset = 10 + headerLen
+    } else {
+      // Version 2.0+: 4-byte header length (little endian)
+      headerLen = bytes[8] | (bytes[9] << 8) | (bytes[10] << 16) | (bytes[11] << 24)
+      dataOffset = 12 + headerLen
+    }
+
+    // Extract the float64 data after the header
+    const dataBuffer = buffer.slice(dataOffset)
+    const data = new Float64Array(dataBuffer)
+
     // The data is stored as (N, 4) array: x, y, z, radius
     const numParticles = data.length / 4
     const coordinates: number[][] = []
