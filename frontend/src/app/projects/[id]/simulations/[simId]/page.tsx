@@ -87,8 +87,18 @@ export default function SimulationDetailPage({
     )
   }
 
-  const coordinates = geometry?.coordinates ?? []
-  const radii = geometry?.radii ?? []
+  // Get scale factor from parameters (nm), default to 1.0 for backward compatibility
+  const scaleFactor = (simulation?.parameters as { primary_particle_radius_nm?: number })
+    ?.primary_particle_radius_nm ?? 1.0
+  const hasPhysicalUnits = scaleFactor !== 1.0
+
+  // Scale coordinates and radii for display
+  const coordinates = (geometry?.coordinates ?? []).map(([x, y, z]) => [
+    x * scaleFactor,
+    y * scaleFactor,
+    z * scaleFactor,
+  ])
+  const radii = (geometry?.radii ?? []).map((r) => r * scaleFactor)
 
   return (
     <div className="min-h-screen bg-background">
@@ -246,8 +256,8 @@ export default function SimulationDetailPage({
                 value={formatNumber(simulation.metrics.prefactor, 3)}
               />
               <MetricsCard
-                label="Radius of Gyration"
-                value={formatNumber(simulation.metrics.radius_of_gyration, 1)}
+                label={`Radius of Gyration${hasPhysicalUnits ? ' (nm)' : ''}`}
+                value={formatNumber(simulation.metrics.radius_of_gyration * scaleFactor, hasPhysicalUnits ? 1 : 2)}
               />
               <MetricsCard
                 label="Porosity"

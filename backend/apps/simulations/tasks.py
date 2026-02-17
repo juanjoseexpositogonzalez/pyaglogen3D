@@ -55,6 +55,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 radius_min=radius_min,
                 radius_max=radius_max,
                 box_size=params.get("box_size", 100.0),
+                single_agglomerate=params.get("single_agglomerate", True),
                 seed=seed,
             )
         elif algorithm == "ballistic":
@@ -66,11 +67,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 seed=seed,
             )
         elif algorithm == "tunable":
-            # Tunable uses DLA with varying sticking probability
-            result = aglogen_core.run_dla(
+            # Tunable PC with controllable fractal dimension
+            result = aglogen_core.run_tunable(
                 n_particles=params.get("n_particles", 1000),
-                sticking_probability=params.get("sticking_probability", 0.5),
-                lattice_size=params.get("lattice_size", 200),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
                 radius_min=radius_min,
                 radius_max=radius_max,
                 seed=seed,
