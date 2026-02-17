@@ -265,13 +265,16 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
 }
 
 /// Check if any particle in cluster A touches any particle in cluster B.
+/// Uses relative epsilon for robust floating-point comparison.
 fn check_cluster_collision(a: &Cluster, b: &Cluster) -> bool {
     for pa in &a.particles {
         for pb in &b.particles {
             let dist = pa.center.distance_to(&pb.center);
             let contact_dist = pa.radius + pb.radius;
-            if dist < contact_dist * 1.01 {
-                // Small tolerance for floating point
+            // Use relative epsilon based on the scale of values being compared
+            // epsilon = max(|a|, |b|) * relative_tolerance + absolute_tolerance
+            let epsilon = contact_dist.max(dist) * 1e-10 + 1e-14;
+            if dist <= contact_dist + epsilon {
                 return true;
             }
         }
