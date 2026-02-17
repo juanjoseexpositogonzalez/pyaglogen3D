@@ -1,14 +1,16 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
+import { simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2 } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 
 export default function ProjectDetailPage({
@@ -18,7 +20,39 @@ export default function ProjectDetailPage({
 }) {
   const { id } = params
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
-  const { data: simulations, isLoading: simulationsLoading } = useSimulations(id)
+  const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
+
+  const [actionLoading, setActionLoading] = useState<string | null>(null)
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+
+  const handleCancel = async (simId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setActionLoading(simId)
+    try {
+      await simulationsApi.cancel(id, simId)
+      refetch()
+    } catch (err) {
+      console.error('Failed to cancel simulation:', err)
+    } finally {
+      setActionLoading(null)
+    }
+  }
+
+  const handleDelete = async (simId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    setActionLoading(simId)
+    try {
+      await simulationsApi.delete(id, simId)
+      refetch()
+    } catch (err) {
+      console.error('Failed to delete simulation:', err)
+    } finally {
+      setActionLoading(null)
+      setDeleteConfirm(null)
+    }
+  }
 
   if (projectLoading) {
     return (
@@ -142,22 +176,73 @@ export default function ProjectDetailPage({
                           </div>
                         </div>
 
-                        {sim.status === 'completed' && sim.metrics && (
-                          <div className="text-right">
-                            <p className="text-sm">
-                              <span className="text-muted-foreground">Df = </span>
-                              <span className="font-mono font-medium">
-                                {formatNumber(sim.metrics.fractal_dimension, 3)}
-                              </span>
-                            </p>
-                            <p className="text-sm">
-                              <span className="text-muted-foreground">Rg = </span>
-                              <span className="font-mono">
-                                {formatNumber(sim.metrics.radius_of_gyration, 1)}
-                              </span>
-                            </p>
+                        <div className="flex items-center gap-4">
+                          {sim.status === 'completed' && sim.metrics && (
+                            <div className="text-right">
+                              <p className="text-sm">
+                                <span className="text-muted-foreground">Df = </span>
+                                <span className="font-mono font-medium">
+                                  {formatNumber(sim.metrics.fractal_dimension, 3)}
+                                </span>
+                              </p>
+                              <p className="text-sm">
+                                <span className="text-muted-foreground">Rg = </span>
+                                <span className="font-mono">
+                                  {formatNumber(sim.metrics.radius_of_gyration, 1)}
+                                </span>
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Action Buttons */}
+                          <div className="flex gap-2">
+                            {(sim.status === 'queued' || sim.status === 'running') && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => handleCancel(sim.id, e)}
+                                disabled={actionLoading === sim.id}
+                              >
+                                <StopCircle className="h-4 w-4" />
+                              </Button>
+                            )}
+                            {deleteConfirm === sim.id ? (
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={(e) => handleDelete(sim.id, e)}
+                                  disabled={actionLoading === sim.id}
+                                >
+                                  {actionLoading === sim.id ? '...' : 'Yes'}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setDeleteConfirm(null)
+                                  }}
+                                >
+                                  No
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setDeleteConfirm(sim.id)
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
                           </div>
-                        )}
+                        </div>
                       </div>
                     </CardContent>
                   </Card>
