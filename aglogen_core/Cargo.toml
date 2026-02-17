@@ -1,0 +1,33 @@
+[package]
+name = "aglogen_core"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "High-performance 3D agglomerate simulation and fractal analysis"
+authors = ["Juanjo"]
+
+[lib]
+name = "aglogen_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.20", features = ["extension-module"] }
+numpy = "0.20"
+ndarray = { version = "0.15", features = ["rayon"] }
+rand = "0.8"
+rand_pcg = "0.3"
+rayon = "1.8"
+thiserror = "1.0"
+
+[dev-dependencies]
+criterion = "0.5"
+approx = "0.5"
+
+[[bench]]
+name = "dla_benchmark"
+harness = false
+
+[profile.release]
+lto = true
+codegen-units = 1
+opt-level = 3
