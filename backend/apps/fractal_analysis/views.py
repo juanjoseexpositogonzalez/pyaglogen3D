@@ -18,7 +18,7 @@ from .tasks import run_fractal_analysis_task
 class ImageAnalysisViewSet(viewsets.ModelViewSet):
     """ViewSet for ImageAnalysis CRUD operations."""
 
-    queryset = ImageAnalysis.objects.all()
+    queryset = ImageAnalysis.objects.select_related("project")
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -78,7 +78,11 @@ class ImageAnalysisViewSet(viewsets.ModelViewSet):
 class ComparisonSetViewSet(viewsets.ModelViewSet):
     """ViewSet for ComparisonSet CRUD operations."""
 
-    queryset = ComparisonSet.objects.all()
+    # Prefetch M2M relationships to avoid N+1 queries
+    queryset = ComparisonSet.objects.select_related("project").prefetch_related(
+        "simulations",
+        "analyses",
+    )
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

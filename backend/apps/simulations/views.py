@@ -19,7 +19,7 @@ from .tasks import run_simulation_task
 class SimulationViewSet(viewsets.ModelViewSet):
     """ViewSet for Simulation CRUD operations."""
 
-    queryset = Simulation.objects.all()
+    queryset = Simulation.objects.select_related("project")
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -64,7 +64,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
 class ParametricStudyViewSet(viewsets.ModelViewSet):
     """ViewSet for ParametricStudy CRUD operations."""
 
-    queryset = ParametricStudy.objects.all()
+    queryset = ParametricStudy.objects.select_related("project").prefetch_related(
+        "simulations"
+    )
     serializer_class = ParametricStudySerializer
 
     def get_queryset(self):
