@@ -72,18 +72,8 @@ class ImageAnalysisCreateSerializer(serializers.ModelSerializer):
 class ComparisonSetSerializer(serializers.ModelSerializer):
     """Serializer for ComparisonSet model."""
 
-    simulation_ids = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=None,
-        source="simulations",
-        required=False,
-    )
-    analysis_ids = serializers.PrimaryKeyRelatedField(
-        many=True,
-        queryset=ImageAnalysis.objects.all(),
-        source="analyses",
-        required=False,
-    )
+    simulation_ids = serializers.SerializerMethodField()
+    analysis_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = ComparisonSet
@@ -98,9 +88,54 @@ class ComparisonSetSerializer(serializers.ModelSerializer):
         ]
         read_only_fields = ["id", "created_at"]
 
-    def __init__(self, *args, **kwargs):
-        """Initialize with simulation queryset."""
-        super().__init__(*args, **kwargs)
+    def get_simulation_ids(self, obj: ComparisonSet) -> list[str]:
+        """Return list of simulation IDs."""
+        return [str(sim.id) for sim in obj.simulations.all()]
+
+    def get_analysis_ids(self, obj: ComparisonSet) -> list[str]:
+        """Return list of analysis IDs."""
+        return [str(analysis.id) for analysis in obj.analyses.all()]
+
+
+class ComparisonSetCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating ComparisonSet with related items."""
+
+    simulation_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+    analysis_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
+
+    class Meta:
+        model = ComparisonSet
+        fields = [
+            "project",
+            "name",
+            "description",
+            "simulation_ids",
+            "analysis_ids",
+        ]
+
+    def create(self, validated_data: dict) -> ComparisonSet:
+        """Create comparison set with related items."""
         from apps.simulations.models import Simulation
 
-        self.fields["simulation_ids"].queryset = Simulation.objects.all()
+        simulation_ids = validated_data.pop("simulation_ids", [])
+        analysis_ids = validated_data.pop("analysis_ids", [])
+
+        comparison_set = ComparisonSet.objects.create(**validated_data)
+
+        if simulation_ids:
+            simulations = Simulation.objects.filter(id__in=simulation_ids)
+            comparison_set.simulations.set(simulations)
+
+        if analysis_ids:
+            analyses = ImageAnalysis.objects.filter(id__in=analysis_ids)
+            comparison_set.analyses.set(analyses)
+
+        return comparison_set

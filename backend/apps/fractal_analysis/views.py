@@ -7,6 +7,7 @@ from rest_framework.response import Response
 
 from .models import ComparisonSet, ImageAnalysis
 from .serializers import (
+    ComparisonSetCreateSerializer,
     ComparisonSetSerializer,
     ImageAnalysisCreateSerializer,
     ImageAnalysisSerializer,
@@ -78,7 +79,12 @@ class ComparisonSetViewSet(viewsets.ModelViewSet):
     """ViewSet for ComparisonSet CRUD operations."""
 
     queryset = ComparisonSet.objects.all()
-    serializer_class = ComparisonSetSerializer
+
+    def get_serializer_class(self):
+        """Return appropriate serializer based on action."""
+        if self.action in ("create", "update", "partial_update"):
+            return ComparisonSetCreateSerializer
+        return ComparisonSetSerializer
 
     def get_queryset(self):
         """Filter comparison sets by project if project_id in URL."""
