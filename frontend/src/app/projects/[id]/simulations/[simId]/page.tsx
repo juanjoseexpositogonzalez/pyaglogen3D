@@ -9,6 +9,12 @@ import { simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
 import { ViewerControls } from '@/components/viewer3d/ViewerControls'
+import {
+  ProjectionControls,
+  ProjectionViewer,
+  type ProjectionParams,
+  type BatchParams,
+} from '@/components/projection'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
@@ -34,6 +40,54 @@ export default function SimulationDetailPage({
   const [isCancelling, setIsCancelling] = useState(false)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+
+  // Projection state
+  const [projectionUrl, setProjectionUrl] = useState<string | null>(null)
+  const [projectionParams, setProjectionParams] = useState<ProjectionParams>({
+    azimuth: 45,
+    elevation: 30,
+    format: 'png',
+  })
+  const [isProjectionLoading, setIsProjectionLoading] = useState(false)
+  const [isBatchLoading, setIsBatchLoading] = useState(false)
+
+  const handleProjectionPreview = async (params: ProjectionParams) => {
+    setIsProjectionLoading(true)
+    setProjectionParams(params)
+    try {
+      const blob = await simulationsApi.getProjection(id, simId, params)
+      // Revoke previous URL to avoid memory leaks
+      if (projectionUrl) {
+        URL.revokeObjectURL(projectionUrl)
+      }
+      const url = URL.createObjectURL(blob)
+      setProjectionUrl(url)
+    } catch (err) {
+      console.error('Failed to generate projection:', err)
+    } finally {
+      setIsProjectionLoading(false)
+    }
+  }
+
+  const handleBatchDownload = async (params: BatchParams) => {
+    setIsBatchLoading(true)
+    try {
+      const blob = await simulationsApi.getProjectionBatch(id, simId, params)
+      // Trigger download
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${simId}_projections.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to generate batch projections:', err)
+    } finally {
+      setIsBatchLoading(false)
+    }
+  }
 
   const handleCancel = async () => {
     if (!simulation) return
@@ -306,6 +360,26 @@ export default function SimulationDetailPage({
               </div>
               <div className="lg:col-span-1">
                 <ViewerControls />
+              </div>
+            </div>
+
+            {/* 2D Projections */}
+            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+              <div className="lg:col-span-3">
+                <ProjectionViewer
+                  imageUrl={projectionUrl}
+                  azimuth={projectionParams.azimuth}
+                  elevation={projectionParams.elevation}
+                  format={projectionParams.format}
+                />
+              </div>
+              <div className="lg:col-span-1">
+                <ProjectionControls
+                  onPreview={handleProjectionPreview}
+                  onDownloadBatch={handleBatchDownload}
+                  isLoading={isProjectionLoading}
+                  isBatchLoading={isBatchLoading}
+                />
               </div>
             </div>
 

@@ -108,6 +108,75 @@ export const simulationsApi = {
     ),
 
   /**
+   * Generate a 2D projection of the agglomerate.
+   * Returns image blob (PNG or SVG).
+   */
+  getProjection: async (
+    projectId: string,
+    simId: string,
+    params: {
+      azimuth?: number
+      elevation?: number
+      format?: 'png' | 'svg'
+    } = {}
+  ): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          azimuth: params.azimuth ?? 0,
+          elevation: params.elevation ?? 0,
+          format: params.format ?? 'png',
+        }),
+      }
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to generate projection', res.status)
+    }
+    return res.blob()
+  },
+
+  /**
+   * Generate batch 2D projections as a ZIP file.
+   */
+  getProjectionBatch: async (
+    projectId: string,
+    simId: string,
+    params: {
+      azimuth_start?: number
+      azimuth_end?: number
+      azimuth_step?: number
+      elevation_start?: number
+      elevation_end?: number
+      elevation_step?: number
+      format?: 'png' | 'svg'
+    } = {}
+  ): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/batch/`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          azimuth_start: params.azimuth_start ?? 0,
+          azimuth_end: params.azimuth_end ?? 150,
+          azimuth_step: params.azimuth_step ?? 30,
+          elevation_start: params.elevation_start ?? 0,
+          elevation_end: params.elevation_end ?? 150,
+          elevation_step: params.elevation_step ?? 30,
+          format: params.format ?? 'png',
+        }),
+      }
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to generate projections', res.status)
+    }
+    return res.blob()
+  },
+
+  /**
    * Fetch geometry data as binary numpy array.
    * Returns coordinates and radii parsed from .npy format.
    */

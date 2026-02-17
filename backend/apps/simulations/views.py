@@ -1,7 +1,9 @@
 """Simulation views."""
 import io
 import logging
+import zipfile
 
+import numpy as np
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -14,6 +16,11 @@ from .serializers import (
     ParametricStudySerializer,
     SimulationDetailSerializer,
     SimulationSerializer,
+)
+from .services.projection import (
+    render_projection_png,
+    render_projection_svg,
+    create_projection_filename,
 )
 from .tasks import run_simulation_task
 
@@ -120,6 +127,149 @@ class SimulationViewSet(viewsets.ModelViewSet):
         )
         response["Content-Disposition"] = f'attachment; filename="{simulation.id}.npy"'
         return response
+
+    @action(detail=True, methods=["post"])
+    def projection(self, request: Request, pk=None, **kwargs) -> HttpResponse:
+        """Generate a 2D projection of the agglomerate.
+
+        POST body:
+        {
+            "azimuth": 45.0,      // degrees (default: 0)
+            "elevation": 30.0,   // degrees (default: 0)
+            "format": "png"      // "png" or "svg" (default: "png")
+        }
+        """
+        simulation = self.get_object()
+
+        if simulation.geometry is None:
+            return Response(
+                {"error": "Geometry not available"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Parse parameters
+        azimuth = float(request.data.get("azimuth", 0.0))
+        elevation = float(request.data.get("elevation", 0.0))
+        img_format = request.data.get("format", "png").lower()
+
+        if img_format not in ("png", "svg"):
+            return Response(
+                {"error": "Format must be 'png' or 'svg'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Load geometry
+        coords, radii = self._load_geometry(simulation)
+
+        # Project using Rust
+        import aglogen_core
+        proj = aglogen_core.project_to_2d(coords, radii, azimuth, elevation)
+
+        # Render image
+        bounds = (proj.bounds[0], proj.bounds[1], proj.bounds[2], proj.bounds[3])
+
+        if img_format == "png":
+            image_data = render_projection_png(proj.x, proj.y, proj.radii, bounds)
+            content_type = "image/png"
+        else:
+            image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
+            content_type = "image/svg+xml"
+
+        filename = create_projection_filename(
+            str(simulation.id)[:8], azimuth, elevation, img_format
+        )
+
+        response = HttpResponse(image_data, content_type=content_type)
+        response["Content-Disposition"] = f'attachment; filename="{filename}"'
+        return response
+
+    @action(detail=True, methods=["post"], url_path="projection/batch")
+    def projection_batch(self, request: Request, pk=None, **kwargs) -> HttpResponse:
+        """Generate batch 2D projections as a ZIP file.
+
+        POST body:
+        {
+            "azimuth_start": 0,     // degrees (default: 0)
+            "azimuth_end": 150,     // degrees (default: 150)
+            "azimuth_step": 30,     // degrees (default: 30)
+            "elevation_start": 0,   // degrees (default: 0)
+            "elevation_end": 150,   // degrees (default: 150)
+            "elevation_step": 30,   // degrees (default: 30)
+            "format": "png"         // "png" or "svg" (default: "png")
+        }
+        """
+        simulation = self.get_object()
+
+        if simulation.geometry is None:
+            return Response(
+                {"error": "Geometry not available"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Parse parameters
+        az_start = float(request.data.get("azimuth_start", 0.0))
+        az_end = float(request.data.get("azimuth_end", 150.0))
+        az_step = float(request.data.get("azimuth_step", 30.0))
+        el_start = float(request.data.get("elevation_start", 0.0))
+        el_end = float(request.data.get("elevation_end", 150.0))
+        el_step = float(request.data.get("elevation_step", 30.0))
+        img_format = request.data.get("format", "png").lower()
+
+        if img_format not in ("png", "svg"):
+            return Response(
+                {"error": "Format must be 'png' or 'svg'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if az_step <= 0 or el_step <= 0:
+            return Response(
+                {"error": "Step values must be positive"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Load geometry
+        coords, radii = self._load_geometry(simulation)
+
+        # Generate batch projections using Rust
+        import aglogen_core
+        projections = aglogen_core.project_batch(
+            coords, radii,
+            azimuth_start=az_start,
+            azimuth_end=az_end,
+            azimuth_step=az_step,
+            elevation_start=el_start,
+            elevation_end=el_end,
+            elevation_step=el_step,
+        )
+
+        # Create ZIP file with all projections
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+            for proj in projections:
+                bounds = (proj.bounds[0], proj.bounds[1], proj.bounds[2], proj.bounds[3])
+
+                if img_format == "png":
+                    image_data = render_projection_png(proj.x, proj.y, proj.radii, bounds)
+                else:
+                    image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
+
+                filename = create_projection_filename(
+                    str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
+                )
+                zf.writestr(filename, image_data)
+
+        zip_buffer.seek(0)
+        response = HttpResponse(zip_buffer.read(), content_type="application/zip")
+        response["Content-Disposition"] = f'attachment; filename="{simulation.id}_projections.zip"'
+        return response
+
+    def _load_geometry(self, simulation: Simulation) -> tuple[np.ndarray, np.ndarray]:
+        """Load geometry from simulation and return coordinates and radii."""
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = geometry_array[:, :3]
+        radii = geometry_array[:, 3]
+        return coords, radii
 
 
 class ParametricStudyViewSet(viewsets.ModelViewSet):
