@@ -10,6 +10,8 @@ import type {
   ImageAnalysis,
   PaginatedResponse,
   GeometryData,
+  FraktalAnalysis,
+  CreateFraktalInput,
 } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
@@ -268,6 +270,61 @@ export const comparisonApi = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
+}
+
+// FRAKTAL Analysis API
+export const fraktalApi = {
+  /**
+   * List all FRAKTAL analyses for a project.
+   */
+  list: (projectId: string) =>
+    request<PaginatedResponse<FraktalAnalysis>>(`/projects/${projectId}/fraktal/`),
+
+  /**
+   * Get a single FRAKTAL analysis.
+   */
+  get: (projectId: string, id: string) =>
+    request<FraktalAnalysis>(`/projects/${projectId}/fraktal/${id}/`),
+
+  /**
+   * Create a new FRAKTAL analysis.
+   * Supports both uploaded images and simulation projections.
+   */
+  create: (projectId: string, data: CreateFraktalInput) =>
+    request<FraktalAnalysis>(`/projects/${projectId}/fraktal/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /**
+   * Delete a FRAKTAL analysis.
+   */
+  delete: (projectId: string, id: string) =>
+    request<void>(`/projects/${projectId}/fraktal/${id}/`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Re-run a failed or completed FRAKTAL analysis.
+   */
+  rerun: (projectId: string, id: string) =>
+    request<{ message: string; id: string }>(
+      `/projects/${projectId}/fraktal/${id}/rerun/`,
+      { method: 'POST' }
+    ),
+
+  /**
+   * Download the original image (only for uploaded_image source).
+   */
+  getOriginalImage: async (projectId: string, id: string): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/projects/${projectId}/fraktal/${id}/original_image/`
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to download original image', res.status)
+    }
+    return res.blob()
+  },
 }
 
 // Export ApiError for error handling

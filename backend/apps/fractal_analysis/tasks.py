@@ -3,6 +3,7 @@ import io
 import logging
 from uuid import UUID
 
+import aglogen_core
 import numpy as np
 from celery import shared_task
 from django.utils import timezone
@@ -108,6 +109,146 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
 
     except Exception as e:
         logger.exception(f"Analysis {analysis_id} failed: {e}")
+        analysis.status = AnalysisStatus.FAILED
+        analysis.error_message = str(e)
+        analysis.completed_at = timezone.now()
+        analysis.save()
+
+        return {
+            "status": "failed",
+            "analysis_id": analysis_id,
+            "error": str(e),
+        }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
+    """Execute FRAKTAL fractal analysis using Rust engine.
+
+    Supports both uploaded images and simulation projections.
+    Uses either the 2012 granulated model or 2018 voxel model.
+    """
+    from .models import AnalysisStatus, FraktalAnalysis, SourceType
+
+    analysis = FraktalAnalysis.objects.select_related("simulation").get(
+        id=UUID(analysis_id)
+    )
+
+    # Update status to running
+    analysis.status = AnalysisStatus.RUNNING
+    analysis.started_at = timezone.now()
+    analysis.save(update_fields=["status", "started_at"])
+
+    try:
+        # Step 1: Get the image (uploaded or from simulation projection)
+        if analysis.source_type == SourceType.UPLOADED_IMAGE:
+            # Load uploaded image
+            image = Image.open(io.BytesIO(analysis.original_image))
+        else:
+            # Generate projection from simulation
+            if analysis.simulation is None:
+                raise ValueError("No simulation linked for projection-based analysis")
+
+            if analysis.simulation.geometry is None:
+                raise ValueError("Simulation has no geometry data")
+
+            # Load simulation geometry
+            geometry = np.load(io.BytesIO(analysis.simulation.geometry))
+            coordinates = geometry[:, :3]
+            radii = geometry[:, 3]
+
+            # Get projection parameters
+            proj_params = analysis.projection_params or {}
+            azimuth = proj_params.get("azimuth", 0.0)
+            elevation = proj_params.get("elevation", 0.0)
+            resolution = proj_params.get("resolution", 512)
+
+            # Generate 2D projection using Rust
+            projection_result = aglogen_core.project_to_2d(
+                coordinates=coordinates,
+                radii=radii,
+                azimuth=azimuth,
+                elevation=elevation,
+                resolution=resolution,
+                format="raw",
+            )
+
+            # Convert projection to grayscale image
+            img_array = np.array(projection_result.image, dtype=np.uint8)
+            image = Image.fromarray(img_array, mode="L")
+
+        # Step 2: Convert to grayscale numpy array
+        if image.mode != "L":
+            image = image.convert("L")
+        img_array = np.array(image, dtype=np.uint8)
+
+        # Step 3: Run FRAKTAL analysis using Rust
+        if analysis.model == "granulated_2012":
+            result = aglogen_core.fraktal_granulated_2012(
+                image=img_array,
+                npix=analysis.npix,
+                dpo=analysis.dpo,
+                delta=analysis.delta,
+                correction_3d=analysis.correction_3d,
+                pixel_min=analysis.pixel_min,
+                pixel_max=analysis.pixel_max,
+                npo_limit=analysis.npo_limit,
+                escala=analysis.escala,
+            )
+        else:  # voxel_2018
+            result = aglogen_core.fraktal_voxel_2018(
+                image=img_array,
+                npix=analysis.npix,
+                escala=analysis.escala,
+                correction_3d=analysis.correction_3d,
+                pixel_min=analysis.pixel_min,
+                pixel_max=analysis.pixel_max,
+                m_exponent=analysis.m_exponent,
+            )
+
+        # Step 4: Store results
+        analysis.results = {
+            "rg": result.rg,
+            "ap": result.ap,
+            "df": result.df,
+            "npo": result.npo,
+            "kf": result.kf,
+            "zf": result.zf,
+            "jf": result.jf,
+            "volume": result.volume,
+            "mass": result.mass,
+            "surface_area": result.surface_area,
+            "status": result.status,
+            "model": result.model,
+        }
+        analysis.execution_time_ms = result.execution_time_ms
+        analysis.engine_version = aglogen_core.version()
+
+        # Check for analysis errors
+        if result.status != "success":
+            analysis.status = AnalysisStatus.FAILED
+            analysis.error_message = f"FRAKTAL analysis failed: {result.status}"
+        else:
+            analysis.status = AnalysisStatus.COMPLETED
+
+        analysis.completed_at = timezone.now()
+        analysis.save()
+
+        logger.info(
+            f"FRAKTAL analysis {analysis_id} completed: Df={result.df:.4f}, "
+            f"npo={result.npo}, status={result.status}"
+        )
+
+        return {
+            "status": "completed" if result.status == "success" else "failed",
+            "analysis_id": analysis_id,
+            "df": result.df,
+            "npo": result.npo,
+            "kf": result.kf,
+        }
+
+    except Exception as e:
+        logger.exception(f"FRAKTAL analysis {analysis_id} failed: {e}")
         analysis.status = AnalysisStatus.FAILED
         analysis.error_message = str(e)
         analysis.completed_at = timezone.now()

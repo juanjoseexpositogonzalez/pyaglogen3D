@@ -4,13 +4,15 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
+import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
 import { simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2 } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 
 export default function ProjectDetailPage({
@@ -21,9 +23,12 @@ export default function ProjectDetailPage({
   const { id } = params
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
+  const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
+  const deleteFraktal = useDeleteFraktalAnalysis(id)
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  const [fraktalDeleteConfirm, setFraktalDeleteConfirm] = useState<string | null>(null)
 
   const handleCancel = async (simId: string, e: React.MouseEvent) => {
     e.preventDefault()
@@ -51,6 +56,19 @@ export default function ProjectDetailPage({
     } finally {
       setActionLoading(null)
       setDeleteConfirm(null)
+    }
+  }
+
+  const handleDeleteFraktal = async (analysisId: string, e: React.MouseEvent) => {
+    e.preventDefault()
+    e.stopPropagation()
+    try {
+      await deleteFraktal.mutateAsync(analysisId)
+      refetchFraktal()
+    } catch (err) {
+      console.error('Failed to delete FRAKTAL analysis:', err)
+    } finally {
+      setFraktalDeleteConfirm(null)
     }
   }
 
@@ -119,12 +137,20 @@ export default function ProjectDetailPage({
               </span>
             </div>
           </div>
-          <Link href={`/projects/${id}/simulations/new`}>
-            <Button>
-              <Plus className="h-4 w-4 mr-2" />
-              New Simulation
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link href={`/projects/${id}/fraktal/new`}>
+              <Button variant="outline">
+                <Microscope className="h-4 w-4 mr-2" />
+                FRAKTAL Analysis
+              </Button>
+            </Link>
+            <Link href={`/projects/${id}/simulations/new`}>
+              <Button>
+                <Plus className="h-4 w-4 mr-2" />
+                New Simulation
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Simulations List */}
@@ -242,6 +268,121 @@ export default function ProjectDetailPage({
                                   e.preventDefault()
                                   e.stopPropagation()
                                   setDeleteConfirm(sim.id)
+                                }}
+                              >
+                                <Trash2 className="h-4 w-4" />
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </CardContent>
+                  </Card>
+                </Link>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* FRAKTAL Analyses List */}
+        <div className="space-y-4 mt-8">
+          <h2 className="text-xl font-semibold">FRAKTAL Analyses</h2>
+
+          {fraktalLoading ? (
+            <LoadingScreen message="Loading analyses..." />
+          ) : (fraktalAnalyses?.results ?? []).length === 0 ? (
+            <Card>
+              <CardContent className="p-8 text-center">
+                <Microscope className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                <h3 className="text-lg font-medium mb-2">No FRAKTAL analyses yet</h3>
+                <p className="text-muted-foreground mb-4">
+                  Analyze fractal properties of agglomerate images or simulation projections
+                </p>
+                <Link href={`/projects/${id}/fraktal/new`}>
+                  <Button>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Run FRAKTAL Analysis
+                  </Button>
+                </Link>
+              </CardContent>
+            </Card>
+          ) : (
+            <div className="grid gap-4">
+              {(fraktalAnalyses?.results ?? []).map((analysis) => (
+                <Link
+                  key={analysis.id}
+                  href={`/projects/${id}/fraktal/${analysis.id}`}
+                >
+                  <Card className="hover:border-primary/50 transition-colors cursor-pointer">
+                    <CardContent className="p-4">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-4">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <span className="font-medium">
+                                {analysis.model === 'granulated_2012' ? 'Granulated 2012' : 'Voxel 2018'}
+                              </span>
+                              <Badge variant="outline">
+                                {analysis.source_type === 'uploaded_image' ? 'Image' : 'Projection'}
+                              </Badge>
+                              <StatusBadge status={analysis.status} />
+                            </div>
+                            <p className="text-sm text-muted-foreground mt-1">
+                              {formatDistanceToNow(analysis.created_at)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center gap-4">
+                          {analysis.status === 'completed' && analysis.results && (
+                            <div className="text-right">
+                              <p className="text-sm">
+                                <span className="text-muted-foreground">Df = </span>
+                                <span className="font-mono font-medium">
+                                  {formatNumber(analysis.results.df, 3)}
+                                </span>
+                              </p>
+                              <p className="text-sm">
+                                <span className="text-muted-foreground">Npo = </span>
+                                <span className="font-mono">
+                                  {analysis.results.npo?.toLocaleString() ?? 'N/A'}
+                                </span>
+                              </p>
+                            </div>
+                          )}
+
+                          {/* Delete Button */}
+                          <div className="flex gap-2">
+                            {fraktalDeleteConfirm === analysis.id ? (
+                              <div className="flex gap-1">
+                                <Button
+                                  variant="destructive"
+                                  size="sm"
+                                  onClick={(e) => handleDeleteFraktal(analysis.id, e)}
+                                  disabled={deleteFraktal.isPending}
+                                >
+                                  {deleteFraktal.isPending ? '...' : 'Yes'}
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    e.stopPropagation()
+                                    setFraktalDeleteConfirm(null)
+                                  }}
+                                >
+                                  No
+                                </Button>
+                              </div>
+                            ) : (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={(e) => {
+                                  e.preventDefault()
+                                  e.stopPropagation()
+                                  setFraktalDeleteConfirm(analysis.id)
                                 }}
                               >
                                 <Trash2 className="h-4 w-4" />
