@@ -2,18 +2,38 @@
 //!
 //! Implements the iterative bisection method used in FRAKTAL to solve
 //! the equation: kf × (dp/dpo)^Df = (Ap/Apo)^zp
+//!
+//! This module provides the core numerical solver for the FRAKTAL fractal
+//! analysis algorithm. It finds the fractal dimension (Df) where the
+//! objective function crosses zero, using a combination of bracketing
+//! and bisection refinement.
+
+/// Convergence threshold for function value.
+/// Solution is considered converged when |f(Df)| < this value.
+const CONVERGENCE_THRESHOLD: f64 = 0.1;
 
 /// Bisection solver for fractal dimension.
+///
+/// Uses a two-phase approach:
+/// 1. Search for a bracket where the function changes sign
+/// 2. Refine using bisection until convergence
+///
+/// Falls back to golden section optimization if no bracket is found.
 pub struct BisectionSolver {
-    /// Convergence tolerance
+    /// Convergence tolerance for interval width (default: 1e-5)
     pub tolerance: f64,
-    /// Maximum iterations
+    /// Maximum iterations for refinement (default: 100)
     pub max_iterations: usize,
-    /// Search step size for initial bracket
+    /// Search step size for initial bracket finding (default: 0.05)
     pub step_size: f64,
 }
 
 impl Default for BisectionSolver {
+    /// Create solver with defaults tuned for FRAKTAL Df search.
+    ///
+    /// - tolerance: 1e-5 (sufficient precision for Df)
+    /// - max_iterations: 100 (ample for convergence)
+    /// - step_size: 0.05 (gives ~40 points in Df range 1.0-3.0)
     fn default() -> Self {
         Self {
             tolerance: 1e-5,
@@ -23,22 +43,31 @@ impl Default for BisectionSolver {
     }
 }
 
-/// Result of bisection search.
+/// Result of bisection search for fractal dimension.
+///
+/// Contains the found Df value along with convergence information.
+/// A successful result has `converged = true` and `function_value` near zero.
 #[derive(Debug, Clone)]
 pub struct BisectionResult {
-    /// Found fractal dimension
+    /// Found fractal dimension (0.0 if not found)
     pub df: f64,
-    /// Prefactor at solution
+    /// Prefactor kf at the solution point
     pub kf: f64,
-    /// Number of iterations
+    /// Number of iterations performed
     pub iterations: usize,
-    /// Final function value (should be near zero)
+    /// Final function value (should be near zero for good solution)
     pub function_value: f64,
-    /// Whether solution was found
+    /// Whether a valid solution was found within tolerance
     pub converged: bool,
 }
 
 impl BisectionSolver {
+    /// Create a new bisection solver with custom parameters.
+    ///
+    /// # Arguments
+    /// * `tolerance` - Convergence tolerance for interval width
+    /// * `max_iterations` - Maximum iterations for refinement
+    /// * `step_size` - Search step size for initial bracket finding
     pub fn new(tolerance: f64, max_iterations: usize, step_size: f64) -> Self {
         Self {
             tolerance,
@@ -56,43 +85,48 @@ impl BisectionSolver {
     /// * `objective_fn` - Function that takes Df and returns (function_value, kf)
     /// * `df_min` - Minimum Df to search (typically 1.0)
     /// * `df_max` - Maximum Df to search (typically 3.0)
+    ///
+    /// # Example
+    /// ```ignore
+    /// let solver = BisectionSolver::default();
+    /// let result = solver.solve(|df| {
+    ///     let kf = calculate_kf(df);
+    ///     let value = kf * (dp/dpo).powf(df) - (ap/apo).powf(zp);
+    ///     (value, kf)
+    /// }, 1.0, 3.0);
+    /// ```
     pub fn solve<F>(&self, objective_fn: F, df_min: f64, df_max: f64) -> BisectionResult
     where
         F: Fn(f64) -> (f64, f64),
     {
-        // Generate Df values to test
-        let mut df_values: Vec<f64> = Vec::new();
-        let mut df = df_min;
-        while df <= df_max + 1e-10 {
-            df_values.push(df);
-            df += self.step_size;
-        }
-
         // Find bracket where function changes sign
-        let mut dfa = 0.0;
-        let mut dfb = 0.0;
-        let mut funa = 0.0;
-        let mut funb;
-        let mut kfa = 0.0;
-        let mut kfb;
+        // Use iterator to generate Df values on-the-fly (memory efficient)
+        let mut dfa = df_min;
+        let mut dfb = df_min + self.step_size;
         let mut found_bracket = false;
 
-        for i in 0..df_values.len() - 1 {
-            dfa = df_values[i];
-            dfb = df_values[i + 1];
+        // Evaluate first point
+        let (mut funa, _) = objective_fn(dfa);
 
-            let (fa, ka) = objective_fn(dfa);
-            let (fb, kb) = objective_fn(dfb);
-            funa = fa;
-            funb = fb;
-            kfa = ka;
-            kfb = kb;
+        // Search for bracket by stepping through Df values
+        while dfb < df_max + self.step_size {
+            let (fb, _kb) = objective_fn(dfb);
 
-            // Check for sign change
-            if funa.signum() != funb.signum() && funa.is_finite() && funb.is_finite() {
+            // Check for sign change (found a bracket)
+            if funa.signum() != fb.signum() && funa.is_finite() && fb.is_finite() {
                 found_bracket = true;
                 break;
             }
+
+            // Move to next interval
+            dfa = dfb;
+            funa = fb;
+            dfb += self.step_size;
+        }
+
+        // Clamp dfb to df_max to avoid exceeding range
+        if dfb > df_max {
+            dfb = df_max;
         }
 
         if !found_bracket {
@@ -103,12 +137,10 @@ impl BisectionSolver {
         // Bisection refinement
         let mut iterations = 0;
         let mut dfc = (dfa + dfb) / 2.0;
-        let mut kfc = kfa;
 
         while (dfa - dfb).abs() > self.tolerance && iterations < self.max_iterations {
             dfc = (dfa + dfb) / 2.0;
-            let (func, kc) = objective_fn(dfc);
-            kfc = kc;
+            let (func, _) = objective_fn(dfc);
 
             if funa.signum() == func.signum() {
                 dfa = dfc;
@@ -127,11 +159,16 @@ impl BisectionSolver {
             kf: final_kf,
             iterations,
             function_value: final_value,
-            converged: final_value.abs() < 0.1, // Reasonable convergence threshold
+            converged: final_value.abs() < CONVERGENCE_THRESHOLD,
         }
     }
 
     /// Fallback optimization when no bracket is found.
+    ///
+    /// Uses golden section search to find the minimum of |f(Df)|.
+    /// This is called when the objective function doesn't change sign
+    /// across the search range, which can happen for certain parameter
+    /// combinations where the function is always positive or negative.
     fn fallback_optimization<F>(&self, objective_fn: &F, df_min: f64, df_max: f64) -> BisectionResult
     where
         F: Fn(f64) -> (f64, f64),
@@ -181,7 +218,7 @@ impl BisectionSolver {
             kf: if valid { kf } else { 0.0 },
             iterations,
             function_value: fun_value,
-            converged: valid && fun_value.abs() < 0.1,
+            converged: valid && fun_value.abs() < CONVERGENCE_THRESHOLD,
         }
     }
 }
