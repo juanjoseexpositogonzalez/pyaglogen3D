@@ -77,6 +77,27 @@ pub fn project_to_2d(
     let radii_arr = radii.as_array();
 
     let n = coords.shape()[0];
+
+    // Validate input dimensions (Issue #6 fix)
+    if coords.shape().len() < 2 || coords.shape()[1] < 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            format!(
+                "coordinates must have shape (N, 3) or (N, >=3), got shape {:?}",
+                coords.shape()
+            )
+        ));
+    }
+
+    if radii_arr.len() != n {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            format!(
+                "radii length ({}) must match number of coordinates ({})",
+                radii_arr.len(),
+                n
+            )
+        ));
+    }
+
     if n == 0 {
         return Ok(PyProjectionResult {
             x: vec![],

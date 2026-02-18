@@ -16,8 +16,9 @@ interface SimulationFormProps {
 
 const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'dla', label: 'DLA (Diffusion-Limited Aggregation)' },
-  { value: 'cca', label: 'CCA (Cluster-Cluster Aggregation)' },
-  { value: 'ballistic', label: 'Ballistic Aggregation' },
+  { value: 'cca', label: 'CCA (Brownian Cluster-Cluster)' },
+  { value: 'ballistic', label: 'Ballistic PC (Particle-Cluster)' },
+  { value: 'ballistic_cc', label: 'Ballistic CC (Cluster-Cluster)' },
   { value: 'tunable', label: 'Tunable Df (Filippov method)' },
 ]
 
@@ -56,8 +57,9 @@ const defaultParams: FormParams = {
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   dla: 'Diffusion-Limited Aggregation: Particles undergo random walks and stick upon contact. Produces fractal structures with Df ~ 2.4-2.6.',
-  cca: 'Cluster-Cluster Aggregation: Multiple clusters move and merge upon collision. Produces more open structures with Df ~ 1.8-2.0.',
-  ballistic: 'Ballistic Aggregation: Particles travel in straight lines until contact. Produces denser structures with Df ~ 2.8-3.0.',
+  cca: 'Brownian CCA: Clusters move via Brownian motion and merge on collision. Produces open structures with Df ~ 1.8-2.0.',
+  ballistic: 'Ballistic PC: Particles travel in straight lines towards a growing cluster. Produces denser structures with Df ~ 2.8-3.0.',
+  ballistic_cc: 'Ballistic CC: Clusters travel in straight lines and merge on collision. Produces branched structures with Df ~ 1.8-2.2 (thesis section 6.2).',
   tunable: 'Tunable Df (Filippov method): Generate aggregates with target fractal dimension and prefactor. Based on N = kf × (Rg/rp)^Df power law.',
 }
 

@@ -134,8 +134,8 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         POST body:
         {
-            "azimuth": 45.0,      // degrees (default: 0)
-            "elevation": 30.0,   // degrees (default: 0)
+            "azimuth": 45.0,      // degrees (default: 0, range: 0-360)
+            "elevation": 30.0,   // degrees (default: 0, range: -90 to 90)
             "format": "png"      // "png" or "svg" (default: "png")
         }
         """
@@ -147,10 +147,36 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Parse parameters
-        azimuth = float(request.data.get("azimuth", 0.0))
-        elevation = float(request.data.get("elevation", 0.0))
-        img_format = request.data.get("format", "png").lower()
+        # Parse and validate parameters (Issue #7, #9, #10 fixes)
+        try:
+            azimuth = float(request.data.get("azimuth", 0.0))
+            elevation = float(request.data.get("elevation", 0.0))
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": f"Invalid numeric parameter: {e}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate angle ranges (Issue #9)
+        if not (0 <= azimuth <= 360):
+            return Response(
+                {"error": "Azimuth must be between 0 and 360 degrees"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (-90 <= elevation <= 90):
+            return Response(
+                {"error": "Elevation must be between -90 and 90 degrees"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate format strictly (Issue #10)
+        img_format = request.data.get("format", "png")
+        if not isinstance(img_format, str):
+            return Response(
+                {"error": "Format must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        img_format = img_format.lower().strip()
 
         if img_format not in ("png", "svg"):
             return Response(
@@ -189,12 +215,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         POST body:
         {
-            "azimuth_start": 0,     // degrees (default: 0)
-            "azimuth_end": 150,     // degrees (default: 150)
-            "azimuth_step": 30,     // degrees (default: 30)
-            "elevation_start": 0,   // degrees (default: 0)
-            "elevation_end": 150,   // degrees (default: 150)
-            "elevation_step": 30,   // degrees (default: 30)
+            "azimuth_start": 0,     // degrees (default: 0, range: 0-360)
+            "azimuth_end": 150,     // degrees (default: 150, range: 0-360)
+            "azimuth_step": 30,     // degrees (default: 30, must be > 0)
+            "elevation_start": 0,   // degrees (default: 0, range: -90 to 90)
+            "elevation_end": 150,   // degrees (default: 150, range: -90 to 90)
+            "elevation_step": 30,   // degrees (default: 30, must be > 0)
             "format": "png"         // "png" or "svg" (default: "png")
         }
         """
@@ -206,14 +232,40 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Parse parameters
-        az_start = float(request.data.get("azimuth_start", 0.0))
-        az_end = float(request.data.get("azimuth_end", 150.0))
-        az_step = float(request.data.get("azimuth_step", 30.0))
-        el_start = float(request.data.get("elevation_start", 0.0))
-        el_end = float(request.data.get("elevation_end", 150.0))
-        el_step = float(request.data.get("elevation_step", 30.0))
-        img_format = request.data.get("format", "png").lower()
+        # Parse and validate parameters (Issue #8, #9, #10 fixes)
+        try:
+            az_start = float(request.data.get("azimuth_start", 0.0))
+            az_end = float(request.data.get("azimuth_end", 150.0))
+            az_step = float(request.data.get("azimuth_step", 30.0))
+            el_start = float(request.data.get("elevation_start", 0.0))
+            el_end = float(request.data.get("elevation_end", 150.0))
+            el_step = float(request.data.get("elevation_step", 30.0))
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": f"Invalid numeric parameter: {e}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate angle ranges (Issue #9)
+        if not (0 <= az_start <= 360) or not (0 <= az_end <= 360):
+            return Response(
+                {"error": "Azimuth values must be between 0 and 360 degrees"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (-90 <= el_start <= 90) or not (-90 <= el_end <= 90):
+            return Response(
+                {"error": "Elevation values must be between -90 and 90 degrees"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate format strictly (Issue #10)
+        img_format = request.data.get("format", "png")
+        if not isinstance(img_format, str):
+            return Response(
+                {"error": "Format must be a string"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        img_format = img_format.lower().strip()
 
         if img_format not in ("png", "svg"):
             return Response(
