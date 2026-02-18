@@ -27,5 +27,7 @@ class Project(models.Model):
 
     @property
     def analysis_count(self) -> int:
-        """Return number of image analyses in this project."""
-        return self.analyses.count()
+        """Return total number of analyses (ImageAnalysis + FraktalAnalysis) in this project."""
+        image_analyses = self.analyses.count() if hasattr(self, 'analyses') else 0
+        fraktal_analyses = self.fraktal_analyses.count() if hasattr(self, 'fraktal_analyses') else 0
+        return image_analyses + fraktal_analyses

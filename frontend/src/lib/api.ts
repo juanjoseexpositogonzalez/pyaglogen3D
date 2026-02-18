@@ -10,8 +10,12 @@ import type {
   ImageAnalysis,
   PaginatedResponse,
   GeometryData,
+  NeighborGraphData,
   FraktalAnalysis,
   CreateFraktalInput,
+  ParametricStudy,
+  CreateParametricStudyInput,
+  ParametricStudyResults,
 } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
@@ -225,6 +229,29 @@ export const simulationsApi = {
 
     return { coordinates, radii }
   },
+
+  /**
+   * Export agglomerate data as CSV.
+   * Returns CSV file with properties and per-particle data.
+   */
+  exportCsv: async (projectId: string, simId: string): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/projects/${projectId}/simulations/${simId}/export/`
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to export CSV', res.status)
+    }
+    return res.blob()
+  },
+
+  /**
+   * Get particle neighbor/adjacency graph.
+   * Returns nodes (particles) and edges (connections between touching particles).
+   */
+  getNeighborGraph: (projectId: string, simId: string) =>
+    request<NeighborGraphData>(
+      `/projects/${projectId}/simulations/${simId}/neighbor-graph/`
+    ),
 }
 
 // Image Analyses API
@@ -322,6 +349,57 @@ export const fraktalApi = {
     )
     if (!res.ok) {
       throw new ApiError('Failed to download original image', res.status)
+    }
+    return res.blob()
+  },
+}
+
+// Parametric Studies (Batch Simulations) API
+export const studiesApi = {
+  /**
+   * List all parametric studies for a project.
+   */
+  list: (projectId: string) =>
+    request<PaginatedResponse<ParametricStudy>>(`/projects/${projectId}/studies/`),
+
+  /**
+   * Get a single parametric study.
+   */
+  get: (projectId: string, id: string) =>
+    request<ParametricStudy>(`/projects/${projectId}/studies/${id}/`),
+
+  /**
+   * Create a new parametric study (batch simulations).
+   */
+  create: (projectId: string, data: CreateParametricStudyInput) =>
+    request<ParametricStudy>(`/projects/${projectId}/studies/`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+
+  /**
+   * Delete a parametric study.
+   */
+  delete: (projectId: string, id: string) =>
+    request<void>(`/projects/${projectId}/studies/${id}/`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Get results for a parametric study.
+   */
+  getResults: (projectId: string, id: string) =>
+    request<ParametricStudyResults>(`/projects/${projectId}/studies/${id}/results/`),
+
+  /**
+   * Export study results as CSV.
+   */
+  exportCsv: async (projectId: string, id: string): Promise<Blob> => {
+    const res = await fetch(
+      `${API_BASE}/projects/${projectId}/studies/${id}/export/`
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to export CSV', res.status)
     }
     return res.blob()
   },

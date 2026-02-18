@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 
 export default function ProjectDetailPage({
@@ -138,6 +138,12 @@ export default function ProjectDetailPage({
             </div>
           </div>
           <div className="flex gap-2">
+            <Link href={`/projects/${id}/batch`}>
+              <Button variant="outline">
+                <Layers className="h-4 w-4 mr-2" />
+                Batch Simulations
+              </Button>
+            </Link>
             <Link href={`/projects/${id}/fraktal/new`}>
               <Button variant="outline">
                 <Microscope className="h-4 w-4 mr-2" />

@@ -4,7 +4,7 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
-import { useSimulation, useSimulationGeometry } from '@/hooks/useSimulations'
+import { useSimulation, useSimulationGeometry, useNeighborGraph } from '@/hooks/useSimulations'
 import { simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
@@ -15,12 +15,13 @@ import {
   type ProjectionParams,
   type BatchParams,
 } from '@/components/projection'
+import { NeighborGraph } from '@/components/topology'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Clock, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
+import { ArrowLeft, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
 
 export default function SimulationDetailPage({
@@ -33,6 +34,11 @@ export default function SimulationDetailPage({
   const { data: project } = useProject(id)
   const { data: simulation, isLoading, error, refetch } = useSimulation(id, simId)
   const { data: geometry } = useSimulationGeometry(
+    simId,
+    simulation?.status === 'completed'
+  )
+  const { data: neighborGraph, isLoading: isGraphLoading } = useNeighborGraph(
+    id,
     simId,
     simulation?.status === 'completed'
   )
@@ -50,6 +56,26 @@ export default function SimulationDetailPage({
   })
   const [isProjectionLoading, setIsProjectionLoading] = useState(false)
   const [isBatchLoading, setIsBatchLoading] = useState(false)
+  const [isExporting, setIsExporting] = useState(false)
+
+  const handleExportCsv = async () => {
+    setIsExporting(true)
+    try {
+      const blob = await simulationsApi.exportCsv(id, simId)
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      link.download = `${simId}_export.csv`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to export CSV:', err)
+    } finally {
+      setIsExporting(false)
+    }
+  }
 
   const handleProjectionPreview = async (params: ProjectionParams) => {
     setIsProjectionLoading(true)
@@ -208,6 +234,16 @@ export default function SimulationDetailPage({
                 {isCancelling ? 'Cancelling...' : 'Cancel'}
               </Button>
             )}
+            {simulation.status === 'completed' && (
+              <Button
+                variant="outline"
+                onClick={handleExportCsv}
+                disabled={isExporting}
+              >
+                <Download className="h-4 w-4 mr-2" />
+                {isExporting ? 'Exporting...' : 'Export CSV'}
+              </Button>
+            )}
             {showDeleteConfirm ? (
               <div className="flex gap-2 items-center">
                 <span className="text-sm text-muted-foreground">Delete?</span>
@@ -319,28 +355,91 @@ export default function SimulationDetailPage({
               />
             </MetricsGrid>
 
-            {/* Coordination */}
-            <Card className="mb-8">
-              <CardHeader>
-                <CardTitle className="text-lg">Coordination Number</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <div className="flex gap-8">
-                  <div>
-                    <p className="text-sm text-muted-foreground">Mean</p>
-                    <p className="text-2xl font-bold">
-                      {formatNumber(simulation.metrics.coordination.mean, 2)}
-                    </p>
+            {/* Coordination and Shape Analysis */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Coordination Number</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex gap-8">
+                    <div>
+                      <p className="text-sm text-muted-foreground">Mean</p>
+                      <p className="text-2xl font-bold">
+                        {formatNumber(simulation.metrics.coordination.mean, 2)}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-sm text-muted-foreground">Std. Dev.</p>
+                      <p className="text-2xl font-bold">
+                        {formatNumber(simulation.metrics.coordination.std, 2)}
+                      </p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-sm text-muted-foreground">Std. Dev.</p>
-                    <p className="text-2xl font-bold">
-                      {formatNumber(simulation.metrics.coordination.std, 2)}
-                    </p>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+
+              {/* Shape Analysis from Inertia Tensor */}
+              {simulation.metrics.anisotropy !== undefined && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle className="text-lg">Shape Analysis</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="flex flex-wrap gap-8">
+                      <div>
+                        <p className="text-sm text-muted-foreground">Anisotropy</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(simulation.metrics.anisotropy, 2)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {simulation.metrics.anisotropy < 1.5 ? 'Compact' :
+                           simulation.metrics.anisotropy < 3 ? 'Moderate' : 'Elongated'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Asphericity</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(simulation.metrics.asphericity, 3)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-sm text-muted-foreground">Acylindricity</p>
+                        <p className="text-2xl font-bold">
+                          {formatNumber(simulation.metrics.acylindricity, 3)}
+                        </p>
+                      </div>
+                    </div>
+                    {/* Principal Moments of Inertia */}
+                    {simulation.metrics.principal_moments && (
+                      <div className="pt-2 border-t">
+                        <p className="text-sm text-muted-foreground mb-2">Principal Moments of Inertia</p>
+                        <div className="flex gap-6">
+                          <div>
+                            <p className="text-xs text-muted-foreground">I₁ (min)</p>
+                            <p className="text-lg font-mono font-medium">
+                              {formatNumber(simulation.metrics.principal_moments[0], 1)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">I₂</p>
+                            <p className="text-lg font-mono font-medium">
+                              {formatNumber(simulation.metrics.principal_moments[1], 1)}
+                            </p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-muted-foreground">I₃ (max)</p>
+                            <p className="text-lg font-mono font-medium">
+                              {formatNumber(simulation.metrics.principal_moments[2], 1)}
+                            </p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
 
             {/* 3D Viewer */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
@@ -353,6 +452,7 @@ export default function SimulationDetailPage({
                     <AgglomerateViewer
                       coordinates={coordinates}
                       radii={radii}
+                      principalAxes={simulation.metrics.principal_axes}
                       className="h-[600px]"
                     />
                   </CardContent>
@@ -381,6 +481,14 @@ export default function SimulationDetailPage({
                   isBatchLoading={isBatchLoading}
                 />
               </div>
+            </div>
+
+            {/* Topology Analysis */}
+            <div className="mb-8">
+              <NeighborGraph
+                data={neighborGraph ?? null}
+                isLoading={isGraphLoading}
+              />
             </div>
 
             {/* Parameters */}

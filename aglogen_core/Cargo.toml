@@ -14,6 +14,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.23", features = ["extension-module"] }
 numpy = "0.23"
 ndarray = { version = "0.15", features = ["rayon"] }
+nalgebra = "0.33"
 rand = "0.8"
 rand_pcg = "0.3"
 rayon = "1.8"

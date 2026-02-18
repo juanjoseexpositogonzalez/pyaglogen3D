@@ -143,7 +143,7 @@ export default function FraktalAnalysisDetailPage({
         </div>
 
         {/* Results */}
-        <FraktalResultsView analysis={analysis} />
+        <FraktalResultsView analysis={analysis} projectId={id} />
       </main>
     </div>
   )

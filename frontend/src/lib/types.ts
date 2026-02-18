@@ -88,6 +88,12 @@ export interface SimulationMetrics {
     std: number
   }
   rg_evolution: number[]
+  // Inertia tensor analysis
+  anisotropy: number
+  asphericity: number
+  acylindricity: number
+  principal_moments: [number, number, number]
+  principal_axes: [[number, number, number], [number, number, number], [number, number, number]]
 }
 
 export interface CreateSimulationInput {
@@ -176,6 +182,98 @@ export interface GeometryData {
   radii: number[]
 }
 
+// Neighbor graph data for topology visualization
+export interface NeighborGraphNode {
+  id: number  // 1-based particle ID (depositional order)
+  x: number
+  y: number
+  z: number
+  radius: number
+  coordination: number
+  distance_from_cdg: number
+}
+
+export interface NeighborGraphEdge {
+  source: number  // 1-based particle ID
+  target: number  // 1-based particle ID
+}
+
+export interface NeighborGraphStats {
+  n_particles: number
+  n_edges: number
+  avg_coordination: number
+  max_coordination: number
+  min_coordination: number
+  is_connected: boolean
+}
+
+export interface NeighborGraphData {
+  nodes: NeighborGraphNode[]
+  edges: NeighborGraphEdge[]
+  stats: NeighborGraphStats
+}
+
+// Parametric Study (Batch Simulations)
+export interface ParametricStudy {
+  id: string
+  project: string
+  name: string
+  description: string
+  base_algorithm: SimulationAlgorithm
+  base_parameters: Record<string, unknown>
+  parameter_grid: Record<string, unknown[]>
+  seeds_per_combination: number
+  status: SimulationStatus
+  total_simulations: number
+  completed_simulations: number
+  created_at: string
+  completed_at: string | null
+}
+
+export interface CreateParametricStudyInput {
+  name: string
+  description?: string
+  base_algorithm: SimulationAlgorithm
+  base_parameters: Record<string, unknown>
+  parameter_grid: Record<string, unknown[]>
+  seeds_per_combination?: number
+}
+
+export interface ParametricStudyResult {
+  simulation_id: string
+  status: SimulationStatus
+  parameters: Record<string, unknown>
+  seed: number
+  execution_time_ms: number | null
+  fractal_dimension?: number
+  fractal_dimension_std?: number
+  prefactor?: number
+  radius_of_gyration?: number
+  porosity?: number
+  coordination_mean?: number
+  coordination_std?: number
+  anisotropy?: number
+  asphericity?: number
+  acylindricity?: number
+}
+
+export interface ParametricStudyResults {
+  study_id: string
+  name: string
+  description: string
+  base_algorithm: SimulationAlgorithm
+  base_parameters: Record<string, unknown>
+  parameter_grid: Record<string, unknown[]>
+  status: string
+  progress: {
+    total: number
+    completed: number
+    failed: number
+    running: number
+  }
+  results: ParametricStudyResult[]
+}
+
 // FRAKTAL Analysis Types
 export interface FraktalAnalysisSummary {
   id: string
@@ -223,7 +321,8 @@ export interface FraktalResults {
   rg: number               // Radius of gyration (nm)
   ap: number               // Projected area (nm²)
   df: number               // Fractal dimension
-  npo: number              // Number of primary particles
+  npo: number              // Number of primary particles (calculated)
+  npo_visual: number       // Number of primary particles (estimated from image)
   kf: number               // Prefactor
   zf: number               // Overlap exponent
   jf: number | null        // Coordination index (granulated_2012 only)
@@ -232,6 +331,9 @@ export interface FraktalResults {
   surface_area: number     // Surface area (nm²)
   status: string           // Analysis status message
   model: string            // Model used
+  npo_ratio: number        // Ratio of calculated/visual npo (1.0 = match)
+  npo_aligned: boolean     // Whether npo values are aligned (within 2x)
+  dpo_estimated: number    // Estimated dpo from visual analysis (nm)
 }
 
 export interface Granulated2012Params {

@@ -1,17 +1,124 @@
 'use client'
 
+import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard } from '@/components/common/MetricsCard'
-import type { FraktalAnalysis } from '@/lib/types'
+import { fraktalApi } from '@/lib/api'
+import type { FraktalAnalysis, CreateFraktalFromImageInput } from '@/lib/types'
 
 interface FraktalResultsViewProps {
   analysis: FraktalAnalysis
+  projectId: string
+  onComparisonCreated?: (newAnalysis: FraktalAnalysis) => void
 }
 
-export function FraktalResultsView({ analysis }: FraktalResultsViewProps) {
+export function FraktalResultsView({ analysis, projectId, onComparisonCreated }: FraktalResultsViewProps) {
   const { results, status, model, source_type } = analysis
+  const [imageUrl, setImageUrl] = useState<string | null>(null)
+  const [imageLoading, setImageLoading] = useState(false)
+  const [rerunLoading, setRerunLoading] = useState(false)
+  const [comparisonAnalysis, setComparisonAnalysis] = useState<FraktalAnalysis | null>(null)
+  const [comparisonError, setComparisonError] = useState<string | null>(null)
+
+  // Load original image for uploaded_image source
+  useEffect(() => {
+    let blobUrl: string | null = null
+
+    if (source_type === 'uploaded_image' && (status === 'completed' || status === 'failed')) {
+      setImageLoading(true)
+      fraktalApi.getOriginalImage(projectId, analysis.id)
+        .then(blob => {
+          blobUrl = URL.createObjectURL(blob)
+          setImageUrl(blobUrl)
+        })
+        .catch(err => {
+          console.error('Failed to load image:', err)
+        })
+        .finally(() => {
+          setImageLoading(false)
+        })
+    }
+
+    // Cleanup blob URL on unmount
+    return () => {
+      if (blobUrl) {
+        URL.revokeObjectURL(blobUrl)
+      }
+    }
+  }, [source_type, status, projectId, analysis.id])
+
+  // Poll for comparison analysis status
+  useEffect(() => {
+    if (!comparisonAnalysis) return
+    if (comparisonAnalysis.status === 'completed' || comparisonAnalysis.status === 'failed') return
+
+    const interval = setInterval(async () => {
+      try {
+        const updated = await fraktalApi.get(projectId, comparisonAnalysis.id)
+        setComparisonAnalysis(updated)
+        if (updated.status === 'completed' || updated.status === 'failed') {
+          clearInterval(interval)
+        }
+      } catch (err) {
+        console.error('Failed to poll comparison analysis:', err)
+      }
+    }, 2000)
+
+    return () => clearInterval(interval)
+  }, [comparisonAnalysis, projectId])
+
+  // Re-run analysis with suggested dpo
+  const handleRerunWithSuggestedDpo = useCallback(async () => {
+    if (!results?.dpo_estimated || source_type !== 'uploaded_image') return
+
+    setRerunLoading(true)
+    setComparisonError(null)
+
+    try {
+      // Get the original image as base64
+      const imageBlob = await fraktalApi.getOriginalImage(projectId, analysis.id)
+      const base64 = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onloadend = () => {
+          const result = reader.result as string
+          // Remove data URL prefix
+          const base64Data = result.split(',')[1]
+          resolve(base64Data)
+        }
+        reader.onerror = reject
+        reader.readAsDataURL(imageBlob)
+      })
+
+      // Create new analysis with suggested dpo
+      const newAnalysisData: CreateFraktalFromImageInput = {
+        source_type: 'uploaded_image',
+        image: base64,
+        original_filename: analysis.original_filename || 'rerun_image.png',
+        original_content_type: analysis.original_content_type || 'image/png',
+        model: model as 'granulated_2012' | 'voxel_2018',
+        npix: analysis.npix,
+        dpo: Math.round(results.dpo_estimated),  // Use suggested dpo
+        delta: analysis.delta,
+        correction_3d: analysis.correction_3d,
+        pixel_min: analysis.pixel_min,
+        pixel_max: analysis.pixel_max,
+        npo_limit: analysis.npo_limit,
+        escala: analysis.escala,
+      }
+
+      const newAnalysis = await fraktalApi.create(projectId, newAnalysisData)
+      setComparisonAnalysis(newAnalysis)
+      onComparisonCreated?.(newAnalysis)
+    } catch (err) {
+      console.error('Failed to create comparison analysis:', err)
+      setComparisonError(err instanceof Error ? err.message : 'Failed to create comparison analysis')
+    } finally {
+      setRerunLoading(false)
+    }
+  }, [results, source_type, projectId, analysis, model, onComparisonCreated])
 
   const formatNumber = (value: number | null | undefined, decimals = 4): string => {
     if (value === null || value === undefined) return 'N/A'
@@ -77,6 +184,39 @@ export function FraktalResultsView({ analysis }: FraktalResultsViewProps) {
         </CardContent>
       </Card>
 
+      {/* Original Image */}
+      {source_type === 'uploaded_image' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Analyzed Image</CardTitle>
+          </CardHeader>
+          <CardContent>
+            {imageLoading ? (
+              <div className="flex items-center justify-center h-64 bg-muted/50 rounded-lg">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary" />
+              </div>
+            ) : imageUrl ? (
+              <div className="flex justify-center">
+                <img
+                  src={imageUrl}
+                  alt="Analyzed aggregate"
+                  className="max-h-96 object-contain rounded-lg border"
+                />
+              </div>
+            ) : (
+              <div className="flex items-center justify-center h-64 bg-muted/50 rounded-lg">
+                <p className="text-muted-foreground">Image not available</p>
+              </div>
+            )}
+            {analysis.original_filename && (
+              <p className="text-sm text-muted-foreground mt-2 text-center">
+                {analysis.original_filename}
+              </p>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Error Display */}
       {status === 'failed' && analysis.error_message && (
         <Card className="border-red-500/50 bg-red-500/10">
@@ -89,31 +229,70 @@ export function FraktalResultsView({ analysis }: FraktalResultsViewProps) {
         </Card>
       )}
 
+      {/* NPO Mismatch Warning */}
+      {results && results.npo_aligned === false && results.npo_visual > 5 && !comparisonAnalysis && (
+        <Card className="border-yellow-500/50 bg-yellow-500/10">
+          <CardHeader>
+            <CardTitle className="text-yellow-600">Parameter Mismatch Detected</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-yellow-700">
+              Calculated particles (<strong>{results.npo?.toLocaleString() ?? 'N/A'}</strong>) differs significantly from
+              visual estimate (<strong>{results.npo_visual}</strong>)
+              {results.npo_ratio != null && results.npo_ratio > 0 && (
+                <> - ratio: <strong>{results.npo_ratio.toFixed(1)}x</strong></>
+              )}
+            </p>
+            {results.dpo_estimated != null && results.dpo_estimated > 0 && (
+              <p className="text-yellow-700 font-medium">
+                Suggested dpo: <strong>{results.dpo_estimated.toFixed(1)} nm</strong> (current: {analysis.dpo ?? 'N/A'} nm)
+              </p>
+            )}
+            {comparisonError && (
+              <p className="text-red-600 text-sm">{comparisonError}</p>
+            )}
+            {source_type === 'uploaded_image' && results.dpo_estimated > 0 && (
+              <Button
+                onClick={handleRerunWithSuggestedDpo}
+                disabled={rerunLoading}
+                variant="outline"
+                className="border-yellow-500 text-yellow-700 hover:bg-yellow-100"
+              >
+                {rerunLoading ? (
+                  <>
+                    <span className="animate-spin mr-2">⟳</span>
+                    Re-running...
+                  </>
+                ) : (
+                  <>Re-run with dpo = {Math.round(results.dpo_estimated)} nm</>
+                )}
+              </Button>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
       {/* Results */}
       {results && (
         <>
           {/* Primary Metrics */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
             <MetricsCard
-              title="Fractal Dimension"
+              label="Fractal Dimension (Df)"
               value={formatNumber(results.df, 4)}
-              subtitle="Df"
-              highlight
             />
             <MetricsCard
-              title="Prefactor"
+              label="Prefactor (kf)"
               value={formatNumber(results.kf, 4)}
-              subtitle="kf"
             />
             <MetricsCard
-              title="Primary Particles"
+              label="Primary Particles (npo)"
               value={results.npo?.toLocaleString() || 'N/A'}
-              subtitle="Npo"
+              subvalue={results.npo_visual > 0 ? `~${results.npo_visual} visual estimate` : undefined}
             />
             <MetricsCard
-              title="Overlap Exponent"
+              label="Overlap Exponent (zf)"
               value={formatNumber(results.zf, 4)}
-              subtitle="zf"
             />
           </div>
 
@@ -251,6 +430,126 @@ export function FraktalResultsView({ analysis }: FraktalResultsViewProps) {
             <p className="text-muted-foreground">
               {status === 'queued' ? 'Analysis queued...' : 'Running FRAKTAL analysis...'}
             </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Comparison Results */}
+      {comparisonAnalysis && (
+        <Card className="border-blue-500/50 bg-blue-500/5">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-blue-600">Comparison: Re-run with Suggested dpo</CardTitle>
+              <StatusBadge status={comparisonAnalysis.status} />
+            </div>
+          </CardHeader>
+          <CardContent>
+            {(comparisonAnalysis.status === 'queued' || comparisonAnalysis.status === 'running') && (
+              <div className="py-8 text-center">
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500 mx-auto mb-4" />
+                <p className="text-muted-foreground">
+                  {comparisonAnalysis.status === 'queued' ? 'Analysis queued...' : 'Running comparison...'}
+                </p>
+              </div>
+            )}
+
+            {comparisonAnalysis.status === 'failed' && (
+              <p className="text-red-600">{comparisonAnalysis.error_message || 'Analysis failed'}</p>
+            )}
+
+            {comparisonAnalysis.status === 'completed' && comparisonAnalysis.results && (
+              <div className="space-y-4">
+                {/* Side-by-side comparison table */}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 font-medium">Metric</th>
+                        <th className="text-right py-2 font-medium text-yellow-600">Original (dpo={analysis.dpo})</th>
+                        <th className="text-right py-2 font-medium text-blue-600">Re-run (dpo={comparisonAnalysis.dpo})</th>
+                        <th className="text-right py-2 font-medium">Change</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr className="border-b">
+                        <td className="py-2">Fractal Dimension (Df)</td>
+                        <td className="text-right font-mono">{formatNumber(results?.df, 4)}</td>
+                        <td className="text-right font-mono">{formatNumber(comparisonAnalysis.results.df, 4)}</td>
+                        <td className="text-right font-mono text-muted-foreground">
+                          {results?.df && comparisonAnalysis.results.df
+                            ? (comparisonAnalysis.results.df - results.df > 0 ? '+' : '') +
+                              (comparisonAnalysis.results.df - results.df).toFixed(4)
+                            : '-'}
+                        </td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">Primary Particles (npo)</td>
+                        <td className="text-right font-mono">{results?.npo?.toLocaleString() ?? 'N/A'}</td>
+                        <td className="text-right font-mono">{comparisonAnalysis.results.npo?.toLocaleString() ?? 'N/A'}</td>
+                        <td className="text-right font-mono text-muted-foreground">
+                          {results?.npo && comparisonAnalysis.results.npo
+                            ? (comparisonAnalysis.results.npo > results.npo ? '+' : '') +
+                              (comparisonAnalysis.results.npo - results.npo).toLocaleString()
+                            : '-'}
+                        </td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">Visual Estimate</td>
+                        <td className="text-right font-mono">{results?.npo_visual ?? 'N/A'}</td>
+                        <td className="text-right font-mono">{comparisonAnalysis.results.npo_visual ?? 'N/A'}</td>
+                        <td className="text-right font-mono text-muted-foreground">-</td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">NPO Aligned</td>
+                        <td className="text-right">
+                          <Badge variant={results?.npo_aligned ? 'default' : 'destructive'}>
+                            {results?.npo_aligned ? 'Yes' : 'No'}
+                          </Badge>
+                        </td>
+                        <td className="text-right">
+                          <Badge variant={comparisonAnalysis.results.npo_aligned ? 'default' : 'destructive'}>
+                            {comparisonAnalysis.results.npo_aligned ? 'Yes' : 'No'}
+                          </Badge>
+                        </td>
+                        <td className="text-right">
+                          {!results?.npo_aligned && comparisonAnalysis.results.npo_aligned && (
+                            <span className="text-green-600">✓ Fixed</span>
+                          )}
+                        </td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">Prefactor (kf)</td>
+                        <td className="text-right font-mono">{formatNumber(results?.kf, 4)}</td>
+                        <td className="text-right font-mono">{formatNumber(comparisonAnalysis.results.kf, 4)}</td>
+                        <td className="text-right font-mono text-muted-foreground">
+                          {results?.kf && comparisonAnalysis.results.kf
+                            ? (comparisonAnalysis.results.kf - results.kf > 0 ? '+' : '') +
+                              (comparisonAnalysis.results.kf - results.kf).toFixed(4)
+                            : '-'}
+                        </td>
+                      </tr>
+                      <tr className="border-b">
+                        <td className="py-2">Overlap Exponent (zf)</td>
+                        <td className="text-right font-mono">{formatNumber(results?.zf, 4)}</td>
+                        <td className="text-right font-mono">{formatNumber(comparisonAnalysis.results.zf, 4)}</td>
+                        <td className="text-right font-mono text-muted-foreground">
+                          {results?.zf && comparisonAnalysis.results.zf
+                            ? (comparisonAnalysis.results.zf - results.zf > 0 ? '+' : '') +
+                              (comparisonAnalysis.results.zf - results.zf).toFixed(4)
+                            : '-'}
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                {comparisonAnalysis.results.npo_aligned && !results?.npo_aligned && (
+                  <div className="bg-green-100 border border-green-300 rounded-lg p-3 text-green-800">
+                    <strong>Success!</strong> The re-run with suggested dpo produces results that align with the visual particle count.
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
       )}

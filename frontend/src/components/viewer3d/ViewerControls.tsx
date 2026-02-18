@@ -11,6 +11,9 @@ import {
   RotateCcw,
   Play,
   Pause,
+  Compass,
+  Circle,
+  Move3D,
 } from 'lucide-react'
 import type { ColorMode } from '@/lib/types'
 
@@ -36,6 +39,10 @@ export function ViewerControls() {
     toggleAxes,
     showGrid,
     toggleGrid,
+    showBoundingSphere,
+    toggleBoundingSphere,
+    showPrincipalAxes,
+    togglePrincipalAxes,
     autoRotate,
     toggleAutoRotate,
     rotateSpeed,
@@ -44,12 +51,23 @@ export function ViewerControls() {
     setParticleOpacity,
     background,
     setBackground,
+    cameraAzimuth,
+    cameraElevation,
     reset,
   } = useViewerStore()
 
   return (
     <div className="space-y-4 p-4 bg-card rounded-lg border">
       <h3 className="font-semibold text-sm">Viewer Controls</h3>
+
+      {/* Camera Position (Az/El) */}
+      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+        <Compass className="h-4 w-4 text-muted-foreground" />
+        <div className="flex gap-3 text-sm">
+          <span>Az: <span className="font-mono font-medium">{cameraAzimuth}°</span></span>
+          <span>El: <span className="font-mono font-medium">{cameraElevation}°</span></span>
+        </div>
+      </div>
 
       {/* Color Mode */}
       <div className="space-y-2">
@@ -113,6 +131,25 @@ export function ViewerControls() {
         >
           <Grid3X3 className="h-4 w-4 mr-1" />
           Grid
+        </Button>
+
+        <Button
+          variant={showBoundingSphere ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleBoundingSphere}
+        >
+          <Circle className="h-4 w-4 mr-1" />
+          Sphere
+        </Button>
+
+        <Button
+          variant={showPrincipalAxes ? 'default' : 'outline'}
+          size="sm"
+          onClick={togglePrincipalAxes}
+          title="Show principal axes of inertia"
+        >
+          <Move3D className="h-4 w-4 mr-1" />
+          Inertia
         </Button>
 
         <Button

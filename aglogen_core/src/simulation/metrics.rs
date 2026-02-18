@@ -1,6 +1,22 @@
 //! Agglomerate metrics calculation.
 
 use crate::common::geometry::Vector3;
+use nalgebra::{Matrix3, SymmetricEigen};
+
+/// Results from inertia tensor analysis.
+#[derive(Debug, Clone)]
+pub struct InertiaTensorResult {
+    /// Principal moments of inertia (sorted: I1 <= I2 <= I3)
+    pub principal_moments: [f64; 3],
+    /// Principal axes (eigenvectors), each column is an axis
+    pub principal_axes: [[f64; 3]; 3],
+    /// Anisotropy factor: I_max / I_min
+    pub anisotropy: f64,
+    /// Asphericity: I3 - 0.5*(I1 + I2), normalized
+    pub asphericity: f64,
+    /// Acylindricity: I2 - I1, normalized
+    pub acylindricity: f64,
+}
 
 /// Calculate center of gravity of particles (mass-weighted).
 pub fn calculate_center_of_gravity(coordinates: &[[f64; 3]], radii: &[f64]) -> Vector3 {
@@ -157,6 +173,132 @@ pub fn calculate_porosity(coordinates: &[[f64; 3]], radii: &[f64]) -> f64 {
     }
 }
 
+/// Calculate the inertia tensor and its principal components.
+///
+/// The inertia tensor I is calculated as:
+/// I = Σ mᵢ [(rᵢ·rᵢ)I₃ - rᵢ⊗rᵢ]
+///
+/// where rᵢ is the position vector relative to the center of mass,
+/// mᵢ is the mass (proportional to r³), and ⊗ denotes outer product.
+///
+/// Returns principal moments (eigenvalues) and axes (eigenvectors),
+/// plus derived shape descriptors (anisotropy, asphericity, acylindricity).
+pub fn calculate_inertia_tensor(coordinates: &[[f64; 3]], radii: &[f64]) -> InertiaTensorResult {
+    // Default result for empty or single-particle cases
+    let default_result = InertiaTensorResult {
+        principal_moments: [1.0, 1.0, 1.0],
+        principal_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        anisotropy: 1.0,
+        asphericity: 0.0,
+        acylindricity: 0.0,
+    };
+
+    if coordinates.len() < 2 {
+        return default_result;
+    }
+
+    // Calculate center of mass
+    let cg = calculate_center_of_gravity(coordinates, radii);
+
+    // Build the inertia tensor matrix
+    let mut ixx = 0.0;
+    let mut iyy = 0.0;
+    let mut izz = 0.0;
+    let mut ixy = 0.0;
+    let mut ixz = 0.0;
+    let mut iyz = 0.0;
+
+    for (coord, &r) in coordinates.iter().zip(radii.iter()) {
+        // Position relative to center of mass
+        let x = coord[0] - cg.x;
+        let y = coord[1] - cg.y;
+        let z = coord[2] - cg.z;
+
+        // Mass proportional to volume (r³)
+        let mass = r * r * r;
+
+        // Diagonal terms: m * (r² - component²)
+        // r² = x² + y² + z²
+        let r_sq = x * x + y * y + z * z;
+
+        ixx += mass * (r_sq - x * x); // m * (y² + z²)
+        iyy += mass * (r_sq - y * y); // m * (x² + z²)
+        izz += mass * (r_sq - z * z); // m * (x² + y²)
+
+        // Off-diagonal terms (negative of products)
+        ixy -= mass * x * y;
+        ixz -= mass * x * z;
+        iyz -= mass * y * z;
+    }
+
+    // Construct symmetric inertia tensor matrix
+    let inertia_matrix = Matrix3::new(
+        ixx, ixy, ixz,
+        ixy, iyy, iyz,
+        ixz, iyz, izz,
+    );
+
+    // Compute eigendecomposition
+    let eigen = SymmetricEigen::new(inertia_matrix);
+    let mut eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
+    let eigenvectors = eigen.eigenvectors;
+
+    // Sort eigenvalues (and track indices for eigenvectors)
+    let mut indices: Vec<usize> = (0..3).collect();
+    indices.sort_by(|&a, &b| eigenvalues[a].partial_cmp(&eigenvalues[b]).unwrap());
+
+    let sorted_eigenvalues = [
+        eigenvalues[indices[0]].max(1e-10), // Avoid zero/negative
+        eigenvalues[indices[1]].max(1e-10),
+        eigenvalues[indices[2]].max(1e-10),
+    ];
+
+    // Extract sorted eigenvectors (principal axes)
+    let mut principal_axes = [[0.0; 3]; 3];
+    for (i, &idx) in indices.iter().enumerate() {
+        principal_axes[i] = [
+            eigenvectors[(0, idx)],
+            eigenvectors[(1, idx)],
+            eigenvectors[(2, idx)],
+        ];
+    }
+
+    // Calculate shape descriptors
+    let i1 = sorted_eigenvalues[0];
+    let i2 = sorted_eigenvalues[1];
+    let i3 = sorted_eigenvalues[2];
+
+    // Anisotropy: ratio of max to min principal moments
+    let anisotropy = i3 / i1;
+
+    // For asphericity and acylindricity, normalize by trace
+    let trace = i1 + i2 + i3;
+
+    // Asphericity: deviation from spherical symmetry
+    // b = I3 - 0.5*(I1 + I2), normalized
+    let asphericity = if trace > 0.0 {
+        (i3 - 0.5 * (i1 + i2)) / trace
+    } else {
+        0.0
+    };
+
+    // Acylindricity: deviation from cylindrical symmetry
+    // c = I2 - I1, normalized
+    let acylindricity = if trace > 0.0 {
+        (i2 - i1) / trace
+    } else {
+        0.0
+    };
+
+    InertiaTensorResult {
+        principal_moments: sorted_eigenvalues,
+        principal_axes,
+        anisotropy,
+        asphericity,
+        acylindricity,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -182,5 +324,46 @@ mod tests {
         // Rg = sqrt(3/5) * r for single sphere
         let expected = (3.0 / 5.0_f64).sqrt();
         assert!((rg - expected).abs() < 1e-10);
+    }
+
+    #[test]
+    fn test_inertia_tensor_symmetric() {
+        // Symmetric distribution: 6 particles at unit distance along each axis
+        let coords = vec![
+            [1.0, 0.0, 0.0],
+            [-1.0, 0.0, 0.0],
+            [0.0, 1.0, 0.0],
+            [0.0, -1.0, 0.0],
+            [0.0, 0.0, 1.0],
+            [0.0, 0.0, -1.0],
+        ];
+        let radii = vec![0.5; 6];
+
+        let result = calculate_inertia_tensor(&coords, &radii);
+
+        // For symmetric distribution, anisotropy should be close to 1
+        assert!((result.anisotropy - 1.0).abs() < 0.1);
+        // Asphericity should be near 0
+        assert!(result.asphericity.abs() < 0.1);
+    }
+
+    #[test]
+    fn test_inertia_tensor_elongated() {
+        // Chain-like: particles along X axis
+        let coords = vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0],
+            [8.0, 0.0, 0.0],
+        ];
+        let radii = vec![1.0; 5];
+
+        let result = calculate_inertia_tensor(&coords, &radii);
+
+        // Elongated structure should have high anisotropy
+        assert!(result.anisotropy > 1.5);
+        // High asphericity for chain-like structure
+        assert!(result.asphericity > 0.1);
     }
 }

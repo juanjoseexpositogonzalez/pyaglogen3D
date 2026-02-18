@@ -16,7 +16,8 @@ use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_point_on_sphere};
 
 use super::metrics::{
-    calculate_coordination, calculate_porosity, calculate_radius_of_gyration,
+    calculate_coordination, calculate_inertia_tensor, calculate_porosity,
+    calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
 
@@ -318,6 +319,7 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
 
     let porosity = calculate_porosity(&coords, &radii);
     let coordination = calculate_coordination(&coords, &radii, rp * 0.1);
+    let inertia = calculate_inertia_tensor(&coords, &radii);
 
     let coord_mean = coordination.iter().map(|&c| c as f64).sum::<f64>() / coordination.len().max(1) as f64;
     let coord_std = if coordination.len() > 1 {
@@ -345,6 +347,11 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
         coordination_std: coord_std,
         execution_time_ms,
         seed,
+        anisotropy: inertia.anisotropy,
+        asphericity: inertia.asphericity,
+        acylindricity: inertia.acylindricity,
+        principal_moments: inertia.principal_moments,
+        principal_axes: inertia.principal_axes,
     }
 }
 

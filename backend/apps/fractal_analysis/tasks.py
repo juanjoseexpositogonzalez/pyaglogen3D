@@ -183,6 +183,17 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
         img_array = np.array(image, dtype=np.uint8)
 
         # Step 3: Run FRAKTAL analysis using Rust
+        logger.info(
+            f"FRAKTAL params: npix={analysis.npix}, dpo={analysis.dpo}, "
+            f"delta={analysis.delta}, correction_3d={analysis.correction_3d}, "
+            f"pixel_min={analysis.pixel_min}, pixel_max={analysis.pixel_max}, "
+            f"npo_limit={analysis.npo_limit}, escala={analysis.escala}"
+        )
+        logger.info(
+            f"Image shape: {img_array.shape}, dtype: {img_array.dtype}, "
+            f"min: {img_array.min()}, max: {img_array.max()}, mean: {img_array.mean():.1f}"
+        )
+
         if analysis.model == "granulated_2012":
             result = aglogen_core.fraktal_granulated_2012(
                 image=img_array,
@@ -207,11 +218,18 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
             )
 
         # Step 4: Store results
+        logger.info(
+            f"FRAKTAL result: status={result.status}, df={result.df}, "
+            f"rg={result.rg:.2f}, ap={result.ap:.2f}, npo={result.npo}, "
+            f"npo_visual={result.npo_visual}, kf={result.kf:.4f}"
+        )
+
         analysis.results = {
             "rg": result.rg,
             "ap": result.ap,
             "df": result.df,
             "npo": result.npo,
+            "npo_visual": result.npo_visual,
             "kf": result.kf,
             "zf": result.zf,
             "jf": result.jf,
@@ -220,6 +238,9 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
             "surface_area": result.surface_area,
             "status": result.status,
             "model": result.model,
+            "npo_ratio": result.npo_ratio,
+            "npo_aligned": result.npo_aligned,
+            "dpo_estimated": result.dpo_estimated,
         }
         analysis.execution_time_ms = result.execution_time_ms
         analysis.engine_version = aglogen_core.version()
