@@ -9,7 +9,8 @@ class SimulationAlgorithm(models.TextChoices):
 
     DLA = "dla", "Diffusion-Limited Aggregation"
     CCA = "cca", "Cluster-Cluster Aggregation"
-    BALLISTIC = "ballistic", "Ballistic Aggregation"
+    BALLISTIC = "ballistic", "Ballistic Particle-Cluster"
+    BALLISTIC_CC = "ballistic_cc", "Ballistic Cluster-Cluster"
     TUNABLE = "tunable", "Tunable Sticking Probability"
 
 
