@@ -5,8 +5,10 @@
 // Enums
 export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
-export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal'
+export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
+export type FraktalModel = 'granulated_2012' | 'voxel_2018'
+export type FraktalSourceType = 'uploaded_image' | 'simulation_projection'
 export type ColorMode = 'uniform' | 'order' | 'coordination' | 'distance' | 'depth'
 
 // Project
@@ -173,3 +175,116 @@ export interface GeometryData {
   coordinates: number[][]  // [x, y, z][]
   radii: number[]
 }
+
+// FRAKTAL Analysis Types
+export interface FraktalAnalysisSummary {
+  id: string
+  model: FraktalModel
+  source_type: FraktalSourceType
+  status: AnalysisStatus
+  created_at: string
+}
+
+export interface FraktalAnalysis {
+  id: string
+  project: string
+  source_type: FraktalSourceType
+  original_filename: string
+  original_content_type: string
+  simulation_id: string | null
+  projection_params: ProjectionParams | null
+  model: FraktalModel
+  npix: number
+  dpo: number | null
+  delta: number
+  correction_3d: boolean
+  pixel_min: number
+  pixel_max: number
+  npo_limit: number
+  escala: number
+  m_exponent: number
+  results: FraktalResults | null
+  status: AnalysisStatus
+  execution_time_ms: number | null
+  engine_version: string
+  error_message: string
+  created_at: string
+  started_at: string | null
+  completed_at: string | null
+}
+
+export interface ProjectionParams {
+  azimuth: number
+  elevation: number
+  resolution: number
+}
+
+export interface FraktalResults {
+  rg: number               // Radius of gyration (nm)
+  ap: number               // Projected area (nm²)
+  df: number               // Fractal dimension
+  npo: number              // Number of primary particles
+  kf: number               // Prefactor
+  zf: number               // Overlap exponent
+  jf: number | null        // Coordination index (granulated_2012 only)
+  volume: number           // Volume (nm³)
+  mass: number             // Mass (fg)
+  surface_area: number     // Surface area (nm²)
+  status: string           // Analysis status message
+  model: string            // Model used
+}
+
+export interface Granulated2012Params {
+  npix: number
+  dpo: number
+  delta: number
+  correction_3d: boolean
+  pixel_min: number
+  pixel_max: number
+  npo_limit: number
+  escala: number
+}
+
+export interface Voxel2018Params {
+  npix: number
+  escala: number
+  correction_3d: boolean
+  pixel_min: number
+  pixel_max: number
+  m_exponent: number
+}
+
+export interface CreateFraktalFromImageInput {
+  source_type: 'uploaded_image'
+  image: string  // base64 encoded
+  original_filename: string
+  original_content_type: string
+  model: FraktalModel
+  npix: number
+  dpo?: number
+  delta?: number
+  correction_3d?: boolean
+  pixel_min?: number
+  pixel_max?: number
+  npo_limit?: number
+  escala?: number
+  m_exponent?: number
+}
+
+export interface CreateFraktalFromSimulationInput {
+  source_type: 'simulation_projection'
+  simulation_id: string
+  projection_params: ProjectionParams
+  model: FraktalModel
+  npix: number
+  dpo?: number
+  delta?: number
+  correction_3d?: boolean
+  pixel_min?: number
+  pixel_max?: number
+  npo_limit?: number
+  escala?: number
+  m_exponent?: number
+}
+
+export type CreateFraktalInput = CreateFraktalFromImageInput | CreateFraktalFromSimulationInput
