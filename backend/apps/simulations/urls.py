@@ -28,6 +28,16 @@ urlpatterns = [
         SimulationViewSet.as_view({"get": "geometry"}),
         name="project-simulations-geometry",
     ),
+    path(
+        "projects/<uuid:project_pk>/simulations/<uuid:pk>/projection/",
+        SimulationViewSet.as_view({"post": "projection"}),
+        name="project-simulations-projection",
+    ),
+    path(
+        "projects/<uuid:project_pk>/simulations/<uuid:pk>/projection/batch/",
+        SimulationViewSet.as_view({"post": "projection_batch"}),
+        name="project-simulations-projection-batch",
+    ),
     # Nested project routes for parametric studies
     path(
         "projects/<uuid:project_pk>/studies/",

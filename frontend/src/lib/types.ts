@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'tunable'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'

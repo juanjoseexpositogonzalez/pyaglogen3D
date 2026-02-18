@@ -66,6 +66,15 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 radius_max=radius_max,
                 seed=seed,
             )
+        elif algorithm == "ballistic_cc":
+            # Ballistic Cluster-Cluster aggregation (thesis section 6.2)
+            result = aglogen_core.run_ballistic_cc(
+                n_particles=params.get("n_particles", 1000),
+                sticking_probability=params.get("sticking_probability", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                seed=seed,
+            )
         elif algorithm == "tunable":
             # Tunable PC with controllable fractal dimension
             result = aglogen_core.run_tunable(

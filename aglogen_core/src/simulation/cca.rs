@@ -41,13 +41,25 @@ impl Default for CcaParams {
             radius_max: 1.0,
             box_size: 100.0,
             max_iterations: 100_000,
-            step_size_factor: 0.5,
+            step_size_factor: 2.0, // Increased for faster convergence
             single_agglomerate: true,
         }
     }
 }
 
 impl CcaParams {
+    /// Calculate optimal box size based on particle count and target volume fraction.
+    ///
+    /// For CCA to converge in reasonable time, particles need to encounter each other
+    /// frequently. A volume fraction of ~2-5% ensures good convergence speed.
+    pub fn optimal_box_size(n_particles: usize, mean_radius: f64, target_volume_fraction: f64) -> f64 {
+        // Volume of a sphere: 4/3 * π * r³
+        let particle_volume = (4.0 / 3.0) * std::f64::consts::PI * mean_radius.powi(3);
+        let total_particle_volume = n_particles as f64 * particle_volume;
+        let box_volume = total_particle_volume / target_volume_fraction;
+        box_volume.cbrt()
+    }
+
     /// Check if particles are polydisperse.
     pub fn is_polydisperse(&self) -> bool {
         (self.radius_max - self.radius_min).abs() > 1e-10
@@ -178,13 +190,25 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
     let start_time = Instant::now();
     let mut rng = create_rng(seed);
 
+    // Calculate optimal box size to ensure reasonable convergence
+    // Target ~3% volume fraction for good performance
+    let optimal_box = CcaParams::optimal_box_size(params.n_particles, params.mean_radius(), 0.03);
+
+    // Use the smaller of user-specified or optimal box size for single_agglomerate mode
+    // This prevents simulations from running indefinitely
+    let effective_box_size = if params.single_agglomerate {
+        params.box_size.min(optimal_box)
+    } else {
+        params.box_size
+    };
+
     // Initialize all particles as individual clusters randomly distributed
     // Each particle gets a random radius if polydisperse
     let mut clusters: Vec<Cluster> = (0..params.n_particles)
         .map(|_| {
-            let x = (rng.gen::<f64>() - 0.5) * params.box_size;
-            let y = (rng.gen::<f64>() - 0.5) * params.box_size;
-            let z = (rng.gen::<f64>() - 0.5) * params.box_size;
+            let x = (rng.gen::<f64>() - 0.5) * effective_box_size;
+            let y = (rng.gen::<f64>() - 0.5) * effective_box_size;
+            let z = (rng.gen::<f64>() - 0.5) * effective_box_size;
             let radius = params.random_radius(&mut rng);
             Cluster::new(Sphere::new(Vector3::new(x, y, z), radius))
         })
@@ -223,14 +247,20 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
         for cluster in &mut clusters {
             let (dx, dy, dz) = random_direction(&mut rng);
             // Smaller clusters move faster (diffusion coefficient ~ 1/Rg)
-            let mobility = 1.0 / (1.0 + cluster.radius_of_gyration);
+            // Use sqrt for more realistic diffusion scaling
+            let mobility = 1.0 / (1.0 + cluster.radius_of_gyration.sqrt());
             let delta = Vector3::new(dx * step_size * mobility, dy * step_size * mobility, dz * step_size * mobility);
             cluster.translate(delta);
 
-            // Apply periodic boundary conditions
-            apply_pbc(&mut cluster.center_of_mass, params.box_size);
-            for p in &mut cluster.particles {
-                apply_pbc(&mut p.center, params.box_size);
+            // Apply periodic boundary conditions only to cluster center
+            // Don't apply PBC to individual particles to maintain connectivity
+            let mut wrapped_center = cluster.center_of_mass;
+            apply_pbc(&mut wrapped_center, effective_box_size);
+
+            // If the center wrapped, translate all particles by the same amount
+            let wrap_delta = wrapped_center - cluster.center_of_mass;
+            if wrap_delta.length_squared() > 1e-10 {
+                cluster.translate(wrap_delta);
             }
         }
 
@@ -248,13 +278,17 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
                     continue;
                 }
 
-                // Quick bounding check
-                let dist = clusters[i].center_of_mass.distance_to(&clusters[j].center_of_mass);
+                // Quick bounding check using periodic distance
+                let dist = periodic_distance(
+                    &clusters[i].center_of_mass,
+                    &clusters[j].center_of_mass,
+                    effective_box_size,
+                );
                 let max_dist = clusters[i].bounding_radius() + clusters[j].bounding_radius();
 
                 if dist < max_dist {
-                    // Detailed particle-level collision check
-                    if check_cluster_collision(&clusters[i], &clusters[j]) {
+                    // Detailed particle-level collision check with PBC
+                    if check_cluster_collision_pbc(&clusters[i], &clusters[j], effective_box_size) {
                         if params.sticking_probability >= 1.0
                             || rng.gen::<f64>() < params.sticking_probability
                         {
@@ -266,10 +300,27 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
             }
         }
 
-        // Perform merges (in reverse order to maintain indices)
-        for (i, j) in merges.into_iter().rev() {
-            let cluster_j = clusters.remove(j);
-            clusters[i].merge_with(cluster_j);
+        // Perform merges - sort by j descending to maintain valid indices during removal
+        merges.sort_by(|a, b| b.1.cmp(&a.1));
+        for (i, j) in merges {
+            // Ensure indices are still valid (defensive check)
+            if j < clusters.len() && i < clusters.len() && i != j {
+                let mut cluster_j = clusters.remove(j);
+                // Adjust i if it was after j
+                let adjusted_i = if i > j { i - 1 } else { i };
+                if adjusted_i < clusters.len() {
+                    // Unwrap cluster_j to be in the same periodic image as cluster_i
+                    let delta = unwrap_periodic_offset(
+                        &clusters[adjusted_i].center_of_mass,
+                        &cluster_j.center_of_mass,
+                        effective_box_size,
+                    );
+                    if delta.length_squared() > 1e-10 {
+                        cluster_j.translate(delta);
+                    }
+                    clusters[adjusted_i].merge_with(cluster_j);
+                }
+            }
         }
 
         // Track largest cluster
@@ -325,15 +376,70 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
     }
 }
 
+/// Calculate the offset needed to move point b into the same periodic image as point a.
+fn unwrap_periodic_offset(a: &Vector3, b: &Vector3, box_size: f64) -> Vector3 {
+    let mut dx = a.x - b.x;
+    let mut dy = a.y - b.y;
+    let mut dz = a.z - b.z;
+
+    // If the difference is more than half the box, wrap to the closer image
+    if dx > box_size / 2.0 {
+        dx -= box_size;
+    } else if dx < -box_size / 2.0 {
+        dx += box_size;
+    }
+    if dy > box_size / 2.0 {
+        dy -= box_size;
+    } else if dy < -box_size / 2.0 {
+        dy += box_size;
+    }
+    if dz > box_size / 2.0 {
+        dz -= box_size;
+    } else if dz < -box_size / 2.0 {
+        dz += box_size;
+    }
+
+    // Return the offset to add to b to bring it close to a
+    // b + offset should be close to a
+    // So: b + offset = a - d where d = a - b after wrapping
+    // offset = a - d - b = a - (a - b_wrapped) - b = b_wrapped - b
+    // Actually: if dx is the wrapped difference a - b, then
+    // to get b_wrapped = a - dx, we need offset = a - dx - b
+    let target_x = a.x - dx;
+    let target_y = a.y - dy;
+    let target_z = a.z - dz;
+
+    Vector3::new(target_x - b.x, target_y - b.y, target_z - b.z)
+}
+
+/// Calculate periodic distance between two points.
+fn periodic_distance(a: &Vector3, b: &Vector3, box_size: f64) -> f64 {
+    let mut dx = (a.x - b.x).abs();
+    let mut dy = (a.y - b.y).abs();
+    let mut dz = (a.z - b.z).abs();
+
+    // Apply minimum image convention
+    if dx > box_size / 2.0 {
+        dx = box_size - dx;
+    }
+    if dy > box_size / 2.0 {
+        dy = box_size - dy;
+    }
+    if dz > box_size / 2.0 {
+        dz = box_size - dz;
+    }
+
+    (dx * dx + dy * dy + dz * dz).sqrt()
+}
+
 /// Check if any particle in cluster A touches any particle in cluster B.
-/// Uses relative epsilon for robust floating-point comparison.
-fn check_cluster_collision(a: &Cluster, b: &Cluster) -> bool {
+/// Uses periodic boundary conditions for distance calculation.
+fn check_cluster_collision_pbc(a: &Cluster, b: &Cluster, box_size: f64) -> bool {
     for pa in &a.particles {
         for pb in &b.particles {
-            let dist = pa.center.distance_to(&pb.center);
+            let dist = periodic_distance(&pa.center, &pb.center, box_size);
             let contact_dist = pa.radius + pb.radius;
-            // Use relative epsilon based on the scale of values being compared
-            // epsilon = max(|a|, |b|) * relative_tolerance + absolute_tolerance
+            // Use relative epsilon for robust comparison
             let epsilon = contact_dist.max(dist) * 1e-10 + 1e-14;
             if dist <= contact_dist + epsilon {
                 return true;

@@ -8,11 +8,14 @@ use pyo3::prelude::*;
 
 mod common;
 mod fractal;
+mod projection;
 mod simulation;
 
 use fractal::box_counting::box_counting;
 use fractal::result::PyFractalResult;
+use projection::{project_batch, project_to_2d, PyProjectionResult};
 use simulation::ballistic::run_ballistic;
+use simulation::ballistic_cc::run_ballistic_cc;
 use simulation::cca::run_cca;
 use simulation::dla::run_dla;
 use simulation::tunable::run_tunable;
@@ -25,10 +28,15 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_dla, m)?)?;
     m.add_function(wrap_pyfunction!(run_cca, m)?)?;
     m.add_function(wrap_pyfunction!(run_ballistic, m)?)?;
+    m.add_function(wrap_pyfunction!(run_ballistic_cc, m)?)?;
     m.add_function(wrap_pyfunction!(run_tunable, m)?)?;
 
     // Fractal analysis functions
     m.add_function(wrap_pyfunction!(box_counting, m)?)?;
+
+    // Projection functions
+    m.add_function(wrap_pyfunction!(project_to_2d, m)?)?;
+    m.add_function(wrap_pyfunction!(project_batch, m)?)?;
 
     // Utility functions
     m.add_function(wrap_pyfunction!(version, m)?)?;
@@ -36,6 +44,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Result classes
     m.add_class::<PySimulationResult>()?;
     m.add_class::<PyFractalResult>()?;
+    m.add_class::<PyProjectionResult>()?;
 
     Ok(())
 }
