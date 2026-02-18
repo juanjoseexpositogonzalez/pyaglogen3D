@@ -237,6 +237,8 @@ pub fn analyze_granulated_2012(
 
     let mut df_result = 0.0;
     let mut kf_result = 0.0;
+    // Note: npo_final is only used after convergence check at line 314.
+    // If !converged, we return early with error status before npo_final is used.
     let mut npo_final = 0.0;
     let mut converged = false;
     let tolerance = 0.0001;

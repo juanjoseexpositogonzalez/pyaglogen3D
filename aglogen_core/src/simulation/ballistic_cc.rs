@@ -21,8 +21,8 @@ use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_direction, random_point_on_sphere};
 
 use super::metrics::{
-    calculate_coordination, calculate_fractal_dimension, calculate_porosity,
-    calculate_radius_of_gyration,
+    calculate_coordination, calculate_fractal_dimension, calculate_inertia_tensor,
+    calculate_porosity, calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
 
@@ -366,6 +366,7 @@ fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simulation
     let (df, kf, _r2) = calculate_fractal_dimension(&n_values, &rg_evolution);
     let porosity = calculate_porosity(&coords, &radii);
     let coordination = calculate_coordination(&coords, &radii, params.mean_radius() * 0.1);
+    let inertia = calculate_inertia_tensor(&coords, &radii);
 
     let coord_mean =
         coordination.iter().map(|&c| c as f64).sum::<f64>() / coordination.len().max(1) as f64;
@@ -400,6 +401,11 @@ fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simulation
         coordination_std: coord_std,
         execution_time_ms,
         seed,
+        anisotropy: inertia.anisotropy,
+        asphericity: inertia.asphericity,
+        acylindricity: inertia.acylindricity,
+        principal_moments: inertia.principal_moments,
+        principal_axes: inertia.principal_axes,
     }
 }
 

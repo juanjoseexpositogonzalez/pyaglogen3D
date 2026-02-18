@@ -109,6 +109,12 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 "std": float(result.coordination_std),
             },
             "rg_evolution": result.rg_evolution.tolist(),
+            # Inertia tensor analysis
+            "anisotropy": float(result.anisotropy),
+            "asphericity": float(result.asphericity),
+            "acylindricity": float(result.acylindricity),
+            "principal_moments": result.principal_moments.tolist(),
+            "principal_axes": result.principal_axes.tolist(),
         }
         simulation.execution_time_ms = result.execution_time_ms
         simulation.engine_version = aglogen_core.version()

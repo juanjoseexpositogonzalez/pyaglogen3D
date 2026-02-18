@@ -61,3 +61,12 @@ export function useSimulationGeometry(simulationId: string, enabled: boolean) {
     staleTime: Infinity, // Geometry data doesn't change
   })
 }
+
+export function useNeighborGraph(projectId: string, simulationId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ['neighbor-graph', projectId, simulationId],
+    queryFn: () => simulationsApi.getNeighborGraph(projectId, simulationId),
+    enabled: enabled && !!projectId && !!simulationId,
+    staleTime: Infinity, // Graph data doesn't change for a completed simulation
+  })
+}

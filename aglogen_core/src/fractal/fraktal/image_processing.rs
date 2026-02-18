@@ -390,4 +390,106 @@ mod tests {
         // Sanity check: not too much larger
         assert!(rg_3d < rg_2d * 1.5);
     }
+
+    #[test]
+    fn test_estimate_particle_count_adaptive_single_particle() {
+        // Create a binary image with a single circular-ish particle
+        // 15x15 image with a circle of radius ~5 in the center
+        let mut binary = ndarray::Array2::<bool>::from_elem((15, 15), false);
+        let center = 7;
+        let radius = 5.0;
+
+        for i in 0..15 {
+            for j in 0..15 {
+                let dist = (((i as f64) - (center as f64)).powi(2)
+                    + ((j as f64) - (center as f64)).powi(2))
+                .sqrt();
+                if dist <= radius {
+                    binary[[i, j]] = true;
+                }
+            }
+        }
+
+        let (count, avg_radius) = estimate_particle_count_adaptive(binary.view());
+
+        // Should detect exactly 1 particle
+        assert_eq!(count, 1, "Should detect single particle");
+        // Detected radius should be approximately the actual radius
+        assert!(
+            (avg_radius - radius).abs() < 2.0,
+            "Detected radius {} should be close to actual radius {}",
+            avg_radius,
+            radius
+        );
+    }
+
+    #[test]
+    fn test_estimate_particle_count_adaptive_multiple_particles() {
+        // Create a binary image with 3 well-separated particles
+        let mut binary = ndarray::Array2::<bool>::from_elem((40, 40), false);
+        let radius = 4.0;
+        let centers = [(8, 8), (8, 30), (30, 20)];
+
+        for (cy, cx) in centers.iter() {
+            for i in 0..40 {
+                for j in 0..40 {
+                    let dist = (((i as f64) - (*cy as f64)).powi(2)
+                        + ((j as f64) - (*cx as f64)).powi(2))
+                    .sqrt();
+                    if dist <= radius {
+                        binary[[i, j]] = true;
+                    }
+                }
+            }
+        }
+
+        let (count, _avg_radius) = estimate_particle_count_adaptive(binary.view());
+
+        // Should detect 3 particles
+        assert_eq!(count, 3, "Should detect 3 separate particles");
+    }
+
+    #[test]
+    fn test_estimate_particles_and_dpo() {
+        // Create a single particle with known size
+        let mut binary = ndarray::Array2::<bool>::from_elem((20, 20), false);
+        let center = 10;
+        let radius_px = 5.0;
+
+        for i in 0..20 {
+            for j in 0..20 {
+                let dist = (((i as f64) - (center as f64)).powi(2)
+                    + ((j as f64) - (center as f64)).powi(2))
+                .sqrt();
+                if dist <= radius_px {
+                    binary[[i, j]] = true;
+                }
+            }
+        }
+
+        let length_per_pixel = 10.0; // 10 nm per pixel
+        let (count, estimated_dpo, avg_radius) =
+            estimate_particles_and_dpo(binary.view(), length_per_pixel);
+
+        assert_eq!(count, 1, "Should detect 1 particle");
+
+        // Expected dpo = 2 * radius_px * length_per_pixel = 2 * 5 * 10 = 100 nm
+        let expected_dpo = 2.0 * radius_px * length_per_pixel;
+        assert!(
+            (estimated_dpo - expected_dpo).abs() < 30.0,
+            "Estimated dpo {} should be close to expected {}",
+            estimated_dpo,
+            expected_dpo
+        );
+        assert!(avg_radius > 0.0, "Average radius should be positive");
+    }
+
+    #[test]
+    fn test_estimate_particle_count_adaptive_empty_image() {
+        let binary = ndarray::Array2::<bool>::from_elem((20, 20), false);
+        let (count, avg_radius) = estimate_particle_count_adaptive(binary.view());
+
+        assert_eq!(count, 0, "Empty image should have 0 particles");
+        assert_eq!(avg_radius, 0.0, "Empty image should have 0 radius");
+    }
 }

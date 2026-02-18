@@ -107,7 +107,10 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         ]
         read_only_fields = [
             "id",
+            "project",
             "status",
+            "total_simulations",
+            "completed_simulations",
             "created_at",
             "completed_at",
         ]

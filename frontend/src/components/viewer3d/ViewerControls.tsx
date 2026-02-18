@@ -13,6 +13,7 @@ import {
   Pause,
   Compass,
   Circle,
+  Move3D,
 } from 'lucide-react'
 import type { ColorMode } from '@/lib/types'
 
@@ -40,6 +41,8 @@ export function ViewerControls() {
     toggleGrid,
     showBoundingSphere,
     toggleBoundingSphere,
+    showPrincipalAxes,
+    togglePrincipalAxes,
     autoRotate,
     toggleAutoRotate,
     rotateSpeed,
@@ -137,6 +140,16 @@ export function ViewerControls() {
         >
           <Circle className="h-4 w-4 mr-1" />
           Sphere
+        </Button>
+
+        <Button
+          variant={showPrincipalAxes ? 'default' : 'outline'}
+          size="sm"
+          onClick={togglePrincipalAxes}
+          title="Show principal axes of inertia"
+        >
+          <Move3D className="h-4 w-4 mr-1" />
+          Inertia
         </Button>
 
         <Button

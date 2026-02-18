@@ -19,6 +19,7 @@ interface ViewerState {
   showAxes: boolean
   showGrid: boolean
   showBoundingSphere: boolean
+  showPrincipalAxes: boolean
   particleOpacity: number
   background: BackgroundPreset
 
@@ -38,6 +39,7 @@ interface ViewerState {
   toggleAxes: () => void
   toggleGrid: () => void
   toggleBoundingSphere: () => void
+  togglePrincipalAxes: () => void
   setParticleOpacity: (opacity: number) => void
   setBackground: (bg: BackgroundPreset) => void
   toggleClipping: () => void
@@ -54,6 +56,7 @@ const initialState = {
   showAxes: true,
   showGrid: false,
   showBoundingSphere: false,
+  showPrincipalAxes: false,
   particleOpacity: 1.0,
   background: 'dark' as BackgroundPreset,
   showClipping: false,
@@ -74,6 +77,7 @@ export const useViewerStore = create<ViewerState>()(
       toggleAxes: () => set((s) => ({ showAxes: !s.showAxes })),
       toggleGrid: () => set((s) => ({ showGrid: !s.showGrid })),
       toggleBoundingSphere: () => set((s) => ({ showBoundingSphere: !s.showBoundingSphere })),
+      togglePrincipalAxes: () => set((s) => ({ showPrincipalAxes: !s.showPrincipalAxes })),
       setParticleOpacity: (opacity) => set({ particleOpacity: opacity }),
       setBackground: (bg) => set({ background: bg }),
       toggleClipping: () => set((s) => ({ showClipping: !s.showClipping })),

@@ -1,13 +1,16 @@
 'use client'
 
-import { Suspense, useMemo, useRef, useEffect } from 'react'
+import { Suspense, useMemo, useRef } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Environment, Grid, GizmoHelper, GizmoViewport } from '@react-three/drei'
+import { OrbitControls, Environment, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
 import { Particles } from './Particles'
 import { useViewerStore, backgroundColors } from '@/stores/viewerStore'
 import { cn } from '@/lib/utils'
 import type { ColorMode } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+
+// Colors for principal axes (similar to coordinate axes but distinguishable)
+const PRINCIPAL_AXIS_COLORS = ['#ff6b6b', '#51cf66', '#339af0'] as const
 
 /**
  * Tracks camera position and updates store with azimuth/elevation angles.
@@ -48,11 +51,50 @@ function CameraTracker({ controlsRef }: { controlsRef: React.RefObject<OrbitCont
   return null
 }
 
+/**
+ * Renders principal axes as colored lines through the center.
+ * Each axis is shown as a line from -scale to +scale along the eigenvector direction.
+ */
+function PrincipalAxes({
+  axes,
+  scale,
+}: {
+  axes: [[number, number, number], [number, number, number], [number, number, number]]
+  scale: number
+}) {
+  return (
+    <group>
+      {axes.map((axis, i) => {
+        // Create line from -scale*axis to +scale*axis
+        const start: [number, number, number] = [
+          -axis[0] * scale,
+          -axis[1] * scale,
+          -axis[2] * scale,
+        ]
+        const end: [number, number, number] = [
+          axis[0] * scale,
+          axis[1] * scale,
+          axis[2] * scale,
+        ]
+        return (
+          <Line
+            key={i}
+            points={[start, end]}
+            color={PRINCIPAL_AXIS_COLORS[i]}
+            lineWidth={3}
+          />
+        )
+      })}
+    </group>
+  )
+}
+
 interface AgglomerateViewerProps {
   coordinates: number[][]
   radii: number[]
   colorMode?: ColorMode
   coordination?: number[]
+  principalAxes?: [[number, number, number], [number, number, number], [number, number, number]]
   className?: string
 }
 
@@ -61,6 +103,7 @@ export function AgglomerateViewer({
   radii,
   colorMode: propColorMode,
   coordination,
+  principalAxes,
   className,
 }: AgglomerateViewerProps) {
   const controlsRef = useRef<OrbitControlsImpl>(null)
@@ -69,6 +112,7 @@ export function AgglomerateViewer({
     showAxes,
     showGrid,
     showBoundingSphere,
+    showPrincipalAxes,
     autoRotate,
     rotateSpeed,
     particleOpacity,
@@ -187,6 +231,11 @@ export function AgglomerateViewer({
                 opacity={0.6}
               />
             </mesh>
+          )}
+
+          {/* Principal axes of inertia */}
+          {showPrincipalAxes && principalAxes && (
+            <PrincipalAxes axes={principalAxes} scale={maxRadius * 1.2} />
           )}
 
           {/* Axes helper via GizmoHelper */}
