@@ -1,11 +1,17 @@
 """Fractal Analysis views."""
+import logging
+
+from django.conf import settings
 from django.http import HttpResponse
+from kombu.exceptions import OperationalError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.request import Request
 from rest_framework.response import Response
 
 from .models import ComparisonSet, FraktalAnalysis, ImageAnalysis
+
+logger = logging.getLogger(__name__)
 from .serializers import (
     ComparisonSetCreateSerializer,
     ComparisonSetSerializer,
@@ -40,8 +46,12 @@ class ImageAnalysisViewSet(viewsets.ModelViewSet):
         """Create analysis and enqueue task."""
         project_id = self.kwargs.get("project_pk")
         analysis = serializer.save(project_id=project_id)
-        # Enqueue Celery task
-        run_fractal_analysis_task.delay(str(analysis.id))
+        # Enqueue Celery task, fallback to sync execution if broker unavailable
+        try:
+            run_fractal_analysis_task.delay(str(analysis.id))
+        except OperationalError:
+            logger.warning("Celery broker unavailable, running fractal task synchronously")
+            run_fractal_analysis_task(str(analysis.id))
 
     @action(detail=True, methods=["get"])
     def original_image(self, request: Request, pk=None, **kwargs) -> HttpResponse:
@@ -100,8 +110,12 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         """Create analysis and enqueue task."""
         project_id = self.kwargs.get("project_pk")
         analysis = serializer.save(project_id=project_id)
-        # Enqueue Celery task
-        run_fraktal_analysis_task.delay(str(analysis.id))
+        # Enqueue Celery task, fallback to sync execution if broker unavailable
+        try:
+            run_fraktal_analysis_task.delay(str(analysis.id))
+        except OperationalError:
+            logger.warning("Celery broker unavailable, running FRAKTAL task synchronously")
+            run_fraktal_analysis_task(str(analysis.id))
 
     @action(detail=True, methods=["get"])
     def original_image(self, request: Request, pk=None, **kwargs) -> HttpResponse:
@@ -142,7 +156,11 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         analysis.error_message = ""
         analysis.save(update_fields=["status", "results", "error_message"])
 
-        run_fraktal_analysis_task.delay(str(analysis.id))
+        try:
+            run_fraktal_analysis_task.delay(str(analysis.id))
+        except OperationalError:
+            logger.warning("Celery broker unavailable, running FRAKTAL task synchronously")
+            run_fraktal_analysis_task(str(analysis.id))
 
         return Response(
             {"message": "Analysis re-queued", "id": str(analysis.id)},
