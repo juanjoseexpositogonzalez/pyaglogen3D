@@ -4,7 +4,7 @@ import binascii
 
 from rest_framework import serializers
 
-from .models import ComparisonSet, ImageAnalysis
+from .models import ComparisonSet, FraktalAnalysis, ImageAnalysis, SourceType
 
 
 class ImageAnalysisSerializer(serializers.ModelSerializer):
@@ -93,11 +93,200 @@ class ImageAnalysisCreateSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 
+class FraktalAnalysisSerializer(serializers.ModelSerializer):
+    """Serializer for FraktalAnalysis model."""
+
+    simulation_id = serializers.SerializerMethodField()
+
+    class Meta:
+        model = FraktalAnalysis
+        fields = [
+            "id",
+            "project",
+            "source_type",
+            "original_filename",
+            "original_content_type",
+            "simulation_id",
+            "projection_params",
+            "model",
+            "npix",
+            "dpo",
+            "delta",
+            "correction_3d",
+            "pixel_min",
+            "pixel_max",
+            "npo_limit",
+            "escala",
+            "m_exponent",
+            "results",
+            "status",
+            "execution_time_ms",
+            "engine_version",
+            "error_message",
+            "created_at",
+            "started_at",
+            "completed_at",
+        ]
+        read_only_fields = [
+            "id",
+            "results",
+            "status",
+            "execution_time_ms",
+            "engine_version",
+            "error_message",
+            "created_at",
+            "started_at",
+            "completed_at",
+        ]
+
+    def get_simulation_id(self, obj: FraktalAnalysis) -> str | None:
+        """Return simulation ID if source is simulation projection."""
+        return str(obj.simulation_id) if obj.simulation_id else None
+
+
+class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
+    """Serializer for creating FraktalAnalysis with image upload or simulation projection."""
+
+    image = serializers.CharField(
+        write_only=True,
+        required=False,
+        allow_blank=True,
+        help_text="Base64 encoded image data (required for uploaded_image source)",
+    )
+    simulation_id = serializers.UUIDField(
+        write_only=True,
+        required=False,
+        allow_null=True,
+        help_text="Simulation ID for projection-based analysis",
+    )
+
+    class Meta:
+        model = FraktalAnalysis
+        fields = [
+            "project",
+            "source_type",
+            "image",
+            "original_filename",
+            "original_content_type",
+            "simulation_id",
+            "projection_params",
+            "model",
+            "npix",
+            "dpo",
+            "delta",
+            "correction_3d",
+            "pixel_min",
+            "pixel_max",
+            "npo_limit",
+            "escala",
+            "m_exponent",
+        ]
+
+    def validate_image(self, value: str) -> str:
+        """Validate base64 encoded image data."""
+        if not value:
+            return value
+        try:
+            base64.b64decode(value)
+        except (binascii.Error, ValueError) as e:
+            raise serializers.ValidationError(f"Invalid base64 data: {e}")
+
+        if len(value) > 14_000_000:  # ~10MB in base64
+            raise serializers.ValidationError("Image too large. Maximum size is 10MB.")
+
+        return value
+
+    def validate_original_content_type(self, value: str) -> str:
+        """Validate content type is an allowed image type."""
+        if not value:
+            return value
+        allowed_types = {"image/png", "image/jpeg", "image/tiff", "image/bmp"}
+        if value not in allowed_types:
+            raise serializers.ValidationError(
+                f"Invalid content type. Allowed: {', '.join(allowed_types)}"
+            )
+        return value
+
+    def validate_model(self, value: str) -> str:
+        """Validate model choice."""
+        allowed = {"granulated_2012", "voxel_2018"}
+        if value not in allowed:
+            raise serializers.ValidationError(
+                f"Invalid model. Allowed: {', '.join(allowed)}"
+            )
+        return value
+
+    def validate_delta(self, value: float) -> float:
+        """Validate delta is in valid range (1.0-1.5)."""
+        if not (1.0 <= value <= 1.5):
+            raise serializers.ValidationError("Delta must be between 1.0 and 1.5")
+        return value
+
+    def validate_npix(self, value: float) -> float:
+        """Validate npix is positive."""
+        if value <= 0:
+            raise serializers.ValidationError("npix must be positive")
+        return value
+
+    def validate(self, attrs: dict) -> dict:
+        """Validate source-specific requirements and model-specific parameters."""
+        source_type = attrs.get("source_type", SourceType.UPLOADED_IMAGE)
+        model = attrs.get("model")
+
+        # Validate source-specific requirements
+        if source_type == SourceType.UPLOADED_IMAGE:
+            if not attrs.get("image"):
+                raise serializers.ValidationError({
+                    "image": "Image is required for uploaded_image source type"
+                })
+            if not attrs.get("original_filename"):
+                raise serializers.ValidationError({
+                    "original_filename": "Filename is required for uploaded_image source type"
+                })
+        elif source_type == SourceType.SIMULATION_PROJECTION:
+            if not attrs.get("simulation_id"):
+                raise serializers.ValidationError({
+                    "simulation_id": "Simulation ID is required for simulation_projection source type"
+                })
+
+        # Validate model-specific parameters
+        if model == "granulated_2012":
+            if not attrs.get("dpo"):
+                raise serializers.ValidationError({
+                    "dpo": "Primary particle diameter (dpo) is required for granulated_2012 model"
+                })
+
+        return attrs
+
+    def create(self, validated_data: dict) -> FraktalAnalysis:
+        """Create analysis with decoded image or simulation reference."""
+        from apps.simulations.models import Simulation
+
+        image_b64 = validated_data.pop("image", None)
+        simulation_id = validated_data.pop("simulation_id", None)
+
+        if image_b64:
+            image_bytes = base64.b64decode(image_b64)
+            validated_data["original_image"] = image_bytes
+
+        if simulation_id:
+            try:
+                simulation = Simulation.objects.get(id=simulation_id)
+                validated_data["simulation"] = simulation
+            except Simulation.DoesNotExist:
+                raise serializers.ValidationError({
+                    "simulation_id": "Simulation not found"
+                })
+
+        return super().create(validated_data)
+
+
 class ComparisonSetSerializer(serializers.ModelSerializer):
     """Serializer for ComparisonSet model."""
 
     simulation_ids = serializers.SerializerMethodField()
     analysis_ids = serializers.SerializerMethodField()
+    fraktal_analysis_ids = serializers.SerializerMethodField()
 
     class Meta:
         model = ComparisonSet
@@ -108,6 +297,7 @@ class ComparisonSetSerializer(serializers.ModelSerializer):
             "description",
             "simulation_ids",
             "analysis_ids",
+            "fraktal_analysis_ids",
             "created_at",
         ]
         read_only_fields = ["id", "created_at"]
@@ -126,6 +316,13 @@ class ComparisonSetSerializer(serializers.ModelSerializer):
         """
         return [str(analysis.id) for analysis in obj.analyses.all()]
 
+    def get_fraktal_analysis_ids(self, obj: ComparisonSet) -> list[str]:
+        """Return list of FRAKTAL analysis IDs.
+
+        Note: Use prefetch_related('fraktal_analyses') in the queryset to avoid N+1.
+        """
+        return [str(analysis.id) for analysis in obj.fraktal_analyses.all()]
+
 
 class ComparisonSetCreateSerializer(serializers.ModelSerializer):
     """Serializer for creating ComparisonSet with related items."""
@@ -140,6 +337,11 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
         required=False,
         default=list,
     )
+    fraktal_analysis_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        required=False,
+        default=list,
+    )
 
     class Meta:
         model = ComparisonSet
@@ -149,6 +351,7 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
             "description",
             "simulation_ids",
             "analysis_ids",
+            "fraktal_analysis_ids",
         ]
 
     def validate(self, attrs: dict) -> dict:
@@ -158,6 +361,7 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
         project = attrs.get("project")
         simulation_ids = attrs.get("simulation_ids", [])
         analysis_ids = attrs.get("analysis_ids", [])
+        fraktal_analysis_ids = attrs.get("fraktal_analysis_ids", [])
 
         # Validate simulations belong to the project
         if simulation_ids:
@@ -181,6 +385,17 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
                     "analysis_ids": "One or more analyses do not exist or belong to a different project."
                 })
 
+        # Validate FRAKTAL analyses belong to the project
+        if fraktal_analysis_ids:
+            valid_count = FraktalAnalysis.objects.filter(
+                id__in=fraktal_analysis_ids,
+                project=project,
+            ).count()
+            if valid_count != len(fraktal_analysis_ids):
+                raise serializers.ValidationError({
+                    "fraktal_analysis_ids": "One or more FRAKTAL analyses do not exist or belong to a different project."
+                })
+
         return attrs
 
     def create(self, validated_data: dict) -> ComparisonSet:
@@ -189,6 +404,7 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
 
         simulation_ids = validated_data.pop("simulation_ids", [])
         analysis_ids = validated_data.pop("analysis_ids", [])
+        fraktal_analysis_ids = validated_data.pop("fraktal_analysis_ids", [])
         project = validated_data.get("project")
 
         comparison_set = ComparisonSet.objects.create(**validated_data)
@@ -208,5 +424,13 @@ class ComparisonSetCreateSerializer(serializers.ModelSerializer):
                 project=project,
             )
             comparison_set.analyses.set(analyses)
+
+        if fraktal_analysis_ids:
+            # Filter by project for additional security
+            fraktal_analyses = FraktalAnalysis.objects.filter(
+                id__in=fraktal_analysis_ids,
+                project=project,
+            )
+            comparison_set.fraktal_analyses.set(fraktal_analyses)
 
         return comparison_set
