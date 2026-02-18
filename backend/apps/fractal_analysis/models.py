@@ -57,7 +57,7 @@ class ImageAnalysis(models.Model):
         help_text="Threshold method, invert, clean params"
     )
     method = models.CharField(
-        max_length=20,
+        max_length=30,
         choices=FractalMethod.choices,
     )
     method_params = models.JSONField(
