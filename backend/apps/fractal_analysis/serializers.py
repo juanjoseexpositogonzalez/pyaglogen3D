@@ -163,6 +163,7 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = FraktalAnalysis
         fields = [
+            "id",
             "source_type",
             "image",
             "original_filename",
@@ -179,7 +180,9 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
             "npo_limit",
             "escala",
             "m_exponent",
+            "status",
         ]
+        read_only_fields = ["id", "status"]
 
     def validate_image(self, value: str) -> str:
         """Validate base64 encoded image data."""
