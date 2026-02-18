@@ -6,7 +6,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Slider } from '@/components/ui/slider'
-import { Download, Image, Loader2 } from 'lucide-react'
+import { Download, Image, Loader2, Camera } from 'lucide-react'
+import { useViewerStore } from '@/stores/viewerStore'
 
 export interface ProjectionParams {
   azimuth: number
@@ -37,9 +38,17 @@ export function ProjectionControls({
   isLoading,
   isBatchLoading,
 }: ProjectionControlsProps) {
+  const { cameraAzimuth, cameraElevation } = useViewerStore()
   const [azimuth, setAzimuth] = useState(45)
   const [elevation, setElevation] = useState(30)
   const [format, setFormat] = useState<'png' | 'svg'>('png')
+
+  const handleProjectCurrentView = () => {
+    // Set sliders to current 3D view angles and generate preview
+    setAzimuth(cameraAzimuth)
+    setElevation(cameraElevation)
+    onPreview({ azimuth: cameraAzimuth, elevation: cameraElevation, format })
+  }
 
   // Batch settings
   const [azStart, setAzStart] = useState(0)
@@ -119,14 +128,30 @@ export function ProjectionControls({
             </Button>
           </div>
 
-          <Button onClick={handlePreview} disabled={isLoading} className="w-full">
-            {isLoading ? (
-              <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <Image className="h-4 w-4 mr-2" />
-            )}
-            Generate Preview
-          </Button>
+          <div className="flex gap-2">
+            <Button onClick={handlePreview} disabled={isLoading} className="flex-1">
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Image className="h-4 w-4 mr-2" />
+              )}
+              Preview
+            </Button>
+            <Button
+              onClick={handleProjectCurrentView}
+              disabled={isLoading}
+              variant="outline"
+              className="flex-1"
+              title={`Project current 3D view (Az: ${cameraAzimuth}°, El: ${cameraElevation}°)`}
+            >
+              {isLoading ? (
+                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+              ) : (
+                <Camera className="h-4 w-4 mr-2" />
+              )}
+              3D View
+            </Button>
+          </div>
         </div>
 
         <hr className="border-border" />

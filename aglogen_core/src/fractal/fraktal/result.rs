@@ -51,8 +51,11 @@ pub struct FraktalResult {
     /// Fractal dimension (1.0 - 3.0)
     pub df: f64,
 
-    /// Number of primary particles (rounded)
+    /// Number of primary particles (calculated from fractal equation)
     pub npo: u64,
+
+    /// Number of primary particles (estimated visually from image)
+    pub npo_visual: u64,
 
     /// Prefactor kf from power law
     pub kf: f64,
@@ -80,6 +83,15 @@ pub struct FraktalResult {
 
     /// Model used for analysis ("granulated_2012" or "voxel_2018")
     pub model: String,
+
+    /// Ratio of calculated npo / visual npo (1.0 = perfect match)
+    pub npo_ratio: f64,
+
+    /// Whether calculated and visual npo are aligned (within 2x tolerance)
+    pub npo_aligned: bool,
+
+    /// Estimated dpo from visual particle analysis (nm)
+    pub dpo_estimated: f64,
 }
 
 impl Default for FraktalResult {
@@ -89,6 +101,7 @@ impl Default for FraktalResult {
             ap: 0.0,
             df: 0.0,
             npo: 0,
+            npo_visual: 0,
             kf: 0.0,
             zf: 0.0,
             jf: None,
@@ -98,6 +111,9 @@ impl Default for FraktalResult {
             status: FraktalStatus::Error("Not initialized".to_string()),
             execution_time_ms: 0,
             model: String::new(),
+            npo_ratio: 0.0,
+            npo_aligned: false,
+            dpo_estimated: 0.0,
         }
     }
 }
@@ -118,9 +134,13 @@ pub struct PyFraktalResult {
     #[pyo3(get)]
     pub df: f64,
 
-    /// Number of primary particles
+    /// Number of primary particles (calculated from fractal equation)
     #[pyo3(get)]
     pub npo: u64,
+
+    /// Number of primary particles (estimated visually from image)
+    #[pyo3(get)]
+    pub npo_visual: u64,
 
     /// Prefactor kf
     #[pyo3(get)]
@@ -161,6 +181,18 @@ pub struct PyFraktalResult {
     /// Model used
     #[pyo3(get)]
     pub model: String,
+
+    /// Ratio of calculated npo / visual npo (1.0 = perfect match)
+    #[pyo3(get)]
+    pub npo_ratio: f64,
+
+    /// Whether calculated and visual npo are aligned (within 2x tolerance)
+    #[pyo3(get)]
+    pub npo_aligned: bool,
+
+    /// Estimated dpo from visual particle analysis (nm)
+    #[pyo3(get)]
+    pub dpo_estimated: f64,
 }
 
 impl From<FraktalResult> for PyFraktalResult {
@@ -170,6 +202,7 @@ impl From<FraktalResult> for PyFraktalResult {
             ap: r.ap,
             df: r.df,
             npo: r.npo,
+            npo_visual: r.npo_visual,
             kf: r.kf,
             zf: r.zf,
             jf: r.jf,
@@ -180,6 +213,9 @@ impl From<FraktalResult> for PyFraktalResult {
             status_message: r.status.message(),
             execution_time_ms: r.execution_time_ms,
             model: r.model,
+            npo_ratio: r.npo_ratio,
+            npo_aligned: r.npo_aligned,
+            dpo_estimated: r.dpo_estimated,
         }
     }
 }

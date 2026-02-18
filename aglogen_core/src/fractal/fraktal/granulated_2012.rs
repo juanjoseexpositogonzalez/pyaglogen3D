@@ -11,6 +11,7 @@ use ndarray::ArrayView2;
 use super::bisection::BisectionSolver;
 use super::image_processing::{
     apply_3d_correction_granulated, calculate_geometry, calculate_m_exponent, color_segment,
+    estimate_particles_and_dpo,
 };
 use super::params::Granulated2012Params;
 use super::result::{FraktalResult, FraktalStatus};
@@ -192,6 +193,12 @@ pub fn analyze_granulated_2012(
         }
     };
 
+    // Step 2b: Estimate particle count and dpo visually using adaptive detection
+    let (npo_visual, dpo_estimated, _avg_radius_px) = estimate_particles_and_dpo(
+        binary.view(),
+        geometry.length_per_pixel,
+    );
+
     // Step 3: Apply 3D correction if enabled
     let m = calculate_m_exponent(params.correction_3d, true, params.delta);
     let rg = if params.correction_3d {
@@ -203,58 +210,113 @@ pub fn analyze_granulated_2012(
     let ap = geometry.projected_area_nm2;
 
     // Step 4: Iterative solution for Df
-    let mut npo_estimate = 1_000_000.0;
+    // Try multiple initial npo estimates since the algorithm can be sensitive
+    // to the starting point. Prioritize the visual estimate if available.
+    let apo_simple = PI / 4.0 * params.dpo.powi(2);
+    let npo_from_geometry = (ap / apo_simple).max(10.0).min(100_000.0);
+
+    // Build initial estimates, prioritizing visual estimate if reliable
+    let mut initial_estimates: Vec<f64> = Vec::new();
+
+    // Primary: Use visual estimate with ±30% margin (if we have enough particles)
+    if npo_visual > 5 {
+        initial_estimates.push((npo_visual as f64 * 0.7).max(5.0));
+        initial_estimates.push(npo_visual as f64);
+        initial_estimates.push(npo_visual as f64 * 1.3);
+    }
+
+    // Fallback: Original estimates for robustness
+    initial_estimates.extend_from_slice(&[
+        50.0,
+        100.0,
+        200.0,
+        npo_from_geometry.min(500.0),
+        npo_from_geometry.min(1000.0),
+        npo_from_geometry,
+    ]);
+
     let mut df_result = 0.0;
     let mut kf_result = 0.0;
+    let mut npo_final = 0.0;
     let mut converged = false;
     let tolerance = 0.0001;
     let max_outer_iterations = 50;
 
-    for outer_iter in 0..max_outer_iterations {
-        let (akf, bkf, ckf) = calculate_prefactor_coefficients(npo_estimate, params.delta);
+    'outer_search: for npo_initial in initial_estimates.iter().copied() {
+        let mut npo_estimate = npo_initial;
 
-        // Define objective function for bisection
-        let objective = |df: f64| {
-            let kf = calculate_kf(df, akf, bkf, ckf);
-            let jf = calculate_jf(df, kf, npo_estimate, params.delta);
-            let apo = calculate_apo(params.dpo, jf, params.delta);
-            let zp = calculate_zp_granulated(npo_estimate, df, m);
+        for outer_iter in 0..max_outer_iterations {
+            let (akf, bkf, ckf) = calculate_prefactor_coefficients(npo_estimate, params.delta);
 
-            // Equation: kf * (dp/dpo)^Df = (Ap/Apo)^zp
-            let lhs = kf * (dp / params.dpo).powf(df);
-            let rhs = (ap / apo).powf(zp);
-            (lhs - rhs, kf)
-        };
+            // Define objective function for bisection
+            let objective = |df: f64| {
+                let kf = calculate_kf(df, akf, bkf, ckf);
+                // Use |kf| for Jf calculation to avoid NaN from negative kf^b
+                let jf = calculate_jf(df, kf.abs().max(0.001), npo_estimate, params.delta);
+                let apo = calculate_apo(params.dpo, jf, params.delta);
+                let zp = calculate_zp_granulated(npo_estimate, df, m);
 
-        let solver = BisectionSolver::default();
-        let result = solver.solve(objective, 1.0, 3.0);
+                // Equation: kf * (dp/dpo)^Df = (Ap/Apo)^zp
+                let lhs = kf * (dp / params.dpo).powf(df);
+                let rhs = (ap / apo).powf(zp);
+                (lhs - rhs, kf)
+            };
 
-        if result.df == 0.0 || !result.converged {
-            break;
-        }
+            // The kf polynomial often goes negative in the middle (around Df=1.3-1.8)
+            // but is positive at both ends. We need to search in the UPPER region
+            // where kf > 0 (typically Df > 1.85) since that's where physical solutions lie.
+            // Find the lower bound where kf becomes positive (searching from high to low)
+            let mut df_min_valid = 3.0;
+            for i in 0..40 {
+                let test_df = 3.0 - 0.05 * (i as f64);
+                let test_kf = calculate_kf(test_df, akf, bkf, ckf);
+                if test_kf > 0.01 {
+                    df_min_valid = test_df;
+                } else {
+                    break; // Found where kf goes negative, stop
+                }
+            }
+            // Add small margin to ensure we're in positive kf region
+            let df_search_min = (df_min_valid + 0.05).min(2.5);
 
-        // Calculate new npo estimate
-        let new_npo = result.kf * (dp / params.dpo).powf(result.df);
+            let solver = BisectionSolver::default();
+            let result = solver.solve(objective, df_search_min, 3.0);
 
-        // Check convergence
-        if (result.df - df_result).abs() < tolerance && outer_iter > 0 {
+            // Check for invalid result (bisection failed or kf negative)
+            if result.df == 0.0 || !result.converged || result.kf <= 0.0 {
+                break; // Try next initial estimate
+            }
+
+            // Calculate new npo estimate
+            let new_npo = result.kf * (dp / params.dpo).powf(result.df);
+
+            // Check for invalid npo
+            if new_npo <= 0.0 || !new_npo.is_finite() {
+                break; // Try next initial estimate
+            }
+
+            // Check convergence
+            if (result.df - df_result).abs() < tolerance && outer_iter > 0 {
+                df_result = result.df;
+                kf_result = result.kf;
+                npo_final = new_npo;
+                converged = true;
+                break 'outer_search; // Found solution, exit both loops
+            }
+
             df_result = result.df;
             kf_result = result.kf;
             npo_estimate = new_npo;
-            converged = true;
-            break;
         }
-
-        df_result = result.df;
-        kf_result = result.kf;
-        npo_estimate = new_npo;
-    }
+    } // End of outer_search loop
 
     // Check for valid solution
     if df_result == 0.0 || !converged {
         return FraktalResult {
             rg,
             ap,
+            npo_visual: npo_visual as u64,
+            dpo_estimated,
             status: if df_result == 0.0 {
                 FraktalStatus::DfOutOfRange
             } else {
@@ -266,16 +328,27 @@ pub fn analyze_granulated_2012(
         };
     }
 
-    let npo_final = npo_estimate.round() as u64;
+    let npo_rounded = npo_final.round() as u64;
 
     // Check minimum particle count
-    if npo_final < params.npo_limit as u64 {
+    if npo_rounded < params.npo_limit as u64 {
+        let npo_ratio = if npo_visual > 0 {
+            npo_rounded as f64 / npo_visual as f64
+        } else {
+            0.0
+        };
+        let npo_aligned = npo_ratio >= 0.5 && npo_ratio <= 2.0;
+
         return FraktalResult {
             rg,
             ap,
             df: df_result,
-            npo: npo_final,
+            npo: npo_rounded,
+            npo_visual: npo_visual as u64,
             kf: kf_result,
+            npo_ratio,
+            npo_aligned,
+            dpo_estimated,
             status: FraktalStatus::NpoTooSmall,
             execution_time_ms: start_time.elapsed().as_millis() as u64,
             model: "granulated_2012".to_string(),
@@ -284,33 +357,45 @@ pub fn analyze_granulated_2012(
     }
 
     // Calculate final derived properties
-    let jf = calculate_jf(df_result, kf_result, npo_estimate, params.delta);
-    let zf = calculate_zp_granulated(npo_estimate, df_result, m);
+    let jf = calculate_jf(df_result, kf_result, npo_final, params.delta);
+    let zf = calculate_zp_granulated(npo_final, df_result, m);
 
     // Volume calculation
     let delta = params.delta;
     let dpo = params.dpo;
     let vol_factor = 1.0 - jf * (4.0 * delta.powi(3) - 6.0 * delta.powi(2) + 2.0) / (8.0 * delta.powi(3));
-    let volume = npo_estimate * (PI / 6.0 * dpo.powi(3)) * vol_factor;
+    let volume = npo_final * (PI / 6.0 * dpo.powi(3)) * vol_factor;
 
     // Mass calculation (using soot density)
     let mass = SOOT_DENSITY * volume;
 
     // Surface area calculation
     let surf_factor = 1.0 - jf * (delta - 1.0) / (2.0 * delta);
-    let surface_area = npo_estimate * (PI * dpo.powi(2)) * surf_factor;
+    let surface_area = npo_final * (PI * dpo.powi(2)) * surf_factor;
+
+    // Calculate npo alignment metrics for validation
+    let npo_ratio = if npo_visual > 0 {
+        npo_rounded as f64 / npo_visual as f64
+    } else {
+        0.0
+    };
+    let npo_aligned = npo_ratio >= 0.5 && npo_ratio <= 2.0;
 
     FraktalResult {
         rg,
         ap,
         df: df_result,
-        npo: npo_final,
+        npo: npo_rounded,
+        npo_visual: npo_visual as u64,
         kf: kf_result,
         zf,
         jf: Some(jf),
         volume,
         mass,
         surface_area,
+        npo_ratio,
+        npo_aligned,
+        dpo_estimated,
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "granulated_2012".to_string(),

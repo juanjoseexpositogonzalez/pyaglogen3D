@@ -223,7 +223,8 @@ export interface FraktalResults {
   rg: number               // Radius of gyration (nm)
   ap: number               // Projected area (nm²)
   df: number               // Fractal dimension
-  npo: number              // Number of primary particles
+  npo: number              // Number of primary particles (calculated)
+  npo_visual: number       // Number of primary particles (estimated from image)
   kf: number               // Prefactor
   zf: number               // Overlap exponent
   jf: number | null        // Coordination index (granulated_2012 only)
@@ -232,6 +233,9 @@ export interface FraktalResults {
   surface_area: number     // Surface area (nm²)
   status: string           // Analysis status message
   model: string            // Model used
+  npo_ratio: number        // Ratio of calculated/visual npo (1.0 = match)
+  npo_aligned: boolean     // Whether npo values are aligned (within 2x)
+  dpo_estimated: number    // Estimated dpo from visual analysis (nm)
 }
 
 export interface Granulated2012Params {

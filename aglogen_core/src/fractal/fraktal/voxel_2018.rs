@@ -169,12 +169,16 @@ pub fn analyze_voxel_2018(
         ap,
         df: df_result,
         npo: nvox_final,  // nvox treated as npo for output
+        npo_visual: 0,    // Not applicable for voxel model
         kf: kf_result,
         zf,
         jf: None,  // No Jf for voxel model
         volume,
         mass,
         surface_area,
+        npo_ratio: 0.0,       // Not applicable for voxel model
+        npo_aligned: true,    // No comparison for voxel model
+        dpo_estimated: 0.0,   // Not applicable for voxel model
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "voxel_2018".to_string(),
