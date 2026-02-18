@@ -163,7 +163,6 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
     class Meta:
         model = FraktalAnalysis
         fields = [
-            "project",
             "source_type",
             "image",
             "original_filename",
