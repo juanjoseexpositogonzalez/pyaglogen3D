@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -86,16 +86,22 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
     setParams((prev) => ({ ...prev, [key]: value }))
   }
 
+  // Cleanup object URL on unmount
+  useEffect(() => {
+    return () => {
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview)
+      }
+    }
+  }, [imagePreview])
+
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
       setImageFile(file)
-      // Create preview
-      const reader = new FileReader()
-      reader.onload = () => {
-        setImagePreview(reader.result as string)
-      }
-      reader.readAsDataURL(file)
+      // Create preview using URL.createObjectURL for better performance
+      const objectUrl = URL.createObjectURL(file)
+      setImagePreview(objectUrl)
     }
   }
 
