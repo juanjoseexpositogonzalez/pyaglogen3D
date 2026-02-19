@@ -40,12 +40,18 @@ pub struct Granulated2012Params {
     /// Scale reference in nm (default: 100)
     #[pyo3(get, set)]
     pub escala: f64,
+
+    /// Enable automatic threshold detection using Otsu's method (default: true)
+    /// When enabled, automatically detects if image has dark or light particles
+    /// and adjusts segmentation accordingly.
+    #[pyo3(get, set)]
+    pub auto_threshold: bool,
 }
 
 #[pymethods]
 impl Granulated2012Params {
     #[new]
-    #[pyo3(signature = (npix, dpo, delta=1.1, correction_3d=false, pixel_min=10, pixel_max=240, npo_limit=5, escala=100.0))]
+    #[pyo3(signature = (npix, dpo, delta=1.1, correction_3d=false, pixel_min=10, pixel_max=240, npo_limit=5, escala=100.0, auto_threshold=true))]
     pub fn new(
         npix: f64,
         dpo: f64,
@@ -55,6 +61,7 @@ impl Granulated2012Params {
         pixel_max: u8,
         npo_limit: usize,
         escala: f64,
+        auto_threshold: bool,
     ) -> Self {
         Self {
             npix,
@@ -65,6 +72,7 @@ impl Granulated2012Params {
             pixel_max,
             npo_limit,
             escala,
+            auto_threshold,
         }
     }
 }
@@ -80,6 +88,7 @@ impl Default for Granulated2012Params {
             pixel_max: 240,
             npo_limit: 5,
             escala: 100.0,
+            auto_threshold: true, // Enable by default
         }
     }
 }
@@ -114,12 +123,16 @@ pub struct Voxel2018Params {
     /// m exponent for zp calculation (default: 1.0 for voxels)
     #[pyo3(get, set)]
     pub m_exponent: f64,
+
+    /// Enable automatic threshold detection using Otsu's method (default: true)
+    #[pyo3(get, set)]
+    pub auto_threshold: bool,
 }
 
 #[pymethods]
 impl Voxel2018Params {
     #[new]
-    #[pyo3(signature = (npix, escala=100.0, correction_3d=false, pixel_min=10, pixel_max=240, m_exponent=1.0))]
+    #[pyo3(signature = (npix, escala=100.0, correction_3d=false, pixel_min=10, pixel_max=240, m_exponent=1.0, auto_threshold=true))]
     pub fn new(
         npix: f64,
         escala: f64,
@@ -127,6 +140,7 @@ impl Voxel2018Params {
         pixel_min: u8,
         pixel_max: u8,
         m_exponent: f64,
+        auto_threshold: bool,
     ) -> Self {
         Self {
             npix,
@@ -135,6 +149,7 @@ impl Voxel2018Params {
             pixel_min,
             pixel_max,
             m_exponent,
+            auto_threshold,
         }
     }
 }
@@ -148,6 +163,7 @@ impl Default for Voxel2018Params {
             pixel_min: 10,
             pixel_max: 240,
             m_exponent: 1.0,
+            auto_threshold: true,
         }
     }
 }

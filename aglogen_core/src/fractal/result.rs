@@ -17,6 +17,9 @@ pub struct PyFractalResult {
     pub confidence_interval: (f64, f64),
     #[pyo3(get)]
     pub execution_time_ms: u64,
+    /// Start index of linear region (0 = all points used).
+    #[pyo3(get)]
+    pub linear_region_start: usize,
 
     // Internal storage
     pub(crate) log_scales_data: Vec<f64>,
@@ -55,6 +58,7 @@ pub struct FractalResult {
     pub log_values: Vec<f64>,
     pub residuals: Vec<f64>,
     pub execution_time_ms: u64,
+    pub linear_region_start: usize,
 }
 
 impl FractalResult {
@@ -65,6 +69,7 @@ impl FractalResult {
             std_error: self.std_error,
             confidence_interval: self.confidence_interval,
             execution_time_ms: self.execution_time_ms,
+            linear_region_start: self.linear_region_start,
             log_scales_data: self.log_scales,
             log_values_data: self.log_values,
             residuals_data: self.residuals,

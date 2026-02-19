@@ -54,8 +54,12 @@ interface FormParams {
   dpo: number
   delta: number
   npo_limit: number
+  auto_calibrate: boolean
   // Voxel 2018 specific
   m_exponent: number
+  // Scale calibration helper
+  scaleBarPixels: number
+  scaleBarNm: number
 }
 
 const defaultParams: FormParams = {
@@ -65,15 +69,19 @@ const defaultParams: FormParams = {
   elevation: 0,
   resolution: 512,
   model: 'granulated_2012',
-  npix: 10.0,
+  npix: 100.0,  // Default: 100 pixels per 100nm = 1 pixel/nm
   escala: 100.0,
   correction_3d: false,
   pixel_min: 10,
   pixel_max: 240,
-  dpo: 25.0,
+  dpo: 40.0,  // More realistic default for TEM images
   delta: 1.1,
   npo_limit: 5,
+  auto_calibrate: false,
   m_exponent: 1.0,
+  // Scale calibration helper
+  scaleBarPixels: 100,  // Default: measure 100 pixels from scale bar
+  scaleBarNm: 100,      // Default: 100nm scale bar
 }
 
 export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: FraktalAnalysisFormProps) {
@@ -134,6 +142,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
           npo_limit: params.npo_limit,
           escala: params.escala,
           m_exponent: params.m_exponent,
+          auto_calibrate: params.model === 'granulated_2012' ? params.auto_calibrate : undefined,
         })
       }
       reader.readAsDataURL(imageFile)
@@ -162,6 +171,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         npo_limit: params.npo_limit,
         escala: params.escala,
         m_exponent: params.m_exponent,
+        auto_calibrate: params.model === 'granulated_2012' ? params.auto_calibrate : undefined,
       })
     }
   }
@@ -289,27 +299,146 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         </CardContent>
       </Card>
 
-      {/* Scale Parameters */}
+      {/* Scale Calibration */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-lg">Scale Parameters</CardTitle>
+          <CardTitle className="text-lg">Scale Calibration</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
+          {/* Scale Bar Calibration Helper */}
+          <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
+            <p className="text-sm font-medium text-blue-700 dark:text-blue-300">
+              📏 Measure your scale bar to calibrate
+            </p>
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="scaleBarPixels">Scale bar length (pixels)</Label>
+                <Input
+                  id="scaleBarPixels"
+                  type="number"
+                  min={1}
+                  max={2000}
+                  step={1}
+                  value={params.scaleBarPixels}
+                  onChange={(e) => {
+                    const pixels = parseInt(e.target.value) || 100
+                    updateParam('scaleBarPixels', pixels)
+                    // Auto-calculate npix
+                    const calculatedNpix = (pixels / params.scaleBarNm) * 100
+                    updateParam('npix', Math.round(calculatedNpix * 10) / 10)
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Measure the scale bar in your image
+                </p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="scaleBarNm">Scale bar value (nm)</Label>
+                <Input
+                  id="scaleBarNm"
+                  type="number"
+                  min={1}
+                  max={10000}
+                  step={1}
+                  value={params.scaleBarNm}
+                  onChange={(e) => {
+                    const nm = parseInt(e.target.value) || 100
+                    updateParam('scaleBarNm', nm)
+                    // Auto-calculate npix
+                    const calculatedNpix = (params.scaleBarPixels / nm) * 100
+                    updateParam('npix', Math.round(calculatedNpix * 10) / 10)
+                  }}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Value shown on scale bar (e.g., 50, 100)
+                </p>
+              </div>
+            </div>
+            <div className="flex items-center justify-between pt-2 border-t border-blue-200 dark:border-blue-700">
+              <span className="text-sm text-blue-700 dark:text-blue-300">Calculated npix:</span>
+              <span className="text-lg font-bold font-mono text-blue-800 dark:text-blue-200">
+                {params.npix.toFixed(1)} px/100nm
+              </span>
+            </div>
+            <p className="text-xs text-blue-600 dark:text-blue-400">
+              = {(params.npix / 100).toFixed(3)} pixels per nm
+            </p>
+          </div>
+
+          {/* Manual npix override */}
           <div className="space-y-2">
-            <Label htmlFor="npix">Pixels per 100nm (npix)</Label>
+            <Label htmlFor="npix">Pixels per 100nm (npix) - Manual</Label>
             <Input
               id="npix"
               type="number"
               min={0.1}
-              max={100}
+              max={1000}
               step={0.1}
               value={params.npix}
-              onChange={(e) => updateParam('npix', parseFloat(e.target.value) || 10)}
+              onChange={(e) => updateParam('npix', parseFloat(e.target.value) || 100)}
             />
             <p className="text-xs text-muted-foreground">
-              Number of pixels corresponding to 100nm in the scale bar
+              You can also enter this value directly if you know it
             </p>
           </div>
+
+          {params.model === 'granulated_2012' && (
+            <>
+              {/* Auto-calibrate toggle */}
+              <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <Label className="text-amber-700 dark:text-amber-300 font-medium">
+                      Auto-calibrate dpo
+                    </Label>
+                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
+                      Automatically find optimal primary particle diameter
+                    </p>
+                  </div>
+                  <Button
+                    type="button"
+                    variant={params.auto_calibrate ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => updateParam('auto_calibrate', !params.auto_calibrate)}
+                    className={params.auto_calibrate ? 'bg-amber-600 hover:bg-amber-700' : ''}
+                  >
+                    {params.auto_calibrate ? 'Enabled' : 'Disabled'}
+                  </Button>
+                </div>
+                {params.auto_calibrate && (
+                  <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-amber-200 dark:border-amber-700 pt-2">
+                    The algorithm will test multiple dpo values (0.5x to 2x of starting point)
+                    and select the one with best alignment between calculated and visual particle count.
+                  </p>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="dpo">
+                  Primary Particle Diameter (nm)
+                  {params.auto_calibrate && (
+                    <span className="text-amber-600 dark:text-amber-400 ml-2 text-xs font-normal">
+                      (starting point)
+                    </span>
+                  )}
+                </Label>
+                <Input
+                  id="dpo"
+                  type="number"
+                  min={1}
+                  max={1000}
+                  step={1}
+                  value={params.dpo}
+                  onChange={(e) => updateParam('dpo', parseFloat(e.target.value) || 40)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {params.auto_calibrate
+                    ? 'Starting value for auto-calibration. The algorithm will search around this value.'
+                    : 'Mean diameter of primary spherical particles. If analysis fails, try the suggested dpo from the error message.'}
+                </p>
+              </div>
+            </>
+          )}
 
           <div className="space-y-2">
             <Label htmlFor="escala">Scale Reference (nm)</Label>
@@ -326,24 +455,6 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
               Reference scale in nanometers (default: 100nm)
             </p>
           </div>
-
-          {params.model === 'granulated_2012' && (
-            <div className="space-y-2">
-              <Label htmlFor="dpo">Primary Particle Diameter (nm)</Label>
-              <Input
-                id="dpo"
-                type="number"
-                min={1}
-                max={1000}
-                step={1}
-                value={params.dpo}
-                onChange={(e) => updateParam('dpo', parseFloat(e.target.value) || 25)}
-              />
-              <p className="text-xs text-muted-foreground">
-                Mean diameter of primary spherical particles (required for 2012 model)
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
 

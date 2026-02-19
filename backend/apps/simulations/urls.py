@@ -77,4 +77,9 @@ urlpatterns = [
         SimulationViewSet.as_view({"post": "cancel"}),
         name="project-simulations-cancel",
     ),
+    path(
+        "projects/<uuid:project_pk>/simulations/<uuid:pk>/box-counting/",
+        SimulationViewSet.as_view({"get": "box_counting"}),
+        name="project-simulations-box-counting",
+    ),
 ]

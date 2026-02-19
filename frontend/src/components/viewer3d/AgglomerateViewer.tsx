@@ -1,6 +1,6 @@
 'use client'
 
-import { Suspense, useMemo, useRef } from 'react'
+import { Suspense, useMemo, useRef, useEffect } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Environment, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
 import { Particles } from './Particles'
@@ -11,6 +11,40 @@ import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
 // Colors for principal axes (similar to coordinate axes but distinguishable)
 const PRINCIPAL_AXIS_COLORS = ['#ff6b6b', '#51cf66', '#339af0'] as const
+
+/**
+ * Handles export requests from the store.
+ * Must be placed inside Canvas.
+ */
+function ExportHandler() {
+  const { gl, scene, camera } = useThree()
+  const exportRequest = useViewerStore((s) => s.exportRequest)
+  const exportFilename = useViewerStore((s) => s.exportFilename)
+  const clearExportRequest = useViewerStore((s) => s.clearExportRequest)
+
+  useEffect(() => {
+    if (!exportRequest) return
+
+    // Render one more frame to ensure the scene is up to date
+    gl.render(scene, camera)
+
+    const canvas = gl.domElement
+    const dataUrl = canvas.toDataURL('image/png')
+
+    // For SVG, we can't directly export WebGL as SVG, so we export as PNG
+    // A true SVG export would require a different rendering approach (e.g., SVGRenderer)
+    const link = document.createElement('a')
+    link.download = `${exportFilename}.png`
+    link.href = dataUrl
+    document.body.appendChild(link)
+    link.click()
+    document.body.removeChild(link)
+
+    clearExportRequest()
+  }, [exportRequest, exportFilename, gl, scene, camera, clearExportRequest])
+
+  return null
+}
 
 /**
  * Tracks camera position and updates store with azimuth/elevation angles.
@@ -183,7 +217,7 @@ export function AgglomerateViewer({
     >
       <Canvas
         camera={{ position: cameraPosition, fov: 45, near: 0.1, far: maxRadius * 20 }}
-        gl={{ antialias: true, alpha: false }}
+        gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
       >
         <Suspense fallback={null}>
           <color attach="background" args={[bgColor]} />
@@ -266,6 +300,9 @@ export function AgglomerateViewer({
 
           {/* Track camera position for Az/El display */}
           <CameraTracker controlsRef={controlsRef} />
+
+          {/* Handle export requests */}
+          <ExportHandler />
 
           <Environment preset="studio" />
         </Suspense>

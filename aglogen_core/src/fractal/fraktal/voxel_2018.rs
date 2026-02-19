@@ -10,7 +10,7 @@ use ndarray::ArrayView2;
 
 use super::bisection::BisectionSolver;
 use super::image_processing::{
-    apply_3d_correction_voxel, calculate_geometry, color_segment,
+    apply_3d_correction_voxel, calculate_geometry, smart_segment,
 };
 use super::params::Voxel2018Params;
 use super::result::{FraktalResult, FraktalStatus};
@@ -58,8 +58,16 @@ pub fn analyze_voxel_2018(
 ) -> FraktalResult {
     let start_time = Instant::now();
 
-    // Step 1: Color segmentation
-    let binary = color_segment(image, params.pixel_min, params.pixel_max);
+    // Step 1: Smart segmentation with automatic threshold detection
+    let (binary, detected_threshold, is_dark_on_light) = smart_segment(
+        image,
+        params.pixel_min,
+        params.pixel_max,
+        params.auto_threshold,
+    );
+
+    // Debug info available via detected_threshold and is_dark_on_light
+    let _ = (detected_threshold, is_dark_on_light); // Mark as intentionally unused
 
     // Step 2: Calculate geometry
     let geometry = match calculate_geometry(binary.view(), params.npix, params.escala) {

@@ -185,6 +185,10 @@ class FraktalAnalysis(models.Model):
         default=1.0,
         help_text="m exponent for zp calculation (voxel model)",
     )
+    auto_calibrate = models.BooleanField(
+        default=False,
+        help_text="Automatically find optimal dpo by testing multiple values",
+    )
 
     # Results
     results = models.JSONField(

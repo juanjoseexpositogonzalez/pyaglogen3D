@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'limiting'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -53,7 +53,35 @@ export interface BallisticParams {
   particle_radius: number
 }
 
-export type SimulationParams = DlaParams | CcaParams | BallisticParams
+export interface TunableParams {
+  n_particles: number
+  target_df: number
+  target_kf: number
+  radius_min?: number
+  radius_max?: number
+}
+
+export interface TunableCcParams extends TunableParams {
+  seed_cluster_size?: number
+  max_rotation_attempts?: number
+}
+
+export type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
+export type ChainConfig = 'lineal' | 'cruz2d' | 'asterisco' | 'cruz3d'
+export type PlaneConfig = 'plano' | 'dobleplano' | 'tripleplano'
+export type SphereConfig = 'cuboctaedro'
+export type PackingType = 'HC' | 'CS' | 'CCC'
+
+export interface LimitingParams {
+  n_particles: number
+  geometry_type: LimitingGeometryType
+  configuration_type: ChainConfig | PlaneConfig | SphereConfig
+  packing: PackingType
+  layers?: number
+  primary_particle_radius_nm?: number
+}
+
+export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | LimitingParams
 
 // Simulation
 export interface SimulationSummary {
@@ -301,6 +329,7 @@ export interface FraktalAnalysis {
   npo_limit: number
   escala: number
   m_exponent: number
+  auto_calibrate: boolean
   results: FraktalResults | null
   status: AnalysisStatus
   execution_time_ms: number | null
@@ -315,6 +344,13 @@ export interface ProjectionParams {
   azimuth: number
   elevation: number
   resolution: number
+}
+
+export interface CalibrationAttempt {
+  dpo: number
+  npo: number
+  npo_ratio: number
+  npo_aligned: boolean
 }
 
 export interface FraktalResults {
@@ -334,6 +370,9 @@ export interface FraktalResults {
   npo_ratio: number        // Ratio of calculated/visual npo (1.0 = match)
   npo_aligned: boolean     // Whether npo values are aligned (within 2x)
   dpo_estimated: number    // Estimated dpo from visual analysis (nm)
+  // Auto-calibration results
+  calibration_attempts?: CalibrationAttempt[]  // Array of tried dpo values
+  best_dpo?: number        // Optimal dpo found by auto-calibration
 }
 
 export interface Granulated2012Params {
@@ -371,6 +410,7 @@ export interface CreateFraktalFromImageInput {
   npo_limit?: number
   escala?: number
   m_exponent?: number
+  auto_calibrate?: boolean
 }
 
 export interface CreateFraktalFromSimulationInput {
@@ -387,6 +427,21 @@ export interface CreateFraktalFromSimulationInput {
   npo_limit?: number
   escala?: number
   m_exponent?: number
+  auto_calibrate?: boolean
 }
 
 export type CreateFraktalInput = CreateFraktalFromImageInput | CreateFraktalFromSimulationInput
+
+// 3D Box-Counting Analysis Results
+export interface BoxCounting3DResult {
+  dimension: number
+  r_squared: number
+  std_error: number
+  confidence_interval: [number, number]
+  log_scales: number[]
+  log_values: number[]
+  residuals: number[]
+  /** Start index of linear region (points before this are excluded as outliers) */
+  linear_region_start: number
+  execution_time_ms: number
+}

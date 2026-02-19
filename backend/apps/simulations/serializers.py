@@ -66,6 +66,13 @@ class SimulationSerializer(serializers.ModelSerializer):
                     "n_particles must be at most 100,000"
                 )
 
+        elif algorithm == "limiting":
+            # Limiting cases allow any N >= 1
+            if "n_particles" in value and value["n_particles"] < 1:
+                raise serializers.ValidationError(
+                    "n_particles must be at least 1 for limiting cases"
+                )
+
         return value
 
 

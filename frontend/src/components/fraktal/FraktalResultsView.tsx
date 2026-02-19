@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard } from '@/components/common/MetricsCard'
 import { fraktalApi } from '@/lib/api'
-import type { FraktalAnalysis, CreateFraktalFromImageInput } from '@/lib/types'
+import type { FraktalAnalysis, CreateFraktalFromImageInput, CalibrationAttempt } from '@/lib/types'
 
 interface FraktalResultsViewProps {
   analysis: FraktalAnalysis
@@ -391,9 +391,78 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
                     <p className="font-medium">{analysis.m_exponent}</p>
                   </div>
                 )}
+                {analysis.auto_calibrate && (
+                  <div>
+                    <span className="text-muted-foreground">Auto-calibrate:</span>
+                    <p className="font-medium text-amber-600">Enabled</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
+
+          {/* Auto-Calibration Results */}
+          {results.calibration_attempts && results.calibration_attempts.length > 0 && (
+            <Card className="border-amber-500/50 bg-amber-500/5">
+              <CardHeader>
+                <CardTitle className="text-lg text-amber-700">
+                  Auto-Calibration Results
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {results.best_dpo && (
+                  <div className="flex items-center gap-4 p-3 bg-amber-100 dark:bg-amber-900/30 rounded-lg">
+                    <span className="text-amber-700 dark:text-amber-300">Optimal dpo found:</span>
+                    <span className="text-2xl font-bold text-amber-800 dark:text-amber-200">
+                      {results.best_dpo.toFixed(1)} nm
+                    </span>
+                    <Badge variant="default" className="bg-green-600">
+                      Best Match
+                    </Badge>
+                  </div>
+                )}
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead>
+                      <tr className="border-b">
+                        <th className="text-left py-2 font-medium">dpo (nm)</th>
+                        <th className="text-right py-2 font-medium">Calculated npo</th>
+                        <th className="text-right py-2 font-medium">Ratio</th>
+                        <th className="text-center py-2 font-medium">Aligned</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {results.calibration_attempts.map((attempt: CalibrationAttempt, idx: number) => (
+                        <tr
+                          key={idx}
+                          className={`border-b ${
+                            results.best_dpo && Math.abs(attempt.dpo - results.best_dpo) < 0.1
+                              ? 'bg-green-100 dark:bg-green-900/30'
+                              : ''
+                          }`}
+                        >
+                          <td className="py-2 font-mono">{attempt.dpo.toFixed(1)}</td>
+                          <td className="text-right font-mono">{attempt.npo.toLocaleString()}</td>
+                          <td className="text-right font-mono">
+                            {attempt.npo_ratio.toFixed(2)}x
+                          </td>
+                          <td className="text-center">
+                            <Badge variant={attempt.npo_aligned ? 'default' : 'secondary'}>
+                              {attempt.npo_aligned ? 'Yes' : 'No'}
+                            </Badge>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Visual estimate: {results.npo_visual} particles.
+                  Ratio near 1.0 indicates good alignment between calculated and visual particle count.
+                </p>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Projection Parameters (if from simulation) */}
           {source_type === 'simulation_projection' && analysis.projection_params && (

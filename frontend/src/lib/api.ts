@@ -16,6 +16,7 @@ import type {
   ParametricStudy,
   CreateParametricStudyInput,
   ParametricStudyResults,
+  BoxCounting3DResult,
 } from './types'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
@@ -251,6 +252,25 @@ export const simulationsApi = {
   getNeighborGraph: (projectId: string, simId: string) =>
     request<NeighborGraphData>(
       `/projects/${projectId}/simulations/${simId}/neighbor-graph/`
+    ),
+
+  /**
+   * Run 3D box-counting fractal analysis on the agglomerate.
+   * This is an on-demand analysis that may take a few seconds.
+   */
+  getBoxCounting: (
+    projectId: string,
+    simId: string,
+    params?: { points_per_sphere?: number; precision?: number }
+  ) =>
+    request<BoxCounting3DResult>(
+      `/projects/${projectId}/simulations/${simId}/box-counting/${
+        params
+          ? `?${new URLSearchParams(
+              Object.entries(params).map(([k, v]) => [k, String(v)])
+            ).toString()}`
+          : ''
+      }`
     ),
 }
 

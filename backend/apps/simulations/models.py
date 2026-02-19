@@ -12,6 +12,8 @@ class SimulationAlgorithm(models.TextChoices):
     BALLISTIC = "ballistic", "Ballistic Particle-Cluster"
     BALLISTIC_CC = "ballistic_cc", "Ballistic Cluster-Cluster"
     TUNABLE = "tunable", "Tunable Sticking Probability"
+    TUNABLE_CC = "tunable_cc", "Tunable Cluster-Cluster"
+    LIMITING = "limiting", "Limiting Case Geometry"
 
 
 class SimulationStatus(models.TextChoices):

@@ -26,10 +26,18 @@ export default function BatchSimulationsPage({
   const [isExporting, setIsExporting] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
-  // Fetch studies list
+  // Fetch studies list (polls while any study has running simulations)
   const { data: studiesData, isLoading: isLoadingStudies } = useQuery({
     queryKey: ['studies', id],
     queryFn: () => studiesApi.list(id),
+    refetchInterval: (query) => {
+      const data = query.state.data
+      // Poll if any study has running simulations (completed < total)
+      const hasRunning = data?.results?.some(
+        (s) => s.completed_simulations < s.total_simulations
+      )
+      return hasRunning ? 3000 : false
+    },
   })
 
   // Fetch selected study results

@@ -122,6 +122,233 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
 
 
 @shared_task(bind=True, max_retries=1)
+def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
+    """Run FRAKTAL with auto-calibration to find optimal parameters.
+
+    Tries different dpo values and finds the one that best aligns
+    calculated particles (npo) with visual estimate (npo_visual).
+    """
+    from .models import AnalysisStatus, FraktalAnalysis, SourceType
+
+    analysis = FraktalAnalysis.objects.select_related("simulation").get(
+        id=UUID(analysis_id)
+    )
+
+    analysis.status = AnalysisStatus.RUNNING
+    analysis.started_at = timezone.now()
+    analysis.save(update_fields=["status", "started_at"])
+
+    try:
+        # Get the image
+        if analysis.source_type == SourceType.UPLOADED_IMAGE:
+            image = Image.open(io.BytesIO(analysis.original_image))
+        else:
+            if analysis.simulation is None or analysis.simulation.geometry is None:
+                raise ValueError("No simulation geometry available")
+            geometry = np.load(io.BytesIO(analysis.simulation.geometry))
+            coordinates = geometry[:, :3]
+            radii = geometry[:, 3]
+            proj_params = analysis.projection_params or {}
+            projection_result = aglogen_core.project_to_2d(
+                coordinates=coordinates,
+                radii=radii,
+                azimuth=proj_params.get("azimuth", 0.0),
+                elevation=proj_params.get("elevation", 0.0),
+                resolution=proj_params.get("resolution", 512),
+                format="raw",
+            )
+            img_array = np.array(projection_result.image, dtype=np.uint8)
+            image = Image.fromarray(img_array, mode="L")
+
+        if image.mode != "L":
+            image = image.convert("L")
+        img_array = np.array(image, dtype=np.uint8)
+
+        logger.info(f"Auto-calibration for analysis {analysis_id}")
+
+        # First, get a visual estimate by running with a reasonable dpo
+        initial_dpo = analysis.dpo or 40.0
+
+        # Try a range of dpo values (reduced set for faster calibration)
+        # Start with the initial value, then try nearby values
+        dpo_values = [
+            initial_dpo,
+            initial_dpo * 0.7,
+            initial_dpo * 1.4,
+            initial_dpo * 0.5,
+        ]
+
+        best_result = None
+        best_alignment = float('inf')
+        best_dpo = initial_dpo
+        all_attempts = []
+        found_good_match = False
+
+        for idx, test_dpo in enumerate(dpo_values):
+            logger.info(f"Auto-cal attempt {idx + 1}/{len(dpo_values)}: dpo={test_dpo:.1f}")
+            try:
+                if analysis.model == "granulated_2012":
+                    result = aglogen_core.fraktal_granulated_2012(
+                        image=img_array,
+                        npix=analysis.npix,
+                        dpo=test_dpo,
+                        delta=analysis.delta,
+                        correction_3d=analysis.correction_3d,
+                        pixel_min=analysis.pixel_min,
+                        pixel_max=analysis.pixel_max,
+                        npo_limit=analysis.npo_limit,
+                        escala=analysis.escala,
+                    )
+                else:
+                    result = aglogen_core.fraktal_voxel_2018(
+                        image=img_array,
+                        npix=analysis.npix,
+                        escala=analysis.escala,
+                        correction_3d=analysis.correction_3d,
+                        pixel_min=analysis.pixel_min,
+                        pixel_max=analysis.pixel_max,
+                        m_exponent=analysis.m_exponent,
+                    )
+
+                # Calculate alignment score (lower is better)
+                if result.npo_visual > 0 and result.npo > 0:
+                    alignment = abs(result.npo - result.npo_visual) / result.npo_visual
+                else:
+                    alignment = float('inf')
+
+                # npo_aligned if ratio between 0.5 and 2.0
+                npo_ratio = result.npo / result.npo_visual if result.npo_visual > 0 else 0
+                npo_aligned = 0.5 <= npo_ratio <= 2.0
+
+                all_attempts.append({
+                    "dpo": round(test_dpo, 1),
+                    "npo": result.npo,
+                    "npo_ratio": round(npo_ratio, 2),
+                    "npo_aligned": npo_aligned,
+                })
+
+                logger.info(
+                    f"Auto-cal dpo={test_dpo:.1f}: npo={result.npo}, "
+                    f"visual={result.npo_visual}, alignment={alignment:.2f}, status={result.status}"
+                )
+
+                if result.status == "success" and alignment < best_alignment:
+                    best_alignment = alignment
+                    best_result = result
+                    best_dpo = test_dpo
+
+                    # Early exit if we found a good match (within 20%)
+                    if alignment < 0.2:
+                        logger.info(f"Found good match at dpo={test_dpo:.1f}, stopping early")
+                        found_good_match = True
+                        break
+
+            except Exception as e:
+                logger.warning(f"Auto-cal attempt dpo={test_dpo} failed: {e}")
+                all_attempts.append({
+                    "dpo": test_dpo,
+                    "error": str(e),
+                })
+
+        # If no successful result, use the best failed one or last attempt
+        if best_result is None:
+            # Find the attempt closest to npo_visual even if not successful
+            for attempt in all_attempts:
+                if "npo" in attempt and attempt.get("npo_visual", 0) > 0:
+                    alignment = abs(attempt["npo"] - attempt["npo_visual"]) / attempt["npo_visual"]
+                    if alignment < best_alignment:
+                        best_alignment = alignment
+                        best_dpo = attempt["dpo"]
+
+            # Re-run with best dpo found
+            if analysis.model == "granulated_2012":
+                best_result = aglogen_core.fraktal_granulated_2012(
+                    image=img_array,
+                    npix=analysis.npix,
+                    dpo=best_dpo,
+                    delta=analysis.delta,
+                    correction_3d=analysis.correction_3d,
+                    pixel_min=analysis.pixel_min,
+                    pixel_max=analysis.pixel_max,
+                    npo_limit=analysis.npo_limit,
+                    escala=analysis.escala,
+                )
+            else:
+                best_result = aglogen_core.fraktal_voxel_2018(
+                    image=img_array,
+                    npix=analysis.npix,
+                    escala=analysis.escala,
+                    correction_3d=analysis.correction_3d,
+                    pixel_min=analysis.pixel_min,
+                    pixel_max=analysis.pixel_max,
+                    m_exponent=analysis.m_exponent,
+                )
+
+        # Update analysis with best result
+        analysis.dpo = best_dpo
+        analysis.results = {
+            "rg": best_result.rg,
+            "ap": best_result.ap,
+            "df": best_result.df,
+            "npo": best_result.npo,
+            "npo_visual": best_result.npo_visual,
+            "kf": best_result.kf,
+            "zf": best_result.zf,
+            "jf": best_result.jf,
+            "volume": best_result.volume,
+            "mass": best_result.mass,
+            "surface_area": best_result.surface_area,
+            "status": best_result.status,
+            "model": best_result.model,
+            "npo_ratio": best_result.npo_ratio,
+            "npo_aligned": best_result.npo_aligned,
+            "dpo_estimated": best_result.dpo_estimated,
+            "auto_calibrated": True,
+            "calibration_attempts": all_attempts,
+            "best_dpo": best_dpo,
+            "best_alignment": best_alignment,
+        }
+        analysis.execution_time_ms = best_result.execution_time_ms
+        analysis.engine_version = aglogen_core.version()
+
+        if best_result.status != "success":
+            analysis.status = AnalysisStatus.FAILED
+            analysis.error_message = f"Auto-calibration failed: {best_result.status}. Best dpo tried: {best_dpo:.1f}nm"
+        else:
+            analysis.status = AnalysisStatus.COMPLETED
+
+        analysis.completed_at = timezone.now()
+        analysis.save()
+
+        logger.info(
+            f"Auto-calibration {analysis_id} completed: best_dpo={best_dpo:.1f}nm, "
+            f"Df={best_result.df:.4f}, npo={best_result.npo}, status={best_result.status}"
+        )
+
+        return {
+            "status": "completed" if best_result.status == "success" else "failed",
+            "analysis_id": analysis_id,
+            "df": best_result.df,
+            "npo": best_result.npo,
+            "kf": best_result.kf,
+            "best_dpo": best_dpo,
+            "auto_calibrated": True,
+        }
+
+    except Exception as e:
+        logger.exception(f"Auto-calibration {analysis_id} failed: {e}")
+        analysis.status = AnalysisStatus.FAILED
+        analysis.error_message = str(e)
+        analysis.completed_at = timezone.now()
+        analysis.save()
+        return {
+            "status": "failed",
+            "analysis_id": analysis_id,
+            "error": str(e),
+        }
+
+
+@shared_task(bind=True, max_retries=1)
 def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
     """Execute FRAKTAL fractal analysis using Rust engine.
 

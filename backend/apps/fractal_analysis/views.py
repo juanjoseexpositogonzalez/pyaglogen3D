@@ -20,7 +20,7 @@ from .serializers import (
     ImageAnalysisCreateSerializer,
     ImageAnalysisSerializer,
 )
-from .tasks import run_fractal_analysis_task, run_fraktal_analysis_task
+from .tasks import run_fractal_analysis_task, run_fraktal_analysis_task, run_fraktal_auto_calibrate_task
 
 
 class ImageAnalysisViewSet(viewsets.ModelViewSet):
@@ -110,12 +110,21 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         """Create analysis and enqueue task."""
         project_id = self.kwargs.get("project_pk")
         analysis = serializer.save(project_id=project_id)
+
+        # Choose task based on auto_calibrate flag
+        if analysis.auto_calibrate:
+            task = run_fraktal_auto_calibrate_task
+            task_name = "FRAKTAL auto-calibrate"
+        else:
+            task = run_fraktal_analysis_task
+            task_name = "FRAKTAL"
+
         # Enqueue Celery task, fallback to sync execution if broker unavailable
         try:
-            run_fraktal_analysis_task.delay(str(analysis.id))
+            task.delay(str(analysis.id))
         except OperationalError:
-            logger.warning("Celery broker unavailable, running FRAKTAL task synchronously")
-            run_fraktal_analysis_task(str(analysis.id))
+            logger.warning(f"Celery broker unavailable, running {task_name} task synchronously")
+            task(str(analysis.id))
 
     @action(detail=True, methods=["get"])
     def original_image(self, request: Request, pk=None, **kwargs) -> HttpResponse:
