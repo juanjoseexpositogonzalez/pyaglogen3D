@@ -39,3 +39,73 @@ export function formatNumber(value: number, decimals = 2): string {
   }
   return value.toFixed(decimals)
 }
+
+/**
+ * Detect the system's decimal separator (. or ,)
+ */
+export function getDecimalSeparator(): string {
+  const n = 1.1
+  return n.toLocaleString().substring(1, 2)
+}
+
+/**
+ * Get the appropriate CSV field separator based on locale.
+ * If decimal separator is comma, use semicolon for CSV fields.
+ */
+export function getCsvSeparator(): string {
+  return getDecimalSeparator() === ',' ? ';' : ','
+}
+
+export type DataExportFormat = 'csv' | 'tsv'
+
+interface ExportDataOptions {
+  filename: string
+  headers: string[]
+  rows: (string | number)[][]
+  format: DataExportFormat
+}
+
+/**
+ * Export tabular data as CSV or TSV file.
+ * Automatically detects locale for proper decimal/field separators.
+ */
+export function exportData({ filename, headers, rows, format }: ExportDataOptions): void {
+  const separator = format === 'tsv' ? '\t' : getCsvSeparator()
+  const decimalSep = getDecimalSeparator()
+
+  // Format numbers with locale-appropriate decimal separator
+  const formatValue = (val: string | number): string => {
+    if (typeof val === 'number') {
+      // Use locale decimal separator
+      const str = val.toString()
+      return decimalSep === ',' ? str.replace('.', ',') : str
+    }
+    // Escape strings that contain separator or quotes
+    if (typeof val === 'string' && (val.includes(separator) || val.includes('"'))) {
+      return `"${val.replace(/"/g, '""')}"`
+    }
+    return String(val)
+  }
+
+  const lines = [
+    headers.join(separator),
+    ...rows.map(row => row.map(formatValue).join(separator))
+  ]
+
+  const content = lines.join('\n')
+  const extension = format === 'tsv' ? 'tsv' : 'csv'
+  const mimeType = format === 'tsv' ? 'text/tab-separated-values' : 'text/csv'
+
+  // Add BOM for Excel compatibility with UTF-8
+  const bom = '\uFEFF'
+  const blob = new Blob([bom + content], { type: `${mimeType};charset=utf-8` })
+
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = `${filename}.${extension}`
+  document.body.appendChild(link)
+  link.click()
+  document.body.removeChild(link)
+  URL.revokeObjectURL(url)
+}

@@ -14,6 +14,7 @@ import {
   Compass,
   Circle,
   Move3D,
+  Download,
 } from 'lucide-react'
 import type { ColorMode } from '@/lib/types'
 
@@ -26,9 +27,10 @@ const colorModeOptions: { value: ColorMode; label: string }[] = [
 ]
 
 const backgroundOptions: { value: BackgroundPreset; label: string }[] = [
+  { value: 'white', label: 'White' },
+  { value: 'light', label: 'Light Gray' },
   { value: 'dark', label: 'Dark Blue' },
   { value: 'black', label: 'Black' },
-  { value: 'white', label: 'White' },
 ]
 
 export function ViewerControls() {
@@ -53,6 +55,7 @@ export function ViewerControls() {
     setBackground,
     cameraAzimuth,
     cameraElevation,
+    requestExport,
     reset,
   } = useViewerStore()
 
@@ -169,6 +172,35 @@ export function ViewerControls() {
           <RotateCcw className="h-4 w-4 mr-1" />
           Reset
         </Button>
+      </div>
+
+      {/* Export Buttons */}
+      <div className="pt-2 border-t">
+        <Label className="text-xs text-muted-foreground mb-2 block">Export Image</Label>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => requestExport('png', `agglomerate_3d_az${cameraAzimuth}_el${cameraElevation}`)}
+            className="flex-1"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            PNG
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => requestExport('svg', `agglomerate_3d_az${cameraAzimuth}_el${cameraElevation}`)}
+            className="flex-1"
+            title="Note: WebGL exports as high-resolution PNG"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            SVG*
+          </Button>
+        </div>
+        <p className="text-xs text-muted-foreground mt-1">
+          *SVG exports as PNG (WebGL limitation)
+        </p>
       </div>
     </div>
   )

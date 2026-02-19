@@ -320,8 +320,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
         """Load geometry from simulation and return coordinates and radii."""
         buf = io.BytesIO(simulation.geometry)
         geometry_array = np.load(buf)
-        coords = geometry_array[:, :3]
-        radii = geometry_array[:, 3]
+        # Use ascontiguousarray to ensure C-contiguous memory layout for Rust/PyO3
+        coords = np.ascontiguousarray(geometry_array[:, :3])
+        radii = np.ascontiguousarray(geometry_array[:, 3])
         return coords, radii
 
     @action(detail=True, methods=["get"], url_path="export")
@@ -563,6 +564,76 @@ class SimulationViewSet(viewsets.ModelViewSet):
                     count += 1
 
         return count == n
+
+    @action(detail=True, methods=["get"], url_path="box-counting")
+    def box_counting(self, request: Request, pk=None, **kwargs) -> Response:
+        """Run 3D box-counting fractal analysis on the agglomerate.
+
+        Uses Morton codes (Z-order curve) for O(N log N) complexity.
+
+        Query params:
+        - points_per_sphere: int (default: 100) - surface points per particle
+        - precision: int (default: 18) - bits per dimension (max: 21)
+
+        Returns fractal dimension estimate with statistics and log-log data.
+        """
+        simulation = self.get_object()
+
+        if simulation.geometry is None:
+            return Response(
+                {"error": "Geometry not available"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Parse parameters
+        try:
+            points_per_sphere = int(request.query_params.get("points_per_sphere", 100))
+            precision = int(request.query_params.get("precision", 18))
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": f"Invalid parameter: {e}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate ranges
+        if not (10 <= points_per_sphere <= 1000):
+            return Response(
+                {"error": "points_per_sphere must be between 10 and 1000"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (8 <= precision <= 21):
+            return Response(
+                {"error": "precision must be between 8 and 21"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Load geometry
+        coords, radii = self._load_geometry(simulation)
+
+        # Run box-counting analysis
+        import aglogen_core
+        result = aglogen_core.box_counting_agglomerate(
+            coords, radii,
+            points_per_sphere=points_per_sphere,
+            precision=precision,
+        )
+
+        return Response({
+            "dimension": result.dimension,
+            "r_squared": result.r_squared,
+            "std_error": result.std_error,
+            "confidence_interval": list(result.confidence_interval),
+            "log_scales": result.log_scales.tolist(),
+            "log_values": result.log_values.tolist(),
+            "residuals": result.residuals.tolist(),
+            "linear_region_start": result.linear_region_start,
+            "execution_time_ms": result.execution_time_ms,
+            "parameters": {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "n_particles": len(coords),
+            },
+        })
 
 
 class ParametricStudyViewSet(viewsets.ModelViewSet):

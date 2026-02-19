@@ -118,6 +118,7 @@ class FraktalAnalysisSerializer(serializers.ModelSerializer):
             "npo_limit",
             "escala",
             "m_exponent",
+            "auto_calibrate",
             "results",
             "status",
             "execution_time_ms",
@@ -180,6 +181,7 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
             "npo_limit",
             "escala",
             "m_exponent",
+            "auto_calibrate",
             "status",
         ]
         read_only_fields = ["id", "status"]
@@ -253,10 +255,14 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
 
         # Validate model-specific parameters
         if model == "granulated_2012":
-            if not attrs.get("dpo"):
+            auto_calibrate = attrs.get("auto_calibrate", False)
+            if not auto_calibrate and not attrs.get("dpo"):
                 raise serializers.ValidationError({
-                    "dpo": "Primary particle diameter (dpo) is required for granulated_2012 model"
+                    "dpo": "Primary particle diameter (dpo) is required for granulated_2012 model (or enable auto-calibrate)"
                 })
+            # Set a default dpo for auto-calibrate if not provided
+            if auto_calibrate and not attrs.get("dpo"):
+                attrs["dpo"] = 40.0  # Starting point for auto-calibration
 
         return attrs
 

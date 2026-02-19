@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
@@ -18,6 +18,9 @@ import {
 import { NeighborGraph } from '@/components/topology'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
+import { FractalPlot } from '@/components/charts'
+import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES } from '@/components/analysis'
+import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -57,6 +60,23 @@ export default function SimulationDetailPage({
   const [isProjectionLoading, setIsProjectionLoading] = useState(false)
   const [isBatchLoading, setIsBatchLoading] = useState(false)
   const [isExporting, setIsExporting] = useState(false)
+  const [showLimitingCases, setShowLimitingCases] = useState(false)
+
+  // Generate limiting case lines for the fractal plot when checkbox is checked
+  // This must be before any early returns to follow React's rules of hooks
+  const npo = simulation && 'n_particles' in simulation.parameters
+    ? (simulation.parameters as { n_particles: number }).n_particles
+    : undefined
+  const limitingCaseLines: LimitingCaseLine[] | undefined = useMemo(() => {
+    if (!showLimitingCases || !npo) return undefined
+    return LIMITING_CASES.map((lc) => ({
+      name: lc.name,
+      df: lc.df,
+      kf: lc.kfFormula(npo),
+      color: lc.color,
+      rgRpFormula: lc.rgRpFormula,
+    }))
+  }, [showLimitingCases, npo])
 
   const handleExportCsv = async () => {
     setIsExporting(true)
@@ -438,6 +458,40 @@ export default function SimulationDetailPage({
                     )}
                   </CardContent>
                 </Card>
+              )}
+            </div>
+
+            {/* Fractal Scaling Plot */}
+            {simulation.metrics.rg_evolution && simulation.metrics.rg_evolution.length > 0 && (
+              <div className="mb-8">
+                <FractalPlot
+                  rgEvolution={simulation.metrics.rg_evolution}
+                  fractalDimension={simulation.metrics.fractal_dimension}
+                  prefactor={simulation.metrics.prefactor}
+                  primaryParticleRadius={1.0}
+                  totalParticles={
+                    'n_particles' in simulation.parameters
+                      ? (simulation.parameters as { n_particles: number }).n_particles
+                      : undefined
+                  }
+                  limitingCases={limitingCaseLines}
+                />
+              </div>
+            )}
+
+            {/* Fractal Analysis Section */}
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+              {/* Box-Counting Analysis */}
+              <BoxCountingAnalysis projectId={id} simulationId={simId} />
+
+              {/* Limiting Cases for Calibration */}
+              {'n_particles' in simulation.parameters && (
+                <LimitingCasesCard
+                  npo={(simulation.parameters as { n_particles: number }).n_particles}
+                  actualDf={simulation.metrics.fractal_dimension}
+                  actualKf={simulation.metrics.prefactor}
+                  onVisibilityChange={setShowLimitingCases}
+                />
               )}
             </div>
 

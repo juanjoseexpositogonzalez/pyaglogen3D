@@ -95,6 +95,7 @@ fn box_counting_internal(
         log_values: log_counts,
         residuals,
         execution_time_ms,
+        linear_region_start: 0,  // 2D box-counting uses all points
     }
 }
 

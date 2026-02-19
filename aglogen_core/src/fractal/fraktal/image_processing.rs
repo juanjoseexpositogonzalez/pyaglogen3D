@@ -35,6 +35,135 @@ pub fn color_segment(image: ArrayView2<u8>, min_val: u8, max_val: u8) -> Array2<
     image.mapv(|v| v >= min_val && v <= max_val)
 }
 
+/// Compute Otsu's optimal threshold for bimodal image segmentation.
+///
+/// Returns the threshold value that minimizes intra-class variance
+/// (equivalently maximizes inter-class variance).
+pub fn otsu_threshold(image: ArrayView2<u8>) -> u8 {
+    // Build histogram
+    let mut histogram = [0u64; 256];
+    for &pixel in image.iter() {
+        histogram[pixel as usize] += 1;
+    }
+
+    let total_pixels = image.len() as f64;
+    if total_pixels == 0.0 {
+        return 128;
+    }
+
+    // Calculate total mean
+    let mut sum_total: f64 = 0.0;
+    for (i, &count) in histogram.iter().enumerate() {
+        sum_total += i as f64 * count as f64;
+    }
+
+    let mut sum_background: f64 = 0.0;
+    let mut weight_background: f64 = 0.0;
+    let mut max_variance: f64 = 0.0;
+    let mut optimal_threshold: u8 = 0;
+
+    for (t, &count) in histogram.iter().enumerate() {
+        weight_background += count as f64;
+        if weight_background == 0.0 {
+            continue;
+        }
+
+        let weight_foreground = total_pixels - weight_background;
+        if weight_foreground == 0.0 {
+            break;
+        }
+
+        sum_background += t as f64 * count as f64;
+
+        let mean_background = sum_background / weight_background;
+        let mean_foreground = (sum_total - sum_background) / weight_foreground;
+
+        // Inter-class variance
+        let variance = weight_background * weight_foreground
+            * (mean_background - mean_foreground).powi(2);
+
+        if variance > max_variance {
+            max_variance = variance;
+            optimal_threshold = t as u8;
+        }
+    }
+
+    optimal_threshold
+}
+
+/// Determine if image has dark objects on light background.
+///
+/// Returns true if particles are dark (low pixel values) on light background.
+/// Uses histogram analysis to detect the dominant pattern.
+pub fn is_dark_on_light(image: ArrayView2<u8>, threshold: u8) -> bool {
+    let mut dark_count = 0u64;
+    let mut light_count = 0u64;
+    let mut dark_sum = 0u64;
+    let mut light_sum = 0u64;
+
+    for &pixel in image.iter() {
+        if pixel <= threshold {
+            dark_count += 1;
+            dark_sum += pixel as u64;
+        } else {
+            light_count += 1;
+            light_sum += pixel as u64;
+        }
+    }
+
+    // If dark region is smaller, it's likely dark-on-light (particles are dark)
+    // Typical TEM images have small dark particles on large light background
+    if dark_count == 0 || light_count == 0 {
+        return false;
+    }
+
+    // Dark-on-light: dark area is smaller and has lower mean
+    let dark_ratio = dark_count as f64 / (dark_count + light_count) as f64;
+
+    // If dark region is less than 50% of image, it's dark-on-light
+    dark_ratio < 0.5
+}
+
+/// Smart segmentation with automatic threshold detection.
+///
+/// Automatically detects:
+/// 1. Optimal threshold using Otsu's method
+/// 2. Whether particles are dark or light
+/// 3. Applies appropriate segmentation
+///
+/// Returns (binary_mask, detected_threshold, is_inverted)
+pub fn smart_segment(
+    image: ArrayView2<u8>,
+    pixel_min: u8,
+    pixel_max: u8,
+    auto_threshold: bool,
+) -> (Array2<bool>, u8, bool) {
+    if !auto_threshold {
+        // Use manual thresholds as-is
+        let binary = color_segment(image, pixel_min, pixel_max);
+        return (binary, pixel_max, false);
+    }
+
+    // Calculate Otsu threshold
+    let otsu = otsu_threshold(image);
+
+    // Detect if dark-on-light
+    let dark_on_light = is_dark_on_light(image, otsu);
+
+    let binary = if dark_on_light {
+        // Dark particles: select pixels BELOW threshold
+        // Add small margin to avoid edge artifacts
+        let effective_threshold = otsu.saturating_add(10).min(pixel_max);
+        image.mapv(|v| v >= pixel_min && v <= effective_threshold)
+    } else {
+        // Light particles: select pixels ABOVE threshold
+        let effective_threshold = otsu.saturating_sub(10).max(pixel_min);
+        image.mapv(|v| v >= effective_threshold && v <= pixel_max)
+    };
+
+    (binary, otsu, dark_on_light)
+}
+
 /// Convert RGB image to grayscale.
 ///
 /// Uses standard luminosity formula: 0.299*R + 0.587*G + 0.114*B
