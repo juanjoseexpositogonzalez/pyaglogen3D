@@ -128,6 +128,13 @@ pub fn calculate_fractal_dimension(n_values: &[usize], rg_values: &[f64]) -> (f6
 }
 
 /// Calculate coordination number (number of neighbors) for each particle.
+///
+/// Two particles are considered neighbors if they are in contact, which includes:
+/// - Particles touching at r1+r2 (no sintering)
+/// - Particles overlapping at < r1+r2 (sintered contacts)
+///
+/// The tolerance parameter adds a small buffer above contact distance to account
+/// for numerical precision in particle placement.
 pub fn calculate_coordination(coordinates: &[[f64; 3]], radii: &[f64], tolerance: f64) -> Vec<u32> {
     let n = coordinates.len();
     let mut coordination = vec![0u32; n];
@@ -140,7 +147,10 @@ pub fn calculate_coordination(coordinates: &[[f64; 3]], radii: &[f64], tolerance
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             let contact_dist = radii[i] + radii[j];
 
-            if (dist - contact_dist).abs() <= tolerance {
+            // Particles are neighbors if they touch or overlap (sintered)
+            // dist <= contact_dist catches sintered particles (closer than r1+r2)
+            // tolerance adds buffer for numerical precision at contact distance
+            if dist <= contact_dist + tolerance {
                 coordination[i] += 1;
                 coordination[j] += 1;
             }
@@ -365,5 +375,62 @@ mod tests {
         assert!(result.anisotropy > 1.5);
         // High asphericity for chain-like structure
         assert!(result.asphericity > 0.1);
+    }
+
+    #[test]
+    fn test_coordination_touching_particles() {
+        // Two particles touching at distance r1+r2=2.0
+        let coords = vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        assert_eq!(coord[0], 1); // Particle 0 has 1 neighbor
+        assert_eq!(coord[1], 1); // Particle 1 has 1 neighbor
+    }
+
+    #[test]
+    fn test_coordination_sintered_particles() {
+        // Two sintered particles at distance 1.8 (90% of r1+r2=2.0)
+        let coords = vec![[0.0, 0.0, 0.0], [1.8, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        // Sintered particles (closer than r1+r2) should still be detected as neighbors
+        assert_eq!(coord[0], 1);
+        assert_eq!(coord[1], 1);
+    }
+
+    #[test]
+    fn test_coordination_non_touching_particles() {
+        // Two particles far apart at distance 5.0 (r1+r2=2.0)
+        let coords = vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        // Non-touching particles should have 0 neighbors
+        assert_eq!(coord[0], 0);
+        assert_eq!(coord[1], 0);
+    }
+
+    #[test]
+    fn test_coordination_chain() {
+        // Linear chain of 4 touching particles
+        let coords = vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0],
+        ];
+        let radii = vec![1.0; 4];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        assert_eq!(coord[0], 1); // End particle: 1 neighbor
+        assert_eq!(coord[1], 2); // Middle particle: 2 neighbors
+        assert_eq!(coord[2], 2); // Middle particle: 2 neighbors
+        assert_eq!(coord[3], 1); // End particle: 1 neighbor
     }
 }
