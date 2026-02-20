@@ -376,4 +376,61 @@ mod tests {
         // High asphericity for chain-like structure
         assert!(result.asphericity > 0.1);
     }
+
+    #[test]
+    fn test_coordination_touching_particles() {
+        // Two particles touching at distance r1+r2=2.0
+        let coords = vec![[0.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        assert_eq!(coord[0], 1); // Particle 0 has 1 neighbor
+        assert_eq!(coord[1], 1); // Particle 1 has 1 neighbor
+    }
+
+    #[test]
+    fn test_coordination_sintered_particles() {
+        // Two sintered particles at distance 1.8 (90% of r1+r2=2.0)
+        let coords = vec![[0.0, 0.0, 0.0], [1.8, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        // Sintered particles (closer than r1+r2) should still be detected as neighbors
+        assert_eq!(coord[0], 1);
+        assert_eq!(coord[1], 1);
+    }
+
+    #[test]
+    fn test_coordination_non_touching_particles() {
+        // Two particles far apart at distance 5.0 (r1+r2=2.0)
+        let coords = vec![[0.0, 0.0, 0.0], [5.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        // Non-touching particles should have 0 neighbors
+        assert_eq!(coord[0], 0);
+        assert_eq!(coord[1], 0);
+    }
+
+    #[test]
+    fn test_coordination_chain() {
+        // Linear chain of 4 touching particles
+        let coords = vec![
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [4.0, 0.0, 0.0],
+            [6.0, 0.0, 0.0],
+        ];
+        let radii = vec![1.0; 4];
+        let tolerance = 0.1;
+
+        let coord = calculate_coordination(&coords, &radii, tolerance);
+        assert_eq!(coord[0], 1); // End particle: 1 neighbor
+        assert_eq!(coord[1], 2); // Middle particle: 2 neighbors
+        assert_eq!(coord[2], 2); // Middle particle: 2 neighbors
+        assert_eq!(coord[3], 1); // End particle: 1 neighbor
+    }
 }

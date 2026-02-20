@@ -216,8 +216,8 @@ mod tests {
         let dist = SinteringDistribution::uniform(0.85, 0.95);
         let mut rng = create_rng(42);
 
-        let mut min_seen = 1.0;
-        let mut max_seen = 0.0;
+        let mut min_seen: f64 = 1.0;
+        let mut max_seen: f64 = 0.0;
 
         for _ in 0..1000 {
             let coeff = dist.sample(&mut rng);
