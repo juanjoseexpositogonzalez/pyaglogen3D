@@ -159,6 +159,7 @@ export interface SimulationMetrics {
 }
 
 export interface CreateSimulationInput {
+  name?: string
   algorithm: SimulationAlgorithm
   parameters: SimulationParams
   seed?: number
@@ -430,6 +431,7 @@ export interface Voxel2018Params {
 }
 
 export interface CreateFraktalFromImageInput {
+  name?: string
   source_type: 'uploaded_image'
   image: string  // base64 encoded
   original_filename: string
@@ -448,6 +450,7 @@ export interface CreateFraktalFromImageInput {
 }
 
 export interface CreateFraktalFromSimulationInput {
+  name?: string
   source_type: 'simulation_projection'
   simulation_id: string
   projection_params: ProjectionParams
