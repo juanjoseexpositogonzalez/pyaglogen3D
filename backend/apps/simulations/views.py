@@ -457,7 +457,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         """Calculate adjacency list for particle neighbor graph.
 
         Returns a list where each index i contains a list of neighbor indices for particle i.
-        Neighbors are particles whose surfaces touch (within tolerance).
+
+        Two particles are considered neighbors if they are in contact:
+        - Particles touching at r1+r2 (no sintering)
+        - Particles overlapping at < r1+r2 (sintered contacts)
+
+        The tolerance parameter (default 1%) adds a small buffer above contact
+        distance to account for numerical precision.
         """
         n = len(coords)
         adjacency = [[] for _ in range(n)]
@@ -465,8 +471,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
         for i in range(n):
             for j in range(i + 1, n):
                 dist = np.linalg.norm(coords[i] - coords[j])
-                touch_dist = radii[i] + radii[j]
-                if dist <= touch_dist * (1 + tolerance):
+                contact_dist = radii[i] + radii[j]
+                # Detect touching or overlapping (sintered) particles
+                if dist <= contact_dist * (1 + tolerance):
                     adjacency[i].append(j)
                     adjacency[j].append(i)
 

@@ -128,6 +128,13 @@ pub fn calculate_fractal_dimension(n_values: &[usize], rg_values: &[f64]) -> (f6
 }
 
 /// Calculate coordination number (number of neighbors) for each particle.
+///
+/// Two particles are considered neighbors if they are in contact, which includes:
+/// - Particles touching at r1+r2 (no sintering)
+/// - Particles overlapping at < r1+r2 (sintered contacts)
+///
+/// The tolerance parameter adds a small buffer above contact distance to account
+/// for numerical precision in particle placement.
 pub fn calculate_coordination(coordinates: &[[f64; 3]], radii: &[f64], tolerance: f64) -> Vec<u32> {
     let n = coordinates.len();
     let mut coordination = vec![0u32; n];
@@ -140,7 +147,10 @@ pub fn calculate_coordination(coordinates: &[[f64; 3]], radii: &[f64], tolerance
             let dist = (dx * dx + dy * dy + dz * dz).sqrt();
             let contact_dist = radii[i] + radii[j];
 
-            if (dist - contact_dist).abs() <= tolerance {
+            // Particles are neighbors if they touch or overlap (sintered)
+            // dist <= contact_dist catches sintered particles (closer than r1+r2)
+            // tolerance adds buffer for numerical precision at contact distance
+            if dist <= contact_dist + tolerance {
                 coordination[i] += 1;
                 coordination[j] += 1;
             }
