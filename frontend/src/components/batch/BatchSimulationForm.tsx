@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -18,14 +18,79 @@ const algorithmOptions = [
   { value: 'tunable', label: 'Tunable Fractal Dimension' },
 ]
 
+type InputMode = 'discrete' | 'range'
+
 interface ParameterVariation {
   name: string
+  inputMode: InputMode
+  // Discrete mode
   values: string // Comma-separated values
+  // Range mode
+  start: string
+  end: string
+  step: string
 }
 
 interface BatchSimulationFormProps {
   onSubmit: (data: CreateParametricStudyInput) => void
   isLoading?: boolean
+}
+
+/**
+ * Generate array of values from start, end, step
+ */
+function generateRangeValues(start: number, end: number, step: number): number[] {
+  if (step <= 0 || isNaN(start) || isNaN(end) || isNaN(step)) return []
+  if (start > end) return []
+
+  const values: number[] = []
+  // Use a small epsilon to handle floating point precision
+  const epsilon = step / 1000
+  for (let v = start; v <= end + epsilon; v += step) {
+    // Round to avoid floating point errors (e.g., 0.1 + 0.2 = 0.30000000000000004)
+    const rounded = Math.round(v * 1e10) / 1e10
+    if (rounded <= end) {
+      values.push(rounded)
+    }
+  }
+  return values
+}
+
+/**
+ * Get the values for a variation based on its input mode
+ */
+function getVariationValues(variation: ParameterVariation, isInteger: boolean): (number | string)[] {
+  if (variation.inputMode === 'range') {
+    const start = parseFloat(variation.start)
+    const end = parseFloat(variation.end)
+    const step = parseFloat(variation.step)
+    const values = generateRangeValues(start, end, step)
+    return isInteger ? values.map(v => Math.round(v)) : values
+  } else {
+    // Discrete mode - parse comma-separated values
+    return variation.values.split(',').map((v) => {
+      const trimmed = v.trim()
+      if (!trimmed) return null
+      if (isInteger) {
+        const num = parseInt(trimmed, 10)
+        return isNaN(num) ? trimmed : num
+      }
+      const num = parseFloat(trimmed)
+      return isNaN(num) ? trimmed : num
+    }).filter((v): v is number | string => v !== null)
+  }
+}
+
+/**
+ * Format values for preview display
+ */
+function formatValuesPreview(values: (number | string)[], maxShow: number = 8): string {
+  if (values.length === 0) return 'No values'
+  if (values.length <= maxShow) {
+    return values.join(', ')
+  }
+  const shown = values.slice(0, maxShow - 1)
+  return `${shown.join(', ')}, ... (${values.length} total)`
 }
 
 export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationFormProps) {
@@ -37,15 +102,29 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const [seedsPerCombo, setSeedsPerCombo] = useState('1')
   const [variations, setVariations] = useState<ParameterVariation[]>([])
 
+  // Parameters that must be integers
+  const integerParams = useMemo(() => new Set(['n_particles']), [])
+
   const addVariation = () => {
-    setVariations([...variations, { name: 'n_particles', values: '' }])
+    setVariations([...variations, {
+      name: 'n_particles',
+      inputMode: 'discrete',
+      values: '',
+      start: '100',
+      end: '1000',
+      step: '100',
+    }])
   }
 
   const removeVariation = (index: number) => {
     setVariations(variations.filter((_, i) => i !== index))
   }
 
-  const updateVariation = (index: number, field: keyof ParameterVariation, value: string) => {
+  const updateVariation = <K extends keyof ParameterVariation>(
+    index: number,
+    field: K,
+    value: ParameterVariation[K]
+  ) => {
     const updated = [...variations]
     updated[index] = { ...updated[index], [field]: value }
     setVariations(updated)
@@ -61,23 +140,14 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     }
 
     // Build parameter grid from variations
-    // Parameters that must be integers
-    const integerParams = new Set(['n_particles'])
-
     const parameterGrid: Record<string, unknown[]> = {}
     for (const variation of variations) {
-      if (variation.name && variation.values) {
-        const values = variation.values.split(',').map((v) => {
-          const trimmed = v.trim()
-          // Use parseInt for integer parameters, parseFloat for others
-          if (integerParams.has(variation.name)) {
-            const num = parseInt(trimmed, 10)
-            return isNaN(num) ? trimmed : num
-          }
-          const num = parseFloat(trimmed)
-          return isNaN(num) ? trimmed : num
-        })
-        parameterGrid[variation.name] = values
+      if (variation.name) {
+        const isInteger = integerParams.has(variation.name)
+        const values = getVariationValues(variation, isInteger)
+        if (values.length > 0) {
+          parameterGrid[variation.name] = values
+        }
       }
     }
 
@@ -94,10 +164,15 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   }
 
   // Calculate total simulations
-  const totalCombinations = variations.reduce((acc, v) => {
-    const count = v.values ? v.values.split(',').filter(Boolean).length : 1
-    return acc * (count || 1)
-  }, 1)
+  const variationCounts = useMemo(() => {
+    return variations.map((v) => {
+      const isInteger = integerParams.has(v.name)
+      const values = getVariationValues(v, isInteger)
+      return { values, count: values.length || 1 }
+    })
+  }, [variations, integerParams])
+
+  const totalCombinations = variationCounts.reduce((acc, v) => acc * v.count, 1)
   const totalSimulations = totalCombinations * (parseInt(seedsPerCombo) || 1)
 
   const parameterOptions = [
@@ -206,34 +281,116 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               </p>
             )}
 
-            {variations.map((variation, index) => (
-              <div key={index} className="flex gap-2 items-end p-3 border rounded-lg bg-muted/30">
-                <div className="flex-1 space-y-1">
-                  <Label className="text-xs">Parameter</Label>
-                  <Select
-                    value={variation.name}
-                    onChange={(e) => updateVariation(index, 'name', e.target.value)}
-                    options={parameterOptions}
-                  />
+            {variations.map((variation, index) => {
+              const isInteger = integerParams.has(variation.name)
+              const { values, count } = variationCounts[index] || { values: [], count: 0 }
+
+              return (
+                <div key={index} className="p-3 border rounded-lg bg-muted/30 space-y-3">
+                  {/* Parameter Selection & Delete */}
+                  <div className="flex gap-2 items-end">
+                    <div className="flex-1 space-y-1">
+                      <Label className="text-xs">Parameter</Label>
+                      <Select
+                        value={variation.name}
+                        onChange={(e) => updateVariation(index, 'name', e.target.value)}
+                        options={parameterOptions}
+                      />
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={() => removeVariation(index)}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  </div>
+
+                  {/* Input Mode Toggle */}
+                  <div className="flex gap-2">
+                    <Button
+                      type="button"
+                      variant={variation.inputMode === 'range' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'range')}
+                    >
+                      Range (Start → End)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'discrete')}
+                    >
+                      Discrete Values
+                    </Button>
+                  </div>
+
+                  {/* Range Mode Inputs */}
+                  {variation.inputMode === 'range' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label className="text-xs">Start</Label>
+                        <Input
+                          type="number"
+                          value={variation.start}
+                          onChange={(e) => updateVariation(index, 'start', e.target.value)}
+                          placeholder="100"
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">End</Label>
+                        <Input
+                          type="number"
+                          value={variation.end}
+                          onChange={(e) => updateVariation(index, 'end', e.target.value)}
+                          placeholder="1000"
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label className="text-xs">Step</Label>
+                        <Input
+                          type="number"
+                          value={variation.step}
+                          onChange={(e) => updateVariation(index, 'step', e.target.value)}
+                          placeholder="100"
+                          min={isInteger ? 1 : 0.01}
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Discrete Mode Input */}
+                  {variation.inputMode === 'discrete' && (
+                    <div className="space-y-1">
+                      <Label className="text-xs">Values (comma-separated)</Label>
+                      <Input
+                        value={variation.values}
+                        onChange={(e) => updateVariation(index, 'values', e.target.value)}
+                        placeholder="e.g., 100, 200, 500, 1000"
+                      />
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  <div className="p-2 bg-primary/5 rounded text-sm space-y-1">
+                    <div className="flex items-center justify-between">
+                      <span className="text-muted-foreground">Generated values:</span>
+                      <span className="font-mono font-medium">{count} values</span>
+                    </div>
+                    <p className="text-xs font-mono text-muted-foreground truncate">
+                      {formatValuesPreview(values)}
+                    </p>
+                  </div>
                 </div>
-                <div className="flex-[2] space-y-1">
-                  <Label className="text-xs">Values (comma-separated)</Label>
-                  <Input
-                    value={variation.values}
-                    onChange={(e) => updateVariation(index, 'values', e.target.value)}
-                    placeholder="e.g., 100, 200, 500, 1000"
-                  />
-                </div>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="icon"
-                  onClick={() => removeVariation(index)}
-                >
-                  <Trash2 className="h-4 w-4" />
-                </Button>
-              </div>
-            ))}
+              )
+            })}
           </div>
 
           {/* Summary */}
