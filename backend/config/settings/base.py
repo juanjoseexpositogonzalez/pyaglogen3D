@@ -1,4 +1,5 @@
 """Base Django settings for pyAgloGen3D."""
+import os
 from pathlib import Path
 
 from decouple import config
@@ -8,6 +9,23 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 SECRET_KEY = config("SECRET_KEY", default="insecure-dev-key")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = []
+
+# Helper to parse DATABASE_URL (Fly.io, Heroku, etc.)
+def parse_database_url(url: str) -> dict:
+    """Parse DATABASE_URL into Django database config."""
+    import re
+    pattern = r"postgres(?:ql)?://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<name>[^?]+)"
+    match = re.match(pattern, url)
+    if match:
+        return {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": match.group("name"),
+            "USER": match.group("user"),
+            "PASSWORD": match.group("password"),
+            "HOST": match.group("host"),
+            "PORT": match.group("port") or "5432",
+        }
+    raise ValueError(f"Invalid DATABASE_URL format: {url}")
 
 # Application definition
 DJANGO_APPS = [
@@ -66,16 +84,21 @@ TEMPLATES = [
 WSGI_APPLICATION = "config.wsgi.application"
 
 # Database
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.postgresql",
-        "NAME": config("DB_NAME", default="pyaglogen3d"),
-        "USER": config("DB_USER", default="pyaglogen3d"),
-        "PASSWORD": config("DB_PASSWORD", default="pyaglogen3d_dev"),
-        "HOST": config("DB_HOST", default="localhost"),
-        "PORT": config("DB_PORT", default="5432"),
+# Support both DATABASE_URL (Fly.io, Heroku) and individual DB_* variables
+DATABASE_URL = config("DATABASE_URL", default="")
+if DATABASE_URL:
+    DATABASES = {"default": parse_database_url(DATABASE_URL)}
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": config("DB_NAME", default="pyaglogen3d"),
+            "USER": config("DB_USER", default="pyaglogen3d"),
+            "PASSWORD": config("DB_PASSWORD", default="pyaglogen3d_dev"),
+            "HOST": config("DB_HOST", default="localhost"),
+            "PORT": config("DB_PORT", default="5432"),
+        }
     }
-}
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [

@@ -1,607 +1,696 @@
 # Deployment Guide
 
-This guide covers deploying pyAgloGen3D to production environments.
+This guide covers deploying pyAgloGen3D to production using **Heroku** (frontend) and **Fly.io** (backend).
 
 ## Table of Contents
 
+- [Architecture Overview](#architecture-overview)
 - [Prerequisites](#prerequisites)
-- [Docker Deployment](#docker-deployment)
-- [Manual Deployment](#manual-deployment)
-- [Environment Variables](#environment-variables)
-- [Database Setup](#database-setup)
-- [Celery Workers](#celery-workers)
-- [Nginx Configuration](#nginx-configuration)
-- [SSL/TLS Setup](#ssltls-setup)
-- [Monitoring](#monitoring)
+- [Backend Deployment (Fly.io)](#backend-deployment-flyio)
+- [Frontend Deployment (Heroku)](#frontend-deployment-heroku)
+- [Domain & SSL Configuration](#domain--ssl-configuration)
+- [CI/CD Integration](#cicd-integration)
+- [Monitoring & Logging](#monitoring--logging)
 - [Troubleshooting](#troubleshooting)
+- [Cost Estimation](#cost-estimation)
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────┐         ┌────────────────────────────────────────┐
+│      HEROKU         │         │               FLY.IO                    │
+│                     │         │                                         │
+│  ┌───────────────┐  │  HTTPS  │  ┌───────────┐    ┌─────────────────┐  │
+│  │   Next.js     │──┼────────▶│  │  Django   │    │  Celery Worker  │  │
+│  │   Frontend    │  │         │  │    API    │    │ (aglogen_core)  │  │
+│  │   (Port 80)   │  │         │  │ (Port 8080)│    │                 │  │
+│  └───────────────┘  │         │  └─────┬─────┘    └────────┬────────┘  │
+│                     │         │        │                    │           │
+└─────────────────────┘         │  ┌─────▼─────┐    ┌────────▼────────┐  │
+                                │  │    Fly    │    │  Upstash Redis  │  │
+                                │  │  Postgres │    │ (Celery Broker) │  │
+                                │  └───────────┘    └─────────────────┘  │
+                                └────────────────────────────────────────┘
+```
+
+**Services:**
+- **Frontend (Heroku)**: Next.js 14 application
+- **Backend API (Fly.io)**: Django 5.0 + Django REST Framework
+- **Background Worker (Fly.io)**: Celery with aglogen_core Rust engine
+- **Database (Fly.io)**: Fly Postgres (managed PostgreSQL)
+- **Cache/Broker (Fly.io)**: Upstash Redis (serverless Redis)
+
+---
 
 ## Prerequisites
 
-### System Requirements
+### Accounts Required
 
-- **CPU**: 4+ cores recommended (simulations are CPU-intensive)
-- **RAM**: 8GB minimum, 16GB recommended
-- **Storage**: 50GB+ for simulation data and geometry storage
-- **OS**: Ubuntu 22.04 LTS or similar Linux distribution
+1. **Fly.io Account**: https://fly.io/app/sign-up (credit card required for resources)
+2. **Heroku Account**: https://signup.heroku.com (credit card required for paid dynos)
 
-### Software Requirements
-
-- Docker 24+ and Docker Compose v2
-- Or for manual deployment:
-  - Python 3.11+
-  - Rust 1.70+ (for building aglogen_core)
-  - Node.js 18+ (for frontend)
-  - PostgreSQL 15+
-  - Redis 7+
-  - Nginx (reverse proxy)
-
-## Docker Deployment
-
-### Quick Start
+### CLI Tools
 
 ```bash
-# Clone repository
-git clone https://github.com/juanjoseexpositogonzalez/pyaglogen3D.git
-cd pyaglogen3D
+# Install Fly CLI
+curl -L https://fly.io/install.sh | sh
+fly auth login
 
-# Create production environment file
-cp .env.example .env
-# Edit .env with production values (see Environment Variables section)
-
-# Build and start all services
-docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-
-# Run migrations
-docker compose exec backend python manage.py migrate
-
-# Collect static files
-docker compose exec backend python manage.py collectstatic --noinput
+# Install Heroku CLI
+curl https://cli-assets.heroku.com/install.sh | sh
+heroku login
 ```
 
-### Production Docker Compose
+### Local Requirements
 
-Create `docker-compose.prod.yml`:
+- Git
+- Python 3.11+ (for generating secrets)
+- Node.js 18+ (optional, for local testing)
+
+---
+
+## Backend Deployment (Fly.io)
+
+### Step 1: Clone and Prepare
+
+```bash
+git clone https://github.com/juanjoseexpositogonzalez/pyaglogen3D.git
+cd pyaglogen3D
+```
+
+### Step 2: Create Fly.io Application
+
+```bash
+# Initialize Fly app (from project root)
+fly launch --name pyaglogen3d-api --no-deploy --region mad
+
+# Choose region closest to your users:
+# - mad (Madrid)
+# - cdg (Paris)
+# - lhr (London)
+# - iad (Virginia)
+# - sjc (San Jose)
+```
+
+### Step 3: Create PostgreSQL Database
+
+```bash
+# Create Fly Postgres cluster
+fly postgres create --name pyaglogen3d-db --region mad
+
+# Attach to your app (auto-sets DATABASE_URL)
+fly postgres attach pyaglogen3d-db --app pyaglogen3d-api
+```
+
+**Postgres Pricing:**
+| Plan | RAM | Storage | Price |
+|------|-----|---------|-------|
+| Development | 256MB | 1GB | Free |
+| Production | 2GB | 10GB | ~$15/month |
+
+### Step 4: Create Upstash Redis
+
+```bash
+# Create Redis instance
+fly redis create --name pyaglogen3d-redis --region mad
+
+# This outputs a REDIS_URL - save it!
+```
+
+**Alternative**: Use [Upstash Console](https://console.upstash.com) for more control.
+
+### Step 5: Configure Secrets
+
+```bash
+# Generate Django secret key
+SECRET_KEY=$(python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())")
+
+# Set all secrets
+fly secrets set \
+  SECRET_KEY="$SECRET_KEY" \
+  DEBUG="False" \
+  ALLOWED_HOSTS="pyaglogen3d-api.fly.dev" \
+  REDIS_URL="<your-redis-url-from-step-4>" \
+  CORS_ORIGINS="https://pyaglogen3d-frontend.herokuapp.com"
+
+# Verify secrets are set
+fly secrets list
+```
+
+### Step 6: Deploy
+
+```bash
+# Deploy the application
+fly deploy
+
+# Watch deployment logs
+fly logs
+```
+
+**First deployment takes 5-10 minutes** due to Rust compilation.
+
+### Step 7: Run Migrations
+
+```bash
+# SSH into the container and run migrations
+fly ssh console -C "python manage.py migrate"
+
+# Create superuser (optional)
+fly ssh console -C "python manage.py createsuperuser"
+```
+
+### Step 8: Scale Celery Worker
+
+```bash
+# Start the worker process
+fly scale count worker=1
+
+# For higher throughput
+fly scale count worker=2
+
+# Check running machines
+fly status
+```
+
+### Step 9: Verify Deployment
+
+```bash
+# Check health endpoint
+curl https://pyaglogen3d-api.fly.dev/api/v1/health/
+
+# Check logs
+fly logs --app pyaglogen3d-api
+
+# Check worker logs specifically
+fly logs --app pyaglogen3d-api -p worker
+```
+
+---
+
+## Frontend Deployment (Heroku)
+
+### Step 1: Create Heroku Application
+
+```bash
+cd pyaglogen3D/frontend
+
+# Create Heroku app
+heroku create pyaglogen3d-frontend
+
+# Set Node.js buildpack
+heroku buildpacks:set heroku/nodejs
+```
+
+### Step 2: Configure Environment Variables
+
+```bash
+# Set API URL to point to Fly.io backend
+heroku config:set NEXT_PUBLIC_API_URL=https://pyaglogen3d-api.fly.dev/api/v1
+
+# Set production mode
+heroku config:set NODE_ENV=production
+
+# Verify configuration
+heroku config
+```
+
+### Step 3: Configure Node.js Version
+
+Add to `frontend/package.json`:
+
+```json
+{
+  "engines": {
+    "node": "18.x",
+    "npm": "10.x"
+  }
+}
+```
+
+### Step 4: Deploy to Heroku
+
+**Option A: Deploy from subdirectory (monorepo)**
+
+```bash
+# From project root
+git subtree push --prefix frontend heroku main
+```
+
+**Option B: Deploy with separate Git remote**
+
+```bash
+# Add Heroku remote for frontend subdirectory
+cd frontend
+git init
+git add .
+git commit -m "Initial frontend deployment"
+heroku git:remote -a pyaglogen3d-frontend
+git push heroku main
+```
+
+**Option C: Use GitHub integration**
+
+1. Go to Heroku Dashboard → Your App → Deploy
+2. Connect GitHub repository
+3. Set "App root" to `frontend`
+4. Enable automatic deploys from `main` branch
+
+### Step 5: Verify Deployment
+
+```bash
+# Open the app
+heroku open
+
+# Check logs
+heroku logs --tail
+
+# Check dyno status
+heroku ps
+```
+
+---
+
+## Domain & SSL Configuration
+
+### Custom Domain for Fly.io (Backend)
+
+```bash
+# Add custom domain
+fly certs add api.yourdomain.com
+
+# Get DNS records
+fly certs show api.yourdomain.com
+
+# Add these DNS records to your domain provider:
+# - CNAME: api → pyaglogen3d-api.fly.dev
+# OR
+# - A record: api → <fly-ipv4>
+# - AAAA record: api → <fly-ipv6>
+```
+
+### Custom Domain for Heroku (Frontend)
+
+```bash
+# Add custom domain
+heroku domains:add www.yourdomain.com
+heroku domains:add yourdomain.com
+
+# Get DNS target
+heroku domains
+
+# Add these DNS records:
+# - CNAME: www → <heroku-dns-target>
+# - ALIAS/ANAME: @ → <heroku-dns-target>
+```
+
+### Update CORS After Custom Domain
+
+```bash
+fly secrets set CORS_ORIGINS="https://yourdomain.com,https://www.yourdomain.com"
+```
+
+### Update Frontend API URL
+
+```bash
+heroku config:set NEXT_PUBLIC_API_URL=https://api.yourdomain.com/api/v1
+```
+
+---
+
+## CI/CD Integration
+
+### GitHub Actions Workflow
+
+Create `.github/workflows/deploy.yml`:
 
 ```yaml
-version: '3.8'
+name: Deploy
 
-services:
-  backend:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    environment:
-      - DEBUG=False
-      - DJANGO_SETTINGS_MODULE=config.settings.production
-    restart: always
-    depends_on:
-      - db
-      - redis
+on:
+  push:
+    branches: [main]
 
-  celery:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command: celery -A config worker -l info --concurrency=4
-    environment:
-      - DEBUG=False
-      - DJANGO_SETTINGS_MODULE=config.settings.production
-    restart: always
-    depends_on:
-      - db
-      - redis
+jobs:
+  deploy-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-  celery-beat:
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    command: celery -A config beat -l info
-    environment:
-      - DEBUG=False
-    restart: always
-    depends_on:
-      - redis
+      - name: Setup Fly CLI
+        uses: superfly/flyctl-actions/setup-flyctl@master
 
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-      args:
-        - NEXT_PUBLIC_API_URL=https://your-domain.com/api/v1
-    restart: always
+      - name: Deploy to Fly.io
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
 
-  db:
-    image: postgres:15-alpine
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
-    restart: always
+  deploy-frontend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
 
-  redis:
-    image: redis:7-alpine
-    volumes:
-      - redis_data:/data
-    restart: always
-
-  nginx:
-    image: nginx:alpine
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
-      - ./nginx/ssl:/etc/nginx/ssl:ro
-      - static_files:/var/www/static:ro
-    depends_on:
-      - backend
-      - frontend
-    restart: always
-
-volumes:
-  postgres_data:
-  redis_data:
-  static_files:
+      - name: Deploy to Heroku
+        uses: akhileshns/heroku-deploy@v3.13.15
+        with:
+          heroku_api_key: ${{ secrets.HEROKU_API_KEY }}
+          heroku_app_name: pyaglogen3d-frontend
+          heroku_email: ${{ secrets.HEROKU_EMAIL }}
+          appdir: frontend
 ```
 
-## Manual Deployment
-
-### 1. System Setup
+### Get API Tokens
 
 ```bash
-# Update system
-sudo apt update && sudo apt upgrade -y
+# Fly.io token
+fly tokens create deploy -x 999999h
+# Add to GitHub Secrets as FLY_API_TOKEN
 
-# Install dependencies
-sudo apt install -y python3.11 python3.11-venv python3.11-dev \
-    postgresql postgresql-contrib redis-server nginx \
-    build-essential pkg-config libssl-dev curl git
-
-# Install Rust
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-source ~/.cargo/env
-
-# Install Node.js
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt install -y nodejs
+# Heroku token
+heroku auth:token
+# Add to GitHub Secrets as HEROKU_API_KEY
 ```
 
-### 2. Application Setup
+---
+
+## Monitoring & Logging
+
+### Fly.io Monitoring
 
 ```bash
-# Create application user
-sudo useradd -m -s /bin/bash pyaglogen
-sudo su - pyaglogen
+# Real-time logs
+fly logs
 
-# Clone repository
-git clone https://github.com/juanjoseexpositogonzalez/pyaglogen3D.git
-cd pyaglogen3D
+# Specific process logs
+fly logs -p web
+fly logs -p worker
 
-# Create virtual environment
-python3.11 -m venv .venv
-source .venv/bin/activate
+# SSH into container for debugging
+fly ssh console
 
-# Install Python dependencies
-cd backend
-pip install --upgrade pip
-pip install -e ".[prod]"
+# Check machine status
+fly status
 
-# Build Rust engine
-cd ../aglogen_core
-maturin build --release
-pip install target/wheels/*.whl
-
-# Build frontend
-cd ../frontend
-npm ci
-npm run build
+# View metrics dashboard
+fly dashboard
 ```
 
-### 3. Configure Environment
+### Heroku Monitoring
 
 ```bash
-cd ~/pyaglogen3D
-cp .env.example .env
-nano .env  # Edit with production values
+# Real-time logs
+heroku logs --tail
+
+# Check dyno status
+heroku ps
+
+# Run one-off commands
+heroku run bash
 ```
 
-### 4. Database Setup
-
-```bash
-# Create database and user
-# IMPORTANT: Replace <SECURE_PASSWORD> with a strong, unique password
-# Store this password securely and use it in your .env file
-sudo -u postgres psql <<EOF
-CREATE USER pyaglogen WITH PASSWORD '<SECURE_PASSWORD>';
-CREATE DATABASE pyaglogen3d OWNER pyaglogen;
-GRANT ALL PRIVILEGES ON DATABASE pyaglogen3d TO pyaglogen;
-EOF
-
-# Run migrations
-cd ~/pyaglogen3D/backend
-source ../.venv/bin/activate
-python manage.py migrate
-python manage.py collectstatic --noinput
-```
-
-### 5. Systemd Services
-
-Create `/etc/systemd/system/pyaglogen-backend.service`:
-
-```ini
-[Unit]
-Description=pyAgloGen3D Django Backend
-After=network.target postgresql.service redis.service
-
-[Service]
-User=pyaglogen
-Group=pyaglogen
-WorkingDirectory=/home/pyaglogen/pyaglogen3D/backend
-Environment="PATH=/home/pyaglogen/pyaglogen3D/.venv/bin"
-ExecStart=/home/pyaglogen/pyaglogen3D/.venv/bin/gunicorn \
-    --workers 4 \
-    --bind unix:/run/pyaglogen/backend.sock \
-    --timeout 120 \
-    config.wsgi:application
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Create `/etc/systemd/system/pyaglogen-celery.service`:
-
-```ini
-[Unit]
-Description=pyAgloGen3D Celery Worker
-After=network.target postgresql.service redis.service
-
-[Service]
-User=pyaglogen
-Group=pyaglogen
-WorkingDirectory=/home/pyaglogen/pyaglogen3D/backend
-Environment="PATH=/home/pyaglogen/pyaglogen3D/.venv/bin"
-ExecStart=/home/pyaglogen/pyaglogen3D/.venv/bin/celery \
-    -A config worker \
-    -l info \
-    --concurrency=4
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Create `/etc/systemd/system/pyaglogen-frontend.service`:
-
-```ini
-[Unit]
-Description=pyAgloGen3D Next.js Frontend
-After=network.target
-
-[Service]
-User=pyaglogen
-Group=pyaglogen
-WorkingDirectory=/home/pyaglogen/pyaglogen3D/frontend
-ExecStart=/usr/bin/npm start
-Environment="PORT=3000"
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-```
-
-Enable and start services:
-
-```bash
-sudo mkdir -p /run/pyaglogen
-sudo chown pyaglogen:pyaglogen /run/pyaglogen
-
-sudo systemctl daemon-reload
-sudo systemctl enable pyaglogen-backend pyaglogen-celery pyaglogen-frontend
-sudo systemctl start pyaglogen-backend pyaglogen-celery pyaglogen-frontend
-```
-
-## Environment Variables
-
-| Variable | Description | Example |
-|----------|-------------|---------|
-| `DEBUG` | Enable debug mode | `False` |
-| `SECRET_KEY` | Django secret key | `your-secure-random-key` |
-| `ALLOWED_HOSTS` | Comma-separated hostnames | `your-domain.com,www.your-domain.com` |
-| `DATABASE_URL` | PostgreSQL connection URL | `postgres://user:pass@localhost:5432/pyaglogen3d` |
-| `REDIS_URL` | Redis connection URL | `redis://localhost:6379/0` |
-| `CELERY_BROKER_URL` | Celery broker URL | `redis://localhost:6379/1` |
-| `CORS_ALLOWED_ORIGINS` | CORS origins | `https://your-domain.com` |
-
-### Generate Secret Key
-
-```bash
-python -c "from django.core.management.utils import get_random_secret_key; print(get_random_secret_key())"
-```
-
-## Database Setup
-
-### PostgreSQL Configuration
-
-Edit `/etc/postgresql/15/main/postgresql.conf`:
-
-```ini
-# Performance tuning for simulation workloads
-shared_buffers = 2GB
-effective_cache_size = 6GB
-work_mem = 256MB
-maintenance_work_mem = 512MB
-max_connections = 100
-```
-
-### Backup Strategy
-
-```bash
-# Create backup script
-cat > /home/pyaglogen/backup.sh << 'EOF'
-#!/bin/bash
-BACKUP_DIR="/home/pyaglogen/backups"
-DATE=$(date +%Y%m%d_%H%M%S)
-mkdir -p $BACKUP_DIR
-
-# Database backup
-pg_dump pyaglogen3d | gzip > "$BACKUP_DIR/db_$DATE.sql.gz"
-
-# Keep only last 7 days
-find $BACKUP_DIR -name "*.gz" -mtime +7 -delete
-EOF
-
-chmod +x /home/pyaglogen/backup.sh
-
-# Add to crontab
-echo "0 2 * * * /home/pyaglogen/backup.sh" | crontab -
-```
-
-## Celery Workers
-
-### Worker Configuration
-
-For CPU-intensive simulations, configure workers appropriately:
-
-```bash
-# Single worker with multiple processes
-celery -A config worker -l info --concurrency=4
-
-# Or use prefork pool for better isolation
-celery -A config worker -l info --pool=prefork --concurrency=4
-```
-
-### Monitoring with Flower
-
-```bash
-pip install flower
-celery -A config flower --port=5555
-```
-
-## Nginx Configuration
-
-Create `/etc/nginx/sites-available/pyaglogen`:
-
-```nginx
-upstream backend {
-    server unix:/run/pyaglogen/backend.sock fail_timeout=0;
-}
-
-upstream frontend {
-    server 127.0.0.1:3000;
-}
-
-server {
-    listen 80;
-    server_name your-domain.com www.your-domain.com;
-    return 301 https://$server_name$request_uri;
-}
-
-server {
-    listen 443 ssl http2;
-    server_name your-domain.com www.your-domain.com;
-
-    ssl_certificate /etc/letsencrypt/live/your-domain.com/fullchain.pem;
-    ssl_certificate_key /etc/letsencrypt/live/your-domain.com/privkey.pem;
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256;
-
-    client_max_body_size 50M;
-
-    # API requests
-    location /api/ {
-        proxy_pass http://backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 300s;
-    }
-
-    # Admin
-    location /admin/ {
-        proxy_pass http://backend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # Static files
-    location /static/ {
-        alias /home/pyaglogen/pyaglogen3D/backend/staticfiles/;
-        expires 30d;
-        add_header Cache-Control "public, immutable";
-    }
-
-    # Frontend
-    location / {
-        proxy_pass http://frontend;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-    }
-}
-```
-
-Enable the site:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/pyaglogen /etc/nginx/sites-enabled/
-sudo nginx -t
-sudo systemctl reload nginx
-```
-
-## SSL/TLS Setup
-
-### Using Let's Encrypt
-
-```bash
-# Install certbot
-sudo apt install certbot python3-certbot-nginx
-
-# Obtain certificate
-sudo certbot --nginx -d your-domain.com -d www.your-domain.com
-
-# Auto-renewal is configured automatically
-sudo systemctl status certbot.timer
-```
-
-## Monitoring
-
-### Health Checks
+### Health Check Endpoints
 
 ```bash
 # Backend health
-curl -f http://localhost:8000/api/v1/health/ || echo "Backend unhealthy"
+curl https://pyaglogen3d-api.fly.dev/api/v1/health/
 
-# Celery health
-celery -A config inspect ping
-
-# Redis health
-redis-cli ping
+# Expected response:
+# {"status": "healthy", "database": "connected", "redis": "connected"}
 ```
 
-### Log Locations
+### Recommended Monitoring Tools
 
-- Backend: `/var/log/pyaglogen/backend.log`
-- Celery: `/var/log/pyaglogen/celery.log`
-- Nginx: `/var/log/nginx/access.log`, `/var/log/nginx/error.log`
+1. **Sentry** - Error tracking (free tier available)
+   ```bash
+   fly secrets set SENTRY_DSN="https://xxx@sentry.io/xxx"
+   ```
 
-### Performance Monitoring
+2. **Fly Metrics** - Built-in metrics at https://fly.io/apps/pyaglogen3d-api/metrics
 
-Consider adding:
-- **Sentry** for error tracking
-- **Prometheus + Grafana** for metrics
-- **pgAdmin** for database monitoring
+3. **Heroku Metrics** - Built-in at Heroku Dashboard → Metrics
+
+---
 
 ## Troubleshooting
 
-### Common Issues
+### Fly.io Issues
 
-**Migrations fail:**
+#### Deployment fails during Rust build
+
+**Symptom**: Build times out or runs out of memory
+
+**Solution**:
 ```bash
-# Check database connection
-python manage.py dbshell
+# Increase build machine resources
+fly deploy --build-arg CARGO_NET_RETRY=5 --vm-size shared-cpu-2x
 
-# Reset migrations if needed (CAUTION: data loss)
-python manage.py migrate --fake-initial
-```
-
-**Celery tasks stuck:**
-```bash
-# Check Redis
-redis-cli LLEN celery
-
-# Purge all tasks (CAUTION)
-celery -A config purge
-
-# Restart workers
-sudo systemctl restart pyaglogen-celery
-```
-
-**Rust module not found:**
-```bash
-# Rebuild aglogen_core
-cd aglogen_core
-maturin develop --release
-```
-
-**Static files not loading:**
-```bash
-python manage.py collectstatic --noinput
-sudo systemctl reload nginx
-```
-
-### Performance Tuning
-
-**For large parametric studies:**
-```bash
-# Increase Celery concurrency
-celery -A config worker -l info --concurrency=8
-
-# Or use multiple workers
-celery -A config worker -l info -n worker1@%h --concurrency=4 &
-celery -A config worker -l info -n worker2@%h --concurrency=4 &
-```
-
-**Database optimization:**
-```sql
--- Add indexes for common queries
-CREATE INDEX idx_simulation_project_status ON simulations_simulation(project_id, status);
-CREATE INDEX idx_parametric_study_status ON simulations_parametricstudy(status);
-
--- Vacuum and analyze
-VACUUM ANALYZE;
-```
-
-## Updates and Maintenance
-
-### Updating the Application
-
-```bash
-cd ~/pyaglogen3D
-git pull origin main
-
-# Update dependencies
-source .venv/bin/activate
-pip install -e ".[prod]"
-
-# Rebuild Rust engine if changed
+# Or pre-build the wheel locally and include in repo
 cd aglogen_core
 maturin build --release
-pip install target/wheels/*.whl --force-reinstall
-
-# Run migrations
-cd ../backend
-python manage.py migrate
-python manage.py collectstatic --noinput
-
-# Restart services
-sudo systemctl restart pyaglogen-backend pyaglogen-celery
-
-# Update frontend
-cd ../frontend
-npm ci
-npm run build
-sudo systemctl restart pyaglogen-frontend
+# Commit the .whl file
 ```
 
-### Rollback Procedure
+#### Database connection errors
+
+**Symptom**: `psycopg.OperationalError: connection refused`
+
+**Solution**:
+```bash
+# Check if DATABASE_URL is set
+fly secrets list | grep DATABASE
+
+# Verify Postgres is running
+fly postgres connect -a pyaglogen3d-db
+
+# Re-attach database
+fly postgres attach pyaglogen3d-db --app pyaglogen3d-api
+```
+
+#### Celery worker not processing tasks
+
+**Symptom**: Tasks stuck in queue
+
+**Solution**:
+```bash
+# Check worker is running
+fly status
+
+# Check worker logs
+fly logs -p worker
+
+# Verify REDIS_URL is correct
+fly ssh console -C "echo \$REDIS_URL"
+
+# Restart worker
+fly scale count worker=0
+fly scale count worker=1
+```
+
+#### Out of memory errors
+
+**Symptom**: `OOMKilled` in logs
+
+**Solution**:
+```bash
+# Scale up VM memory
+fly scale memory 1024 -p web
+fly scale memory 2048 -p worker
+
+# Or reduce Celery concurrency in fly.toml
+# worker = "celery -A config worker -l info --concurrency=1"
+```
+
+#### Machine keeps stopping
+
+**Symptom**: App returns 503 errors intermittently
+
+**Solution**:
+```bash
+# Check if auto-stop is too aggressive
+# In fly.toml, set:
+# min_machines_running = 1
+
+# Force machine to stay running
+fly scale count web=1 --max-per-region 1
+```
+
+### Heroku Issues
+
+#### Build fails
+
+**Symptom**: `npm ERR!` during build
+
+**Solution**:
+```bash
+# Clear build cache
+heroku builds:cache:purge -a pyaglogen3d-frontend
+
+# Check Node.js version in package.json
+# Ensure "engines": { "node": "18.x" }
+
+# View build logs
+heroku builds:output
+```
+
+#### API connection errors (CORS)
+
+**Symptom**: `Access-Control-Allow-Origin` errors in browser console
+
+**Solution**:
+```bash
+# Update CORS settings on backend
+fly secrets set CORS_ORIGINS="https://pyaglogen3d-frontend.herokuapp.com"
+
+# Redeploy backend
+fly deploy
+```
+
+#### Static assets not loading
+
+**Symptom**: CSS/JS files return 404
+
+**Solution**:
+```bash
+# Ensure build completed successfully
+heroku logs --tail
+
+# Check if .next directory was created
+heroku run ls -la .next
+
+# Force rebuild
+git commit --allow-empty -m "Force rebuild"
+git push heroku main
+```
+
+#### Dyno sleeping (Eco tier)
+
+**Symptom**: First request is slow (30+ seconds)
+
+**Solution**:
+```bash
+# Upgrade to Basic dyno ($7/month)
+heroku ps:type basic
+
+# Or use a free uptime monitor like UptimeRobot
+# to ping your app every 25 minutes
+```
+
+### Common Issues (Both Platforms)
+
+#### Migrations fail
+
+**Symptom**: `django.db.utils.ProgrammingError`
+
+**Solution**:
+```bash
+# Fly.io
+fly ssh console -C "python manage.py showmigrations"
+fly ssh console -C "python manage.py migrate --fake-initial"
+
+# Check for unapplied migrations
+fly ssh console -C "python manage.py migrate --plan"
+```
+
+#### Environment variables not loading
+
+**Symptom**: `KeyError` or `decouple.UndefinedValueError`
+
+**Solution**:
+```bash
+# Fly.io - check secrets
+fly secrets list
+
+# Heroku - check config vars
+heroku config
+
+# Ensure variable names match exactly
+```
+
+---
+
+## Cost Estimation
+
+### Fly.io (Backend)
+
+| Resource | Specification | Price |
+|----------|--------------|-------|
+| Web Machine | shared-cpu-1x, 512MB | ~$3/month |
+| Worker Machine | shared-cpu-2x, 1GB | ~$7/month |
+| Postgres (Dev) | 256MB, 1GB storage | Free |
+| Postgres (Prod) | 2GB, 10GB storage | ~$15/month |
+| Upstash Redis | 10K commands/day | Free |
+| Upstash Redis (Pro) | Unlimited | ~$10/month |
+| Bandwidth | 100GB included | $0.02/GB after |
+
+**Total (Development)**: ~$10-15/month
+**Total (Production)**: ~$35-50/month
+
+### Heroku (Frontend)
+
+| Resource | Specification | Price |
+|----------|--------------|-------|
+| Eco Dyno | 512MB, sleeps after 30min | $5/month |
+| Basic Dyno | 512MB, never sleeps | $7/month |
+| Standard-1x | 512MB, horizontal scaling | $25/month |
+
+**Recommended**: Basic Dyno at $7/month
+
+### Total Monthly Cost
+
+| Tier | Fly.io | Heroku | Total |
+|------|--------|--------|-------|
+| Development | $10 | $5 | **$15/month** |
+| Production | $35 | $7 | **$42/month** |
+| High Availability | $75+ | $25+ | **$100+/month** |
+
+---
+
+## Quick Reference
+
+### Useful Commands
 
 ```bash
-# Revert to previous version
-git checkout <previous-commit-hash>
+# === Fly.io ===
+fly status                    # Check app status
+fly logs                      # View logs
+fly ssh console               # SSH into container
+fly secrets set KEY=value     # Set secret
+fly scale count worker=2      # Scale workers
+fly deploy                    # Deploy changes
+fly postgres connect          # Connect to database
 
-# Restore database backup if needed
-gunzip < backups/db_YYYYMMDD_HHMMSS.sql.gz | psql pyaglogen3d
-
-# Rebuild and restart
-# ... follow update steps above
+# === Heroku ===
+heroku ps                     # Check dyno status
+heroku logs --tail            # View logs
+heroku run bash               # Run one-off dyno
+heroku config:set KEY=value   # Set config var
+heroku restart                # Restart dynos
+git push heroku main          # Deploy changes
 ```
+
+### Environment Variables Summary
+
+**Backend (Fly.io)**:
+| Variable | Example |
+|----------|---------|
+| `SECRET_KEY` | Auto-generated Django secret |
+| `DEBUG` | `False` |
+| `ALLOWED_HOSTS` | `pyaglogen3d-api.fly.dev` |
+| `DATABASE_URL` | Auto-set by `fly postgres attach` |
+| `REDIS_URL` | From `fly redis create` output |
+| `CORS_ORIGINS` | `https://your-frontend-domain.com` |
+
+**Frontend (Heroku)**:
+| Variable | Example |
+|----------|---------|
+| `NEXT_PUBLIC_API_URL` | `https://pyaglogen3d-api.fly.dev/api/v1` |
+| `NODE_ENV` | `production` |
+
+---
+
+## Support
+
+- **Fly.io Documentation**: https://fly.io/docs/
+- **Heroku Documentation**: https://devcenter.heroku.com/
+- **Project Issues**: https://github.com/juanjoseexpositogonzalez/pyaglogen3D/issues

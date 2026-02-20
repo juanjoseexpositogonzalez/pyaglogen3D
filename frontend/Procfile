@@ -1,0 +1,4 @@
+# Procfile for pyAgloGen3D Frontend
+# Used by Heroku for Next.js deployment
+
+web: npm start

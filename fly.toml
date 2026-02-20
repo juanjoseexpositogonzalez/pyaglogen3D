@@ -1,0 +1,74 @@
+# =============================================================================
+# Fly.io Configuration for pyAgloGen3D Backend
+# https://fly.io/docs/reference/configuration/
+# =============================================================================
+
+app = "pyaglogen3d-api"
+primary_region = "mad"  # Madrid, Spain - change to your preferred region
+
+# Build configuration - uses Dockerfile in project root
+[build]
+  dockerfile = "backend/Dockerfile"
+
+# Environment variables (non-secret)
+[env]
+  DJANGO_SETTINGS_MODULE = "config.settings.production"
+  PYTHONUNBUFFERED = "1"
+  PORT = "8080"
+
+# HTTP service configuration
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 1
+  processes = ["web"]
+
+  [http_service.concurrency]
+    type = "connections"
+    hard_limit = 100
+    soft_limit = 80
+
+# Process definitions
+[processes]
+  web = "gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 --access-logfile - --error-logfile - config.wsgi:application"
+  worker = "celery -A config worker -l info --concurrency=2"
+
+# VM configuration for web process
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory = "512mb"
+  processes = ["web"]
+
+# VM configuration for worker process (needs more resources for simulations)
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 2
+  memory = "1gb"
+  processes = ["worker"]
+
+# Health checks
+[[services]]
+  protocol = "tcp"
+  internal_port = 8080
+
+  [[services.http_checks]]
+    interval = "30s"
+    timeout = "5s"
+    grace_period = "10s"
+    method = "GET"
+    path = "/api/v1/health/"
+
+# Deployment strategy
+[deploy]
+  strategy = "rolling"
+  release_command = "python manage.py migrate --noinput"
+
+# Mounts for persistent storage (optional - for simulation data)
+# Uncomment if you need persistent file storage
+# [[mounts]]
+#   source = "simulation_data"
+#   destination = "/app/data"
+#   processes = ["web", "worker"]

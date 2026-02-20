@@ -1,0 +1,14 @@
+# Procfile for pyAgloGen3D Backend
+# Used by Fly.io and Heroku-compatible platforms
+
+# Web process - Django with Gunicorn
+web: gunicorn --bind 0.0.0.0:${PORT:-8080} --workers 2 --timeout 120 --access-logfile - --error-logfile - config.wsgi:application
+
+# Worker process - Celery for background tasks
+worker: celery -A config worker -l info --concurrency=2
+
+# Beat process - Celery scheduler (optional)
+beat: celery -A config beat -l info
+
+# Release command - runs during deployment
+release: python manage.py migrate --noinput
