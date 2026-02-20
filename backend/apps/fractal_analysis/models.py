@@ -109,6 +109,11 @@ class FraktalAnalysis(models.Model):
         on_delete=models.CASCADE,
         related_name="fraktal_analyses",
     )
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional display name. Auto-generated if not provided.",
+    )
 
     # Source configuration
     source_type = models.CharField(
@@ -220,6 +225,8 @@ class FraktalAnalysis(models.Model):
         ]
 
     def __str__(self) -> str:
+        if self.name:
+            return self.name
         return f"FRAKTAL {self.model} - {self.status} ({self.id})"
 
 

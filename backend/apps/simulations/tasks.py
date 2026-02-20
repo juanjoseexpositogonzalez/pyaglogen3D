@@ -726,6 +726,82 @@ def compute_kf_sphere(n: int) -> float:
     return 1.0
 
 
+def run_box_counting_if_configured(simulation_id: str) -> dict | None:
+    """Run box-counting on completed simulation if study requires it.
+
+    Checks if the simulation belongs to a ParametricStudy with
+    include_box_counting=True and runs box-counting analysis if so.
+
+    Args:
+        simulation_id: UUID string of the simulation
+
+    Returns:
+        Box-counting results dict if performed, None otherwise
+    """
+    from .models import Simulation
+
+    simulation = Simulation.objects.get(id=simulation_id)
+
+    # Check if simulation belongs to a study with box-counting enabled
+    studies = simulation.studies.filter(include_box_counting=True)
+    if not studies.exists():
+        return None
+
+    if simulation.geometry is None:
+        logger.warning(f"No geometry available for box-counting: {simulation_id}")
+        return None
+
+    # Get box-counting params from first study (they should all be the same)
+    study = studies.first()
+    bc_params = study.box_counting_params or {}
+    points_per_sphere = bc_params.get("points_per_sphere", 100)
+    precision = bc_params.get("precision", 18)
+
+    logger.info(f"Running box-counting for simulation {simulation_id}")
+
+    # Load geometry
+    buf = io.BytesIO(simulation.geometry)
+    geometry_array = np.load(buf)
+    coords = np.ascontiguousarray(geometry_array[:, :3])
+    radii = np.ascontiguousarray(geometry_array[:, 3])
+
+    # Run box-counting
+    import aglogen_core
+
+    result = aglogen_core.box_counting_agglomerate(
+        coords,
+        radii,
+        points_per_sphere=points_per_sphere,
+        precision=precision,
+    )
+
+    # Prepare results
+    box_counting_results = {
+        "dimension": float(result.dimension),
+        "r_squared": float(result.r_squared),
+        "std_error": float(result.std_error),
+        "confidence_interval": list(result.confidence_interval),
+        "execution_time_ms": int(result.execution_time_ms),
+        "parameters": {
+            "points_per_sphere": points_per_sphere,
+            "precision": precision,
+        },
+    }
+
+    # Update simulation metrics
+    metrics = simulation.metrics or {}
+    metrics["box_counting"] = box_counting_results
+    simulation.metrics = metrics
+    simulation.save(update_fields=["metrics"])
+
+    logger.info(
+        f"Box-counting for simulation {simulation_id}: "
+        f"Df_bc={result.dimension:.3f}, R2={result.r_squared:.4f}"
+    )
+
+    return box_counting_results
+
+
 @shared_task(bind=True, max_retries=1)
 def run_simulation_task(self, simulation_id: str) -> dict:
     """Execute simulation using Rust engine."""
@@ -1022,11 +1098,20 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             f"time={result.execution_time_ms}ms"
         )
 
+        # Run box-counting if configured in parent study
+        bc_result = None
+        try:
+            bc_result = run_box_counting_if_configured(simulation_id)
+        except Exception as e:
+            logger.warning(f"Box-counting failed for {simulation_id}: {e}")
+            # Don't fail the whole simulation for box-counting error
+
         return {
             "status": "completed",
             "simulation_id": simulation_id,
             "fractal_dimension": simulation.metrics["fractal_dimension"],
             "execution_time_ms": simulation.execution_time_ms,
+            "box_counting": bc_result,
         }
 
     except ImportError as e:

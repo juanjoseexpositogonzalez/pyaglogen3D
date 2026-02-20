@@ -41,6 +41,31 @@ class TestSimulationModel:
         assert simulation.geometry is None
         assert simulation.metrics is None
 
+    def test_simulation_with_custom_name(self, db, project):
+        """Test creating a simulation with custom name."""
+        simulation = Simulation.objects.create(
+            project=project,
+            name="My Custom Simulation",
+            algorithm=SimulationAlgorithm.DLA,
+            parameters={"n_particles": 100},
+            seed=42,
+        )
+        assert simulation.name == "My Custom Simulation"
+        assert str(simulation) == "My Custom Simulation"
+
+    def test_simulation_name_blank_allowed(self, db, project):
+        """Test simulation name can be blank."""
+        simulation = Simulation.objects.create(
+            project=project,
+            name="",
+            algorithm=SimulationAlgorithm.DLA,
+            parameters={"n_particles": 100},
+            seed=42,
+        )
+        assert simulation.name == ""
+        # When name is blank, __str__ falls back to algorithm - status format
+        assert "dla" in str(simulation)
+
     def test_simulation_str(self, simulation):
         """Test simulation string representation."""
         assert "dla" in str(simulation)
@@ -95,6 +120,74 @@ class TestParametricStudyModel:
         assert study.id is not None
         assert study.status == "queued"
         assert study.simulations.count() == 0
+
+    def test_parametric_study_with_limiting_cases(self, db, project):
+        """Test creating a parametric study with limiting cases enabled."""
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Study with Limiting Cases",
+            base_algorithm=SimulationAlgorithm.DLA,
+            base_parameters={"sticking_probability": 1.0},
+            parameter_grid={"n_particles": [100, 500]},
+            include_limiting_cases=True,
+            limiting_cases_config={
+                "include_boundaries": True,
+                "include_theoretical": True,
+            },
+        )
+        assert study.include_limiting_cases is True
+        assert study.limiting_cases_config["include_boundaries"] is True
+
+    def test_parametric_study_with_sintering(self, db, project):
+        """Test creating a parametric study with sintering configuration."""
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Study with Sintering",
+            base_algorithm=SimulationAlgorithm.DLA,
+            base_parameters={"sticking_probability": 1.0},
+            parameter_grid={"n_particles": [100, 500]},
+            sintering_config={
+                "distribution_type": "uniform",
+                "min": 0.85,
+                "max": 0.95,
+            },
+        )
+        assert study.sintering_config["distribution_type"] == "uniform"
+        assert study.sintering_config["min"] == 0.85
+        assert study.sintering_config["max"] == 0.95
+
+    def test_parametric_study_with_box_counting(self, db, project):
+        """Test creating a parametric study with box-counting enabled."""
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Study with Box Counting",
+            base_algorithm=SimulationAlgorithm.DLA,
+            base_parameters={"sticking_probability": 1.0},
+            parameter_grid={"n_particles": [100, 500]},
+            include_box_counting=True,
+            box_counting_params={
+                "points_per_sphere": 100,
+                "precision": 18,
+            },
+        )
+        assert study.include_box_counting is True
+        assert study.box_counting_params["points_per_sphere"] == 100
+        assert study.box_counting_params["precision"] == 18
+
+    def test_parametric_study_defaults(self, db, project):
+        """Test default values for new batch fields."""
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Basic Study",
+            base_algorithm=SimulationAlgorithm.DLA,
+            base_parameters={"sticking_probability": 1.0},
+            parameter_grid={"n_particles": [100]},
+        )
+        assert study.include_limiting_cases is False
+        assert study.limiting_cases_config is None
+        assert study.sintering_config is None
+        assert study.include_box_counting is False
+        assert study.box_counting_params is None
 
 
 class TestComparisonSetModel:
