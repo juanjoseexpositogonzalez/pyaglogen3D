@@ -211,8 +211,10 @@ nano .env  # Edit with production values
 
 ```bash
 # Create database and user
+# IMPORTANT: Replace <SECURE_PASSWORD> with a strong, unique password
+# Store this password securely and use it in your .env file
 sudo -u postgres psql <<EOF
-CREATE USER pyaglogen WITH PASSWORD 'your-secure-password';
+CREATE USER pyaglogen WITH PASSWORD '<SECURE_PASSWORD>';
 CREATE DATABASE pyaglogen3d OWNER pyaglogen;
 GRANT ALL PRIVILEGES ON DATABASE pyaglogen3d TO pyaglogen;
 EOF

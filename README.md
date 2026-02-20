@@ -134,7 +134,7 @@ REDIS_URL=redis://localhost:6379/0
 
 # Django
 SECRET_KEY=your-secret-key
-DEBUG=True
+DEBUG=False  # Set to True only for local development
 ```
 
 ## Documentation

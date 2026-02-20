@@ -740,7 +740,11 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
     """
     from .models import Simulation
 
-    simulation = Simulation.objects.get(id=simulation_id)
+    try:
+        simulation = Simulation.objects.get(id=simulation_id)
+    except Simulation.DoesNotExist:
+        logger.warning(f"Simulation not found for box-counting: {simulation_id}")
+        return None
 
     # Check if simulation belongs to a study with box-counting enabled
     studies = simulation.studies.filter(include_box_counting=True)
