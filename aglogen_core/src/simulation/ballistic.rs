@@ -175,29 +175,42 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
             }
 
             // Check for collision with existing particles
+            // Note: We detect collision at unsintered distance (physical touch),
+            // then apply sintering coefficient when placing the particle.
             let test_sphere = Sphere::new(pos, new_radius);
             let candidates = spatial_hash.query_potential_collisions(&test_sphere);
+
+            // Sample sintering coefficient once for this particle
+            let sintering_coeff = params.sintering.sample(&mut rng);
 
             for &idx in &candidates {
                 let other = &particles[idx];
                 let dist = pos.distance_to(&other.center);
-                let touch_dist = new_radius + other.radius;
+                // Use sintered distance for collision detection to ensure consistent behavior
+                let contact_dist = sintered_contact_distance(new_radius, other.radius, sintering_coeff);
 
-                if dist < touch_dist {
+                if dist < contact_dist * 1.05 {
                     // Collision! Check sticking probability
                     if params.sticking_probability >= 1.0
                         || rng.gen::<f64>() < params.sticking_probability
                     {
-                        // Sample sintering coefficient for this contact
-                        let sintering_coeff = params.sintering.sample(&mut rng);
-                        let contact_dist = sintered_contact_distance(new_radius, other.radius, sintering_coeff);
-
-                        // Place particle at sintered contact distance
+                        // Place particle at exact sintered contact distance
                         let new_direction = (pos - other.center).normalize();
-                        pos = other.center + new_direction * contact_dist;
+                        let new_pos = other.center + new_direction * contact_dist;
 
-                        stuck = true;
-                        break;
+                        // Verify no overlaps with other particles
+                        let valid = !particles.iter().enumerate().any(|(i, p)| {
+                            if i == idx { return false; }
+                            let d = new_pos.distance_to(&p.center);
+                            let min_dist = sintered_contact_distance(new_radius, p.radius, sintering_coeff);
+                            d < min_dist - 1e-6
+                        });
+
+                        if valid {
+                            pos = new_pos;
+                            stuck = true;
+                            break;
+                        }
                     }
                 }
             }

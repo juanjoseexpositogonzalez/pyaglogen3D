@@ -140,13 +140,14 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
     let r1 = params.random_radius(&mut rng);
     particles.push(Sphere::new(Vector3::zero(), r1));
 
-    // Second particle touching the first (with sintering)
+    // Second particle placed at sintered contact distance from first
+    // Note: sintering is applied from the start for consistent morphology
     let r2 = params.random_radius(&mut rng);
     let (dx, dy, dz) = random_point_on_sphere(&mut rng);
     let dir = Vector3::new(dx, dy, dz);
     let sintering_coeff_2 = params.sintering.sample(&mut rng);
     let contact_dist_2 = sintered_contact_distance(r1, r2, sintering_coeff_2);
-    let pos2 = dir * contact_dist_2;
+    let pos2 = dir * contact_dist_2;  // Uses sintered distance, not r1+r2
     particles.push(Sphere::new(pos2, r2));
 
     // Track Rg evolution
