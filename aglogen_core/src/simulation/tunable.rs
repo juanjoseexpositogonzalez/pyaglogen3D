@@ -20,6 +20,7 @@ use super::metrics::{
     calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
+use super::sintering::{sintered_contact_distance, SinteringDistribution};
 
 /// Tunable PC simulation parameters.
 #[derive(Debug, Clone)]
@@ -30,6 +31,7 @@ pub struct TunableParams {
     pub radius_min: f64,
     pub radius_max: f64,
     pub max_rotations: usize,
+    pub sintering: SinteringDistribution,
 }
 
 impl Default for TunableParams {
@@ -41,6 +43,7 @@ impl Default for TunableParams {
             radius_min: 1.0,
             radius_max: 1.0,
             max_rotations: 25,
+            sintering: SinteringDistribution::default(),
         }
     }
 }
@@ -71,9 +74,14 @@ impl TunableParams {
 /// * `target_kf` - Target prefactor (typically 1.0-2.0)
 /// * `radius_min` - Minimum particle radius
 /// * `radius_max` - Maximum particle radius
+/// * `sintering_coeff` - Sintering coefficient (0.5-1.0, where 1.0 = no sintering)
+/// * `sintering_type` - Distribution type: "fixed", "uniform", or "normal"
+/// * `sintering_min` - Min for uniform distribution (default: 0.85)
+/// * `sintering_max` - Max for uniform distribution (default: 0.95)
+/// * `sintering_std` - Std dev for normal distribution (default: 0.05)
 /// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
 pub fn run_tunable(
     py: Python<'_>,
     n_particles: usize,
@@ -81,10 +89,21 @@ pub fn run_tunable(
     target_kf: f64,
     radius_min: f64,
     radius_max: Option<f64>,
+    sintering_coeff: f64,
+    sintering_type: &str,
+    sintering_min: f64,
+    sintering_max: f64,
+    sintering_std: f64,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
+
+    let sintering = match sintering_type.to_lowercase().as_str() {
+        "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
+        "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
+        _ => SinteringDistribution::fixed(sintering_coeff),
+    };
 
     let params = TunableParams {
         n_particles,
@@ -92,6 +111,7 @@ pub fn run_tunable(
         target_kf,
         radius_min,
         radius_max,
+        sintering,
         ..Default::default()
     };
 
@@ -120,11 +140,13 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
     let r1 = params.random_radius(&mut rng);
     particles.push(Sphere::new(Vector3::zero(), r1));
 
-    // Second particle touching the first
+    // Second particle touching the first (with sintering)
     let r2 = params.random_radius(&mut rng);
     let (dx, dy, dz) = random_point_on_sphere(&mut rng);
     let dir = Vector3::new(dx, dy, dz);
-    let pos2 = dir * (r1 + r2);
+    let sintering_coeff_2 = params.sintering.sample(&mut rng);
+    let contact_dist_2 = sintered_contact_distance(r1, r2, sintering_coeff_2);
+    let pos2 = dir * contact_dist_2;
     particles.push(Sphere::new(pos2, r2));
 
     // Track Rg evolution
@@ -161,7 +183,7 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
         if gamma4_sq <= 0.0 {
             // Fallback: place particle using ballistic-like approach
             let new_radius = params.random_radius(&mut rng);
-            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius) {
+            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering) {
                 particles.push(Sphere::new(pos, new_radius));
                 distances.push(pos.length());
             }
@@ -179,7 +201,7 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
 
         if la_minus.is_empty() {
             // Fallback: use ballistic placement
-            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius) {
+            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering) {
                 particles.push(Sphere::new(pos, new_radius));
                 distances.push(pos.length());
             }
@@ -190,12 +212,18 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
         let mut lb = la_minus.clone();
         let mut placed = false;
 
+        // Sample sintering coefficient for this particle's contact
+        let sintering_coeff = params.sintering.sample(&mut rng);
+
         while !lb.is_empty() && !placed {
             // Select random reference particle from LB
             let ref_idx = lb[rng.gen_range(0..lb.len())];
             let ref_particle = &particles[ref_idx];
             let cb = ref_particle.center;
             let rb = ref_particle.radius;
+
+            // Calculate sintered contact distance
+            let contact_dist = sintered_contact_distance(rb, new_radius, sintering_coeff);
 
             // Calculate alpha - angle to rotate CB to get CA at distance gamma
             let cb_norm = cb.length();
@@ -204,7 +232,7 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
                 continue;
             }
 
-            let cos_alpha = (gamma.powi(2) + cb_norm.powi(2) - (rb + new_radius).powi(2))
+            let cos_alpha = (gamma.powi(2) + cb_norm.powi(2) - contact_dist.powi(2))
                 / (2.0 * gamma * cb_norm);
 
             if cos_alpha.abs() > 1.0 {
@@ -215,11 +243,13 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
             let alpha = cos_alpha.acos();
 
             // Find particles that could intersect (LA+)
+            // Use sintered contact distance for overlap check
             let la_plus: Vec<usize> = lb.iter()
                 .filter(|&&i| i != ref_idx)
                 .filter(|&&i| {
                     let dist_to_ref = particles[i].center.distance_to(&cb);
-                    dist_to_ref < 2.0 * (rb + particles[i].radius)
+                    let overlap_threshold = sintered_contact_distance(rb, particles[i].radius, sintering_coeff);
+                    dist_to_ref < 2.0 * overlap_threshold
                 })
                 .copied()
                 .collect();
@@ -240,17 +270,19 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
                 // Scale to gamma distance
                 let ca = ca_final * gamma;
 
-                // Check for overlaps with LA+
+                // Check for overlaps with LA+ using sintered contact distances
                 let has_overlap = la_plus.iter().any(|&i| {
                     let dist = ca.distance_to(&particles[i].center);
-                    dist < new_radius + particles[i].radius - 1e-6
+                    let min_dist = sintered_contact_distance(new_radius, particles[i].radius, sintering_coeff);
+                    dist < min_dist - 1e-6
                 });
 
                 if !has_overlap {
-                    // Also check against all other particles for safety
+                    // Also check against all other particles for safety using sintered distances
                     let safe = !particles.iter().any(|p| {
                         let dist = ca.distance_to(&p.center);
-                        dist < new_radius + p.radius - 1e-6
+                        let min_dist = sintered_contact_distance(new_radius, p.radius, sintering_coeff);
+                        dist < min_dist - 1e-6
                     });
 
                     if safe {
@@ -269,7 +301,7 @@ fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResult {
 
         // Fallback if placement failed
         if !placed {
-            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius) {
+            if let Some(pos) = place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering) {
                 particles.push(Sphere::new(pos, new_radius));
                 distances.push(pos.length());
             }
@@ -414,15 +446,19 @@ fn rotate_vector(v: &Vector3, axis: &Vector3, angle: f64) -> Vector3 {
     )
 }
 
-/// Fallback: place particle using ballistic-like approach.
+/// Fallback: place particle using ballistic-like approach with sintering.
 fn place_particle_ballistic<R: Rng>(
     particles: &[Sphere],
     rng: &mut R,
     radius: f64,
+    sintering: &SinteringDistribution,
 ) -> Option<Vector3> {
     if particles.is_empty() {
         return Some(Vector3::zero());
     }
+
+    // Sample sintering coefficient for this contact
+    let sintering_coeff = sintering.sample(rng);
 
     // Calculate bounding radius
     let max_dist = particles.iter()
@@ -442,19 +478,20 @@ fn place_particle_ballistic<R: Rng>(
         let mut pos = start;
 
         for _ in 0..(launch_dist * 4.0 / step) as usize {
-            // Check for contact
+            // Check for contact (using sintered contact distance)
             for p in particles {
                 let dist = pos.distance_to(&p.center);
-                let contact_dist = radius + p.radius;
+                let sintered_dist = sintered_contact_distance(radius, p.radius, sintering_coeff);
 
-                if dist <= contact_dist * 1.01 {
-                    // Place at contact point
+                if dist <= sintered_dist * 1.01 {
+                    // Place at sintered contact point
                     let to_p = (p.center - pos).normalize();
-                    let contact_pos = p.center - to_p * contact_dist;
+                    let contact_pos = p.center - to_p * sintered_dist;
 
-                    // Verify no overlaps
+                    // Verify no overlaps (using sintered distances)
                     let safe = !particles.iter().any(|other| {
-                        contact_pos.distance_to(&other.center) < radius + other.radius - 1e-6
+                        let min_dist = sintered_contact_distance(radius, other.radius, sintering_coeff);
+                        contact_pos.distance_to(&other.center) < min_dist - 1e-6
                     });
 
                     if safe {

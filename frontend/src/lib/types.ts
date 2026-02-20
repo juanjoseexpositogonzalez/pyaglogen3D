@@ -38,6 +38,12 @@ export interface DlaParams {
   sticking_probability: number
   lattice_size: number
   seed_radius: number
+  // Sintering parameters (optional)
+  sintering_coeff?: number
+  sintering_type?: SinteringDistributionType
+  sintering_min?: number
+  sintering_max?: number
+  sintering_std?: number
 }
 
 export interface CcaParams {
@@ -45,12 +51,24 @@ export interface CcaParams {
   sticking_probability: number
   particle_radius: number
   box_size: number
+  // Sintering parameters (optional)
+  sintering_coeff?: number
+  sintering_type?: SinteringDistributionType
+  sintering_min?: number
+  sintering_max?: number
+  sintering_std?: number
 }
 
 export interface BallisticParams {
   n_particles: number
   sticking_probability: number
   particle_radius: number
+  // Sintering parameters (optional)
+  sintering_coeff?: number
+  sintering_type?: SinteringDistributionType
+  sintering_min?: number
+  sintering_max?: number
+  sintering_std?: number
 }
 
 export interface TunableParams {
@@ -59,6 +77,12 @@ export interface TunableParams {
   target_kf: number
   radius_min?: number
   radius_max?: number
+  // Sintering parameters (optional)
+  sintering_coeff?: number
+  sintering_type?: SinteringDistributionType
+  sintering_min?: number
+  sintering_max?: number
+  sintering_std?: number
 }
 
 export interface TunableCcParams extends TunableParams {
@@ -71,6 +95,16 @@ export type ChainConfig = 'lineal' | 'cruz2d' | 'asterisco' | 'cruz3d'
 export type PlaneConfig = 'plano' | 'dobleplano' | 'tripleplano'
 export type SphereConfig = 'cuboctaedro'
 export type PackingType = 'HC' | 'CS' | 'CCC'
+export type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
+
+// Sintering parameters
+export interface SinteringParams {
+  sintering_coeff: number       // 0.5-1.0, where 1.0 = no sintering
+  sintering_type: SinteringDistributionType  // Distribution type
+  sintering_min?: number        // Min for uniform distribution (default: 0.85)
+  sintering_max?: number        // Max for uniform distribution (default: 0.95)
+  sintering_std?: number        // Std dev for normal distribution (default: 0.05)
+}
 
 export interface LimitingParams {
   n_particles: number
