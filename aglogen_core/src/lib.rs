@@ -23,6 +23,7 @@ use simulation::dla::run_dla;
 use simulation::tunable::run_tunable;
 use simulation::tunable_cc::run_tunable_cc;
 use simulation::result::PySimulationResult;
+use simulation::sintering::PySinteringParams;
 
 use numpy::PyReadonlyArray2;
 
@@ -124,6 +125,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyFraktalResult>()?;
     m.add_class::<Granulated2012Params>()?;
     m.add_class::<Voxel2018Params>()?;
+    m.add_class::<PySinteringParams>()?;
 
     Ok(())
 }

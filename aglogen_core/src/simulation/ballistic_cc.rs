@@ -25,6 +25,7 @@ use super::metrics::{
     calculate_porosity, calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
+use super::sintering::{sintered_contact_distance, SinteringDistribution};
 
 /// Ballistic CC simulation parameters.
 #[derive(Debug, Clone)]
@@ -34,6 +35,7 @@ pub struct BallisticCcParams {
     pub radius_min: f64,
     pub radius_max: f64,
     pub max_collision_attempts: usize,
+    pub sintering: SinteringDistribution,
 }
 
 impl Default for BallisticCcParams {
@@ -44,6 +46,7 @@ impl Default for BallisticCcParams {
             radius_min: 1.0,
             radius_max: 1.0,
             max_collision_attempts: 100,
+            sintering: SinteringDistribution::default(),
         }
     }
 }
@@ -143,24 +146,26 @@ impl Cluster {
     }
 
     /// Check for collision with another cluster.
-    /// Returns the collision distance t, and indices of colliding particles.
+    /// Returns the collision distance t, indices of colliding particles, and sintered contact distance.
     /// The `other` cluster moves along `trajectory` direction.
     fn find_collision_with(
         &self,
         other: &Cluster,
         trajectory: Vector3,
         max_distance: f64,
-    ) -> Option<(f64, usize, usize)> {
+        sintering_coeff: f64,
+    ) -> Option<(f64, usize, usize, f64)> {
         // For each pair of particles, find the collision distance along trajectory
-        // We solve: |pi.center - (pj.center + t*trajectory)| = ri + rj
+        // We solve: |pi.center - (pj.center + t*trajectory)| = contact_dist
         // Which becomes: |d - t*trajectory|^2 = contact_dist^2
         // Where d = pi.center - pj.center
-        let mut best_collision: Option<(f64, usize, usize)> = None;
+        let mut best_collision: Option<(f64, usize, usize, f64)> = None;
 
         for (i, pi) in self.particles.iter().enumerate() {
             for (j, pj) in other.particles.iter().enumerate() {
                 let d = pi.center - pj.center;
-                let contact_dist = pi.radius + pj.radius;
+                // Use sintered contact distance
+                let contact_dist = sintered_contact_distance(pi.radius, pj.radius, sintering_coeff);
 
                 // Quadratic: t^2*(traj·traj) - 2t*(d·traj) + (d·d - contact^2) = 0
                 let a = trajectory.dot(&trajectory);
@@ -185,7 +190,7 @@ impl Cluster {
 
                     if t <= max_distance {
                         if best_collision.is_none() || t < best_collision.unwrap().0 {
-                            best_collision = Some((t, i, j));
+                            best_collision = Some((t, i, j, contact_dist));
                         }
                     }
                 }
@@ -203,25 +208,42 @@ impl Cluster {
 /// * `sticking_probability` - Probability of adhesion on contact (0-1)
 /// * `radius_min` - Minimum particle radius
 /// * `radius_max` - Maximum particle radius (defaults to radius_min for monodisperse)
+/// * `sintering_coeff` - Sintering coefficient (0.5-1.0, where 1.0 = no sintering)
+/// * `sintering_type` - Distribution type: "fixed", "uniform", or "normal"
+/// * `sintering_min` - Min for uniform distribution (default: 0.85)
+/// * `sintering_max` - Max for uniform distribution (default: 0.95)
+/// * `sintering_std` - Std dev for normal distribution (default: 0.05)
 /// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, seed=None))]
+#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
 pub fn run_ballistic_cc(
     py: Python<'_>,
     n_particles: usize,
     sticking_probability: f64,
     radius_min: f64,
     radius_max: Option<f64>,
+    sintering_coeff: f64,
+    sintering_type: &str,
+    sintering_min: f64,
+    sintering_max: f64,
+    sintering_std: f64,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
+
+    let sintering = match sintering_type.to_lowercase().as_str() {
+        "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
+        "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
+        _ => SinteringDistribution::fixed(sintering_coeff),
+    };
 
     let params = BallisticCcParams {
         n_particles,
         sticking_probability,
         radius_min,
         radius_max,
+        sintering,
         ..Default::default()
     };
 
@@ -299,13 +321,16 @@ fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simulation
         working_impactor.translate(translation);
 
         // Step 10: March impactor along trajectory to find collision
+        // Sample sintering coefficient for this cluster merge
+        let sintering_coeff = params.sintering.sample(&mut rng);
         let collision = impacted.find_collision_with(
             &working_impactor,
             trajectory_dir,
             launch_distance * 2.0,
+            sintering_coeff,
         );
 
-        if let Some((t, _, _)) = collision {
+        if let Some((t, _, _, _)) = collision {
             // Check sticking probability
             if params.sticking_probability >= 1.0 || rng.gen::<f64>() < params.sticking_probability
             {

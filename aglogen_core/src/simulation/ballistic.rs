@@ -18,6 +18,7 @@ use super::metrics::{
     calculate_porosity, calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
+use super::sintering::{sintered_contact_distance, SinteringDistribution};
 
 /// Ballistic aggregation parameters.
 #[derive(Debug, Clone)]
@@ -28,6 +29,7 @@ pub struct BallisticParams {
     pub radius_max: f64,
     pub launch_distance_factor: f64,
     pub max_ray_steps: usize,
+    pub sintering: SinteringDistribution,
 }
 
 impl Default for BallisticParams {
@@ -39,6 +41,7 @@ impl Default for BallisticParams {
             radius_max: 1.0,
             launch_distance_factor: 2.0,
             max_ray_steps: 10000,
+            sintering: SinteringDistribution::default(),
         }
     }
 }
@@ -71,25 +74,42 @@ impl BallisticParams {
 /// * `sticking_probability` - Probability of adhesion on contact (0-1)
 /// * `radius_min` - Minimum particle radius (for polydisperse)
 /// * `radius_max` - Maximum particle radius (for polydisperse, defaults to radius_min)
+/// * `sintering_coeff` - Sintering coefficient (0.5-1.0, where 1.0 = no sintering)
+/// * `sintering_type` - Distribution type: "fixed", "uniform", or "normal"
+/// * `sintering_min` - Min for uniform distribution (default: 0.85)
+/// * `sintering_max` - Max for uniform distribution (default: 0.95)
+/// * `sintering_std` - Std dev for normal distribution (default: 0.05)
 /// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, seed=None))]
+#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
 pub fn run_ballistic(
     py: Python<'_>,
     n_particles: usize,
     sticking_probability: f64,
     radius_min: f64,
     radius_max: Option<f64>,
+    sintering_coeff: f64,
+    sintering_type: &str,
+    sintering_min: f64,
+    sintering_max: f64,
+    sintering_std: f64,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
+
+    let sintering = match sintering_type.to_lowercase().as_str() {
+        "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
+        "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
+        _ => SinteringDistribution::fixed(sintering_coeff),
+    };
 
     let params = BallisticParams {
         n_particles,
         sticking_probability,
         radius_min,
         radius_max,
+        sintering,
         ..Default::default()
     };
 
@@ -155,29 +175,42 @@ fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationResul
             }
 
             // Check for collision with existing particles
+            // Note: We detect collision at unsintered distance (physical touch),
+            // then apply sintering coefficient when placing the particle.
             let test_sphere = Sphere::new(pos, new_radius);
             let candidates = spatial_hash.query_potential_collisions(&test_sphere);
+
+            // Sample sintering coefficient once for this particle
+            let sintering_coeff = params.sintering.sample(&mut rng);
 
             for &idx in &candidates {
                 let other = &particles[idx];
                 let dist = pos.distance_to(&other.center);
-                let contact_dist = new_radius + other.radius;
+                // Use sintered distance for collision detection to ensure consistent behavior
+                let contact_dist = sintered_contact_distance(new_radius, other.radius, sintering_coeff);
 
-                if dist < contact_dist {
+                if dist < contact_dist * 1.05 {
                     // Collision! Check sticking probability
                     if params.sticking_probability >= 1.0
                         || rng.gen::<f64>() < params.sticking_probability
                     {
-                        // Place particle at contact point (backtrack to contact)
-                        let penetration = contact_dist - dist;
-                        pos = pos - direction * penetration;
-
-                        // Verify we're at contact distance
+                        // Place particle at exact sintered contact distance
                         let new_direction = (pos - other.center).normalize();
-                        pos = other.center + new_direction * contact_dist;
+                        let new_pos = other.center + new_direction * contact_dist;
 
-                        stuck = true;
-                        break;
+                        // Verify no overlaps with other particles
+                        let valid = !particles.iter().enumerate().any(|(i, p)| {
+                            if i == idx { return false; }
+                            let d = new_pos.distance_to(&p.center);
+                            let min_dist = sintered_contact_distance(new_radius, p.radius, sintering_coeff);
+                            d < min_dist - 1e-6
+                        });
+
+                        if valid {
+                            pos = new_pos;
+                            stuck = true;
+                            break;
+                        }
                     }
                 }
             }

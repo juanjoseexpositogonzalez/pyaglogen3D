@@ -6,5 +6,6 @@ pub mod cca;
 pub mod dla;
 pub mod metrics;
 pub mod result;
+pub mod sintering;
 pub mod tunable;
 pub mod tunable_cc;

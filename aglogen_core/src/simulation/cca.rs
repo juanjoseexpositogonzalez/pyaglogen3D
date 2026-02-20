@@ -16,6 +16,7 @@ use super::metrics::{
     calculate_porosity, calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
+use super::sintering::{sintered_contact_distance, SinteringDistribution};
 
 /// CCA simulation parameters.
 #[derive(Debug, Clone)]
@@ -30,6 +31,7 @@ pub struct CcaParams {
     /// If true (default), iterate until ONE agglomerate remains.
     /// If false, stop at max_iterations (multi-agglomerate mode).
     pub single_agglomerate: bool,
+    pub sintering: SinteringDistribution,
 }
 
 impl Default for CcaParams {
@@ -43,6 +45,7 @@ impl Default for CcaParams {
             max_iterations: 100_000,
             step_size_factor: 2.0, // Increased for faster convergence
             single_agglomerate: true,
+            sintering: SinteringDistribution::default(),
         }
     }
 }
@@ -153,9 +156,14 @@ impl Cluster {
 /// * `box_size` - Size of the periodic simulation box
 /// * `single_agglomerate` - If true (default), iterate until ONE agglomerate forms.
 ///                          If false, may produce multiple agglomerates.
+/// * `sintering_coeff` - Sintering coefficient (0.5-1.0, where 1.0 = no sintering)
+/// * `sintering_type` - Distribution type: "fixed", "uniform", or "normal"
+/// * `sintering_min` - Min for uniform distribution (default: 0.85)
+/// * `sintering_max` - Max for uniform distribution (default: 0.95)
+/// * `sintering_std` - Std dev for normal distribution (default: 0.05)
 /// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, box_size=100.0, single_agglomerate=true, seed=None))]
+#[pyo3(signature = (n_particles, sticking_probability=1.0, radius_min=1.0, radius_max=None, box_size=100.0, single_agglomerate=true, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
 pub fn run_cca(
     py: Python<'_>,
     n_particles: usize,
@@ -164,10 +172,21 @@ pub fn run_cca(
     radius_max: Option<f64>,
     box_size: f64,
     single_agglomerate: bool,
+    sintering_coeff: f64,
+    sintering_type: &str,
+    sintering_min: f64,
+    sintering_max: f64,
+    sintering_std: f64,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
+
+    let sintering = match sintering_type.to_lowercase().as_str() {
+        "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
+        "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
+        _ => SinteringDistribution::fixed(sintering_coeff),
+    };
 
     let params = CcaParams {
         n_particles,
@@ -176,6 +195,7 @@ pub fn run_cca(
         radius_max,
         box_size,
         single_agglomerate,
+        sintering,
         ..Default::default()
     };
 
@@ -287,8 +307,10 @@ fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
                 let max_dist = clusters[i].bounding_radius() + clusters[j].bounding_radius();
 
                 if dist < max_dist {
-                    // Detailed particle-level collision check with PBC
-                    if check_cluster_collision_pbc(&clusters[i], &clusters[j], effective_box_size) {
+                    // Sample sintering coefficient for this potential merge
+                    let sintering_coeff = params.sintering.sample(&mut rng);
+                    // Detailed particle-level collision check with PBC and sintering
+                    if check_cluster_collision_pbc(&clusters[i], &clusters[j], effective_box_size, sintering_coeff) {
                         if params.sticking_probability >= 1.0
                             || rng.gen::<f64>() < params.sticking_probability
                         {
@@ -440,11 +462,13 @@ fn periodic_distance(a: &Vector3, b: &Vector3, box_size: f64) -> f64 {
 
 /// Check if any particle in cluster A touches any particle in cluster B.
 /// Uses periodic boundary conditions for distance calculation.
-fn check_cluster_collision_pbc(a: &Cluster, b: &Cluster, box_size: f64) -> bool {
+/// sintering_coeff controls how close particles must be to "collide" (0.5-1.0)
+fn check_cluster_collision_pbc(a: &Cluster, b: &Cluster, box_size: f64, sintering_coeff: f64) -> bool {
     for pa in &a.particles {
         for pb in &b.particles {
             let dist = periodic_distance(&pa.center, &pb.center, box_size);
-            let contact_dist = pa.radius + pb.radius;
+            // Use sintered contact distance for collision detection
+            let contact_dist = sintered_contact_distance(pa.radius, pb.radius, sintering_coeff);
             // Use relative epsilon for robust comparison
             let epsilon = contact_dist.max(dist) * 1e-10 + 1e-14;
             if dist <= contact_dist + epsilon {

@@ -121,6 +121,8 @@ const packingOptions3D: { value: PackingType; label: string; description: string
   { value: 'CCC', label: 'CCC', description: 'Face-Centered Cubic' },
 ]
 
+type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
+
 interface FormParams {
   n_particles: number
   sticking_probability: number
@@ -146,6 +148,13 @@ interface FormParams {
   radius_ratio_min: number  // ratio relative to primary (1.0 = same size)
   radius_ratio_max: number
   polydisperse: boolean
+  // Sintering parameters
+  sintering_enabled: boolean
+  sintering_type: SinteringDistributionType
+  sintering_coeff: number        // 0.5-1.0 (1.0 = no sintering)
+  sintering_min: number          // for uniform dist
+  sintering_max: number          // for uniform dist
+  sintering_std: number          // for normal dist
 }
 
 const defaultParams: FormParams = {
@@ -166,6 +175,13 @@ const defaultParams: FormParams = {
   radius_ratio_min: 1.0,
   radius_ratio_max: 1.0,
   polydisperse: false,
+  // Sintering defaults (disabled by default)
+  sintering_enabled: false,
+  sintering_type: 'fixed',
+  sintering_coeff: 0.9,  // 10% overlap when enabled
+  sintering_min: 0.85,
+  sintering_max: 0.95,
+  sintering_std: 0.05,
 }
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
@@ -573,6 +589,15 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       radius_max: params.polydisperse ? params.radius_ratio_max : undefined,
     }
 
+    // Add sintering parameters if enabled (for non-limiting algorithms)
+    if (algorithm !== 'limiting' && params.sintering_enabled) {
+      algorithmParams.sintering_type = params.sintering_type
+      algorithmParams.sintering_coeff = params.sintering_coeff
+      algorithmParams.sintering_min = params.sintering_min
+      algorithmParams.sintering_max = params.sintering_max
+      algorithmParams.sintering_std = params.sintering_std
+    }
+
     // Add algorithm-specific parameters
     if (algorithm === 'dla') {
       algorithmParams.lattice_size = params.lattice_size
@@ -751,6 +776,136 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 : `All particles will have radius ${params.primary_particle_radius_nm} nm`
               }
             </p>
+          </div>
+          )}
+
+          {/* Sintering Section - hidden for limiting case */}
+          {algorithm !== 'limiting' && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Sintering (Necking)</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Particles overlap at contact points
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant={params.sintering_enabled ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => updateParam('sintering_enabled', !params.sintering_enabled)}
+              >
+                {params.sintering_enabled ? 'Enabled' : 'Disabled'}
+              </Button>
+            </div>
+
+            {params.sintering_enabled && (
+              <div className="space-y-4 p-3 bg-muted/50 rounded-lg">
+                {/* Distribution Type */}
+                <div className="space-y-2">
+                  <Label>Distribution Type</Label>
+                  <div className="flex gap-2">
+                    {(['fixed', 'uniform', 'normal'] as SinteringDistributionType[]).map((type) => (
+                      <Button
+                        key={type}
+                        type="button"
+                        variant={params.sintering_type === type ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 capitalize"
+                        onClick={() => updateParam('sintering_type', type)}
+                      >
+                        {type}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Fixed coefficient */}
+                {params.sintering_type === 'fixed' && (
+                  <div className="space-y-2">
+                    <Label>
+                      Sintering Coefficient: {params.sintering_coeff.toFixed(2)} ({((1 - params.sintering_coeff) * 100).toFixed(0)}% overlap)
+                    </Label>
+                    <Slider
+                      min={0.5}
+                      max={1.0}
+                      step={0.01}
+                      value={[params.sintering_coeff]}
+                      onValueChange={([v]) => updateParam('sintering_coeff', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      1.0 = particles just touch, 0.5 = 50% overlap (heavy sintering)
+                    </p>
+                  </div>
+                )}
+
+                {/* Uniform distribution */}
+                {params.sintering_type === 'uniform' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Min Coefficient: {params.sintering_min.toFixed(2)}</Label>
+                      <Slider
+                        min={0.5}
+                        max={params.sintering_max}
+                        step={0.01}
+                        value={[params.sintering_min]}
+                        onValueChange={([v]) => updateParam('sintering_min', v)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Max Coefficient: {params.sintering_max.toFixed(2)}</Label>
+                      <Slider
+                        min={params.sintering_min}
+                        max={1.0}
+                        step={0.01}
+                        value={[params.sintering_max]}
+                        onValueChange={([v]) => updateParam('sintering_max', v)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Normal distribution */}
+                {params.sintering_type === 'normal' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Mean: {params.sintering_coeff.toFixed(2)}</Label>
+                      <Slider
+                        min={0.5}
+                        max={1.0}
+                        step={0.01}
+                        value={[params.sintering_coeff]}
+                        onValueChange={([v]) => updateParam('sintering_coeff', v)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Std Dev: {params.sintering_std.toFixed(2)}</Label>
+                      <Slider
+                        min={0.01}
+                        max={0.2}
+                        step={0.01}
+                        value={[params.sintering_std]}
+                        onValueChange={([v]) => updateParam('sintering_std', v)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Preview of sintering effect */}
+                <div className="p-2 bg-primary/10 rounded text-sm">
+                  <span className="text-muted-foreground">Contact distance = </span>
+                  {params.sintering_type === 'fixed' && (
+                    <span className="font-mono">{params.sintering_coeff.toFixed(2)} × (r₁ + r₂)</span>
+                  )}
+                  {params.sintering_type === 'uniform' && (
+                    <span className="font-mono">U({params.sintering_min.toFixed(2)}, {params.sintering_max.toFixed(2)}) × (r₁ + r₂)</span>
+                  )}
+                  {params.sintering_type === 'normal' && (
+                    <span className="font-mono">N({params.sintering_coeff.toFixed(2)}, {params.sintering_std.toFixed(2)}) × (r₁ + r₂)</span>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
           )}
 

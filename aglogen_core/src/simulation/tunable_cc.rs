@@ -23,6 +23,7 @@ use super::metrics::{
     calculate_radius_of_gyration,
 };
 use super::result::{PySimulationResult, SimulationResult};
+use super::sintering::{sintered_contact_distance, SinteringDistribution};
 use super::tunable::run_tunable;
 
 /// Seed cluster generation strategy.
@@ -53,6 +54,7 @@ pub struct TunableCcParams {
     pub seed_strategy: SeedStrategy,
     pub max_rotation_attempts: usize,
     pub max_particle_selection_attempts: usize,
+    pub sintering: SinteringDistribution,
 }
 
 impl Default for TunableCcParams {
@@ -66,6 +68,7 @@ impl Default for TunableCcParams {
             seed_strategy: SeedStrategy::Monomers,
             max_rotation_attempts: 50,
             max_particle_selection_attempts: 25,
+            sintering: SinteringDistribution::default(),
         }
     }
 }
@@ -275,19 +278,21 @@ fn can_clusters_connect(
     cluster1.bounding_radius + cluster2.bounding_radius >= required_distance
 }
 
-/// Check for overlap between two clusters.
-fn check_overlap(cluster1: &TunableCluster, cluster2: &TunableCluster) -> bool {
-    // Quick bounding sphere check first
+/// Check for overlap between two clusters with sintering support.
+fn check_overlap(cluster1: &TunableCluster, cluster2: &TunableCluster, sintering_coeff: f64) -> bool {
+    // Quick bounding sphere check first (use sintered distance)
     let dist = cluster1.center_of_mass.distance_to(&cluster2.center_of_mass);
-    if dist > cluster1.bounding_radius + cluster2.bounding_radius + 1e-6 {
+    let bounding_contact = sintered_contact_distance(cluster1.bounding_radius, cluster2.bounding_radius, sintering_coeff);
+    if dist > bounding_contact + 1e-6 {
         return false;
     }
 
-    // Detailed particle-level check
+    // Detailed particle-level check with sintering
     for p1 in &cluster1.particles {
         for p2 in &cluster2.particles {
             let d = p1.center.distance_to(&p2.center);
-            if d < p1.radius + p2.radius - 1e-6 {
+            let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
+            if d < contact_dist - 1e-6 {
                 return true;
             }
         }
@@ -384,18 +389,19 @@ fn select_contact_particles<R: Rng>(
 }
 
 /// Position cluster2 relative to cluster1 at the required CoM distance,
-/// with particles m1 and m2 in contact.
+/// with particles m1 and m2 in contact (with sintering).
 fn position_clusters_for_contact<R: Rng>(
     cluster1: &TunableCluster,
     cluster2: &mut TunableCluster,
     m1: usize,
     m2: usize,
     required_distance: f64,
+    sintering_coeff: f64,
     rng: &mut R,
 ) -> bool {
     let p1 = &cluster1.particles[m1];
     let p2_original = &cluster2.particles[m2];
-    let contact_dist = p1.radius + p2_original.radius;
+    let contact_dist = sintered_contact_distance(p1.radius, p2_original.radius, sintering_coeff);
 
     // Vector from cluster1 CoM to particle m1
     let r_cm1_to_p1 = p1.center - cluster1.center_of_mass;
@@ -463,6 +469,7 @@ fn resolve_overlap_by_rotation<R: Rng>(
     cluster2: &mut TunableCluster,
     m2: usize,
     max_attempts: usize,
+    sintering_coeff: f64,
     rng: &mut R,
 ) -> bool {
     // Rotation axis: line from cluster2 CoM through particle m2
@@ -477,7 +484,7 @@ fn resolve_overlap_by_rotation<R: Rng>(
         let mut test_cluster = cluster2.clone();
         test_cluster.rotate_around_axis(rotation_axis, angle, test_cluster.center_of_mass);
 
-        if !check_overlap(cluster1, &test_cluster) {
+        if !check_overlap(cluster1, &test_cluster, sintering_coeff) {
             *cluster2 = test_cluster;
             return true;
         }
@@ -528,6 +535,8 @@ fn initialize_seed_clusters<R: Rng>(
                 } else if let Some(py) = py {
                     // Use Tunable PC to generate seed cluster
                     let seed: u64 = rng.gen();
+                    // Use mean sintering coefficient for seed clusters
+                    let sintering_coeff = params.sintering.mean();
                     if let Ok(result) = run_tunable(
                         py,
                         size,
@@ -535,6 +544,11 @@ fn initialize_seed_clusters<R: Rng>(
                         params.target_kf,
                         params.radius_min,
                         Some(params.radius_max),
+                        sintering_coeff,
+                        "fixed",
+                        0.85,
+                        0.95,
+                        0.05,
                         Some(seed),
                     ) {
                         // Convert PySimulationResult to TunableCluster
@@ -586,10 +600,11 @@ fn initialize_seed_clusters<R: Rng>(
     }
 }
 
-/// Fallback: merge clusters using ballistic-like approach.
+/// Fallback: merge clusters using ballistic-like approach with sintering support.
 fn merge_ballistic<R: Rng>(
     cluster1: &TunableCluster,
     cluster2: &mut TunableCluster,
+    sintering_coeff: f64,
     rng: &mut R,
 ) -> bool {
     // Position cluster2 far from cluster1
@@ -610,15 +625,15 @@ fn merge_ballistic<R: Rng>(
         let step = cluster2.particles.iter().map(|p| p.radius).fold(f64::INFINITY, f64::min) * 0.5;
 
         for _ in 0..(launch_dist * 4.0 / step) as usize {
-            // Check for contact (any particle pair touching)
+            // Check for contact (any particle pair touching with sintering)
             for p1 in &cluster1.particles {
                 for p2 in &cluster2.particles {
                     let dist = p1.center.distance_to(&p2.center);
-                    let contact_dist = p1.radius + p2.radius;
+                    let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
 
                     if dist <= contact_dist * 1.01 && dist >= contact_dist * 0.9 {
-                        // Found contact, check no overlap
-                        if !check_overlap(cluster1, cluster2) {
+                        // Found contact, check no overlap with sintering
+                        if !check_overlap(cluster1, cluster2, sintering_coeff) {
                             return true;
                         }
                     }
@@ -643,9 +658,14 @@ fn merge_ballistic<R: Rng>(
 /// * `radius_max` - Maximum particle radius
 /// * `seed_cluster_size` - Size of seed clusters (None = monomers)
 /// * `max_rotation_attempts` - Max attempts to resolve overlap by rotation
+/// * `sintering_coeff` - Sintering coefficient (0.5-1.0, where 1.0 = no sintering)
+/// * `sintering_type` - Distribution type: "fixed", "uniform", or "normal"
+/// * `sintering_min` - Min for uniform distribution (default: 0.85)
+/// * `sintering_max` - Max for uniform distribution (default: 0.95)
+/// * `sintering_std` - Std dev for normal distribution (default: 0.05)
 /// * `seed` - Random seed for reproducibility
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, seed=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
 pub fn run_tunable_cc(
     py: Python<'_>,
     n_particles: usize,
@@ -655,6 +675,11 @@ pub fn run_tunable_cc(
     radius_max: Option<f64>,
     seed_cluster_size: Option<usize>,
     max_rotation_attempts: usize,
+    sintering_coeff: f64,
+    sintering_type: &str,
+    sintering_min: f64,
+    sintering_max: f64,
+    sintering_std: f64,
     seed: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
@@ -665,6 +690,12 @@ pub fn run_tunable_cc(
         _ => SeedStrategy::Monomers,
     };
 
+    let sintering = match sintering_type.to_lowercase().as_str() {
+        "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
+        "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
+        _ => SinteringDistribution::fixed(sintering_coeff),
+    };
+
     let params = TunableCcParams {
         n_particles,
         target_df,
@@ -673,6 +704,7 @@ pub fn run_tunable_cc(
         radius_max,
         seed_strategy,
         max_rotation_attempts,
+        sintering,
         ..Default::default()
     };
 
@@ -739,6 +771,9 @@ fn run_tunable_cc_internal(
         let impacted = clusters[impacted_idx].clone();
         let mut impactor = clusters[impactor_idx].clone();
 
+        // Sample sintering coefficient for this merge
+        let sintering_coeff = params.sintering.sample(&mut rng);
+
         // Calculate merged particle count
         let n_po = impacted.n_particles() + impactor.n_particles();
         let n_po1 = impacted.n_particles();
@@ -775,19 +810,20 @@ fn run_tunable_cc_internal(
                         required_distance,
                         &mut rng,
                     ) {
-                        // Step 7: Position clusters for contact
+                        // Step 7: Position clusters for contact (with sintering)
                         let positioned = position_clusters_for_contact(
                             &impacted,
                             &mut impactor,
                             m1,
                             m2,
                             required_distance,
+                            sintering_coeff,
                             &mut rng,
                         );
 
                         if positioned {
-                            // Step 8: Check and resolve overlaps
-                            if !check_overlap(&impacted, &impactor) {
+                            // Step 8: Check and resolve overlaps (with sintering)
+                            if !check_overlap(&impacted, &impactor, sintering_coeff) {
                                 merge_success = true;
                                 tunable_merges += 1;
                                 break;
@@ -796,6 +832,7 @@ fn run_tunable_cc_internal(
                                 &mut impactor,
                                 m2,
                                 params.max_rotation_attempts,
+                                sintering_coeff,
                                 &mut rng,
                             ) {
                                 merge_success = true;
@@ -810,7 +847,7 @@ fn run_tunable_cc_internal(
 
         // Fallback: ballistic merge if tunable positioning failed
         if !merge_success {
-            if merge_ballistic(&impacted, &mut impactor, &mut rng) {
+            if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
                 merge_success = true;
                 fallback_merges += 1;
             }

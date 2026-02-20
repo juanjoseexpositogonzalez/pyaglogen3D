@@ -754,6 +754,13 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         radius_min = params.get("radius_min") or params.get("seed_radius") or params.get("particle_radius") or 1.0
         radius_max = params.get("radius_max")  # None means monodisperse (same as radius_min)
 
+        # Get sintering parameters
+        sintering_coeff = params.get("sintering_coeff", 1.0)  # 1.0 = no sintering
+        sintering_type = params.get("sintering_type", "fixed")  # "fixed", "uniform", or "normal"
+        sintering_min = params.get("sintering_min", 0.85)  # For uniform distribution
+        sintering_max = params.get("sintering_max", 0.95)  # For uniform distribution
+        sintering_std = params.get("sintering_std", 0.05)  # For normal distribution
+
         # Run the appropriate algorithm
         if algorithm == "dla":
             result = aglogen_core.run_dla(
@@ -762,6 +769,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 lattice_size=params.get("lattice_size", 200),
                 radius_min=radius_min,
                 radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "cca":
@@ -772,6 +784,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 radius_max=radius_max,
                 box_size=params.get("box_size", 100.0),
                 single_agglomerate=params.get("single_agglomerate", True),
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "ballistic":
@@ -780,6 +797,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 sticking_probability=params.get("sticking_probability", 1.0),
                 radius_min=radius_min,
                 radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "ballistic_cc":
@@ -789,6 +811,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 sticking_probability=params.get("sticking_probability", 1.0),
                 radius_min=radius_min,
                 radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "tunable":
@@ -799,6 +826,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 target_kf=params.get("target_kf", 1.3),
                 radius_min=radius_min,
                 radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "tunable_cc":
@@ -811,6 +843,11 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 radius_max=radius_max,
                 seed_cluster_size=params.get("seed_cluster_size"),
                 max_rotation_attempts=params.get("max_rotation_attempts", 50),
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
                 seed=seed,
             )
         elif algorithm == "limiting":
