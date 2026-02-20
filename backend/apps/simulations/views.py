@@ -660,9 +660,23 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        """Create study and generate all simulations from parameter grid."""
+        """Create study and generate all simulations from parameter grid.
+
+        Handles:
+        - Regular grid combinations
+        - Limiting cases (range boundaries + theoretical extremes)
+        - Sintering configuration (fixed/uniform/normal distributions)
+        - Sintering extremes when limiting cases enabled
+        """
         import itertools
         import random
+
+        from .utils import (
+            apply_sintering_config,
+            generate_limiting_cases,
+            generate_simulation_name,
+            generate_sintering_extreme_cases,
+        )
 
         project_id = self.kwargs.get("project_pk")
         study = serializer.save(project_id=project_id, status=SimulationStatus.RUNNING)
@@ -678,25 +692,36 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         integer_params = {"n_particles"}
 
         simulations_created = []
-        for combo in combinations:
-            # Build parameters for this simulation
-            params = dict(study.base_parameters)
-            for i, name in enumerate(param_names):
-                params[name] = combo[i]
+
+        def create_simulation(
+            params: dict, case_type: str = "grid", case_label: str = ""
+        ) -> None:
+            """Create a single simulation with all configurations applied."""
+            sim_params = dict(params)
+
+            # Apply sintering config if present
+            sim_params = apply_sintering_config(sim_params, study.sintering_config)
 
             # Ensure integer parameters are properly typed
             for param_name in integer_params:
-                if param_name in params:
-                    params[param_name] = int(params[param_name])
+                if param_name in sim_params:
+                    sim_params[param_name] = int(sim_params[param_name])
 
-            # Create simulations with different seeds
             for seed_idx in range(study.seeds_per_combination):
                 seed = random.randint(0, 2**31 - 1)
+
+                # Generate name including case type info
+                suffix = f"({case_type}: {case_label})" if case_label else ""
+                auto_name = generate_simulation_name(
+                    study.base_algorithm, suffix=suffix
+                )
+
                 sim = Simulation.objects.create(
                     project_id=project_id,
                     algorithm=study.base_algorithm,
-                    parameters=params,
+                    parameters=sim_params,
                     seed=seed,
+                    name=auto_name,
                     status=SimulationStatus.QUEUED,
                 )
                 simulations_created.append(sim)
@@ -709,6 +734,62 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     sim.save(update_fields=["task_id"])
                 except Exception as e:
                     logger.warning(f"Failed to queue simulation {sim.id}: {e}")
+
+        # 1. Regular grid combinations
+        for combo in combinations:
+            params = dict(study.base_parameters)
+            for i, name in enumerate(param_names):
+                params[name] = combo[i]
+            combo_str = ", ".join(f"{name}={combo[i]}" for i, name in enumerate(param_names))
+            create_simulation(params, "grid", combo_str)
+
+        # 2. Limiting cases (if enabled)
+        if study.include_limiting_cases:
+            limiting_cases = generate_limiting_cases(
+                study.base_parameters,
+                study.parameter_grid,
+                study.base_algorithm,
+                study.limiting_cases_config,
+            )
+
+            for case_type, description, params in limiting_cases:
+                create_simulation(params, case_type, description)
+
+            # 3. Sintering extremes (if limiting cases AND sintering enabled)
+            if study.sintering_config:
+                sintering_cases = generate_sintering_extreme_cases(study.base_parameters)
+                for case_type, description, params in sintering_cases:
+                    # Don't apply the study's sintering config for extreme cases
+                    # since they define their own sintering
+                    sim_params = dict(params)
+                    for param_name in integer_params:
+                        if param_name in sim_params:
+                            sim_params[param_name] = int(sim_params[param_name])
+
+                    for seed_idx in range(study.seeds_per_combination):
+                        seed = random.randint(0, 2**31 - 1)
+                        suffix = f"({case_type}: {description})"
+                        auto_name = generate_simulation_name(
+                            study.base_algorithm, suffix=suffix
+                        )
+
+                        sim = Simulation.objects.create(
+                            project_id=project_id,
+                            algorithm=study.base_algorithm,
+                            parameters=sim_params,
+                            seed=seed,
+                            name=auto_name,
+                            status=SimulationStatus.QUEUED,
+                        )
+                        simulations_created.append(sim)
+                        study.simulations.add(sim)
+
+                        try:
+                            result = run_simulation_task.delay(str(sim.id))
+                            sim.task_id = result.id
+                            sim.save(update_fields=["task_id"])
+                        except Exception as e:
+                            logger.warning(f"Failed to queue simulation {sim.id}: {e}")
 
         logger.info(
             f"Created parametric study {study.id} with {len(simulations_created)} simulations"
@@ -778,7 +859,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=["get"], url_path="export")
     def export_csv(self, request: Request, pk=None, **kwargs) -> HttpResponse:
-        """Export batch study results as CSV."""
+        """Export batch study results as CSV.
+
+        Includes:
+        - Base simulation data and metrics
+        - Sintering columns if sintering_config is set
+        - Box-counting columns if include_box_counting is enabled
+        """
         study = self.get_object()
         simulations = study.simulations.filter(status="completed").order_by("created_at")
 
@@ -788,13 +875,22 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Determine all parameter keys from the grid
         param_keys = list(study.parameter_grid.keys())
 
-        # Header row
-        header = ["Simulation ID", "Seed"] + param_keys + [
+        # Build header row
+        header = ["Simulation ID", "Name", "Seed"] + param_keys + [
             "Df", "Df_std", "kf", "Rg", "Porosity",
             "Coord_Mean", "Coord_Std",
             "Anisotropy", "Asphericity", "Acylindricity",
             "Execution_ms"
         ]
+
+        # Add sintering columns if configured
+        if study.sintering_config:
+            header.extend(["Sintering_Type", "Sintering_Coeff"])
+
+        # Add box-counting columns if enabled
+        if study.include_box_counting:
+            header.extend(["BC_Df", "BC_R2", "BC_StdError", "BC_Time_ms"])
+
         writer.writerow(header)
 
         # Data rows
@@ -802,6 +898,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             if sim.metrics:
                 row = [
                     str(sim.id),
+                    sim.name or "",
                     sim.seed,
                 ] + [sim.parameters.get(key, "") for key in param_keys] + [
                     f"{sim.metrics.get('fractal_dimension', 0):.4f}",
@@ -816,6 +913,24 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     f"{sim.metrics.get('acylindricity', 0):.6f}",
                     sim.execution_time_ms or 0,
                 ]
+
+                # Add sintering data if configured
+                if study.sintering_config:
+                    row.extend([
+                        sim.parameters.get("sintering_type", "fixed"),
+                        f"{sim.parameters.get('sintering_coeff', 1.0):.3f}",
+                    ])
+
+                # Add box-counting data if enabled
+                if study.include_box_counting:
+                    bc = sim.metrics.get("box_counting", {})
+                    row.extend([
+                        f"{bc.get('dimension', 0):.4f}",
+                        f"{bc.get('r_squared', 0):.4f}",
+                        f"{bc.get('std_error', 0):.6f}",
+                        bc.get("execution_time_ms", 0),
+                    ])
+
                 writer.writerow(row)
 
         output.seek(0)

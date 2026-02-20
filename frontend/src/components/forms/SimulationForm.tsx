@@ -553,6 +553,7 @@ function LimitingGeometrySection({
 }
 
 export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
+  const [name, setName] = useState<string>('')
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [seed, setSeed] = useState<string>('')
@@ -627,6 +628,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     ) as Record<string, number | boolean | string>
 
     onSubmit({
+      name: name.trim() || undefined,
       algorithm,
       parameters: algorithmParams as unknown as CreateSimulationInput['parameters'],
       seed: seed ? parseInt(seed) : undefined,
@@ -635,6 +637,28 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Simulation Name */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Simulation Name</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <Label htmlFor="name">Name (optional)</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Leave empty for auto-generated name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Custom name for this simulation. If left empty, a name will be auto-generated (e.g., "DLA Simulation - 2024-02-20 10:30").
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Algorithm Selection */}
       <Card>
         <CardHeader>

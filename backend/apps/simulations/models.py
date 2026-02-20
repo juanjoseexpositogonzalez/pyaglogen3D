@@ -35,6 +35,11 @@ class Simulation(models.Model):
         on_delete=models.CASCADE,
         related_name="simulations",
     )
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional display name. Auto-generated if not provided.",
+    )
     algorithm = models.CharField(
         max_length=20,
         choices=SimulationAlgorithm.choices,
@@ -79,6 +84,8 @@ class Simulation(models.Model):
         ]
 
     def __str__(self) -> str:
+        if self.name:
+            return self.name
         return f"{self.algorithm} - {self.status} ({self.id})"
 
 
@@ -104,6 +111,32 @@ class ParametricStudy(models.Model):
         help_text="Parameters to vary: {param_name: [values]}"
     )
     seeds_per_combination = models.PositiveIntegerField(default=1)
+    # Limiting cases configuration
+    include_limiting_cases = models.BooleanField(
+        default=False,
+        help_text="Include theoretical extreme parameter combinations",
+    )
+    limiting_cases_config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Configuration: {'include_boundaries': true, 'include_theoretical': true, ...}",
+    )
+    # Sintering configuration
+    sintering_config = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Sintering params: {'distribution_type': 'fixed'|'uniform'|'normal', ...}",
+    )
+    # Box-counting configuration
+    include_box_counting = models.BooleanField(
+        default=False,
+        help_text="Run box-counting analysis after each simulation completes",
+    )
+    box_counting_params = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Box-counting params: {'points_per_sphere': 100, 'precision': 18}",
+    )
     simulations = models.ManyToManyField(
         Simulation,
         related_name="studies",

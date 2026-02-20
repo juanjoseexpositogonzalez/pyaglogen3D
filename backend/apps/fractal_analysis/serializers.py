@@ -4,6 +4,7 @@ import binascii
 
 from rest_framework import serializers
 
+from apps.simulations.utils import generate_fraktal_name
 from .models import ComparisonSet, FraktalAnalysis, ImageAnalysis, SourceType
 
 
@@ -97,11 +98,13 @@ class FraktalAnalysisSerializer(serializers.ModelSerializer):
     """Serializer for FraktalAnalysis model."""
 
     simulation_id = serializers.SerializerMethodField()
+    name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     class Meta:
         model = FraktalAnalysis
         fields = [
             "id",
+            "name",
             "project",
             "source_type",
             "original_filename",
@@ -160,11 +163,13 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
         allow_null=True,
         help_text="Simulation ID for projection-based analysis",
     )
+    name = serializers.CharField(required=False, allow_blank=True, max_length=255)
 
     class Meta:
         model = FraktalAnalysis
         fields = [
             "id",
+            "name",
             "source_type",
             "image",
             "original_filename",
@@ -272,6 +277,12 @@ class FraktalAnalysisCreateSerializer(serializers.ModelSerializer):
 
         image_b64 = validated_data.pop("image", None)
         simulation_id = validated_data.pop("simulation_id", None)
+
+        # Auto-generate name if not provided
+        if not validated_data.get("name"):
+            validated_data["name"] = generate_fraktal_name(
+                validated_data.get("model", "unknown")
+            )
 
         if image_b64:
             image_bytes = base64.b64decode(image_b64)

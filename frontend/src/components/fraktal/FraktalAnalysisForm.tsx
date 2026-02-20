@@ -85,6 +85,7 @@ const defaultParams: FormParams = {
 }
 
 export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: FraktalAnalysisFormProps) {
+  const [name, setName] = useState<string>('')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [imageFile, setImageFile] = useState<File | null>(null)
   const [imagePreview, setImagePreview] = useState<string | null>(null)
@@ -128,6 +129,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         const base64 = (reader.result as string).split(',')[1]
 
         onSubmit({
+          name: name.trim() || undefined,
           source_type: 'uploaded_image',
           image: base64,
           original_filename: imageFile.name,
@@ -154,6 +156,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
       }
 
       onSubmit({
+        name: name.trim() || undefined,
         source_type: 'simulation_projection',
         simulation_id: params.simulation_id,
         projection_params: {
@@ -180,6 +183,28 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Analysis Name */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Analysis Name</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <Label htmlFor="name">Name (optional)</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Leave empty for auto-generated name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Custom name for this analysis. If left empty, a name will be auto-generated (e.g., "FRAKTAL Voxel 2018 - 2024-02-20 10:30").
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Source Selection */}
       <Card>
         <CardHeader>
