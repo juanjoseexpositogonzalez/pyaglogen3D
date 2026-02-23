@@ -24,6 +24,7 @@ export default function BatchSimulationsPage({
   const [showForm, setShowForm] = useState(false)
   const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
+  const [isRunningBoxCounting, setIsRunningBoxCounting] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
   // Fetch studies list (polls while any study has running simulations)
@@ -93,6 +94,24 @@ export default function BatchSimulationsPage({
       console.error('Failed to export:', err)
     } finally {
       setIsExporting(false)
+    }
+  }
+
+  const handleRunBoxCounting = async () => {
+    if (!selectedStudyId) return
+    setIsRunningBoxCounting(true)
+    try {
+      const result = await studiesApi.runBoxCounting(id, selectedStudyId, {
+        points_per_sphere: 100,
+        precision: 18,
+      })
+      console.log('Box-counting result:', result)
+      // Refresh results to show new BC Df values
+      refetchResults()
+    } catch (err) {
+      console.error('Failed to run box-counting:', err)
+    } finally {
+      setIsRunningBoxCounting(false)
     }
   }
 
@@ -227,7 +246,9 @@ export default function BatchSimulationsPage({
                 projectId={id}
                 onExport={handleExport}
                 onRefresh={() => refetchResults()}
+                onRunBoxCounting={handleRunBoxCounting}
                 isExporting={isExporting}
+                isRunningBoxCounting={isRunningBoxCounting}
               />
             ) : (
               <Card>

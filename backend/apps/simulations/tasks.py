@@ -33,10 +33,37 @@ PACKING_2D = ['HC', 'CS']  # Hexagonal Compact, Cubic Simple
 PACKING_3D = ['HC', 'CS', 'CCC']  # + Face-Centered Cubic
 
 
-def generate_linear_chain(n_particles: int, radius: float = 1.0) -> np.ndarray:
-    """Generate a linear chain of touching particles (Df=1, config='lineal').
+def infer_geometry_from_config(configuration_type: str) -> tuple[str, float]:
+    """Infer geometry_type and expected Df from configuration_type.
+
+    Args:
+        configuration_type: The configuration type string
+
+    Returns:
+        Tuple of (geometry_type, df)
+    """
+    if configuration_type in DF1_CONFIGS:
+        return ('chain', 1.0)
+    elif configuration_type in DF2_CONFIGS:
+        return ('plane', 2.0)
+    elif configuration_type in DF3_CONFIGS:
+        return ('sphere', 3.0)
+    else:
+        # Default to chain/lineal
+        return ('chain', 1.0)
+
+
+def generate_linear_chain(
+    n_particles: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate a linear chain of particles (Df=1, config='lineal').
 
     Particles are arranged in a straight line along the x-axis, centered at origin.
+
+    Args:
+        n_particles: Number of particles
+        radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
 
     Examples:
         N=1: [(0, 0, 0)]
@@ -47,7 +74,7 @@ def generate_linear_chain(n_particles: int, radius: float = 1.0) -> np.ndarray:
         return np.zeros((0, 3))
 
     coords = np.zeros((n_particles, 3))
-    d = 2.0 * radius  # Center-to-center distance for touching spheres
+    d = sintering_coeff * 2.0 * radius  # Center-to-center distance (sintered contact)
 
     # Position particles along x-axis
     for i in range(n_particles):
@@ -58,7 +85,9 @@ def generate_linear_chain(n_particles: int, radius: float = 1.0) -> np.ndarray:
     return coords
 
 
-def generate_cruz2d(n_branches: int, radius: float = 1.0) -> np.ndarray:
+def generate_cruz2d(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate a 2D cross structure (Df=1, config='cruz2d').
 
     Based on MATLAB casosLimiteEsferas.m 'cruz2d' case.
@@ -67,6 +96,7 @@ def generate_cruz2d(n_branches: int, radius: float = 1.0) -> np.ndarray:
     Args:
         n_branches: Number of particles per branch arm
         radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
 
     Returns:
         Coordinates array centered at origin
@@ -74,7 +104,7 @@ def generate_cruz2d(n_branches: int, radius: float = 1.0) -> np.ndarray:
     if n_branches <= 0:
         return np.zeros((0, 3))
 
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     coords = []
 
     if n_branches % 2 != 0:  # Odd
@@ -120,7 +150,9 @@ def generate_cruz2d(n_branches: int, radius: float = 1.0) -> np.ndarray:
     return coords
 
 
-def generate_asterisco(n_branches: int, radius: float = 1.0) -> np.ndarray:
+def generate_asterisco(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate an asterisk structure with 6 branches at 60° (Df=1, config='asterisco').
 
     Based on MATLAB casosLimiteEsferas.m 'asterisco' case.
@@ -129,6 +161,7 @@ def generate_asterisco(n_branches: int, radius: float = 1.0) -> np.ndarray:
     Args:
         n_branches: Number of particles per branch arm (must be odd, will be adjusted)
         radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
 
     Returns:
         Coordinates array centered at origin
@@ -140,7 +173,7 @@ def generate_asterisco(n_branches: int, radius: float = 1.0) -> np.ndarray:
     if n_branches % 2 == 0:
         n_branches += 1
 
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     half = n_branches // 2
     coords = []
 
@@ -167,7 +200,9 @@ def generate_asterisco(n_branches: int, radius: float = 1.0) -> np.ndarray:
     return np.unique(coords, axis=0)  # Remove duplicates at center
 
 
-def generate_cruz3d(n_branches: int, radius: float = 1.0) -> np.ndarray:
+def generate_cruz3d(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate a 3D cross structure (Df=1, config='cruz3d').
 
     Based on MATLAB casosLimiteEsferas.m 'cruz3d' case.
@@ -176,6 +211,7 @@ def generate_cruz3d(n_branches: int, radius: float = 1.0) -> np.ndarray:
     Args:
         n_branches: Number of particles per branch arm (must be odd, will be adjusted)
         radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
 
     Returns:
         Coordinates array centered at origin
@@ -187,7 +223,7 @@ def generate_cruz3d(n_branches: int, radius: float = 1.0) -> np.ndarray:
     if n_branches % 2 == 0:
         n_branches += 1
 
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     half = n_branches // 2
     coords = []
 
@@ -227,8 +263,14 @@ def get_complete_hexagonal_counts() -> list[int]:
     return counts
 
 
-def generate_hexagonal_plane(n_particles: int = None, layers: int = None, radius: float = 1.0,
-                              packing: str = 'HC', complete_rings: bool = True) -> np.ndarray:
+def generate_hexagonal_plane(
+    n_particles: int = None,
+    layers: int = None,
+    radius: float = 1.0,
+    packing: str = 'HC',
+    complete_rings: bool = True,
+    sintering_coeff: float = 1.0,
+) -> np.ndarray:
     """Generate a single-layer plane (Df=2, config='plano').
 
     Based on MATLAB casosLimiteEsferas.m 'plano' case.
@@ -239,11 +281,12 @@ def generate_hexagonal_plane(n_particles: int = None, layers: int = None, radius
         radius: Particle radius
         packing: 'HC' (Hexagonal Compact) or 'CS' (Cubic Simple)
         complete_rings: If True, adjusts n_particles to nearest complete number
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
 
     Returns:
         Coordinates array centered at origin
     """
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
 
     if packing.upper() == 'CS':
         # Cubic Simple: square grid
@@ -315,7 +358,9 @@ def generate_hexagonal_plane(n_particles: int = None, layers: int = None, radius
     return coords
 
 
-def generate_doble_plano(layers: int, radius: float = 1.0, packing: str = 'HC') -> np.ndarray:
+def generate_doble_plano(
+    layers: int, radius: float = 1.0, packing: str = 'HC', sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate two perpendicular planes (Df=2, config='dobleplano').
 
     Based on MATLAB casosLimiteEsferas.m 'dobleplano' case.
@@ -325,11 +370,12 @@ def generate_doble_plano(layers: int, radius: float = 1.0, packing: str = 'HC') 
         layers: Number of layers (k for HC packing, n for CS)
         radius: Particle radius
         packing: 'HC' (Hexagonal Compact) or 'CS' (Cubic Simple)
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
 
     Returns:
         Coordinates array centered at origin
     """
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     coords = []
 
     if packing.upper() == 'HC':
@@ -374,7 +420,9 @@ def generate_doble_plano(layers: int, radius: float = 1.0, packing: str = 'HC') 
     return coords
 
 
-def generate_triple_plano(layers: int, radius: float = 1.0) -> np.ndarray:
+def generate_triple_plano(
+    layers: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate three planes at 60° angles (Df=2, config='tripleplano').
 
     Based on MATLAB casosLimiteEsferas.m 'tripleplano' case.
@@ -384,11 +432,12 @@ def generate_triple_plano(layers: int, radius: float = 1.0) -> np.ndarray:
     Args:
         layers: Number of layers (k value)
         radius: Particle radius
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
 
     Returns:
         Coordinates array centered at origin
     """
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     coords = []
     esferas2 = layers * 2 + 1
 
@@ -439,7 +488,9 @@ def get_complete_shell_counts() -> list[tuple[int, str]]:
     ]
 
 
-def generate_cuboctaedro(layers: int, radius: float = 1.0, packing: str = 'HC') -> np.ndarray:
+def generate_cuboctaedro(
+    layers: int, radius: float = 1.0, packing: str = 'HC', sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate a 3D compact structure (Df=3, config='cuboctaedro').
 
     Based on MATLAB casosLimiteEsferas.m 'cuboctaedro' case.
@@ -448,11 +499,12 @@ def generate_cuboctaedro(layers: int, radius: float = 1.0, packing: str = 'HC') 
         layers: Number of layers/shells
         radius: Particle radius
         packing: 'HC' (Hexagonal Compact), 'CS' (Cubic Simple), or 'CCC' (Face-Centered Cubic)
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
 
     Returns:
         Coordinates array centered at origin
     """
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
     coords = []
 
     if packing.upper() == 'HC':
@@ -538,8 +590,10 @@ def generate_cuboctaedro(layers: int, radius: float = 1.0, packing: str = 'HC') 
     return coords
 
 
-def generate_hcp_sphere(n_particles: int = None, layers: int = None, radius: float = 1.0,
-                        packing: str = 'HC') -> np.ndarray:
+def generate_hcp_sphere(
+    n_particles: int = None, layers: int = None, radius: float = 1.0,
+    packing: str = 'HC', sintering_coeff: float = 1.0
+) -> np.ndarray:
     """Generate a 3D compact structure (Df=3).
 
     Wrapper that handles both direct n_particles input and layer-based input.
@@ -550,15 +604,16 @@ def generate_hcp_sphere(n_particles: int = None, layers: int = None, radius: flo
         layers: Number of layers (used for larger structures via cuboctaedro)
         radius: Particle radius
         packing: 'HC', 'CS', or 'CCC'
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
 
     Returns:
         Coordinates array centered at origin
     """
-    d = 2.0 * radius
+    d = sintering_coeff * 2.0 * radius
 
     # Handle layer-based input for larger structures
     if layers is not None and layers > 0:
-        return generate_cuboctaedro(layers, radius, packing)
+        return generate_cuboctaedro(layers, radius, packing, sintering_coeff)
 
     # Handle small N special cases
     if n_particles is None or n_particles <= 0:
@@ -616,10 +671,20 @@ def generate_hcp_sphere(n_particles: int = None, layers: int = None, radius: flo
     return generate_cuboctaedro(max(1, estimated_layers), radius, packing)
 
 
-def compute_limiting_metrics(coords: np.ndarray, n_particles: int) -> dict:
+def compute_limiting_metrics(
+    coords: np.ndarray, n_particles: int, radius: float = 1.0
+) -> dict:
     """Compute metrics for a limiting case geometry.
 
     These are deterministic geometries, so no random seed or simulation time.
+
+    Args:
+        coords: Particle coordinates (N x 3)
+        n_particles: Number of particles
+        radius: Primary particle radius
+
+    Returns:
+        Dictionary with all computed metrics
     """
     if len(coords) == 0:
         return {
@@ -643,6 +708,15 @@ def compute_limiting_metrics(coords: np.ndarray, n_particles: int) -> dict:
 
     # Radius of gyration
     rg = math.sqrt(np.sum(centered**2) / n_particles)
+
+    # Porosity calculation
+    # Porosity = 1 - (total particle volume) / (effective aggregate volume)
+    # Effective volume is based on a sphere with radius = Rg + radius (to enclose particles)
+    particle_volume = (4.0 / 3.0) * math.pi * (radius ** 3)
+    total_particle_volume = n_particles * particle_volume
+    effective_radius = rg + radius  # Rg plus one particle radius to enclose
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius ** 3)
+    porosity = max(0.0, 1.0 - total_particle_volume / aggregate_volume) if aggregate_volume > 0 else 0.0
 
     # Compute coordination numbers (count neighbors within 2.1 * radius)
     radius = 1.0
@@ -691,7 +765,7 @@ def compute_limiting_metrics(coords: np.ndarray, n_particles: int) -> dict:
         "fractal_dimension_std": 0.0,
         "prefactor": 0.0,  # Will be computed from geometry type
         "radius_of_gyration": float(rg),
-        "porosity": 0.0,  # N/A for limiting cases
+        "porosity": float(porosity),
         "coordination": {
             "mean": float(coord_mean),
             "std": float(coord_std),
@@ -785,6 +859,8 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
         "r_squared": float(result.r_squared),
         "std_error": float(result.std_error),
         "confidence_interval": list(result.confidence_interval),
+        "log_scales": result.log_scales.tolist(),
+        "log_values": result.log_values.tolist(),
         "execution_time_ms": int(result.execution_time_ms),
         "parameters": {
             "points_per_sphere": points_per_sphere,
@@ -936,12 +1012,18 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             start_time = time.perf_counter()
 
             n_particles = params.get("n_particles", 100)
-            geometry_type = params.get("geometry_type", "chain")
             configuration_type = params.get("configuration_type", None)
             packing = params.get("packing", "HC")
             layers = params.get("layers")  # Optional: layer-based input
+            sintering_coeff = params.get("sintering_coeff", 1.0)
             radius = radius_min
 
+            # If configuration_type is provided, infer geometry_type from it
+            # This allows varying configuration_type in batch studies
+            if configuration_type:
+                geometry_type, _ = infer_geometry_from_config(configuration_type)
+            else:
+                geometry_type = params.get("geometry_type", "chain")
 
             # Generate coordinates based on geometry type and configuration
             if geometry_type == "chain":
@@ -949,15 +1031,15 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 config = configuration_type or "lineal"
 
                 if config == "lineal":
-                    coordinates = generate_linear_chain(n_particles, radius)
+                    coordinates = generate_linear_chain(n_particles, radius, sintering_coeff)
                 elif config == "cruz2d":
-                    coordinates = generate_cruz2d(n_particles, radius)
+                    coordinates = generate_cruz2d(n_particles, radius, sintering_coeff)
                 elif config == "asterisco":
-                    coordinates = generate_asterisco(n_particles, radius)
+                    coordinates = generate_asterisco(n_particles, radius, sintering_coeff)
                 elif config == "cruz3d":
-                    coordinates = generate_cruz3d(n_particles, radius)
+                    coordinates = generate_cruz3d(n_particles, radius, sintering_coeff)
                 else:
-                    coordinates = generate_linear_chain(n_particles, radius)
+                    coordinates = generate_linear_chain(n_particles, radius, sintering_coeff)
 
             elif geometry_type == "plane":
                 df = 2.0
@@ -969,20 +1051,22 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                         layers=layers,
                         radius=radius,
                         packing=packing,
-                        complete_rings=True
+                        complete_rings=True,
+                        sintering_coeff=sintering_coeff
                     )
                 elif config == "dobleplano":
                     use_layers = layers if layers is not None else max(1, int(math.sqrt(n_particles / 4)))
-                    coordinates = generate_doble_plano(use_layers, radius, packing)
+                    coordinates = generate_doble_plano(use_layers, radius, packing, sintering_coeff)
                 elif config == "tripleplano":
                     use_layers = layers if layers is not None else max(1, int(math.sqrt(n_particles / 6)))
-                    coordinates = generate_triple_plano(use_layers, radius)
+                    coordinates = generate_triple_plano(use_layers, radius, sintering_coeff)
                 else:
                     coordinates = generate_hexagonal_plane(
                         n_particles=n_particles,
                         radius=radius,
                         packing=packing,
-                        complete_rings=True
+                        complete_rings=True,
+                        sintering_coeff=sintering_coeff
                     )
 
             elif geometry_type == "sphere":
@@ -991,11 +1075,14 @@ def run_simulation_task(self, simulation_id: str) -> dict:
 
                 # For small N (1-6), use special configurations
                 if n_particles <= 6 and layers is None:
-                    coordinates = generate_hcp_sphere(n_particles=n_particles, radius=radius, packing=packing)
+                    coordinates = generate_hcp_sphere(
+                        n_particles=n_particles, radius=radius, packing=packing,
+                        sintering_coeff=sintering_coeff
+                    )
                 else:
                     # Use layer-based or estimate layers from n_particles
                     use_layers = layers if layers is not None else max(1, int((n_particles / 13) ** (1/3)))
-                    coordinates = generate_cuboctaedro(use_layers, radius, packing)
+                    coordinates = generate_cuboctaedro(use_layers, radius, packing, sintering_coeff)
             else:
                 raise ValueError(f"Unknown geometry type: {geometry_type}")
 
@@ -1019,8 +1106,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             radii = np.full(n_particles, radius)
             execution_time_ms = int((time.perf_counter() - start_time) * 1000)
 
-            # Compute metrics
-            metrics = compute_limiting_metrics(coordinates, n_particles)
+            # Compute metrics (pass radius for porosity calculation)
+            metrics = compute_limiting_metrics(coordinates, n_particles, radius)
             metrics["fractal_dimension"] = df
             metrics["prefactor"] = kf
 
@@ -1049,13 +1136,22 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             logger.info(
                 f"Limiting geometry {simulation_id} ({config}, packing={packing}) completed: "
                 f"Df={df:.1f}, kf={kf:.3f}, N={n_particles}, Rg={metrics['radius_of_gyration']:.2f}, "
-                f"time={execution_time_ms}ms"
+                f"porosity={metrics['porosity']:.3f}, time={execution_time_ms}ms"
             )
+
+            # Run box-counting if configured in parent study
+            bc_result = None
+            try:
+                bc_result = run_box_counting_if_configured(simulation_id)
+            except Exception as e:
+                logger.warning(f"Box-counting failed for limiting case {simulation_id}: {e}")
+                # Don't fail the whole simulation for box-counting error
 
             return {
                 "status": "completed",
                 "simulation_id": simulation_id,
                 "fractal_dimension": df,
+                "box_counting": bc_result,
                 "execution_time_ms": execution_time_ms,
             }
         else:

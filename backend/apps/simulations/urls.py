@@ -61,6 +61,11 @@ urlpatterns = [
         ParametricStudyViewSet.as_view({"get": "export_csv"}),
         name="project-studies-export",
     ),
+    path(
+        "projects/<uuid:project_pk>/studies/<uuid:pk>/run-box-counting/",
+        ParametricStudyViewSet.as_view({"post": "run_box_counting"}),
+        name="project-studies-run-box-counting",
+    ),
     # Individual simulation export and neighbor graph (new endpoints)
     path(
         "projects/<uuid:project_pk>/simulations/<uuid:pk>/export/",

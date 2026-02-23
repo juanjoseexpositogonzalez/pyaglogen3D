@@ -113,6 +113,7 @@ export interface LimitingParams {
   packing: PackingType
   layers?: number
   primary_particle_radius_nm?: number
+  sintering_coeff?: number
 }
 
 export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | LimitingParams
@@ -293,6 +294,11 @@ export interface ParametricStudy {
   completed_at: string | null
 }
 
+export interface BoxCountingParams {
+  points_per_sphere?: number
+  precision?: number
+}
+
 export interface CreateParametricStudyInput {
   name: string
   description?: string
@@ -300,6 +306,18 @@ export interface CreateParametricStudyInput {
   base_parameters: Record<string, unknown>
   parameter_grid: Record<string, unknown[]>
   seeds_per_combination?: number
+  include_box_counting?: boolean
+  box_counting_params?: BoxCountingParams
+}
+
+export interface BoxCountingResult {
+  dimension: number
+  r_squared: number
+  std_error: number
+  confidence_interval?: [number, number]
+  log_scales?: number[]
+  log_values?: number[]
+  execution_time_ms?: number
 }
 
 export interface ParametricStudyResult {
@@ -318,6 +336,7 @@ export interface ParametricStudyResult {
   anisotropy?: number
   asphericity?: number
   acylindricity?: number
+  box_counting?: BoxCountingResult
 }
 
 export interface ParametricStudyResults {

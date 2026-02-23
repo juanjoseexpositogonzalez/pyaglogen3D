@@ -831,6 +831,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     "anisotropy": sim.metrics.get("anisotropy"),
                     "asphericity": sim.metrics.get("asphericity"),
                     "acylindricity": sim.metrics.get("acylindricity"),
+                    "box_counting": sim.metrics.get("box_counting"),
                 })
             results.append(result_data)
 
@@ -937,3 +938,121 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         response = HttpResponse(output.read(), content_type="text/csv")
         response["Content-Disposition"] = f'attachment; filename="{study.id}_results.csv"'
         return response
+
+    @action(detail=True, methods=["post"], url_path="run-box-counting")
+    def run_box_counting(self, request: Request, pk=None, **kwargs) -> Response:
+        """Run box-counting analysis on all completed simulations in the study.
+
+        This can be used to run box-counting after simulations are complete,
+        even if include_box_counting was not enabled initially.
+
+        Request body (optional):
+        - points_per_sphere: int (default: 100)
+        - precision: int (default: 18)
+
+        Returns progress and results summary.
+        """
+        from .tasks import run_box_counting_if_configured
+        import aglogen_core
+
+        study = self.get_object()
+
+        # Get parameters from request
+        points_per_sphere = request.data.get("points_per_sphere", 100)
+        precision = request.data.get("precision", 18)
+
+        # Validate
+        try:
+            points_per_sphere = int(points_per_sphere)
+            precision = int(precision)
+        except (ValueError, TypeError):
+            return Response(
+                {"error": "Invalid parameters"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        if not (10 <= points_per_sphere <= 1000):
+            return Response(
+                {"error": "points_per_sphere must be between 10 and 1000"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (8 <= precision <= 21):
+            return Response(
+                {"error": "precision must be between 8 and 21"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Update study to enable box-counting for future reference
+        study.include_box_counting = True
+        study.box_counting_params = {
+            "points_per_sphere": points_per_sphere,
+            "precision": precision,
+        }
+        study.save(update_fields=["include_box_counting", "box_counting_params"])
+
+        # Get completed simulations without box-counting results
+        simulations = study.simulations.filter(
+            status="completed",
+            geometry__isnull=False,
+        )
+
+        results = {
+            "total": simulations.count(),
+            "processed": 0,
+            "skipped": 0,
+            "failed": 0,
+            "errors": [],
+        }
+
+        for sim in simulations:
+            # Check if already has box-counting
+            if sim.metrics and sim.metrics.get("box_counting"):
+                results["skipped"] += 1
+                continue
+
+            try:
+                # Load geometry
+                buf = io.BytesIO(sim.geometry)
+                geometry_array = np.load(buf)
+                coords = np.ascontiguousarray(geometry_array[:, :3])
+                radii = np.ascontiguousarray(geometry_array[:, 3])
+
+                # Run box-counting
+                bc_result = aglogen_core.box_counting_agglomerate(
+                    coords, radii,
+                    points_per_sphere=points_per_sphere,
+                    precision=precision,
+                )
+
+                # Update metrics
+                metrics = sim.metrics or {}
+                metrics["box_counting"] = {
+                    "dimension": float(bc_result.dimension),
+                    "r_squared": float(bc_result.r_squared),
+                    "std_error": float(bc_result.std_error),
+                    "confidence_interval": list(bc_result.confidence_interval),
+                    "log_scales": bc_result.log_scales.tolist(),
+                    "log_values": bc_result.log_values.tolist(),
+                    "execution_time_ms": int(bc_result.execution_time_ms),
+                    "parameters": {
+                        "points_per_sphere": points_per_sphere,
+                        "precision": precision,
+                    },
+                }
+                sim.metrics = metrics
+                sim.save(update_fields=["metrics"])
+                results["processed"] += 1
+
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append({
+                    "simulation_id": str(sim.id),
+                    "error": str(e),
+                })
+
+        return Response({
+            "status": "completed",
+            "message": f"Box-counting completed: {results['processed']} processed, "
+                       f"{results['skipped']} skipped (already done), {results['failed']} failed",
+            "results": results,
+        })

@@ -423,6 +423,29 @@ export const studiesApi = {
     }
     return res.blob()
   },
+
+  /**
+   * Run box-counting analysis on all completed simulations in the study.
+   */
+  runBoxCounting: (
+    projectId: string,
+    id: string,
+    params?: { points_per_sphere?: number; precision?: number }
+  ) =>
+    request<{
+      status: string
+      message: string
+      results: {
+        total: number
+        processed: number
+        skipped: number
+        failed: number
+        errors: Array<{ simulation_id: string; error: string }>
+      }
+    }>(`/projects/${projectId}/studies/${id}/run-box-counting/`, {
+      method: 'POST',
+      body: JSON.stringify(params || {}),
+    }),
 }
 
 // Export ApiError for error handling

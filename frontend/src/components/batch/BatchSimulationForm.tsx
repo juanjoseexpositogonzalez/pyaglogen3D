@@ -16,7 +16,58 @@ const algorithmOptions = [
   { value: 'dla', label: 'Diffusion-Limited Aggregation' },
   { value: 'cca', label: 'Cluster-Cluster Aggregation' },
   { value: 'tunable', label: 'Tunable Fractal Dimension' },
+  { value: 'limiting', label: 'Limiting Cases (Df=1,2,3)' },
 ]
+
+const limitingGeometryOptions = [
+  { value: 'chain', label: 'Linear Chain (Df=1)' },
+  { value: 'plane', label: 'Hexagonal Plane (Df=2)' },
+  { value: 'sphere', label: 'Compact Sphere (Df=3)' },
+]
+
+// Configuration options per geometry type
+const chainConfigOptions = [
+  { value: 'lineal', label: 'Lineal - Straight line' },
+  { value: 'cruz2d', label: 'Cruz 2D - 2D cross pattern' },
+  { value: 'asterisco', label: 'Asterisco - Star pattern' },
+  { value: 'cruz3d', label: 'Cruz 3D - 3D cross pattern' },
+]
+
+const planeConfigOptions = [
+  { value: 'plano', label: 'Plano - Single hexagonal plane' },
+  { value: 'dobleplano', label: 'Doble Plano - Two perpendicular planes' },
+  { value: 'tripleplano', label: 'Triple Plano - Three planes at 60°' },
+]
+
+const sphereConfigOptions = [
+  { value: 'cuboctaedro', label: 'Cuboctaedro - Compact 3D structure' },
+]
+
+const packingOptions = [
+  { value: 'HC', label: 'HC - Hexagonal Compact' },
+  { value: 'CS', label: 'CS - Cubic Simple' },
+  { value: 'CCC', label: 'CCC - Face-Centered Cubic' },
+]
+
+// Get configuration options based on geometry type
+function getConfigOptionsForGeometry(geometry: string) {
+  switch (geometry) {
+    case 'chain': return chainConfigOptions
+    case 'plane': return planeConfigOptions
+    case 'sphere': return sphereConfigOptions
+    default: return chainConfigOptions
+  }
+}
+
+// Get default configuration for a geometry type
+function getDefaultConfigForGeometry(geometry: string) {
+  switch (geometry) {
+    case 'chain': return 'lineal'
+    case 'plane': return 'plano'
+    case 'sphere': return 'cuboctaedro'
+    default: return 'lineal'
+  }
+}
 
 type InputMode = 'discrete' | 'range'
 
@@ -101,6 +152,28 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const [stickingProbability, setStickingProbability] = useState('1.0')
   const [seedsPerCombo, setSeedsPerCombo] = useState('1')
   const [variations, setVariations] = useState<ParameterVariation[]>([])
+  // Limiting case specific state
+  const [baseGeometry, setBaseGeometry] = useState<string>('chain')
+  const [baseConfiguration, setBaseConfiguration] = useState<string>('lineal')
+  const [basePacking, setBasePacking] = useState<string>('HC')
+  const [baseSintering, setBaseSintering] = useState('1.0')
+
+  // Box-counting analysis option
+  const [includeBoxCounting, setIncludeBoxCounting] = useState(false)
+  const [boxCountingPointsPerSphere, setBoxCountingPointsPerSphere] = useState('100')
+  const [boxCountingPrecision, setBoxCountingPrecision] = useState('18')
+
+  // Update configuration when geometry changes
+  const handleGeometryChange = (newGeometry: string) => {
+    setBaseGeometry(newGeometry)
+    setBaseConfiguration(getDefaultConfigForGeometry(newGeometry))
+    // Set default packing for sphere
+    if (newGeometry === 'sphere') {
+      setBasePacking('CCC')
+    } else {
+      setBasePacking('HC')
+    }
+  }
 
   // Parameters that must be integers
   const integerParams = useMemo(() => new Set(['n_particles']), [])
@@ -133,11 +206,19 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Build base parameters
-    const baseParams: Record<string, unknown> = {
-      n_particles: parseInt(nParticles),
-      sticking_probability: parseFloat(stickingProbability),
-    }
+    // Build base parameters (different for limiting vs other algorithms)
+    const baseParams: Record<string, unknown> = algorithm === 'limiting'
+      ? {
+          n_particles: parseInt(nParticles),
+          geometry_type: baseGeometry,
+          configuration_type: baseConfiguration,
+          packing: basePacking,
+          sintering_coeff: parseFloat(baseSintering),
+        }
+      : {
+          n_particles: parseInt(nParticles),
+          sticking_probability: parseFloat(stickingProbability),
+        }
 
     // Build parameter grid from variations
     const parameterGrid: Record<string, unknown[]> = {}
@@ -157,7 +238,14 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       base_algorithm: algorithm,
       base_parameters: baseParams,
       parameter_grid: parameterGrid,
-      seeds_per_combination: parseInt(seedsPerCombo) || 1,
+      // Limiting cases are deterministic, so always 1 seed
+      seeds_per_combination: algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1),
+      // Box-counting analysis option
+      include_box_counting: includeBoxCounting,
+      box_counting_params: includeBoxCounting ? {
+        points_per_sphere: parseInt(boxCountingPointsPerSphere) || 100,
+        precision: parseInt(boxCountingPrecision) || 18,
+      } : undefined,
     }
 
     onSubmit(data)
@@ -173,14 +261,23 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   }, [variations, integerParams])
 
   const totalCombinations = variationCounts.reduce((acc, v) => acc * v.count, 1)
-  const totalSimulations = totalCombinations * (parseInt(seedsPerCombo) || 1)
+  // Limiting cases are deterministic, so always 1 seed
+  const effectiveSeeds = algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1)
+  const totalSimulations = totalCombinations * effectiveSeeds
 
-  const parameterOptions = [
-    { value: 'n_particles', label: 'Number of Particles' },
-    { value: 'sticking_probability', label: 'Sticking Probability' },
-    { value: 'target_df', label: 'Target Df (tunable only)' },
-    { value: 'target_kf', label: 'Target kf (tunable only)' },
-  ]
+  const parameterOptions = algorithm === 'limiting'
+    ? [
+        { value: 'configuration_type', label: 'Configuration Type' },
+        { value: 'n_particles', label: 'Number of Particles' },
+        { value: 'sintering_coeff', label: 'Sintering Coefficient' },
+        { value: 'packing', label: 'Packing Type (sphere only)' },
+      ]
+    : [
+        { value: 'n_particles', label: 'Number of Particles' },
+        { value: 'sticking_probability', label: 'Sticking Probability' },
+        { value: 'target_df', label: 'Target Df (tunable only)' },
+        { value: 'target_kf', label: 'Target kf (tunable only)' },
+      ]
 
   return (
     <Card>
@@ -222,48 +319,114 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             />
           </div>
 
-          {/* Base Parameters */}
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="nParticles">Base N Particles</Label>
-              <Input
-                id="nParticles"
-                type="number"
-                value={nParticles}
-                onChange={(e) => setNParticles(e.target.value)}
-                min={10}
-                max={100000}
-              />
+          {/* Base Parameters - conditional based on algorithm */}
+          {algorithm === 'limiting' ? (
+            /* Limiting case parameters */
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label>Base Geometry</Label>
+                  <Select
+                    value={baseGeometry}
+                    onChange={(e) => handleGeometryChange(e.target.value)}
+                    options={limitingGeometryOptions}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Configuration</Label>
+                  <Select
+                    value={baseConfiguration}
+                    onChange={(e) => setBaseConfiguration(e.target.value)}
+                    options={getConfigOptionsForGeometry(baseGeometry)}
+                  />
+                </div>
+              </div>
+              <div className="grid grid-cols-3 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="nParticles">Base N Particles</Label>
+                  <Input
+                    id="nParticles"
+                    type="number"
+                    value={nParticles}
+                    onChange={(e) => setNParticles(e.target.value)}
+                    min={1}
+                    max={10000}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label>Packing</Label>
+                  <Select
+                    value={basePacking}
+                    onChange={(e) => setBasePacking(e.target.value)}
+                    options={packingOptions}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Affects plane & sphere geometries
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="sintering">Base Sintering Coeff.</Label>
+                  <Input
+                    id="sintering"
+                    type="number"
+                    value={baseSintering}
+                    onChange={(e) => setBaseSintering(e.target.value)}
+                    min={0.5}
+                    max={1}
+                    step={0.05}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    1.0 = touching, 0.5 = 50% overlap
+                  </p>
+                </div>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="sticking">Base Sticking Prob.</Label>
-              <Input
-                id="sticking"
-                type="number"
-                value={stickingProbability}
-                onChange={(e) => setStickingProbability(e.target.value)}
-                min={0}
-                max={1}
-                step={0.1}
-              />
+          ) : (
+            /* Standard algorithm parameters */
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="nParticles">Base N Particles</Label>
+                <Input
+                  id="nParticles"
+                  type="number"
+                  value={nParticles}
+                  onChange={(e) => setNParticles(e.target.value)}
+                  min={10}
+                  max={100000}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sticking">Base Sticking Prob.</Label>
+                <Input
+                  id="sticking"
+                  type="number"
+                  value={stickingProbability}
+                  onChange={(e) => setStickingProbability(e.target.value)}
+                  min={0}
+                  max={1}
+                  step={0.1}
+                />
+              </div>
             </div>
-          </div>
+          )}
 
-          {/* Seeds per combination */}
-          <div className="space-y-2">
-            <Label htmlFor="seeds">Seeds per Combination</Label>
-            <Input
-              id="seeds"
-              type="number"
-              value={seedsPerCombo}
-              onChange={(e) => setSeedsPerCombo(e.target.value)}
-              min={1}
-              max={10}
-            />
-            <p className="text-xs text-muted-foreground">
-              Run multiple simulations per parameter combination with different random seeds
-            </p>
-          </div>
+          {/* Seeds per combination - not needed for limiting (deterministic) */}
+          {algorithm !== 'limiting' && (
+            <div className="space-y-2">
+              <Label htmlFor="seeds">Seeds per Combination</Label>
+              <Input
+                id="seeds"
+                type="number"
+                value={seedsPerCombo}
+                onChange={(e) => setSeedsPerCombo(e.target.value)}
+                min={1}
+                max={10}
+              />
+              <p className="text-xs text-muted-foreground">
+                Run multiple simulations per parameter combination with different random seeds
+              </p>
+            </div>
+          )}
 
           {/* Parameter Variations */}
           <div className="space-y-2">
@@ -393,6 +556,60 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             })}
           </div>
 
+          {/* Box-Counting Analysis Option */}
+          <div className="space-y-3 p-3 border rounded-lg">
+            <div className="flex items-center gap-3">
+              <input
+                type="checkbox"
+                id="includeBoxCounting"
+                checked={includeBoxCounting}
+                onChange={(e) => setIncludeBoxCounting(e.target.checked)}
+                className="h-4 w-4 rounded border-gray-300"
+              />
+              <div>
+                <Label htmlFor="includeBoxCounting" className="cursor-pointer">
+                  Run Box-Counting Analysis
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  Compute fractal dimension (Df) using 3D box-counting algorithm
+                </p>
+              </div>
+            </div>
+
+            {includeBoxCounting && (
+              <div className="grid grid-cols-2 gap-4 pt-2">
+                <div className="space-y-1">
+                  <Label className="text-xs">Points per Sphere</Label>
+                  <Input
+                    type="number"
+                    value={boxCountingPointsPerSphere}
+                    onChange={(e) => setBoxCountingPointsPerSphere(e.target.value)}
+                    min={10}
+                    max={1000}
+                    placeholder="100"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Surface sampling density (higher = more accurate)
+                  </p>
+                </div>
+                <div className="space-y-1">
+                  <Label className="text-xs">Precision (bits)</Label>
+                  <Input
+                    type="number"
+                    value={boxCountingPrecision}
+                    onChange={(e) => setBoxCountingPrecision(e.target.value)}
+                    min={8}
+                    max={24}
+                    placeholder="18"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Morton code precision (18 recommended)
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
           {/* Summary */}
           <div className="p-3 bg-primary/10 rounded-lg">
             <p className="text-sm">
@@ -400,7 +617,12 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               <span className="font-mono">{totalSimulations}</span>
               {variations.length > 0 && (
                 <span className="text-muted-foreground">
-                  {' '}({totalCombinations} combinations × {seedsPerCombo} seeds)
+                  {' '}({totalCombinations} combinations × {effectiveSeeds} seeds)
+                </span>
+              )}
+              {includeBoxCounting && (
+                <span className="text-muted-foreground ml-2">
+                  + box-counting
                 </span>
               )}
             </p>

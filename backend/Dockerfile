@@ -7,7 +7,7 @@
 # -----------------------------------------------------------------------------
 # Stage 1: Build Rust engine (aglogen_core)
 # -----------------------------------------------------------------------------
-FROM rust:1.75-slim-bookworm AS rust-builder
+FROM rust:1.80-slim-bookworm AS rust-builder
 
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -53,6 +53,7 @@ RUN pip install /tmp/*.whl && rm -rf /tmp/*.whl
 
 # Copy backend source code
 COPY backend/pyproject.toml ./
+COPY backend/README.md ./
 COPY backend/config ./config
 COPY backend/apps ./apps
 COPY backend/manage.py ./

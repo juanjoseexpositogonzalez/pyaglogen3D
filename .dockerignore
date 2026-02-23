@@ -1,0 +1,83 @@
+# flyctl launch added from .gitignore
+# Python
+**/__pycache__
+**/*.py[cod]
+**/*$py.class
+**/*.so
+**/.Python
+**/build
+**/develop-eggs
+**/dist
+**/downloads
+**/eggs
+**/.eggs
+lib
+lib64
+**/parts
+**/sdist
+**/var
+**/wheels
+**/*.egg-info
+**/.installed.cfg
+**/*.egg
+**/.venv
+**/venv
+**/ENV
+
+# Django
+**/*.log
+**/local_settings.py
+**/db.sqlite3
+**/staticfiles
+**/media
+
+# Rust
+**/target
+
+# Node
+**/node_modules
+**/.next
+**/out
+**/.vercel
+
+# IDE
+**/.idea
+**/.vscode
+**/*.swp
+**/*.swo
+**/*~
+
+# Environment
+**/.env
+**/.env.local
+**/.env.*.local
+
+# OS
+**/.DS_Store
+**/Thumbs.db
+
+# Testing
+**/.coverage
+**/htmlcov
+**/.pytest_cache
+**/.mypy_cache
+
+# Jupyter
+**/.ipynb_checkpoints
+
+# Zone identifiers (WSL)
+**/*:Zone.Identifier
+
+# flyctl launch added from aglogen_core/.venv/.gitignore
+aglogen_core/.venv/**/*
+
+# flyctl launch added from backend/.pytest_cache/.gitignore
+# Created by pytest automatically.
+backend/.pytest_cache/**/*
+
+# flyctl launch added from backend/.venv/.gitignore
+backend/.venv/**/*
+
+# flyctl launch added from technical_content/.gitignore
+technical_content/**/*
+fly.toml

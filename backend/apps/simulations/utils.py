@@ -44,6 +44,18 @@ THEORETICAL_EXTREMES: dict[str, dict[str, list[float]]] = {
         "target_df": [1.0, 1.8, 2.5, 3.0],
         "target_kf": [1.0, 1.3, 2.0],
     },
+    "limiting": {
+        "configuration_type": [
+            # Df=1 (chain) configurations
+            "lineal", "cruz2d", "asterisco", "cruz3d",
+            # Df=2 (plane) configurations
+            "plano", "dobleplano", "tripleplano",
+            # Df=3 (sphere) configurations
+            "cuboctaedro",
+        ],
+        "sintering_coeff": [0.5, 0.75, 0.9, 1.0],
+        "packing": ["HC", "CS", "CCC"],
+    },
 }
 
 # Sintering extreme coefficients
