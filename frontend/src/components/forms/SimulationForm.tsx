@@ -477,7 +477,6 @@ function LimitingGeometrySection({
           <div className="flex items-center gap-4">
             <div className="flex-1 space-y-2">
               <Slider
-                id="layer-count"
                 min={0}
                 max={maxLayers}
                 step={1}
