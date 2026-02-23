@@ -294,7 +294,7 @@ export interface ParametricStudy {
   completed_at: string | null
 }
 
-export interface BoxCountingParams {
+export interface BatchBoxCountingParams {
   points_per_sphere?: number
   precision?: number
 }
@@ -307,7 +307,7 @@ export interface CreateParametricStudyInput {
   parameter_grid: Record<string, unknown[]>
   seeds_per_combination?: number
   include_box_counting?: boolean
-  box_counting_params?: BoxCountingParams
+  box_counting_params?: BatchBoxCountingParams
 }
 
 export interface BoxCountingResult {
