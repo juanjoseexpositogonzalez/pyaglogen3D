@@ -30,6 +30,7 @@ interface AuthContextType {
   updateProfile: (data: UpdateProfileData) => Promise<void>
   refreshUser: () => Promise<void>
   clearError: () => void
+  handleOAuthCallback: (accessToken: string, refreshToken: string) => Promise<void>
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined)
@@ -158,6 +159,21 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setError(null)
   }, [])
 
+  const handleOAuthCallback = useCallback(async (accessToken: string, refreshToken: string) => {
+    // Store the tokens
+    tokenStorage.setTokens(accessToken, refreshToken)
+
+    // Fetch user profile
+    try {
+      const userData = await authApi.getMe()
+      setUser(userData)
+    } catch (err) {
+      // If we can't fetch user, clear tokens
+      tokenStorage.clearTokens()
+      throw err
+    }
+  }, [])
+
   return (
     <AuthContext.Provider
       value={{
@@ -171,6 +187,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         updateProfile,
         refreshUser,
         clearError,
+        handleOAuthCallback,
       }}
     >
       {children}

@@ -20,4 +20,6 @@ urlpatterns = [
     # Email verification
     path("verify-email/", views.VerifyEmailView.as_view(), name="auth-verify-email"),
     path("resend-verification/", views.ResendVerificationView.as_view(), name="auth-resend-verification"),
+    # OAuth callback (generates JWT tokens after OAuth success)
+    path("oauth-callback/", views.OAuthCallbackView.as_view(), name="auth-oauth-callback"),
 ]

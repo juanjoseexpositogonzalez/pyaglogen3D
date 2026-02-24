@@ -267,3 +267,39 @@ class ResendVerificationView(APIView):
             pass
 
         return Response({"message": "If this email exists, a verification link will be sent."})
+
+
+class OAuthCallbackView(APIView):
+    """
+    Handle OAuth callback and return JWT tokens.
+
+    After successful OAuth login, this endpoint generates JWT tokens
+    and redirects to the frontend with tokens in URL parameters.
+    """
+
+    permission_classes = [AllowAny]
+
+    def get(self, request: Request) -> Response:
+        """
+        Called by frontend to get JWT tokens after OAuth redirect.
+        The user should be authenticated via session from allauth.
+        """
+        from django.shortcuts import redirect
+        from urllib.parse import urlencode
+
+        user = request.user
+        frontend_url = getattr(settings, "FRONTEND_URL", "http://localhost:3000")
+
+        if not user.is_authenticated:
+            # Redirect to login with error
+            return redirect(f"{frontend_url}/auth/login?error=oauth_failed")
+
+        # Generate JWT tokens
+        tokens = get_tokens_for_user(user)
+
+        # Redirect to frontend with tokens
+        params = urlencode({
+            "access": tokens["access"],
+            "refresh": tokens["refresh"],
+        })
+        return redirect(f"{frontend_url}/auth/oauth-callback?{params}")
