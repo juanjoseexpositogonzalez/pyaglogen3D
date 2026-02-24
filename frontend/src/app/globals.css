@@ -32,7 +32,10 @@
     @apply border-border;
   }
   body {
-    @apply bg-background text-foreground;
+    @apply text-foreground;
+  }
+  body:not(.app-background) {
+    @apply bg-background;
   }
 }
 
@@ -40,7 +43,7 @@
 .app-background {
   position: relative;
   min-height: 100vh;
-  background: transparent !important;
+  background: transparent;
 }
 
 .app-background::before {
