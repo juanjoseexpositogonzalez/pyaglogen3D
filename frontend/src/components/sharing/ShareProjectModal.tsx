@@ -14,15 +14,8 @@ import {
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Loader2, X, UserPlus, Mail, Trash2 } from 'lucide-react'
+import { Loader2, X, UserPlus, Mail, Trash2, ChevronDown } from 'lucide-react'
 
 interface ShareProjectModalProps {
   projectId: string
@@ -35,6 +28,31 @@ const permissionLabels: Record<SharePermission, string> = {
   view: 'View Only',
   edit: 'Can Edit',
   admin: 'Admin',
+}
+
+interface PermissionSelectProps {
+  value: SharePermission
+  onChange: (value: SharePermission) => void
+  disabled?: boolean
+  className?: string
+}
+
+function PermissionSelect({ value, onChange, disabled, className }: PermissionSelectProps) {
+  return (
+    <div className={`relative ${className || ''}`}>
+      <select
+        value={value}
+        onChange={(e) => onChange(e.target.value as SharePermission)}
+        disabled={disabled}
+        className="w-full h-10 appearance-none rounded-md border border-gray-600 bg-gray-700 px-3 py-2 pr-8 text-sm text-white focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+      >
+        <option value="view">View Only</option>
+        <option value="edit">Can Edit</option>
+        <option value="admin">Admin</option>
+      </select>
+      <ChevronDown className="absolute right-2 top-3 h-4 w-4 opacity-50 pointer-events-none text-white" />
+    </div>
+  )
 }
 
 export function ShareProjectModal({
@@ -123,19 +141,11 @@ export function ShareProjectModal({
                   className="bg-gray-700 border-gray-600 text-white"
                 />
               </div>
-              <Select
+              <PermissionSelect
                 value={permission}
-                onValueChange={(v) => setPermission(v as SharePermission)}
-              >
-                <SelectTrigger className="w-[130px] bg-gray-700 border-gray-600 text-white">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent className="bg-gray-700 border-gray-600">
-                  <SelectItem value="view">View Only</SelectItem>
-                  <SelectItem value="edit">Can Edit</SelectItem>
-                  <SelectItem value="admin">Admin</SelectItem>
-                </SelectContent>
-              </Select>
+                onChange={setPermission}
+                className="w-[130px]"
+              />
               <Button
                 type="submit"
                 disabled={!email || inviteMutation.isPending}
@@ -233,20 +243,12 @@ function CollaboratorRow({
         </div>
       </div>
       <div className="flex items-center gap-2">
-        <Select
+        <PermissionSelect
           value={share.permission}
-          onValueChange={(v) => onPermissionChange(v as SharePermission)}
+          onChange={onPermissionChange}
           disabled={isUpdating}
-        >
-          <SelectTrigger className="w-[110px] h-8 bg-gray-700 border-gray-600 text-sm">
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent className="bg-gray-700 border-gray-600">
-            <SelectItem value="view">View Only</SelectItem>
-            <SelectItem value="edit">Can Edit</SelectItem>
-            <SelectItem value="admin">Admin</SelectItem>
-          </SelectContent>
-        </Select>
+          className="w-[110px]"
+        />
         <Button
           variant="ghost"
           size="icon"
@@ -277,7 +279,7 @@ function InvitationRow({ invitation, onRemove, isRemoving }: InvitationRowProps)
         <div>
           <p className="text-sm font-medium text-gray-300">{invitation.email}</p>
           <p className="text-xs text-gray-500">
-            Invitation pending • {permissionLabels[invitation.permission]}
+            Invitation pending &bull; {permissionLabels[invitation.permission]}
           </p>
         </div>
       </div>
