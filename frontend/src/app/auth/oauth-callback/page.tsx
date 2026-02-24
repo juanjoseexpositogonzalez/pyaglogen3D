@@ -10,23 +10,33 @@ function OAuthCallbackContent() {
   const { handleOAuthCallback } = useAuth()
 
   useEffect(() => {
-    const accessToken = searchParams.get('access')
-    const refreshToken = searchParams.get('refresh')
-    const error = searchParams.get('error')
+    const processOAuth = async () => {
+      const accessToken = searchParams.get('access')
+      const refreshToken = searchParams.get('refresh')
+      const error = searchParams.get('error')
 
-    if (error) {
-      router.push('/auth/login?error=' + error)
-      return
+      if (error) {
+        router.push('/auth/login?error=' + error)
+        return
+      }
+
+      if (accessToken && refreshToken) {
+        try {
+          // Store tokens and fetch user profile
+          await handleOAuthCallback(accessToken, refreshToken)
+          // Only redirect after tokens are stored and user is loaded
+          router.push('/dashboard')
+        } catch (err) {
+          console.error('OAuth callback error:', err)
+          router.push('/auth/login?error=oauth_callback_failed')
+        }
+      } else {
+        // No tokens, redirect to login
+        router.push('/auth/login?error=missing_tokens')
+      }
     }
 
-    if (accessToken && refreshToken) {
-      // Store tokens and redirect to dashboard
-      handleOAuthCallback(accessToken, refreshToken)
-      router.push('/dashboard')
-    } else {
-      // No tokens, redirect to login
-      router.push('/auth/login?error=missing_tokens')
-    }
+    processOAuth()
   }, [searchParams, router, handleOAuthCallback])
 
   return (
