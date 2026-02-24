@@ -1,6 +1,13 @@
+'use client'
+
 import Link from 'next/link'
+import { useAuth } from '@/contexts/AuthContext'
+
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 export default function Home() {
+  const { isAuthenticated, isLoading } = useAuth()
+
   return (
     <main className="flex min-h-screen flex-col items-center justify-center p-24">
       <div className="text-center">
@@ -9,15 +16,34 @@ export default function Home() {
           3D Agglomerate Simulation and Fractal Analysis Platform
         </p>
 
-        <div className="flex gap-4 justify-center">
-          <Link
-            href="/dashboard"
-            className="bg-primary text-primary-foreground px-6 py-3 rounded-lg font-medium hover:opacity-90 transition"
-          >
-            Go to Dashboard
-          </Link>
+        <div className="flex gap-4 justify-center flex-wrap">
+          {!isLoading && (
+            isAuthenticated ? (
+              <Link
+                href="/dashboard"
+                className="bg-primary text-primary-foreground px-6 py-3 rounded-lg font-medium hover:opacity-90 transition"
+              >
+                Go to Dashboard
+              </Link>
+            ) : (
+              <>
+                <Link
+                  href="/auth/login"
+                  className="bg-primary text-primary-foreground px-6 py-3 rounded-lg font-medium hover:opacity-90 transition"
+                >
+                  Sign In
+                </Link>
+                <Link
+                  href="/auth/register"
+                  className="bg-secondary text-secondary-foreground px-6 py-3 rounded-lg font-medium hover:opacity-90 transition"
+                >
+                  Create Account
+                </Link>
+              </>
+            )
+          )}
           <a
-            href="http://localhost:8000/api/v1/"
+            href={`${API_BASE}/`}
             target="_blank"
             rel="noopener noreferrer"
             className="bg-secondary text-secondary-foreground px-6 py-3 rounded-lg font-medium hover:opacity-90 transition"
