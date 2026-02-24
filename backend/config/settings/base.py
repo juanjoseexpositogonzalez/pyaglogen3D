@@ -190,7 +190,7 @@ SITE_ID = 1
 ACCOUNT_EMAIL_REQUIRED = True
 ACCOUNT_USERNAME_REQUIRED = False
 ACCOUNT_AUTHENTICATION_METHOD = "email"
-ACCOUNT_EMAIL_VERIFICATION = "mandatory"
+ACCOUNT_EMAIL_VERIFICATION = "optional"  # Skip for OAuth users
 ACCOUNT_CONFIRM_EMAIL_ON_GET = True
 ACCOUNT_LOGIN_ON_EMAIL_CONFIRMATION = True
 ACCOUNT_UNIQUE_EMAIL = True
@@ -199,6 +199,7 @@ ACCOUNT_UNIQUE_EMAIL = True
 SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_EMAIL_REQUIRED = True
 SOCIALACCOUNT_QUERY_EMAIL = True
+SOCIALACCOUNT_EMAIL_VERIFICATION = "none"  # OAuth emails are already verified
 SOCIALACCOUNT_PROVIDERS = {
     "google": {
         "SCOPE": ["profile", "email"],
@@ -212,6 +213,10 @@ SOCIALACCOUNT_PROVIDERS = {
 
 # Frontend URL for redirects
 FRONTEND_URL = config("FRONTEND_URL", default="http://localhost:3000")
+
+# Allauth redirects - redirect to frontend after OAuth
+LOGIN_REDIRECT_URL = FRONTEND_URL + "/dashboard"
+ACCOUNT_LOGOUT_REDIRECT_URL = FRONTEND_URL
 
 # Email settings (configure in production)
 EMAIL_BACKEND = config(

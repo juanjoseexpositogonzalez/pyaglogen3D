@@ -13,5 +13,13 @@ X_FRAME_OPTIONS = "DENY"
 CSRF_COOKIE_SECURE = True
 SESSION_COOKIE_SECURE = True
 
+# CSRF trusted origins (required for OAuth callbacks)
+CSRF_TRUSTED_ORIGINS = config(
+    "CSRF_TRUSTED_ORIGINS",
+    cast=Csv(),
+    default="https://pyaglogen3d-api.fly.dev,https://pyaglogen3d-frontend-7a41282f9465.herokuapp.com",
+)
+
 # CORS
 CORS_ALLOWED_ORIGINS = config("CORS_ORIGINS", cast=Csv(), default="")
+CORS_ALLOW_CREDENTIALS = True
