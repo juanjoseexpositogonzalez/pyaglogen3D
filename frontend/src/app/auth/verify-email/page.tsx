@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import { useSearchParams } from 'next/navigation'
 import Link from 'next/link'
 import { authApi, AuthApiError } from '@/lib/auth-api'
@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from '@/components/ui/button'
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react'
 
-export default function VerifyEmailPage() {
+function VerifyEmailContent() {
   const searchParams = useSearchParams()
   const token = searchParams.get('token')
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading')
@@ -74,5 +74,29 @@ export default function VerifyEmailPage() {
         )}
       </CardFooter>
     </Card>
+  )
+}
+
+function LoadingFallback() {
+  return (
+    <Card className="bg-gray-800 border-gray-700">
+      <CardHeader className="text-center">
+        <CardTitle className="text-white">Email Verification</CardTitle>
+        <CardDescription className="text-gray-400">
+          Loading...
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col items-center py-8">
+        <Loader2 className="h-16 w-16 text-blue-500 animate-spin" />
+      </CardContent>
+    </Card>
+  )
+}
+
+export default function VerifyEmailPage() {
+  return (
+    <Suspense fallback={<LoadingFallback />}>
+      <VerifyEmailContent />
+    </Suspense>
   )
 }
