@@ -277,6 +277,9 @@ class OAuthCallbackView(APIView):
     and redirects to the frontend with tokens in URL parameters.
     """
 
+    # Allow session auth so we can read the session created by allauth
+    from rest_framework.authentication import SessionAuthentication
+    authentication_classes = [SessionAuthentication]
     permission_classes = [AllowAny]
 
     def get(self, request: Request) -> Response:
