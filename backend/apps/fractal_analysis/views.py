@@ -6,8 +6,11 @@ from django.http import HttpResponse
 from kombu.exceptions import OperationalError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .models import ComparisonSet, FraktalAnalysis, ImageAnalysis
 
@@ -27,6 +30,7 @@ class ImageAnalysisViewSet(viewsets.ModelViewSet):
     """ViewSet for ImageAnalysis CRUD operations."""
 
     queryset = ImageAnalysis.objects.select_related("project")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -91,6 +95,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
     """ViewSet for FraktalAnalysis CRUD operations."""
 
     queryset = FraktalAnalysis.objects.select_related("project", "simulation")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -186,6 +191,7 @@ class ComparisonSetViewSet(viewsets.ModelViewSet):
         "analyses",
         "fraktal_analyses",
     )
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

@@ -18,6 +18,8 @@ import type {
   ParametricStudyResults,
   BoxCounting3DResult,
 } from './types'
+import { tokenStorage } from './token-storage'
+import { authApi } from './auth-api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
@@ -32,9 +34,33 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Get authorization headers if authenticated.
+ */
+function getAuthHeaders(): Record<string, string> {
+  const accessToken = tokenStorage.getAccessToken()
+  if (accessToken) {
+    return { Authorization: `Bearer ${accessToken}` }
+  }
+  return {}
+}
+
+/**
+ * Try to refresh the access token.
+ */
+async function tryRefreshToken(): Promise<boolean> {
+  try {
+    await authApi.refreshToken()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retryOnAuth = true
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`
 
@@ -42,9 +68,23 @@ async function request<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...getAuthHeaders(),
       ...options.headers,
     },
   })
+
+  // Handle 401 Unauthorized - try to refresh token
+  if (res.status === 401 && retryOnAuth && tokenStorage.hasRefreshToken()) {
+    const refreshed = await tryRefreshToken()
+    if (refreshed) {
+      // Retry the request with new token
+      return request<T>(endpoint, options, false)
+    }
+    // Refresh failed - redirect to login
+    if (typeof window !== 'undefined') {
+      window.location.href = '/auth/login'
+    }
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({}))
@@ -61,6 +101,36 @@ async function request<T>(
   }
 
   return res.json()
+}
+
+/**
+ * Make an authenticated fetch request (for blob responses).
+ */
+async function authFetch(
+  url: string,
+  options: RequestInit = {},
+  retryOnAuth = true
+): Promise<Response> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...getAuthHeaders(),
+      ...options.headers,
+    },
+  })
+
+  // Handle 401 Unauthorized - try to refresh token
+  if (res.status === 401 && retryOnAuth && tokenStorage.hasRefreshToken()) {
+    const refreshed = await tryRefreshToken()
+    if (refreshed) {
+      return authFetch(url, options, false)
+    }
+    if (typeof window !== 'undefined') {
+      window.location.href = '/auth/login'
+    }
+  }
+
+  return res
 }
 
 // Projects API
@@ -127,7 +197,7 @@ export const simulationsApi = {
       format?: 'png' | 'svg'
     } = {}
   ): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/`,
       {
         method: 'POST',
@@ -161,7 +231,7 @@ export const simulationsApi = {
       format?: 'png' | 'svg'
     } = {}
   ): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/batch/`,
       {
         method: 'POST',
@@ -188,7 +258,7 @@ export const simulationsApi = {
    * Returns coordinates and radii parsed from .npy format.
    */
   getGeometry: async (id: string): Promise<GeometryData> => {
-    const res = await fetch(`${API_BASE}/simulations/${id}/geometry/`)
+    const res = await authFetch(`${API_BASE}/simulations/${id}/geometry/`)
     if (!res.ok) {
       throw new ApiError('Failed to fetch geometry', res.status)
     }
@@ -236,7 +306,7 @@ export const simulationsApi = {
    * Returns CSV file with properties and per-particle data.
    */
   exportCsv: async (projectId: string, simId: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/export/`
     )
     if (!res.ok) {
@@ -364,7 +434,7 @@ export const fraktalApi = {
    * Download the original image (only for uploaded_image source).
    */
   getOriginalImage: async (projectId: string, id: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/fraktal/${id}/original_image/`
     )
     if (!res.ok) {
@@ -415,7 +485,7 @@ export const studiesApi = {
    * Export study results as CSV.
    */
   exportCsv: async (projectId: string, id: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/studies/${id}/export/`
     )
     if (!res.ok) {
@@ -446,6 +516,57 @@ export const studiesApi = {
       method: 'POST',
       body: JSON.stringify(params || {}),
     }),
+}
+
+// Project Sharing API
+import type {
+  ProjectSharingData,
+  ProjectShare,
+  ShareInvitation,
+  SharePermission,
+} from './types'
+
+export const sharingApi = {
+  /**
+   * Get collaborators and pending invitations for a project.
+   */
+  get: (projectId: string) =>
+    request<ProjectSharingData>(`/projects/${projectId}/sharing/`),
+
+  /**
+   * Invite a user to collaborate on a project.
+   */
+  invite: (projectId: string, email: string, permission: SharePermission) =>
+    request<ProjectShare | ShareInvitation>(`/projects/${projectId}/sharing/invite/`, {
+      method: 'POST',
+      body: JSON.stringify({ email, permission }),
+    }),
+
+  /**
+   * Update a collaborator's permission level.
+   */
+  updatePermission: (projectId: string, shareId: string, permission: SharePermission) =>
+    request<ProjectShare>(`/projects/${projectId}/sharing/update/${shareId}/`, {
+      method: 'PATCH',
+      body: JSON.stringify({ permission }),
+    }),
+
+  /**
+   * Remove a collaborator or cancel a pending invitation.
+   */
+  remove: (projectId: string, shareId: string) =>
+    request<void>(`/projects/${projectId}/sharing/remove/${shareId}/`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Accept a share invitation via token.
+   */
+  acceptInvitation: (token: string) =>
+    request<{ message: string; project_id: string; project_name: string }>(
+      `/projects/invitations/${token}/accept/`,
+      { method: 'POST' }
+    ),
 }
 
 // Export ApiError for error handling

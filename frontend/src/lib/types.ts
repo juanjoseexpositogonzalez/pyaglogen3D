@@ -501,3 +501,37 @@ export interface BoxCounting3DResult {
   linear_region_start: number
   execution_time_ms: number
 }
+
+// Project Sharing
+export type SharePermission = 'view' | 'edit' | 'admin'
+
+export interface ShareUser {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  avatar_url: string | null
+}
+
+export interface ProjectShare {
+  id: string
+  user: ShareUser
+  permission: SharePermission
+  invited_by: ShareUser
+  created_at: string
+  accepted_at: string | null
+}
+
+export interface ShareInvitation {
+  id: string
+  email: string
+  permission: SharePermission
+  invited_by: ShareUser
+  created_at: string
+  expires_at: string
+}
+
+export interface ProjectSharingData {
+  collaborators: ProjectShare[]
+  pending_invitations: ShareInvitation[]
+}

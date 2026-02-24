@@ -9,8 +9,11 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .models import ParametricStudy, Simulation, SimulationStatus
 from .serializers import (
@@ -32,6 +35,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
     """ViewSet for Simulation CRUD operations."""
 
     queryset = Simulation.objects.select_related("project")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -650,6 +654,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         "simulations"
     )
     serializer_class = ParametricStudySerializer
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_queryset(self):
         """Filter studies by project if project_id in URL."""
