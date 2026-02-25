@@ -19,6 +19,7 @@ from rest_framework_simplejwt.tokens import RefreshToken
 
 from .models import EmailVerificationToken
 from .serializers import (
+    AdminUserSerializer,
     ChangePasswordSerializer,
     EmailVerificationSerializer,
     LoginSerializer,
@@ -306,3 +307,46 @@ class OAuthCallbackView(APIView):
             "refresh": tokens["refresh"],
         })
         return redirect(f"{frontend_url}/auth/oauth-callback?{params}")
+
+
+class AdminDashboardView(APIView):
+    """
+    Admin dashboard: list all users with their projects.
+
+    Only accessible by staff/superuser.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        """Get all users with project counts and details."""
+        from django.db.models import Count
+
+        # Check admin permission
+        if not request.user.is_staff and not request.user.is_superuser:
+            return Response(
+                {"error": "Admin access required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+
+        # Get all users with project and simulation counts
+        users = User.objects.annotate(
+            project_count=Count("owned_projects", distinct=True),
+            simulation_count=Count("owned_projects__simulations", distinct=True),
+        ).order_by("-created_at")
+
+        serializer = AdminUserSerializer(users, many=True)
+
+        # Also include summary stats
+        total_users = users.count()
+        total_projects = sum(u.project_count for u in users)
+        total_simulations = sum(u.simulation_count for u in users)
+
+        return Response({
+            "summary": {
+                "total_users": total_users,
+                "total_projects": total_projects,
+                "total_simulations": total_simulations,
+            },
+            "users": serializer.data,
+        })

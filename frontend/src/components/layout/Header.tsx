@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
-import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User } from 'lucide-react'
+import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User, Shield } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
@@ -45,6 +45,22 @@ export function Header() {
                 </Link>
               )
             })}
+
+            {/* Admin link for staff users */}
+            {isAuthenticated && user?.is_staff && (
+              <Link
+                href="/admin"
+                className={cn(
+                  'flex items-center gap-2 text-sm font-medium transition-colors',
+                  pathname.startsWith('/admin')
+                    ? 'text-primary'
+                    : 'text-muted-foreground hover:text-foreground'
+                )}
+              >
+                <Shield className="h-4 w-4" />
+                Admin
+              </Link>
+            )}
 
             {/* Auth section */}
             {!isLoading && (

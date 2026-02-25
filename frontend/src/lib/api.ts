@@ -569,5 +569,47 @@ export const sharingApi = {
     ),
 }
 
+// Admin API
+export interface AdminUser {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  full_name: string
+  email_verified: boolean
+  is_staff: boolean
+  is_active: boolean
+  oauth_provider: string | null
+  created_at: string
+  last_login: string | null
+  project_count: number
+  simulation_count: number
+  projects: Array<{
+    id: string
+    name: string
+    description: string
+    simulation_count: number
+    study_count: number
+    created_at: string
+  }>
+}
+
+export interface AdminDashboardData {
+  summary: {
+    total_users: number
+    total_projects: number
+    total_simulations: number
+  }
+  users: AdminUser[]
+}
+
+export const adminApi = {
+  /**
+   * Get admin dashboard data (all users with their projects).
+   * Requires staff/superuser permission.
+   */
+  getDashboard: () => request<AdminDashboardData>('/auth/admin/dashboard/'),
+}
+
 // Export ApiError for error handling
 export { ApiError }

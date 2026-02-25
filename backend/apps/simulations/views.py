@@ -44,11 +44,16 @@ class SimulationViewSet(viewsets.ModelViewSet):
         return SimulationSerializer
 
     def get_queryset(self):
-        """Filter simulations by project if project_id in URL."""
+        """Filter simulations by project if project_id in URL.
+
+        Excludes batch simulations (those created via parametric studies).
+        """
         queryset = super().get_queryset()
         project_id = self.kwargs.get("project_pk")
         if project_id:
             queryset = queryset.filter(project_id=project_id)
+        # Exclude batch simulations from regular list
+        queryset = queryset.filter(is_batch=False)
         return queryset
 
     def perform_create(self, serializer):
@@ -728,6 +733,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     seed=seed,
                     name=auto_name,
                     status=SimulationStatus.QUEUED,
+                    is_batch=True,
                 )
                 simulations_created.append(sim)
                 study.simulations.add(sim)
@@ -785,6 +791,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             seed=seed,
                             name=auto_name,
                             status=SimulationStatus.QUEUED,
+                            is_batch=True,
                         )
                         simulations_created.append(sim)
                         study.simulations.add(sim)

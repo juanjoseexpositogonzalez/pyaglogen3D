@@ -23,11 +23,12 @@ class UserSerializer(serializers.ModelSerializer):
             "last_name",
             "full_name",
             "email_verified",
+            "is_staff",
             "avatar_url",
             "oauth_provider",
             "created_at",
         ]
-        read_only_fields = ["id", "email", "email_verified", "oauth_provider", "created_at"]
+        read_only_fields = ["id", "email", "email_verified", "is_staff", "oauth_provider", "created_at"]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -80,3 +81,48 @@ class ResendVerificationSerializer(serializers.Serializer):
     """Serializer for resending verification email."""
 
     email = serializers.EmailField()
+
+
+class AdminUserSerializer(serializers.ModelSerializer):
+    """Serializer for admin user listing with project info."""
+
+    full_name = serializers.CharField(read_only=True)
+    project_count = serializers.IntegerField(read_only=True)
+    simulation_count = serializers.IntegerField(read_only=True)
+    projects = serializers.SerializerMethodField()
+
+    class Meta:
+        model = User
+        fields = [
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "full_name",
+            "email_verified",
+            "is_staff",
+            "is_active",
+            "oauth_provider",
+            "created_at",
+            "last_login",
+            "project_count",
+            "simulation_count",
+            "projects",
+        ]
+
+    def get_projects(self, obj):
+        """Get list of user's projects with counts."""
+        from apps.projects.models import Project
+
+        projects = Project.objects.filter(owner=obj).order_by("-created_at")
+        return [
+            {
+                "id": str(p.id),
+                "name": p.name,
+                "description": p.description,
+                "simulation_count": p.simulations.count(),
+                "study_count": p.studies.count(),
+                "created_at": p.created_at.isoformat(),
+            }
+            for p in projects
+        ]

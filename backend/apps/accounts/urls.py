@@ -22,4 +22,6 @@ urlpatterns = [
     path("resend-verification/", views.ResendVerificationView.as_view(), name="auth-resend-verification"),
     # OAuth callback (generates JWT tokens after OAuth success)
     path("oauth-callback/", views.OAuthCallbackView.as_view(), name="auth-oauth-callback"),
+    # Admin dashboard
+    path("admin/dashboard/", views.AdminDashboardView.as_view(), name="admin-dashboard"),
 ]

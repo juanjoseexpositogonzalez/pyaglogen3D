@@ -9,6 +9,7 @@ export interface User {
   last_name: string
   full_name: string
   email_verified: boolean
+  is_staff: boolean
   avatar_url: string | null
   oauth_provider: 'google' | 'github' | ''
   created_at: string
