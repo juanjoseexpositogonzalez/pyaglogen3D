@@ -178,6 +178,12 @@ export const simulationsApi = {
       method: 'DELETE',
     }),
 
+  deleteAll: (projectId: string) =>
+    request<{ deleted: number; message: string }>(
+      `/projects/${projectId}/simulations/delete-all/`,
+      { method: 'DELETE' }
+    ),
+
   cancel: (projectId: string, id: string) =>
     request<{ status: string; simulation_id: string }>(
       `/projects/${projectId}/simulations/${id}/cancel/`,
@@ -420,6 +426,15 @@ export const fraktalApi = {
     request<void>(`/projects/${projectId}/fraktal/${id}/`, {
       method: 'DELETE',
     }),
+
+  /**
+   * Delete all FRAKTAL analyses in a project.
+   */
+  deleteAll: (projectId: string) =>
+    request<{ deleted: number; message: string }>(
+      `/projects/${projectId}/fraktal/delete-all/`,
+      { method: 'DELETE' }
+    ),
 
   /**
    * Re-run a failed or completed FRAKTAL analysis.

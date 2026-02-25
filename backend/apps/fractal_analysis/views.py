@@ -131,6 +131,23 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
             logger.warning(f"Celery broker unavailable, running {task_name} task synchronously")
             task(str(analysis.id))
 
+    @action(detail=False, methods=["delete"], url_path="delete-all")
+    def delete_all(self, request: Request, **kwargs) -> Response:
+        """Delete all FRAKTAL analyses in the project."""
+        project_id = self.kwargs.get("project_pk")
+        if not project_id:
+            return Response(
+                {"error": "Project ID required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analyses = FraktalAnalysis.objects.filter(project_id=project_id)
+        count = analyses.count()
+        analyses.delete()
+
+        logger.info(f"Deleted {count} FRAKTAL analyses from project {project_id}")
+        return Response({"deleted": count, "message": f"Deleted {count} analyses"})
+
     @action(detail=True, methods=["get"])
     def original_image(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Download original image (only for uploaded_image source)."""

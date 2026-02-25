@@ -120,6 +120,29 @@ class SimulationViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 logger.warning(f"Failed to revoke task {simulation.task_id}: {e}")
 
+    @action(detail=False, methods=["delete"], url_path="delete-all")
+    def delete_all(self, request: Request, **kwargs) -> Response:
+        """Delete all simulations in the project (excluding batch simulations)."""
+        project_id = self.kwargs.get("project_pk")
+        if not project_id:
+            return Response(
+                {"error": "Project ID required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get all non-batch simulations for this project
+        simulations = Simulation.objects.filter(project_id=project_id, is_batch=False)
+
+        # Cancel any running tasks first
+        for sim in simulations.filter(status__in=[SimulationStatus.QUEUED, SimulationStatus.RUNNING]):
+            self._cancel_task(sim)
+
+        count = simulations.count()
+        simulations.delete()
+
+        logger.info(f"Deleted {count} simulations from project {project_id}")
+        return Response({"deleted": count, "message": f"Deleted {count} simulations"})
+
     @action(detail=True, methods=["get"])
     def geometry(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Download geometry as binary NumPy array."""
