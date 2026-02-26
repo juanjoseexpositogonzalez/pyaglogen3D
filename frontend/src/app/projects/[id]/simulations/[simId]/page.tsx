@@ -513,7 +513,10 @@ export default function SimulationDetailPage({
                 </Card>
               </div>
               <div className="lg:col-span-1">
-                <ViewerControls />
+                <ViewerControls
+                  onExportCsv={handleExportCsv}
+                  isExportingCsv={isExporting}
+                />
               </div>
             </div>
 

@@ -33,6 +33,7 @@ interface ViewerState {
   clippingNormal: [number, number, number]
 
   // Camera
+  useOrthographic: boolean  // true = orthographic (no perspective), false = perspective
   autoRotate: boolean
   rotateSpeed: number
   cameraAzimuth: number    // Current camera azimuth angle (degrees)
@@ -53,6 +54,7 @@ interface ViewerState {
   toggleClipping: () => void
   setClippingPosition: (pos: [number, number, number]) => void
   setClippingNormal: (normal: [number, number, number]) => void
+  toggleOrthographic: () => void
   toggleAutoRotate: () => void
   setRotateSpeed: (speed: number) => void
   setCameraAngles: (azimuth: number, elevation: number) => void
@@ -72,6 +74,7 @@ const initialState = {
   showClipping: false,
   clippingPosition: [0, 0, 0] as [number, number, number],
   clippingNormal: [1, 0, 0] as [number, number, number],
+  useOrthographic: false,
   autoRotate: false,
   rotateSpeed: 1,
   cameraAzimuth: 0,
@@ -95,6 +98,7 @@ export const useViewerStore = create<ViewerState>()(
       toggleClipping: () => set((s) => ({ showClipping: !s.showClipping })),
       setClippingPosition: (pos) => set({ clippingPosition: pos }),
       setClippingNormal: (normal) => set({ clippingNormal: normal }),
+      toggleOrthographic: () => set((s) => ({ useOrthographic: !s.useOrthographic })),
       toggleAutoRotate: () => set((s) => ({ autoRotate: !s.autoRotate })),
       setRotateSpeed: (speed) => set({ rotateSpeed: speed }),
       setCameraAngles: (azimuth, elevation) => set({ cameraAzimuth: azimuth, cameraElevation: elevation }),
