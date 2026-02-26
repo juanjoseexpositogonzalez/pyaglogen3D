@@ -46,14 +46,16 @@ class SimulationViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         """Filter simulations by project if project_id in URL.
 
-        Excludes batch simulations (those created via parametric studies).
+        Excludes batch simulations from the list view only.
+        Detail views can still access batch simulations.
         """
         queryset = super().get_queryset()
         project_id = self.kwargs.get("project_pk")
         if project_id:
             queryset = queryset.filter(project_id=project_id)
-        # Exclude batch simulations from regular list
-        queryset = queryset.filter(is_batch=False)
+        # Only exclude batch simulations from list view, not detail/other actions
+        if self.action == "list":
+            queryset = queryset.filter(is_batch=False)
         return queryset
 
     def perform_create(self, serializer):
