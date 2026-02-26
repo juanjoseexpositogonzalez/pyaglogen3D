@@ -624,6 +624,29 @@ export const adminApi = {
    * Requires staff/superuser permission.
    */
   getDashboard: () => request<AdminDashboardData>('/auth/admin/dashboard/'),
+
+  /**
+   * Update a user's details.
+   * Requires staff/superuser permission.
+   */
+  updateUser: (userId: string, data: {
+    first_name?: string
+    last_name?: string
+    is_staff?: boolean
+    is_active?: boolean
+  }) => request<AdminUser>(`/auth/admin/users/${userId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
+
+  /**
+   * Delete a user and all their data.
+   * Requires staff/superuser permission.
+   */
+  deleteUser: (userId: string) =>
+    request<{ message: string }>(`/auth/admin/users/${userId}/`, {
+      method: 'DELETE',
+    }),
 }
 
 // Export ApiError for error handling

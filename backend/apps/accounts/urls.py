@@ -24,4 +24,6 @@ urlpatterns = [
     path("oauth-callback/", views.OAuthCallbackView.as_view(), name="auth-oauth-callback"),
     # Admin dashboard
     path("admin/dashboard/", views.AdminDashboardView.as_view(), name="admin-dashboard"),
+    # Admin user management
+    path("admin/users/<uuid:user_id>/", views.AdminUserDetailView.as_view(), name="admin-user-detail"),
 ]

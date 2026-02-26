@@ -350,3 +350,101 @@ class AdminDashboardView(APIView):
             },
             "users": serializer.data,
         })
+
+
+class AdminUserDetailView(APIView):
+    """
+    Admin user management: get, update, delete individual users.
+
+    Only accessible by staff/superuser.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def _check_admin(self, request: Request) -> Response | None:
+        """Check if user is admin. Returns error response if not."""
+        if not request.user.is_staff and not request.user.is_superuser:
+            return Response(
+                {"error": "Admin access required."},
+                status=status.HTTP_403_FORBIDDEN,
+            )
+        return None
+
+    def _get_user(self, user_id: str) -> User | None:
+        """Get user by ID."""
+        try:
+            return User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return None
+
+    def get(self, request: Request, user_id: str) -> Response:
+        """Get user details."""
+        if error := self._check_admin(request):
+            return error
+
+        user = self._get_user(user_id)
+        if not user:
+            return Response(
+                {"error": "User not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        serializer = AdminUserSerializer(user)
+        return Response(serializer.data)
+
+    def patch(self, request: Request, user_id: str) -> Response:
+        """Update user details (first_name, last_name, is_staff, is_active)."""
+        if error := self._check_admin(request):
+            return error
+
+        user = self._get_user(user_id)
+        if not user:
+            return Response(
+                {"error": "User not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Prevent self-demotion from admin
+        if user.id == request.user.id and "is_staff" in request.data:
+            if not request.data["is_staff"]:
+                return Response(
+                    {"error": "Cannot remove your own admin privileges."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+        # Update allowed fields
+        allowed_fields = ["first_name", "last_name", "is_staff", "is_active"]
+        for field in allowed_fields:
+            if field in request.data:
+                setattr(user, field, request.data[field])
+
+        user.save()
+        serializer = AdminUserSerializer(user)
+        return Response(serializer.data)
+
+    def delete(self, request: Request, user_id: str) -> Response:
+        """Delete a user and all their data."""
+        if error := self._check_admin(request):
+            return error
+
+        user = self._get_user(user_id)
+        if not user:
+            return Response(
+                {"error": "User not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Prevent self-deletion
+        if user.id == request.user.id:
+            return Response(
+                {"error": "Cannot delete your own account."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Delete user (cascades to projects, simulations, etc.)
+        email = user.email
+        user.delete()
+
+        return Response({
+            "message": f"User {email} and all associated data deleted.",
+        })

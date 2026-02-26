@@ -8,6 +8,8 @@ import { adminApi, AdminDashboardData, AdminUser } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import {
   Users,
@@ -18,6 +20,11 @@ import {
   Mail,
   Calendar,
   Shield,
+  Trash2,
+  Edit2,
+  Save,
+  X,
+  AlertTriangle,
 } from 'lucide-react'
 
 export default function AdminPage() {
@@ -71,6 +78,28 @@ export default function AdminPage() {
       }
       return next
     })
+  }
+
+  const handleUserUpdate = (updatedUser: AdminUser) => {
+    if (data) {
+      setData({
+        ...data,
+        users: data.users.map((u) => (u.id === updatedUser.id ? updatedUser : u)),
+      })
+    }
+  }
+
+  const handleUserDelete = (userId: string) => {
+    if (data) {
+      setData({
+        ...data,
+        users: data.users.filter((u) => u.id !== userId),
+        summary: {
+          ...data.summary,
+          total_users: data.summary.total_users - 1,
+        },
+      })
+    }
   }
 
   // Show loading while checking auth
@@ -159,8 +188,11 @@ export default function AdminPage() {
                 <UserCard
                   key={adminUser.id}
                   user={adminUser}
+                  currentUserId={user?.id}
                   isExpanded={expandedUsers.has(adminUser.id)}
                   onToggle={() => toggleUserExpand(adminUser.id)}
+                  onUpdate={handleUserUpdate}
+                  onDelete={handleUserDelete}
                 />
               ))}
             </div>
@@ -173,21 +205,81 @@ export default function AdminPage() {
 
 function UserCard({
   user,
+  currentUserId,
   isExpanded,
   onToggle,
+  onUpdate,
+  onDelete,
 }: {
   user: AdminUser
+  currentUserId?: string
   isExpanded: boolean
   onToggle: () => void
+  onUpdate: (user: AdminUser) => void
+  onDelete: (userId: string) => void
 }) {
+  const [isEditing, setIsEditing] = useState(false)
+  const [isDeleting, setIsDeleting] = useState(false)
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [isSaving, setIsSaving] = useState(false)
+  const [editError, setEditError] = useState<string | null>(null)
+
+  // Edit form state
+  const [firstName, setFirstName] = useState(user.first_name || '')
+  const [lastName, setLastName] = useState(user.last_name || '')
+  const [isStaff, setIsStaff] = useState(user.is_staff)
+  const [isActive, setIsActive] = useState(user.is_active)
+
+  const isSelf = currentUserId === user.id
+
+  const handleSave = async () => {
+    setIsSaving(true)
+    setEditError(null)
+    try {
+      const updated = await adminApi.updateUser(user.id, {
+        first_name: firstName,
+        last_name: lastName,
+        is_staff: isStaff,
+        is_active: isActive,
+      })
+      onUpdate(updated)
+      setIsEditing(false)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to update user')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
+  const handleCancel = () => {
+    setFirstName(user.first_name || '')
+    setLastName(user.last_name || '')
+    setIsStaff(user.is_staff)
+    setIsActive(user.is_active)
+    setIsEditing(false)
+    setEditError(null)
+  }
+
+  const handleDelete = async () => {
+    setIsDeleting(true)
+    try {
+      await adminApi.deleteUser(user.id)
+      onDelete(user.id)
+    } catch (err) {
+      setEditError(err instanceof Error ? err.message : 'Failed to delete user')
+      setIsDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }
+
   return (
-    <Card>
+    <Card className={!user.is_active ? 'opacity-60' : ''}>
       <CardHeader className="pb-3">
-        <div
-          className="flex items-center justify-between cursor-pointer"
-          onClick={onToggle}
-        >
-          <div className="flex items-center gap-4">
+        <div className="flex items-center justify-between">
+          <div
+            className="flex items-center gap-4 cursor-pointer flex-1"
+            onClick={onToggle}
+          >
             <Button variant="ghost" size="sm" className="p-0 h-auto">
               {isExpanded ? (
                 <ChevronDown className="h-5 w-5" />
@@ -203,9 +295,19 @@ function UserCard({
                     Admin
                   </span>
                 )}
+                {!user.is_active && (
+                  <span className="text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded">
+                    Deactivated
+                  </span>
+                )}
                 {!user.email_verified && (
                   <span className="text-xs bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded">
                     Unverified
+                  </span>
+                )}
+                {isSelf && (
+                  <span className="text-xs bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded">
+                    You
                   </span>
                 )}
               </CardTitle>
@@ -226,18 +328,165 @@ function UserCard({
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <FolderOpen className="h-4 w-4" />
-              {user.project_count} projects
-            </span>
-            <span className="flex items-center gap-1">
-              <Atom className="h-4 w-4" />
-              {user.simulation_count} sims
-            </span>
+
+          {/* Stats and Actions */}
+          <div className="flex items-center gap-4">
+            <div className="flex items-center gap-4 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1">
+                <FolderOpen className="h-4 w-4" />
+                {user.project_count} projects
+              </span>
+              <span className="flex items-center gap-1">
+                <Atom className="h-4 w-4" />
+                {user.simulation_count} sims
+              </span>
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex items-center gap-2 ml-4">
+              {!isEditing && (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setIsEditing(true)
+                    }}
+                  >
+                    <Edit2 className="h-4 w-4" />
+                  </Button>
+                  {!isSelf && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setShowDeleteConfirm(true)
+                      }}
+                      className="text-destructive hover:text-destructive"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
+                  )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </CardHeader>
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <CardContent className="pt-0 pb-4">
+          <div className="flex items-center gap-4 p-4 bg-destructive/10 rounded-lg border border-destructive/20">
+            <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
+            <div className="flex-1">
+              <p className="font-medium text-destructive">Delete this user?</p>
+              <p className="text-sm text-muted-foreground">
+                This will permanently delete {user.email} and all their projects, simulations, and data.
+              </p>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteConfirm(false)}
+                disabled={isDeleting}
+              >
+                Cancel
+              </Button>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDelete}
+                disabled={isDeleting}
+              >
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      )}
+
+      {/* Edit form */}
+      {isEditing && (
+        <CardContent className="pt-0 pb-4">
+          <div className="p-4 bg-secondary/30 rounded-lg border">
+            <h4 className="font-medium mb-4">Edit User</h4>
+
+            {editError && (
+              <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive">
+                {editError}
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-4 mb-4">
+              <div>
+                <label className="text-sm font-medium mb-1 block">First Name</label>
+                <Input
+                  value={firstName}
+                  onChange={(e) => setFirstName(e.target.value)}
+                  placeholder="First name"
+                />
+              </div>
+              <div>
+                <label className="text-sm font-medium mb-1 block">Last Name</label>
+                <Input
+                  value={lastName}
+                  onChange={(e) => setLastName(e.target.value)}
+                  placeholder="Last name"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center gap-8 mb-4">
+              <div className="flex items-center gap-3">
+                <Switch
+                  checked={isStaff}
+                  onCheckedChange={setIsStaff}
+                  disabled={isSelf}
+                />
+                <label className="text-sm">
+                  Admin access
+                  {isSelf && <span className="text-muted-foreground ml-2">(cannot change own)</span>}
+                </label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch
+                  checked={isActive}
+                  onCheckedChange={setIsActive}
+                  disabled={isSelf}
+                />
+                <label className="text-sm">
+                  Active account
+                  {isSelf && <span className="text-muted-foreground ml-2">(cannot change own)</span>}
+                </label>
+              </div>
+            </div>
+
+            <div className="flex gap-2">
+              <Button
+                size="sm"
+                onClick={handleSave}
+                disabled={isSaving}
+              >
+                <Save className="h-4 w-4 mr-2" />
+                {isSaving ? 'Saving...' : 'Save'}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleCancel}
+                disabled={isSaving}
+              >
+                <X className="h-4 w-4 mr-2" />
+                Cancel
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      )}
 
       {isExpanded && user.projects.length > 0 && (
         <CardContent className="pt-0">
