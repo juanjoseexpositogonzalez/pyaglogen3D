@@ -74,4 +74,9 @@ urlpatterns = [
         FraktalAnalysisViewSet.as_view({"post": "rerun"}),
         name="project-fraktal-rerun",
     ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/delete-all/",
+        FraktalAnalysisViewSet.as_view({"delete": "delete_all"}),
+        name="project-fraktal-delete-all",
+    ),
 ]

@@ -87,4 +87,9 @@ urlpatterns = [
         SimulationViewSet.as_view({"get": "box_counting"}),
         name="project-simulations-box-counting",
     ),
+    path(
+        "projects/<uuid:project_pk>/simulations/delete-all/",
+        SimulationViewSet.as_view({"delete": "delete_all"}),
+        name="project-simulations-delete-all",
+    ),
 ]
