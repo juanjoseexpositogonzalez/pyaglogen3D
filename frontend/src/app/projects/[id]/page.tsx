@@ -103,7 +103,7 @@ export default function ProjectDetailPage({
 
   if (projectLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading project..." />
       </div>
@@ -112,7 +112,7 @@ export default function ProjectDetailPage({
 
   if (projectError || !project) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <main className="container mx-auto px-4 py-8">
           <Card className="border-destructive">
@@ -133,7 +133,7 @@ export default function ProjectDetailPage({
   const simulationList = simulations?.results ?? []
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">

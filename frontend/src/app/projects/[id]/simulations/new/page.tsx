@@ -31,7 +31,7 @@ export default function NewSimulationPage({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading..." />
       </div>
@@ -39,7 +39,7 @@ export default function NewSimulationPage({
   }
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8 max-w-2xl">
