@@ -4,11 +4,12 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
-import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User, Shield } from 'lucide-react'
+import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User, Shield, Bot } from 'lucide-react'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
+  { name: 'AI Assistant', href: '/ai', icon: Bot },
 ]
 
 export function Header() {
