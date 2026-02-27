@@ -25,6 +25,7 @@ import {
   Save,
   X,
   AlertTriangle,
+  Bot,
 } from 'lucide-react'
 
 export default function AdminPage() {
@@ -229,6 +230,7 @@ function UserCard({
   const [lastName, setLastName] = useState(user.last_name || '')
   const [isStaff, setIsStaff] = useState(user.is_staff)
   const [isActive, setIsActive] = useState(user.is_active)
+  const [hasAIAccess, setHasAIAccess] = useState(user.has_ai_access)
 
   const isSelf = currentUserId === user.id
 
@@ -241,6 +243,7 @@ function UserCard({
         last_name: lastName,
         is_staff: isStaff,
         is_active: isActive,
+        has_ai_access: hasAIAccess,
       })
       onUpdate(updated)
       setIsEditing(false)
@@ -256,6 +259,7 @@ function UserCard({
     setLastName(user.last_name || '')
     setIsStaff(user.is_staff)
     setIsActive(user.is_active)
+    setHasAIAccess(user.has_ai_access)
     setIsEditing(false)
     setEditError(null)
   }
@@ -293,6 +297,12 @@ function UserCard({
                 {user.is_staff && (
                   <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded">
                     Admin
+                  </span>
+                )}
+                {user.has_ai_access && (
+                  <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded flex items-center gap-1">
+                    <Bot className="h-3 w-3" />
+                    AI
                   </span>
                 )}
                 {!user.is_active && (
@@ -440,7 +450,7 @@ function UserCard({
               </div>
             </div>
 
-            <div className="flex items-center gap-8 mb-4">
+            <div className="flex items-center gap-8 mb-4 flex-wrap">
               <div className="flex items-center gap-3">
                 <Switch
                   checked={isStaff}
@@ -461,6 +471,18 @@ function UserCard({
                 <label className="text-sm">
                   Active account
                   {isSelf && <span className="text-muted-foreground ml-2">(cannot change own)</span>}
+                </label>
+              </div>
+              <div className="flex items-center gap-3">
+                <Switch
+                  checked={hasAIAccess}
+                  onCheckedChange={setHasAIAccess}
+                  disabled={isStaff}
+                />
+                <label className="text-sm flex items-center gap-1">
+                  <Bot className="h-4 w-4" />
+                  AI Assistant access
+                  {isStaff && <span className="text-muted-foreground ml-2">(admins always have access)</span>}
                 </label>
               </div>
             </div>

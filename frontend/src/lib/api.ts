@@ -594,6 +594,7 @@ export interface AdminUser {
   email_verified: boolean
   is_staff: boolean
   is_active: boolean
+  has_ai_access: boolean
   oauth_provider: string | null
   created_at: string
   last_login: string | null
@@ -634,6 +635,7 @@ export const adminApi = {
     last_name?: string
     is_staff?: boolean
     is_active?: boolean
+    has_ai_access?: boolean
   }) => request<AdminUser>(`/auth/admin/users/${userId}/`, {
     method: 'PATCH',
     body: JSON.stringify(data),

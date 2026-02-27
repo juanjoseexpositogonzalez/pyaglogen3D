@@ -90,6 +90,7 @@ class AdminUserSerializer(serializers.ModelSerializer):
     project_count = serializers.IntegerField(read_only=True)
     simulation_count = serializers.IntegerField(read_only=True)
     projects = serializers.SerializerMethodField()
+    has_ai_access = serializers.SerializerMethodField()
 
     class Meta:
         model = User
@@ -108,7 +109,18 @@ class AdminUserSerializer(serializers.ModelSerializer):
             "project_count",
             "simulation_count",
             "projects",
+            "has_ai_access",
         ]
+
+    def get_has_ai_access(self, obj) -> bool:
+        """Check if user has AI access via AIUserProfile."""
+        # Staff always has access
+        if obj.is_staff:
+            return True
+        # Check AIUserProfile
+        if hasattr(obj, "ai_profile"):
+            return obj.ai_profile.has_ai_access
+        return False
 
     def get_projects(self, obj):
         """Get list of user's projects with counts."""

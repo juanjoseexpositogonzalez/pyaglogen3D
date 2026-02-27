@@ -393,7 +393,7 @@ class AdminUserDetailView(APIView):
         return Response(serializer.data)
 
     def patch(self, request: Request, user_id: str) -> Response:
-        """Update user details (first_name, last_name, is_staff, is_active)."""
+        """Update user details (first_name, last_name, is_staff, is_active, has_ai_access)."""
         if error := self._check_admin(request):
             return error
 
@@ -412,13 +412,34 @@ class AdminUserDetailView(APIView):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-        # Update allowed fields
+        # Update allowed fields on User model
         allowed_fields = ["first_name", "last_name", "is_staff", "is_active"]
         for field in allowed_fields:
             if field in request.data:
                 setattr(user, field, request.data[field])
 
         user.save()
+
+        # Handle AI access separately via AIUserProfile
+        if "has_ai_access" in request.data:
+            from apps.ai_assistant.models import AIUserProfile
+
+            has_ai_access = request.data["has_ai_access"]
+            ai_profile, created = AIUserProfile.objects.get_or_create(user=user)
+
+            if has_ai_access and not ai_profile.has_ai_access:
+                # Granting access
+                ai_profile.has_ai_access = True
+                ai_profile.access_granted_by = request.user
+                ai_profile.access_granted_at = timezone.now()
+                ai_profile.save()
+            elif not has_ai_access and ai_profile.has_ai_access:
+                # Revoking access
+                ai_profile.has_ai_access = False
+                ai_profile.access_granted_by = None
+                ai_profile.access_granted_at = None
+                ai_profile.save()
+
         serializer = AdminUserSerializer(user)
         return Response(serializer.data)
 
