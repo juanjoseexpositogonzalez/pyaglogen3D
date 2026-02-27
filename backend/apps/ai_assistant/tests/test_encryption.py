@@ -41,12 +41,15 @@ class TestAPIKeyEncryption:
         decrypted = encryption_service.decrypt(encrypted)
         assert decrypted == original
 
-    def test_encrypt_empty_string(self, encryption_service):
-        """Test encryption of empty string."""
-        encrypted = encryption_service.encrypt("")
-        assert encrypted == ""
-        decrypted = encryption_service.decrypt("")
-        assert decrypted == ""
+    def test_encrypt_empty_string_raises_error(self, encryption_service):
+        """Test encryption of empty string raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot encrypt empty"):
+            encryption_service.encrypt("")
+
+    def test_decrypt_empty_string_raises_error(self, encryption_service):
+        """Test decryption of empty string raises ValueError."""
+        with pytest.raises(ValueError, match="Cannot decrypt empty"):
+            encryption_service.decrypt("")
 
     def test_encrypted_value_differs_from_original(self, encryption_service):
         """Test that encrypted value is different from original."""

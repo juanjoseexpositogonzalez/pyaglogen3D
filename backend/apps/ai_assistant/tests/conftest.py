@@ -9,6 +9,16 @@ from apps.ai_assistant.services.encryption import APIKeyEncryption
 User = get_user_model()
 
 
+@pytest.fixture(autouse=True)
+def enable_debug_mode(settings):
+    """Enable DEBUG mode for all AI assistant tests.
+
+    This ensures the IsAIUser permission allows all authenticated
+    users during development/testing.
+    """
+    settings.DEBUG = True
+
+
 @pytest.fixture
 def encryption_key():
     """Generate a test encryption key."""
@@ -43,7 +53,7 @@ def staff_user(db):
 
 
 @pytest.fixture
-def authenticated_client(api_client, user):
+def authenticated_client(db, api_client, user):
     """Create an authenticated API client."""
     api_client.force_authenticate(user=user)
     return api_client

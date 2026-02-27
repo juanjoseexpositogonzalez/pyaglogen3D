@@ -3,6 +3,11 @@ from .base import *  # noqa: F403
 
 DEBUG = True
 
+# REST Framework test settings
+REST_FRAMEWORK["DEFAULT_AUTHENTICATION_CLASSES"] = [  # noqa: F405
+    "rest_framework.authentication.SessionAuthentication",
+]
+
 # Use SQLite for testing
 DATABASES = {
     "default": {

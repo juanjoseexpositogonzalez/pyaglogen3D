@@ -1,4 +1,8 @@
 """AI Assistant views."""
+import logging
+
+import anthropic
+import openai
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -8,7 +12,10 @@ from rest_framework.response import Response
 from .models import AIProviderConfig
 from .permissions import IsAIUser
 from .serializers import AIProviderConfigListSerializer, AIProviderConfigSerializer
-from .services import AIService
+from .services.encryption import get_encryption_service
+from .services.providers import ProviderFactory, StopReason
+
+logger = logging.getLogger(__name__)
 
 
 class AIProviderConfigViewSet(viewsets.ModelViewSet):
@@ -34,21 +41,20 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
     def test_connection(self, request: Request, pk=None) -> Response:
         """Test the API key connection for a specific provider.
 
+        Tests the connection by making a simple API call to verify
+        the API key is valid and the provider is accessible.
+
         Returns:
             200 with success message if connection works.
             400 with error message if connection fails.
+
+        Note:
+            API keys are never logged or exposed in error messages.
         """
         config = self.get_object()
 
-        # Create AI service and test
-        ai_service = AIService(request.user)
-        ai_service._provider = None  # Force reload
-
-        # Temporarily use this specific config
-        from .services.encryption import get_encryption_service
-        from .services.providers import ProviderFactory
-
         try:
+            # Decrypt API key and create provider
             encryption = get_encryption_service()
             api_key = encryption.decrypt(config.api_key_encrypted)
             provider = ProviderFactory.create_from_config(config, api_key)
@@ -60,9 +66,11 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
                 temperature=0,
             )
 
-            if response.stop_reason.value == "error":
+            if response.stop_reason == StopReason.ERROR:
+                # Sanitize error message - don't expose internal details
+                error_msg = self._sanitize_error_message(response.text)
                 return Response(
-                    {"success": False, "message": response.text},
+                    {"success": False, "message": error_msg},
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
@@ -72,11 +80,90 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
                 "response": response.text[:100] if response.text else "",
             })
 
-        except Exception as e:
+        except anthropic.AuthenticationError:
+            logger.warning(
+                f"Authentication failed for provider config {config.id}",
+                extra={"user_id": request.user.id, "provider": config.provider},
+            )
             return Response(
-                {"success": False, "message": str(e)},
+                {"success": False, "message": "Invalid API key. Please check your credentials."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        except openai.AuthenticationError:
+            logger.warning(
+                f"Authentication failed for provider config {config.id}",
+                extra={"user_id": request.user.id, "provider": config.provider},
+            )
+            return Response(
+                {"success": False, "message": "Invalid API key. Please check your credentials."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except anthropic.RateLimitError:
+            return Response(
+                {"success": False, "message": "Rate limit exceeded. Please try again later."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        except openai.RateLimitError:
+            return Response(
+                {"success": False, "message": "Rate limit exceeded. Please try again later."},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        except (anthropic.APIConnectionError, openai.APIConnectionError):
+            return Response(
+                {"success": False, "message": "Could not connect to the AI provider. Please try again."},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        except ValueError as e:
+            # Handle encryption/decryption errors
+            error_str = str(e)
+            if "decrypt" in error_str.lower() or "encrypt" in error_str.lower():
+                logger.error(f"Encryption error for config {config.id}: {error_str}")
+                return Response(
+                    {"success": False, "message": "Configuration error. Please reconfigure your API key."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            return Response(
+                {"success": False, "message": "Invalid configuration."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as e:
+            # Log the full error for debugging but don't expose to user
+            logger.exception(
+                f"Unexpected error testing connection for config {config.id}",
+                extra={"user_id": request.user.id, "provider": config.provider},
+            )
+            return Response(
+                {"success": False, "message": "An unexpected error occurred. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _sanitize_error_message(self, message: str | None) -> str:
+        """Sanitize error messages to prevent sensitive data exposure.
+
+        Args:
+            message: The raw error message.
+
+        Returns:
+            A sanitized error message safe for client display.
+        """
+        if not message:
+            return "An error occurred."
+
+        # Remove potential API key patterns (sk-..., key-..., etc.)
+        import re
+        sanitized = re.sub(r'\b(sk-|key-|api-)[a-zA-Z0-9_-]+\b', '[REDACTED]', message)
+
+        # Truncate long messages
+        if len(sanitized) > 200:
+            sanitized = sanitized[:200] + "..."
+
+        return sanitized
 
     @action(detail=True, methods=["post"])
     def set_default(self, request: Request, pk=None) -> Response:
