@@ -48,6 +48,18 @@ def register_all_tools(registry: ToolRegistry) -> None:
         list_studies_tool,
     )
 
+    # Import analysis tool definitions
+    from .analysis_tools import (
+        analyze_parametric_study_tool,
+        compare_simulations_tool,
+        get_box_counting_results_tool,
+        get_fraktal_results_tool,
+        list_analyses_tool,
+        run_box_counting_tool,
+        run_fraktal_analysis_tool,
+        run_fraktal_from_image_tool,
+    )
+
     # Utility tools
     registry.register(list_algorithms_tool)
     registry.register(get_project_info_tool)
@@ -70,5 +82,15 @@ def register_all_tools(registry: ToolRegistry) -> None:
     registry.register(get_study_results_tool)
     registry.register(list_studies_tool)
     registry.register(cancel_study_tool)
+
+    # Analysis tools
+    registry.register(run_box_counting_tool)
+    registry.register(get_box_counting_results_tool)
+    registry.register(run_fraktal_analysis_tool)
+    registry.register(run_fraktal_from_image_tool)
+    registry.register(get_fraktal_results_tool)
+    registry.register(compare_simulations_tool)
+    registry.register(analyze_parametric_study_tool)
+    registry.register(list_analyses_tool)
 
     logger.info(f"Registered {len(registry)} AI tools")
