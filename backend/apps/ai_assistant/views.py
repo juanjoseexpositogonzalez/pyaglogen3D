@@ -8,12 +8,16 @@ from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework.views import APIView
 
 from .models import AIProviderConfig
 from .permissions import IsAIUser
 from .serializers import AIProviderConfigListSerializer, AIProviderConfigSerializer
 from .services.encryption import get_encryption_service
 from .services.providers import ProviderFactory, StopReason
+from .tools.context import ContextManager
+from .tools.executor import ToolExecutor
+from .tools.registry import get_registry
 
 logger = logging.getLogger(__name__)
 
@@ -172,3 +176,98 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
         config.is_default = True
         config.save()
         return Response({"message": f"{config.get_provider_display()} set as default"})
+
+
+class ToolListView(APIView):
+    """List all available AI tools."""
+
+    permission_classes = [IsAuthenticated, IsAIUser]
+
+    def get(self, request: Request) -> Response:
+        """List all registered tools.
+
+        Returns tools grouped by category with their schemas.
+
+        Query parameters:
+            category: Optional category filter.
+
+        Returns:
+            200 with list of tools.
+        """
+        registry = get_registry()
+        category = request.query_params.get("category")
+
+        if category:
+            tools = registry.get_tools_by_category(category)
+        else:
+            tools = registry.get_all_tools()
+
+        return Response({
+            "tools": [t.to_dict() for t in tools],
+            "count": len(tools),
+            "categories": registry.get_categories(),
+        })
+
+
+class ToolExecuteView(APIView):
+    """Execute a specific tool directly."""
+
+    permission_classes = [IsAuthenticated, IsAIUser]
+
+    def post(self, request: Request, name: str) -> Response:
+        """Execute a tool by name.
+
+        This endpoint allows direct tool execution for testing
+        and programmatic access outside of chat context.
+
+        Args:
+            name: The tool name from the URL path.
+
+        Request body:
+            arguments: Dict of tool arguments.
+            project_id: Optional project context.
+
+        Returns:
+            200 with tool result on success.
+            400 with error on validation failure.
+            404 if tool not found.
+        """
+        registry = get_registry()
+        tool = registry.get_tool(name)
+
+        if tool is None:
+            return Response(
+                {"error": f"Tool '{name}' not found"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Get arguments from request body
+        arguments = request.data.get("arguments", {})
+        project_id = request.data.get("project_id")
+
+        # Create execution context
+        context = ContextManager.from_request(
+            request._request,
+            project_id=project_id,
+        )
+
+        # Execute the tool
+        executor = ToolExecutor(registry, context)
+        result = executor.execute(name, arguments)
+
+        # Return appropriate status code based on result
+        if result.success:
+            return Response(result.to_dict())
+
+        # Map error types to status codes
+        error_type = result.error.error_type if result.error else "Unknown"
+        status_map = {
+            "ValidationError": status.HTTP_400_BAD_REQUEST,
+            "ToolNotFoundError": status.HTTP_404_NOT_FOUND,
+            "PermissionError": status.HTTP_403_FORBIDDEN,
+            "ContextError": status.HTTP_400_BAD_REQUEST,
+            "ValueError": status.HTTP_400_BAD_REQUEST,
+        }
+        response_status = status_map.get(error_type, status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+        return Response(result.to_dict(), status=response_status)
