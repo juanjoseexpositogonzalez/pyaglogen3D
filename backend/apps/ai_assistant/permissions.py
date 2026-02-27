@@ -1,0 +1,54 @@
+"""AI Assistant permissions."""
+from django.conf import settings
+from rest_framework.permissions import BasePermission
+
+
+class IsAIUser(BasePermission):
+    """Permission for users who can access AI features.
+
+    Access is granted if the user:
+    - Is a staff member (admin), OR
+    - Has the `has_ai_access` flag set to True
+
+    Note:
+        In development (DEBUG=True), all authenticated users have access
+        for easier testing. In production, proper access control is enforced.
+    """
+
+    message = "AI features are not enabled for your account."
+
+    def has_permission(self, request, view) -> bool:
+        """Check if user can access AI features."""
+        if not request.user.is_authenticated:
+            return False
+
+        # Staff always has access
+        if request.user.is_staff:
+            return True
+
+        # Check has_ai_access attribute (will be added in access control phase)
+        if hasattr(request.user, "has_ai_access") and request.user.has_ai_access:
+            return True
+
+        # In development mode, allow all authenticated users for testing
+        # In production, deny access if user doesn't have explicit access
+        if settings.DEBUG:
+            return True
+
+        return False
+
+
+class IsRAGAdmin(BasePermission):
+    """Permission for users who can manage RAG knowledge base.
+
+    Only staff users can manage RAG documents.
+    """
+
+    message = "RAG management requires admin privileges."
+
+    def has_permission(self, request, view) -> bool:
+        """Check if user can manage RAG."""
+        return (
+            request.user.is_authenticated and
+            request.user.is_staff
+        )
