@@ -8,6 +8,7 @@ class Migration(migrations.Migration):
 
     When switching to a custom User model with UUID primary key, some legacy
     Django tables still have integer foreign keys. This migration fixes them.
+    Also renames ManyToMany tables to match the User model's db_table setting.
     """
 
     dependencies = [
@@ -24,6 +25,11 @@ class Migration(migrations.Migration):
             sql="DROP TABLE IF EXISTS auth_user_user_permissions CASCADE;",
             reverse_sql="SELECT 1;",  # No reverse needed
         ),
+        # Drop orphaned auth_user table if exists
+        migrations.RunSQL(
+            sql="DROP TABLE IF EXISTS auth_user CASCADE;",
+            reverse_sql="SELECT 1;",
+        ),
         # Fix django_admin_log to use UUID
         migrations.RunSQL(
             sql="""
@@ -38,5 +44,14 @@ class Migration(migrations.Migration):
                 FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE;
             """,
             reverse_sql="SELECT 1;",
+        ),
+        # Rename ManyToMany tables to match User model's db_table="users"
+        migrations.RunSQL(
+            sql="ALTER TABLE IF EXISTS accounts_user_groups RENAME TO users_groups;",
+            reverse_sql="ALTER TABLE IF EXISTS users_groups RENAME TO accounts_user_groups;",
+        ),
+        migrations.RunSQL(
+            sql="ALTER TABLE IF EXISTS accounts_user_user_permissions RENAME TO users_user_permissions;",
+            reverse_sql="ALTER TABLE IF EXISTS users_user_permissions RENAME TO accounts_user_user_permissions;",
         ),
     ]
