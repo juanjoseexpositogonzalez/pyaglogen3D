@@ -8,14 +8,14 @@ class IsAIUser(BasePermission):
 
     Access is granted if the user:
     - Is a staff member (admin), OR
-    - Has the `has_ai_access` flag set to True
+    - Has an AIUserProfile with has_ai_access=True
 
     Note:
         In development (DEBUG=True), all authenticated users have access
         for easier testing. In production, proper access control is enforced.
     """
 
-    message = "AI features are not enabled for your account."
+    message = "AI features are not enabled for your account. Contact an administrator to request access."
 
     def has_permission(self, request, view) -> bool:
         """Check if user can access AI features."""
@@ -26,9 +26,10 @@ class IsAIUser(BasePermission):
         if request.user.is_staff:
             return True
 
-        # Check has_ai_access attribute (will be added in access control phase)
-        if hasattr(request.user, "has_ai_access") and request.user.has_ai_access:
-            return True
+        # Check AIUserProfile for access permission
+        if hasattr(request.user, "ai_profile"):
+            if request.user.ai_profile.has_ai_access:
+                return True
 
         # In development mode, allow all authenticated users for testing
         # In production, deny access if user doesn't have explicit access
