@@ -1,20 +1,43 @@
 'use client'
 
+import { useState, useEffect } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { aiApi } from '@/lib/ai-api'
 import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User, Shield, Bot } from 'lucide-react'
 
-const navigation = [
+const baseNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { name: 'Projects', href: '/projects', icon: FolderOpen },
-  { name: 'AI Assistant', href: '/ai', icon: Bot },
 ]
 
 export function Header() {
   const pathname = usePathname()
   const { user, isAuthenticated, isLoading, logout } = useAuth()
+  const [hasAIAccess, setHasAIAccess] = useState(false)
+
+  useEffect(() => {
+    async function checkAIAccess() {
+      if (isAuthenticated) {
+        try {
+          const response = await aiApi.checkAccess()
+          setHasAIAccess(response.has_access)
+        } catch {
+          setHasAIAccess(false)
+        }
+      } else {
+        setHasAIAccess(false)
+      }
+    }
+    checkAIAccess()
+  }, [isAuthenticated])
+
+  // Build navigation dynamically based on AI access
+  const navigation = hasAIAccess
+    ? [...baseNavigation, { name: 'AI Assistant', href: '/ai', icon: Bot }]
+    : baseNavigation
 
   return (
     <header className="border-b border-white/10 bg-card/80 backdrop-blur-md">

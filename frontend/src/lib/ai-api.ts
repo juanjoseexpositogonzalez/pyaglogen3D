@@ -103,7 +103,21 @@ async function aiFetch<T>(
   return response.json()
 }
 
+export interface AIAccessResponse {
+  has_access: boolean
+  reason: 'staff' | 'granted' | 'debug_mode' | 'not_granted'
+}
+
 export const aiApi = {
+  // Access Check
+
+  /**
+   * Check if the current user has AI access.
+   */
+  async checkAccess(): Promise<AIAccessResponse> {
+    return aiFetch<AIAccessResponse>('/access/')
+  },
+
   // Provider Management
 
   /**

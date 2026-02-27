@@ -178,6 +178,35 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
         return Response({"message": f"{config.get_provider_display()} set as default"})
 
 
+class AIAccessCheckView(APIView):
+    """Check if the current user has AI access."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        """Check if user has AI access.
+
+        Returns:
+            200 with has_access boolean.
+        """
+        user = request.user
+
+        # Staff always has access
+        if user.is_staff:
+            return Response({"has_access": True, "reason": "staff"})
+
+        # Check AIUserProfile for access permission
+        if hasattr(user, "ai_profile") and user.ai_profile.has_ai_access:
+            return Response({"has_access": True, "reason": "granted"})
+
+        # In development mode, allow all authenticated users
+        from django.conf import settings
+        if settings.DEBUG:
+            return Response({"has_access": True, "reason": "debug_mode"})
+
+        return Response({"has_access": False, "reason": "not_granted"})
+
+
 class ToolListView(APIView):
     """List all available AI tools."""
 

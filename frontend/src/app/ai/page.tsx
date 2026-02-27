@@ -11,7 +11,7 @@ import { Select } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { aiApi, type AITool, type AIProvider, type ToolExecutionResult } from '@/lib/ai-api'
 import { useAuth } from '@/contexts/AuthContext'
-import { Loader2, Send, Settings, Wrench, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp } from 'lucide-react'
+import { Loader2, Send, Settings, Wrench, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react'
 
 interface ToolExecution {
   id: string
@@ -37,6 +37,7 @@ export default function AIAssistantPage() {
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+  const [hasAccess, setHasAccess] = useState<boolean | null>(null)
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -45,8 +46,23 @@ export default function AIAssistantPage() {
   }, [user, authLoading, router])
 
   useEffect(() => {
-    loadData()
+    checkAccessAndLoadData()
   }, [])
+
+  async function checkAccessAndLoadData() {
+    try {
+      const accessResponse = await aiApi.checkAccess()
+      setHasAccess(accessResponse.has_access)
+      if (accessResponse.has_access) {
+        await loadData()
+      } else {
+        setIsLoading(false)
+      }
+    } catch {
+      setHasAccess(false)
+      setIsLoading(false)
+    }
+  }
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -207,6 +223,28 @@ export default function AIAssistantPage() {
         <Header />
         <main className="container mx-auto px-4 py-8 flex items-center justify-center">
           <Loader2 className="h-8 w-8 animate-spin" />
+        </main>
+      </div>
+    )
+  }
+
+  if (hasAccess === false) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Header />
+        <main className="container mx-auto px-4 py-8">
+          <Card className="bg-gray-800/50 border-gray-700 max-w-lg mx-auto">
+            <CardContent className="p-8 text-center">
+              <ShieldAlert className="h-16 w-16 mx-auto text-yellow-500 mb-4" />
+              <h2 className="text-2xl font-bold text-white mb-2">Access Required</h2>
+              <p className="text-gray-400 mb-4">
+                AI features are not enabled for your account. Please contact an administrator to request access.
+              </p>
+              <Button variant="outline" onClick={() => router.push('/dashboard')}>
+                Back to Dashboard
+              </Button>
+            </CardContent>
+          </Card>
         </main>
       </div>
     )
