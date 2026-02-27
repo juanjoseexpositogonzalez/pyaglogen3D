@@ -163,7 +163,7 @@ export default function SimulationDetailPage({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading simulation..." />
       </div>
@@ -172,7 +172,7 @@ export default function SimulationDetailPage({
 
   if (error || !simulation) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <main className="container mx-auto px-4 py-8">
           <Card className="border-destructive">
@@ -201,7 +201,7 @@ export default function SimulationDetailPage({
   const radii = (geometry?.radii ?? []).map((r) => r * scaleFactor)
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">
@@ -513,7 +513,10 @@ export default function SimulationDetailPage({
                 </Card>
               </div>
               <div className="lg:col-span-1">
-                <ViewerControls />
+                <ViewerControls
+                  onExportCsv={handleExportCsv}
+                  isExportingCsv={isExporting}
+                />
               </div>
             </div>
 

@@ -147,6 +147,7 @@ export function AgglomerateViewer({
     showGrid,
     showBoundingSphere,
     showPrincipalAxes,
+    useOrthographic,
     autoRotate,
     rotateSpeed,
     particleOpacity,
@@ -216,7 +217,21 @@ export function AgglomerateViewer({
       style={{ backgroundColor: bgColor }}
     >
       <Canvas
-        camera={{ position: cameraPosition, fov: 45, near: 0.1, far: maxRadius * 20 }}
+        orthographic={useOrthographic}
+        camera={useOrthographic
+          ? {
+              position: cameraPosition,
+              zoom: 10 / maxRadius,  // Adjust zoom based on agglomerate size
+              near: 0.1,
+              far: maxRadius * 20
+            }
+          : {
+              position: cameraPosition,
+              fov: 45,
+              near: 0.1,
+              far: maxRadius * 20
+            }
+        }
         gl={{ antialias: true, alpha: false, preserveDrawingBuffer: true }}
       >
         <Suspense fallback={null}>

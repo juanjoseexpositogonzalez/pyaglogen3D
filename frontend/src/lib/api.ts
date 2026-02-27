@@ -18,6 +18,8 @@ import type {
   ParametricStudyResults,
   BoxCounting3DResult,
 } from './types'
+import { tokenStorage } from './token-storage'
+import { authApi } from './auth-api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
@@ -32,9 +34,33 @@ class ApiError extends Error {
   }
 }
 
+/**
+ * Get authorization headers if authenticated.
+ */
+function getAuthHeaders(): Record<string, string> {
+  const accessToken = tokenStorage.getAccessToken()
+  if (accessToken) {
+    return { Authorization: `Bearer ${accessToken}` }
+  }
+  return {}
+}
+
+/**
+ * Try to refresh the access token.
+ */
+async function tryRefreshToken(): Promise<boolean> {
+  try {
+    await authApi.refreshToken()
+    return true
+  } catch {
+    return false
+  }
+}
+
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  retryOnAuth = true
 ): Promise<T> {
   const url = `${API_BASE}${endpoint}`
 
@@ -42,9 +68,23 @@ async function request<T>(
     ...options,
     headers: {
       'Content-Type': 'application/json',
+      ...getAuthHeaders(),
       ...options.headers,
     },
   })
+
+  // Handle 401 Unauthorized - try to refresh token
+  if (res.status === 401 && retryOnAuth && tokenStorage.hasRefreshToken()) {
+    const refreshed = await tryRefreshToken()
+    if (refreshed) {
+      // Retry the request with new token
+      return request<T>(endpoint, options, false)
+    }
+    // Refresh failed - redirect to login
+    if (typeof window !== 'undefined') {
+      window.location.href = '/auth/login'
+    }
+  }
 
   if (!res.ok) {
     const error = await res.json().catch(() => ({}))
@@ -61,6 +101,36 @@ async function request<T>(
   }
 
   return res.json()
+}
+
+/**
+ * Make an authenticated fetch request (for blob responses).
+ */
+async function authFetch(
+  url: string,
+  options: RequestInit = {},
+  retryOnAuth = true
+): Promise<Response> {
+  const res = await fetch(url, {
+    ...options,
+    headers: {
+      ...getAuthHeaders(),
+      ...options.headers,
+    },
+  })
+
+  // Handle 401 Unauthorized - try to refresh token
+  if (res.status === 401 && retryOnAuth && tokenStorage.hasRefreshToken()) {
+    const refreshed = await tryRefreshToken()
+    if (refreshed) {
+      return authFetch(url, options, false)
+    }
+    if (typeof window !== 'undefined') {
+      window.location.href = '/auth/login'
+    }
+  }
+
+  return res
 }
 
 // Projects API
@@ -108,6 +178,12 @@ export const simulationsApi = {
       method: 'DELETE',
     }),
 
+  deleteAll: (projectId: string) =>
+    request<{ deleted: number; message: string }>(
+      `/projects/${projectId}/simulations/delete-all/`,
+      { method: 'DELETE' }
+    ),
+
   cancel: (projectId: string, id: string) =>
     request<{ status: string; simulation_id: string }>(
       `/projects/${projectId}/simulations/${id}/cancel/`,
@@ -127,7 +203,7 @@ export const simulationsApi = {
       format?: 'png' | 'svg'
     } = {}
   ): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/`,
       {
         method: 'POST',
@@ -161,7 +237,7 @@ export const simulationsApi = {
       format?: 'png' | 'svg'
     } = {}
   ): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/batch/`,
       {
         method: 'POST',
@@ -188,7 +264,7 @@ export const simulationsApi = {
    * Returns coordinates and radii parsed from .npy format.
    */
   getGeometry: async (id: string): Promise<GeometryData> => {
-    const res = await fetch(`${API_BASE}/simulations/${id}/geometry/`)
+    const res = await authFetch(`${API_BASE}/simulations/${id}/geometry/`)
     if (!res.ok) {
       throw new ApiError('Failed to fetch geometry', res.status)
     }
@@ -236,7 +312,7 @@ export const simulationsApi = {
    * Returns CSV file with properties and per-particle data.
    */
   exportCsv: async (projectId: string, simId: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/simulations/${simId}/export/`
     )
     if (!res.ok) {
@@ -352,6 +428,15 @@ export const fraktalApi = {
     }),
 
   /**
+   * Delete all FRAKTAL analyses in a project.
+   */
+  deleteAll: (projectId: string) =>
+    request<{ deleted: number; message: string }>(
+      `/projects/${projectId}/fraktal/delete-all/`,
+      { method: 'DELETE' }
+    ),
+
+  /**
    * Re-run a failed or completed FRAKTAL analysis.
    */
   rerun: (projectId: string, id: string) =>
@@ -364,7 +449,7 @@ export const fraktalApi = {
    * Download the original image (only for uploaded_image source).
    */
   getOriginalImage: async (projectId: string, id: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/fraktal/${id}/original_image/`
     )
     if (!res.ok) {
@@ -415,7 +500,7 @@ export const studiesApi = {
    * Export study results as CSV.
    */
   exportCsv: async (projectId: string, id: string): Promise<Blob> => {
-    const res = await fetch(
+    const res = await authFetch(
       `${API_BASE}/projects/${projectId}/studies/${id}/export/`
     )
     if (!res.ok) {
@@ -445,6 +530,122 @@ export const studiesApi = {
     }>(`/projects/${projectId}/studies/${id}/run-box-counting/`, {
       method: 'POST',
       body: JSON.stringify(params || {}),
+    }),
+}
+
+// Project Sharing API
+import type {
+  ProjectSharingData,
+  ProjectShare,
+  ShareInvitation,
+  SharePermission,
+} from './types'
+
+export const sharingApi = {
+  /**
+   * Get collaborators and pending invitations for a project.
+   */
+  get: (projectId: string) =>
+    request<ProjectSharingData>(`/projects/${projectId}/sharing/`),
+
+  /**
+   * Invite a user to collaborate on a project.
+   */
+  invite: (projectId: string, email: string, permission: SharePermission) =>
+    request<ProjectShare | ShareInvitation>(`/projects/${projectId}/sharing/invite/`, {
+      method: 'POST',
+      body: JSON.stringify({ email, permission }),
+    }),
+
+  /**
+   * Update a collaborator's permission level.
+   */
+  updatePermission: (projectId: string, shareId: string, permission: SharePermission) =>
+    request<ProjectShare>(`/projects/${projectId}/sharing/update/${shareId}/`, {
+      method: 'PATCH',
+      body: JSON.stringify({ permission }),
+    }),
+
+  /**
+   * Remove a collaborator or cancel a pending invitation.
+   */
+  remove: (projectId: string, shareId: string) =>
+    request<void>(`/projects/${projectId}/sharing/remove/${shareId}/`, {
+      method: 'DELETE',
+    }),
+
+  /**
+   * Accept a share invitation via token.
+   */
+  acceptInvitation: (token: string) =>
+    request<{ message: string; project_id: string; project_name: string }>(
+      `/projects/invitations/${token}/accept/`,
+      { method: 'POST' }
+    ),
+}
+
+// Admin API
+export interface AdminUser {
+  id: string
+  email: string
+  first_name: string
+  last_name: string
+  full_name: string
+  email_verified: boolean
+  is_staff: boolean
+  is_active: boolean
+  oauth_provider: string | null
+  created_at: string
+  last_login: string | null
+  project_count: number
+  simulation_count: number
+  projects: Array<{
+    id: string
+    name: string
+    description: string
+    simulation_count: number
+    study_count: number
+    created_at: string
+  }>
+}
+
+export interface AdminDashboardData {
+  summary: {
+    total_users: number
+    total_projects: number
+    total_simulations: number
+  }
+  users: AdminUser[]
+}
+
+export const adminApi = {
+  /**
+   * Get admin dashboard data (all users with their projects).
+   * Requires staff/superuser permission.
+   */
+  getDashboard: () => request<AdminDashboardData>('/auth/admin/dashboard/'),
+
+  /**
+   * Update a user's details.
+   * Requires staff/superuser permission.
+   */
+  updateUser: (userId: string, data: {
+    first_name?: string
+    last_name?: string
+    is_staff?: boolean
+    is_active?: boolean
+  }) => request<AdminUser>(`/auth/admin/users/${userId}/`, {
+    method: 'PATCH',
+    body: JSON.stringify(data),
+  }),
+
+  /**
+   * Delete a user and all their data.
+   * Requires staff/superuser permission.
+   */
+  deleteUser: (userId: string) =>
+    request<{ message: string }>(`/auth/admin/users/${userId}/`, {
+      method: 'DELETE',
     }),
 }
 

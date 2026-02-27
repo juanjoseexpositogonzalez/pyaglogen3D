@@ -15,8 +15,16 @@ import {
   Circle,
   Move3D,
   Download,
+  Box,
+  Maximize,
 } from 'lucide-react'
 import type { ColorMode } from '@/lib/types'
+import { FileSpreadsheet } from 'lucide-react'
+
+interface ViewerControlsProps {
+  onExportCsv?: () => void
+  isExportingCsv?: boolean
+}
 
 const colorModeOptions: { value: ColorMode; label: string }[] = [
   { value: 'uniform', label: 'Uniform' },
@@ -33,7 +41,7 @@ const backgroundOptions: { value: BackgroundPreset; label: string }[] = [
   { value: 'black', label: 'Black' },
 ]
 
-export function ViewerControls() {
+export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsProps = {}) {
   const {
     colorMode,
     setColorMode,
@@ -45,6 +53,8 @@ export function ViewerControls() {
     toggleBoundingSphere,
     showPrincipalAxes,
     togglePrincipalAxes,
+    useOrthographic,
+    toggleOrthographic,
     autoRotate,
     toggleAutoRotate,
     rotateSpeed,
@@ -156,6 +166,20 @@ export function ViewerControls() {
         </Button>
 
         <Button
+          variant={useOrthographic ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleOrthographic}
+          title={useOrthographic ? 'Switch to perspective view' : 'Switch to orthographic view (no perspective distortion)'}
+        >
+          {useOrthographic ? (
+            <Box className="h-4 w-4 mr-1" />
+          ) : (
+            <Maximize className="h-4 w-4 mr-1" />
+          )}
+          {useOrthographic ? 'Ortho' : 'Persp'}
+        </Button>
+
+        <Button
           variant={autoRotate ? 'default' : 'outline'}
           size="sm"
           onClick={toggleAutoRotate}
@@ -176,7 +200,7 @@ export function ViewerControls() {
 
       {/* Export Buttons */}
       <div className="pt-2 border-t">
-        <Label className="text-xs text-muted-foreground mb-2 block">Export Image</Label>
+        <Label className="text-xs text-muted-foreground mb-2 block">Export</Label>
         <div className="flex gap-2">
           <Button
             variant="outline"
@@ -198,6 +222,19 @@ export function ViewerControls() {
             SVG*
           </Button>
         </div>
+        {onExportCsv && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportCsv}
+            disabled={isExportingCsv}
+            className="w-full mt-2"
+            title="Export particle coordinates and fractal parameters as CSV"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-1" />
+            {isExportingCsv ? 'Exporting...' : 'CSV (Coordinates + Metrics)'}
+          </Button>
+        )}
         <p className="text-xs text-muted-foreground mt-1">
           *SVG exports as PNG (WebGL limitation)
         </p>

@@ -117,7 +117,7 @@ export default function BatchSimulationsPage({
 
   if (isLoadingStudies) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading batch studies..." />
       </div>
@@ -127,7 +127,7 @@ export default function BatchSimulationsPage({
   const studies = studiesData?.results || []
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">

@@ -5,4 +5,7 @@ from django.urls import include, path
 urlpatterns = [
     path("admin/", admin.site.urls),
     path("api/v1/", include("apps.core.urls")),
+    path("api/v1/auth/", include("apps.accounts.urls")),
+    # Django Allauth for OAuth callbacks
+    path("accounts/", include("allauth.urls")),
 ]

@@ -46,7 +46,7 @@ export default function FraktalAnalysisDetailPage({
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading analysis..." />
       </div>
@@ -55,7 +55,7 @@ export default function FraktalAnalysisDetailPage({
 
   if (error || !analysis) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <main className="container mx-auto px-4 py-8">
           <Card className="border-destructive">
@@ -76,7 +76,7 @@ export default function FraktalAnalysisDetailPage({
   const canRerun = analysis.status === 'completed' || analysis.status === 'failed'
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">

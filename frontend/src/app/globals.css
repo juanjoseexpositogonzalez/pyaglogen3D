@@ -31,7 +31,48 @@
   * {
     @apply border-border;
   }
-  body {
-    @apply bg-background text-foreground;
+  html {
+    background: transparent;
   }
+  body {
+    @apply text-foreground;
+  }
+  body:not(.app-background) {
+    @apply bg-background;
+  }
+}
+
+/* Background with transparency overlay for readability */
+.app-background {
+  position: relative;
+  min-height: 100vh;
+  background: transparent;
+  isolation: isolate; /* Create stacking context for z-index */
+}
+
+.app-background::before {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background-image: url('/pyAgloGen3DBNG.png');
+  background-size: cover;
+  background-position: center;
+  background-repeat: no-repeat;
+  z-index: -2;
+  pointer-events: none;
+}
+
+.app-background::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.65);
+  z-index: -1;
+  pointer-events: none;
 }

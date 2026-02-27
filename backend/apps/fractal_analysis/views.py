@@ -6,8 +6,11 @@ from django.http import HttpResponse
 from kombu.exceptions import OperationalError
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .models import ComparisonSet, FraktalAnalysis, ImageAnalysis
 
@@ -27,6 +30,7 @@ class ImageAnalysisViewSet(viewsets.ModelViewSet):
     """ViewSet for ImageAnalysis CRUD operations."""
 
     queryset = ImageAnalysis.objects.select_related("project")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -91,6 +95,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
     """ViewSet for FraktalAnalysis CRUD operations."""
 
     queryset = FraktalAnalysis.objects.select_related("project", "simulation")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -125,6 +130,23 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         except OperationalError:
             logger.warning(f"Celery broker unavailable, running {task_name} task synchronously")
             task(str(analysis.id))
+
+    @action(detail=False, methods=["delete"], url_path="delete-all")
+    def delete_all(self, request: Request, **kwargs) -> Response:
+        """Delete all FRAKTAL analyses in the project."""
+        project_id = self.kwargs.get("project_pk")
+        if not project_id:
+            return Response(
+                {"error": "Project ID required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        analyses = FraktalAnalysis.objects.filter(project_id=project_id)
+        count = analyses.count()
+        analyses.delete()
+
+        logger.info(f"Deleted {count} FRAKTAL analyses from project {project_id}")
+        return Response({"deleted": count, "message": f"Deleted {count} analyses"})
 
     @action(detail=True, methods=["get"])
     def original_image(self, request: Request, pk=None, **kwargs) -> HttpResponse:
@@ -186,6 +208,7 @@ class ComparisonSetViewSet(viewsets.ModelViewSet):
         "analyses",
         "fraktal_analyses",
     )
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""

@@ -26,6 +26,10 @@ dependencies = [
     "gunicorn>=21.0",
     "whitenoise>=6.6",
     "redis-cli>=1.0.1",
+    # Authentication
+    "djangorestframework-simplejwt>=5.3",
+    "dj-rest-auth>=7.0",
+    "django-allauth[socialaccount]>=65.0",
     # AI Assistant dependencies
     "anthropic>=0.40",
     "openai>=1.50",

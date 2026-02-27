@@ -1,7 +1,10 @@
 'use client'
 
+import { useEffect } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useProjects } from '@/hooks/useProjects'
+import { useAuth } from '@/contexts/AuthContext'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -9,14 +12,33 @@ import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { FolderOpen, Plus, Atom, ImageIcon, TrendingUp } from 'lucide-react'
 
 export default function DashboardPage() {
+  const router = useRouter()
+  const { isLoading: authLoading, isAuthenticated } = useAuth()
   const { data, isLoading, error } = useProjects()
+
+  // Redirect to login if not authenticated (after auth check completes)
+  useEffect(() => {
+    if (!authLoading && !isAuthenticated) {
+      router.push('/auth/login')
+    }
+  }, [authLoading, isAuthenticated, router])
+
+  // Show loading while checking auth
+  if (authLoading) {
+    return <LoadingScreen message="Checking authentication..." />
+  }
+
+  // Don't render dashboard content if not authenticated
+  if (!isAuthenticated) {
+    return <LoadingScreen message="Redirecting to login..." />
+  }
 
   const projects = data?.results ?? []
   const totalSimulations = projects.reduce((acc, p) => acc + p.simulation_count, 0)
   const totalAnalyses = projects.reduce((acc, p) => acc + p.analysis_count, 0)
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">

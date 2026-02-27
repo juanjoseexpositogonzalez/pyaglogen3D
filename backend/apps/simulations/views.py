@@ -9,8 +9,11 @@ from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.permissions import IsAuthenticated
 from rest_framework.request import Request
 from rest_framework.response import Response
+
+from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .models import ParametricStudy, Simulation, SimulationStatus
 from .serializers import (
@@ -32,6 +35,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
     """ViewSet for Simulation CRUD operations."""
 
     queryset = Simulation.objects.select_related("project")
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_serializer_class(self):
         """Return appropriate serializer based on action."""
@@ -40,11 +44,18 @@ class SimulationViewSet(viewsets.ModelViewSet):
         return SimulationSerializer
 
     def get_queryset(self):
-        """Filter simulations by project if project_id in URL."""
+        """Filter simulations by project if project_id in URL.
+
+        Excludes batch simulations from the list view only.
+        Detail views can still access batch simulations.
+        """
         queryset = super().get_queryset()
         project_id = self.kwargs.get("project_pk")
         if project_id:
             queryset = queryset.filter(project_id=project_id)
+        # Only exclude batch simulations from list view, not detail/other actions
+        if self.action == "list":
+            queryset = queryset.filter(is_batch=False)
         return queryset
 
     def perform_create(self, serializer):
@@ -110,6 +121,29 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 logger.info(f"Revoked Celery task {simulation.task_id}")
             except Exception as e:
                 logger.warning(f"Failed to revoke task {simulation.task_id}: {e}")
+
+    @action(detail=False, methods=["delete"], url_path="delete-all")
+    def delete_all(self, request: Request, **kwargs) -> Response:
+        """Delete all simulations in the project (excluding batch simulations)."""
+        project_id = self.kwargs.get("project_pk")
+        if not project_id:
+            return Response(
+                {"error": "Project ID required"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Get all non-batch simulations for this project
+        simulations = Simulation.objects.filter(project_id=project_id, is_batch=False)
+
+        # Cancel any running tasks first
+        for sim in simulations.filter(status__in=[SimulationStatus.QUEUED, SimulationStatus.RUNNING]):
+            self._cancel_task(sim)
+
+        count = simulations.count()
+        simulations.delete()
+
+        logger.info(f"Deleted {count} simulations from project {project_id}")
+        return Response({"deleted": count, "message": f"Deleted {count} simulations"})
 
     @action(detail=True, methods=["get"])
     def geometry(self, request: Request, pk=None, **kwargs) -> HttpResponse:
@@ -650,6 +684,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         "simulations"
     )
     serializer_class = ParametricStudySerializer
+    permission_classes = [IsAuthenticated, IsProjectOwnerOrShared]
 
     def get_queryset(self):
         """Filter studies by project if project_id in URL."""
@@ -723,6 +758,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     seed=seed,
                     name=auto_name,
                     status=SimulationStatus.QUEUED,
+                    is_batch=True,
                 )
                 simulations_created.append(sim)
                 study.simulations.add(sim)
@@ -780,6 +816,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             seed=seed,
                             name=auto_name,
                             status=SimulationStatus.QUEUED,
+                            is_batch=True,
                         )
                         simulations_created.append(sim)
                         study.simulations.add(sim)

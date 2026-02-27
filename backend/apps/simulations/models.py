@@ -70,6 +70,10 @@ class Simulation(models.Model):
     engine_version = models.CharField(max_length=20, blank=True)
     error_message = models.TextField(blank=True)
     task_id = models.CharField(max_length=50, blank=True, help_text="Celery task ID")
+    is_batch = models.BooleanField(
+        default=False,
+        help_text="True if created as part of a parametric study (batch simulation)",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)

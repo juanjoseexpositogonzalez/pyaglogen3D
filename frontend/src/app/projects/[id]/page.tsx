@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
 import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
-import { simulationsApi } from '@/lib/api'
+import { simulationsApi, fraktalApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -29,6 +29,9 @@ export default function ProjectDetailPage({
   const [actionLoading, setActionLoading] = useState<string | null>(null)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   const [fraktalDeleteConfirm, setFraktalDeleteConfirm] = useState<string | null>(null)
+  const [deleteAllSimsConfirm, setDeleteAllSimsConfirm] = useState(false)
+  const [deleteAllFraktalConfirm, setDeleteAllFraktalConfirm] = useState(false)
+  const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false)
 
   const handleCancel = async (simId: string, e: React.MouseEvent) => {
     e.preventDefault()
@@ -72,9 +75,35 @@ export default function ProjectDetailPage({
     }
   }
 
+  const handleDeleteAllSimulations = async () => {
+    setBulkDeleteLoading(true)
+    try {
+      await simulationsApi.deleteAll(id)
+      refetch()
+    } catch (err) {
+      console.error('Failed to delete all simulations:', err)
+    } finally {
+      setBulkDeleteLoading(false)
+      setDeleteAllSimsConfirm(false)
+    }
+  }
+
+  const handleDeleteAllFraktal = async () => {
+    setBulkDeleteLoading(true)
+    try {
+      await fraktalApi.deleteAll(id)
+      refetchFraktal()
+    } catch (err) {
+      console.error('Failed to delete all FRAKTAL analyses:', err)
+    } finally {
+      setBulkDeleteLoading(false)
+      setDeleteAllFraktalConfirm(false)
+    }
+  }
+
   if (projectLoading) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <LoadingScreen message="Loading project..." />
       </div>
@@ -83,7 +112,7 @@ export default function ProjectDetailPage({
 
   if (projectError || !project) {
     return (
-      <div className="min-h-screen bg-background">
+      <div className="min-h-screen">
         <Header />
         <main className="container mx-auto px-4 py-8">
           <Card className="border-destructive">
@@ -104,7 +133,7 @@ export default function ProjectDetailPage({
   const simulationList = simulations?.results ?? []
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen">
       <Header />
 
       <main className="container mx-auto px-4 py-8">
@@ -161,7 +190,41 @@ export default function ProjectDetailPage({
 
         {/* Simulations List */}
         <div className="space-y-4">
-          <h2 className="text-xl font-semibold">Simulations</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">Simulations</h2>
+            {simulationList.length > 0 && (
+              deleteAllSimsConfirm ? (
+                <div className="flex gap-2 items-center">
+                  <span className="text-sm text-muted-foreground">Delete all {simulationList.length} simulations?</span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteAllSimulations}
+                    disabled={bulkDeleteLoading}
+                  >
+                    {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDeleteAllSimsConfirm(false)}
+                    disabled={bulkDeleteLoading}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDeleteAllSimsConfirm(true)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete All
+                </Button>
+              )
+            )}
+          </div>
 
           {simulationsLoading ? (
             <LoadingScreen message="Loading simulations..." />
@@ -292,7 +355,43 @@ export default function ProjectDetailPage({
 
         {/* FRAKTAL Analyses List */}
         <div className="space-y-4 mt-8">
-          <h2 className="text-xl font-semibold">FRAKTAL Analyses</h2>
+          <div className="flex items-center justify-between">
+            <h2 className="text-xl font-semibold">FRAKTAL Analyses</h2>
+            {(fraktalAnalyses?.results ?? []).length > 0 && (
+              deleteAllFraktalConfirm ? (
+                <div className="flex gap-2 items-center">
+                  <span className="text-sm text-muted-foreground">
+                    Delete all {fraktalAnalyses?.results?.length} analyses?
+                  </span>
+                  <Button
+                    variant="destructive"
+                    size="sm"
+                    onClick={handleDeleteAllFraktal}
+                    disabled={bulkDeleteLoading}
+                  >
+                    {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setDeleteAllFraktalConfirm(false)}
+                    disabled={bulkDeleteLoading}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setDeleteAllFraktalConfirm(true)}
+                >
+                  <Trash2 className="h-4 w-4 mr-2" />
+                  Delete All
+                </Button>
+              )
+            )}
+          </div>
 
           {fraktalLoading ? (
             <LoadingScreen message="Loading analyses..." />
