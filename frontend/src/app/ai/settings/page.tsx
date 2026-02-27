@@ -35,7 +35,7 @@ export default function AISettingsPage() {
   // Form state
   const [newProvider, setNewProvider] = useState<ProviderType>('anthropic')
   const [newApiKey, setNewApiKey] = useState('')
-  const [newModel, setNewModel] = useState(PROVIDERS[0].models[0])
+  const [newModel, setNewModel] = useState<string>(PROVIDERS[0].models[0])
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
