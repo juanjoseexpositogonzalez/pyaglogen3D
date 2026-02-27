@@ -47,6 +47,7 @@ LOCAL_APPS = [
     "apps.projects",
     "apps.simulations",
     "apps.fractal_analysis",
+    "apps.ai_assistant",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -142,3 +143,10 @@ CELERY_TIMEZONE = TIME_ZONE
 # CORS
 CORS_ALLOW_ALL_ORIGINS = False
 CORS_ALLOWED_ORIGINS: list[str] = []
+
+# AI Assistant Settings
+AI_ENCRYPTION_KEY = config("AI_ENCRYPTION_KEY", default="")
+AI_DEFAULT_PROVIDER = config("AI_DEFAULT_PROVIDER", default="anthropic")
+AI_DEFAULT_MODEL = config("AI_DEFAULT_MODEL", default="claude-sonnet-4-20250514")
+AI_MAX_TOKENS = config("AI_MAX_TOKENS", default=4096, cast=int)
+AI_TIMEOUT_SECONDS = config("AI_TIMEOUT_SECONDS", default=60, cast=int)
