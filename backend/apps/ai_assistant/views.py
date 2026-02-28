@@ -12,9 +12,17 @@ from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .models import AIProviderConfig
+from .models import AIProviderConfig, Conversation, ChatMessage, Notification
 from .permissions import IsAIUser
-from .serializers import AIProviderConfigListSerializer, AIProviderConfigSerializer
+from .serializers import (
+    AIProviderConfigListSerializer,
+    AIProviderConfigSerializer,
+    ConversationListSerializer,
+    ConversationDetailSerializer,
+    ConversationCreateSerializer,
+    ChatMessageSerializer,
+    NotificationSerializer,
+)
 from .services.ai_service import AIService
 from .services.encryption import get_encryption_service
 from .services.providers import ProviderFactory, StopReason
@@ -41,10 +49,25 @@ You have access to tools that can:
 - Perform fractal dimension calculations
 - Get project and study information
 
+CONVERSATION MEMORY:
+- You have access to the conversation history within this session
+- Past messages are preserved so you can reference earlier discussion
+- Each conversation is stored separately and can be resumed later
+
+NOTIFICATIONS:
+- When simulations complete or fail, users receive automatic notifications
+- Users can see their recent simulations in the sidebar
+- Tell users they will be notified when their simulation completes
+
 When a user asks a question:
 1. Use the appropriate tool(s) to gather information
 2. Explain the results in a clear, helpful way
 3. Offer follow-up suggestions when relevant
+
+When queuing simulations or long-running tasks:
+- Clearly state the simulation ID so users can reference it later
+- Remind users they will receive a notification when it completes
+- Suggest they can ask you to check the status anytime
 
 Be concise but thorough. Format numbers appropriately and use markdown for clarity when helpful."""
 
@@ -519,3 +542,151 @@ class ChatView(APIView):
                     for tc in response.tool_calls
                 ],
             }
+
+
+class ConversationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing AI conversations."""
+
+    permission_classes = [IsAuthenticated, IsAIUser]
+
+    def get_serializer_class(self):
+        """Use appropriate serializer based on action."""
+        if self.action == "list":
+            return ConversationListSerializer
+        if self.action in ["create", "update", "partial_update"]:
+            return ConversationCreateSerializer
+        return ConversationDetailSerializer
+
+    def get_queryset(self):
+        """Return conversations for the current user."""
+        return Conversation.objects.filter(user=self.request.user).prefetch_related("messages")
+
+    def perform_create(self, serializer):
+        """Set the user on creation."""
+        serializer.save(user=self.request.user)
+
+    @action(detail=True, methods=["post"])
+    def add_message(self, request: Request, pk=None) -> Response:
+        """Add a message to the conversation.
+
+        This is used to store messages after they've been processed.
+        """
+        conversation = self.get_object()
+        serializer = ChatMessageSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save(conversation=conversation)
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=["post"])
+    def set_active(self, request: Request, pk=None) -> Response:
+        """Set this conversation as the active one."""
+        conversation = self.get_object()
+        conversation.is_active = True
+        conversation.save()
+        return Response({"message": "Conversation set as active"})
+
+    @action(detail=False, methods=["get"])
+    def active(self, request: Request) -> Response:
+        """Get the user's active conversation or create one."""
+        conversation = Conversation.objects.filter(
+            user=request.user,
+            is_active=True,
+        ).first()
+
+        if not conversation:
+            # Create a new active conversation
+            conversation = Conversation.objects.create(
+                user=request.user,
+                title="New Conversation",
+                is_active=True,
+            )
+
+        serializer = ConversationDetailSerializer(conversation)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=["delete"])
+    def clear(self, request: Request, pk=None) -> Response:
+        """Clear all messages from a conversation."""
+        conversation = self.get_object()
+        conversation.messages.all().delete()
+        conversation.title = "New Conversation"
+        conversation.save()
+        return Response({"message": "Conversation cleared"})
+
+
+class NotificationViewSet(viewsets.ModelViewSet):
+    """ViewSet for managing user notifications."""
+
+    permission_classes = [IsAuthenticated]
+    serializer_class = NotificationSerializer
+    http_method_names = ["get", "patch", "delete"]  # No create
+
+    def get_queryset(self):
+        """Return notifications for the current user."""
+        return Notification.objects.filter(user=self.request.user)
+
+    @action(detail=False, methods=["get"])
+    def unread_count(self, request: Request) -> Response:
+        """Get count of unread notifications."""
+        count = Notification.objects.filter(
+            user=request.user,
+            is_read=False,
+        ).count()
+        return Response({"count": count})
+
+    @action(detail=False, methods=["post"])
+    def mark_all_read(self, request: Request) -> Response:
+        """Mark all notifications as read."""
+        Notification.objects.filter(
+            user=request.user,
+            is_read=False,
+        ).update(is_read=True)
+        return Response({"message": "All notifications marked as read"})
+
+    @action(detail=True, methods=["post"])
+    def mark_read(self, request: Request, pk=None) -> Response:
+        """Mark a single notification as read."""
+        notification = self.get_object()
+        notification.is_read = True
+        notification.save()
+        return Response({"message": "Notification marked as read"})
+
+
+class RecentSimulationsView(APIView):
+    """Get user's recent simulations for the AI chat interface."""
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request: Request) -> Response:
+        """Get recent simulations for the user.
+
+        Returns the last 10 simulations across all user's projects.
+        """
+        from apps.simulations.models import Simulation
+
+        # Get user's simulations through their projects
+        simulations = Simulation.objects.filter(
+            project__owner=request.user
+        ).select_related("project").order_by("-created_at")[:10]
+
+        data = [
+            {
+                "id": str(sim.id),
+                "name": sim.name,
+                "algorithm": sim.algorithm,
+                "status": sim.status,
+                "n_particles": sim.parameters.get("n_particles"),
+                "project_id": str(sim.project.id),
+                "project_name": sim.project.name,
+                "created_at": sim.created_at.isoformat(),
+                "completed_at": sim.completed_at.isoformat() if sim.completed_at else None,
+                "metrics": {
+                    "fractal_dimension": sim.metrics.get("fractal_dimension") if sim.metrics else None,
+                    "radius_of_gyration": sim.metrics.get("radius_of_gyration") if sim.metrics else None,
+                } if sim.metrics else None,
+            }
+            for sim in simulations
+        ]
+
+        return Response({"simulations": data})

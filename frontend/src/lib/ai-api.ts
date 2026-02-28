@@ -133,6 +133,58 @@ export interface ChatResponse {
   }
 }
 
+// Conversation types
+export interface Conversation {
+  id: string
+  title: string
+  project: string | null
+  is_active: boolean
+  message_count?: number
+  last_message_preview?: string
+  messages?: StoredChatMessage[]
+  created_at: string
+  updated_at: string
+}
+
+export interface StoredChatMessage {
+  id: string
+  role: 'user' | 'assistant' | 'tool'
+  content: string
+  tool_call_id?: string
+  tool_calls: ToolCallInfo[]
+  token_usage: Record<string, number>
+  created_at: string
+}
+
+// Notification types
+export interface Notification {
+  id: string
+  notification_type: 'simulation_complete' | 'simulation_failed' | 'study_complete' | 'study_failed' | 'analysis_complete' | 'info'
+  notification_type_display: string
+  title: string
+  message: string
+  data: Record<string, unknown>
+  is_read: boolean
+  created_at: string
+}
+
+// Recent simulation type
+export interface RecentSimulation {
+  id: string
+  name: string
+  algorithm: string
+  status: string
+  n_particles: number | null
+  project_id: string
+  project_name: string
+  created_at: string
+  completed_at: string | null
+  metrics: {
+    fractal_dimension: number | null
+    radius_of_gyration: number | null
+  } | null
+}
+
 export const aiApi = {
   // Access Check
 
@@ -243,6 +295,134 @@ export const aiApi = {
         project_id: projectId,
       }),
     })
+  },
+
+  // Conversations
+
+  /**
+   * List all conversations for the current user.
+   */
+  async listConversations(): Promise<{ results: Conversation[] }> {
+    return aiFetch<{ results: Conversation[] }>('/conversations/')
+  },
+
+  /**
+   * Get a specific conversation with all messages.
+   */
+  async getConversation(id: string): Promise<Conversation> {
+    return aiFetch<Conversation>(`/conversations/${id}/`)
+  },
+
+  /**
+   * Get the active conversation or create one.
+   */
+  async getActiveConversation(): Promise<Conversation> {
+    return aiFetch<Conversation>('/conversations/active/')
+  },
+
+  /**
+   * Create a new conversation.
+   */
+  async createConversation(data: { title?: string; project?: string }): Promise<Conversation> {
+    return aiFetch<Conversation>('/conversations/', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    })
+  },
+
+  /**
+   * Add a message to a conversation.
+   */
+  async addMessage(conversationId: string, message: {
+    role: string
+    content: string
+    tool_call_id?: string
+    tool_calls?: ToolCallInfo[]
+    token_usage?: Record<string, number>
+  }): Promise<StoredChatMessage> {
+    return aiFetch<StoredChatMessage>(`/conversations/${conversationId}/add_message/`, {
+      method: 'POST',
+      body: JSON.stringify(message),
+    })
+  },
+
+  /**
+   * Set a conversation as active.
+   */
+  async setActiveConversation(id: string): Promise<{ message: string }> {
+    return aiFetch<{ message: string }>(`/conversations/${id}/set_active/`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Clear all messages from a conversation.
+   */
+  async clearConversation(id: string): Promise<{ message: string }> {
+    return aiFetch<{ message: string }>(`/conversations/${id}/clear/`, {
+      method: 'DELETE',
+    })
+  },
+
+  /**
+   * Delete a conversation.
+   */
+  async deleteConversation(id: string): Promise<void> {
+    await aiFetch(`/conversations/${id}/`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Notifications
+
+  /**
+   * List all notifications for the current user.
+   */
+  async listNotifications(): Promise<{ results: Notification[] }> {
+    return aiFetch<{ results: Notification[] }>('/notifications/')
+  },
+
+  /**
+   * Get unread notification count.
+   */
+  async getUnreadCount(): Promise<{ count: number }> {
+    return aiFetch<{ count: number }>('/notifications/unread_count/')
+  },
+
+  /**
+   * Mark all notifications as read.
+   */
+  async markAllNotificationsRead(): Promise<{ message: string }> {
+    return aiFetch<{ message: string }>('/notifications/mark_all_read/', {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Mark a single notification as read.
+   */
+  async markNotificationRead(id: string): Promise<{ message: string }> {
+    return aiFetch<{ message: string }>(`/notifications/${id}/mark_read/`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Delete a notification.
+   */
+  async deleteNotification(id: string): Promise<void> {
+    await aiFetch(`/notifications/${id}/`, {
+      method: 'DELETE',
+    })
+  },
+
+  // Recent Simulations
+
+  /**
+   * Get recent simulations for the chat interface.
+   */
+  async getRecentSimulations(): Promise<{ simulations: RecentSimulation[] }> {
+    return aiFetch<{ simulations: RecentSimulation[] }>('/recent-simulations/')
   },
 }
 

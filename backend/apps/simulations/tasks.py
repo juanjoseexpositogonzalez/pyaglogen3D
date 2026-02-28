@@ -11,6 +11,26 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def create_simulation_notification(simulation, success: bool = True) -> None:
+    """Create a notification for simulation completion.
+
+    Args:
+        simulation: The Simulation instance
+        success: Whether the simulation completed successfully
+    """
+    try:
+        from apps.ai_assistant.models import Notification
+        Notification.create_simulation_notification(
+            user=simulation.project.owner,
+            simulation=simulation,
+            success=success,
+        )
+        logger.info(f"Created notification for simulation {simulation.id}")
+    except Exception as e:
+        # Don't fail the task if notification creation fails
+        logger.warning(f"Failed to create notification for simulation {simulation.id}: {e}")
+
+
 # ============================================================================
 # Limiting Case Geometry Generators
 # ============================================================================
@@ -1147,6 +1167,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 logger.warning(f"Box-counting failed for limiting case {simulation_id}: {e}")
                 # Don't fail the whole simulation for box-counting error
 
+            # Create notification for user
+            create_simulation_notification(simulation, success=True)
+
             return {
                 "status": "completed",
                 "simulation_id": simulation_id,
@@ -1206,6 +1229,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             logger.warning(f"Box-counting failed for {simulation_id}: {e}")
             # Don't fail the whole simulation for box-counting error
 
+        # Create notification for user
+        create_simulation_notification(simulation, success=True)
+
         return {
             "status": "completed",
             "simulation_id": simulation_id,
@@ -1221,6 +1247,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         simulation.completed_at = timezone.now()
         simulation.save()
 
+        # Create notification for user
+        create_simulation_notification(simulation, success=False)
+
         return {
             "status": "failed",
             "simulation_id": simulation_id,
@@ -1233,6 +1262,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         simulation.error_message = str(e)
         simulation.completed_at = timezone.now()
         simulation.save()
+
+        # Create notification for user
+        create_simulation_notification(simulation, success=False)
 
         return {
             "status": "failed",
