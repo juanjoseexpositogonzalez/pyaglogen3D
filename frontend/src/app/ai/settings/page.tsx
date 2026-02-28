@@ -14,10 +14,50 @@ import { useAuth } from '@/contexts/AuthContext'
 import { Loader2, Plus, Trash2, Check, X, Star, TestTube, ShieldAlert } from 'lucide-react'
 
 const PROVIDERS = [
-  { value: 'anthropic', label: 'Anthropic (Claude)', models: ['claude-sonnet-4-20250514', 'claude-opus-4-20250514', 'claude-3-5-haiku-20241022'] },
-  { value: 'openai', label: 'OpenAI (GPT)', models: ['gpt-4o', 'gpt-4o-mini', 'gpt-4-turbo'] },
-  { value: 'groq', label: 'Groq', models: ['llama-3.3-70b-versatile', 'mixtral-8x7b-32768'] },
-  { value: 'xai', label: 'xAI (Grok)', models: ['grok-2', 'grok-2-mini'] },
+  {
+    value: 'anthropic',
+    label: 'Anthropic (Claude)',
+    models: [
+      'claude-sonnet-4-20250514',
+      'claude-opus-4-20250514',
+      'claude-3-5-haiku-20241022',
+    ]
+  },
+  {
+    value: 'openai',
+    label: 'OpenAI (GPT)',
+    models: [
+      'gpt-4.1',
+      'gpt-4.1-mini',
+      'gpt-4.1-nano',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'gpt-4-turbo',
+      'o1',
+      'o3-mini',
+    ]
+  },
+  {
+    value: 'groq',
+    label: 'Groq',
+    models: [
+      'llama-3.3-70b-versatile',
+      'llama-3.1-8b-instant',
+      'llama3-70b-8192',
+      'llama3-8b-8192',
+      'gemma2-9b-it',
+    ]
+  },
+  {
+    value: 'xai',
+    label: 'xAI (Grok)',
+    models: [
+      'grok-3',
+      'grok-2',
+      'grok-2-mini',
+      'grok-2-vision-1212',
+    ]
+  },
 ] as const
 
 type ProviderType = typeof PROVIDERS[number]['value']
