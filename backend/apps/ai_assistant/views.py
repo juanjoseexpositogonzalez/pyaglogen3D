@@ -365,15 +365,11 @@ class ChatView(APIView):
             # Get AI service for user
             ai_service = AIService(request.user)
 
-            # Get all tools in provider format
+            # Get all tools in Anthropic format (simple: name, description, input_schema)
+            # Each provider's _format_tools will convert to their specific format
             registry = get_registry()
             provider = ai_service.get_provider()
-
-            # Get tools in the appropriate format for the provider
-            if provider.provider_name in ("anthropic",):
-                tools = registry.to_anthropic_format()
-            else:
-                tools = registry.to_openai_format()
+            tools = registry.to_anthropic_format()
 
             # Create tool executor with context
             context = ContextManager.from_request(
