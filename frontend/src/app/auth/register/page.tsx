@@ -39,7 +39,7 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="bg-gray-800 border-gray-700">
+    <Card className="bg-gray-800/70 backdrop-blur-md border-gray-700">
       <CardHeader>
         <CardTitle className="text-white">Create Account</CardTitle>
         <CardDescription className="text-gray-400">
@@ -139,7 +139,7 @@ export default function RegisterPage() {
               <div className="w-full border-t border-gray-600" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-gray-800 px-2 text-gray-400">Or continue with</span>
+              <span className="bg-gray-800/70 px-2 text-gray-400">Or continue with</span>
             </div>
           </div>
 
