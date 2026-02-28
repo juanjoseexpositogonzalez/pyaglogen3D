@@ -320,6 +320,14 @@ def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
         analysis.completed_at = timezone.now()
         analysis.save()
 
+        # TODO: Enable RAG indexing when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
+        # if analysis.status == AnalysisStatus.COMPLETED:
+        #     try:
+        #         from apps.rag.tasks import index_analysis_task
+        #         index_analysis_task.delay(str(analysis.id))
+        #     except Exception as e:
+        #         logger.warning(f"Failed to queue RAG indexing for analysis {analysis_id}: {e}")
+
         logger.info(
             f"Auto-calibration {analysis_id} completed: best_dpo={best_dpo:.1f}nm, "
             f"Df={best_result.df:.4f}, npo={best_result.npo}, status={best_result.status}"
@@ -481,6 +489,14 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
 
         analysis.completed_at = timezone.now()
         analysis.save()
+
+        # TODO: Enable RAG indexing when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
+        # if analysis.status == AnalysisStatus.COMPLETED:
+        #     try:
+        #         from apps.rag.tasks import index_analysis_task
+        #         index_analysis_task.delay(str(analysis.id))
+        #     except Exception as e:
+        #         logger.warning(f"Failed to queue RAG indexing for analysis {analysis_id}: {e}")
 
         logger.info(
             f"FRAKTAL analysis {analysis_id} completed: Df={result.df:.4f}, "

@@ -35,6 +35,9 @@ dependencies = [
     "openai>=1.50",
     "cryptography>=43.0",
     "jsonschema>=4.20.0",
+    # RAG dependencies
+    "pgvector>=0.3.0",
+    "langchain-text-splitters>=0.0.1",
 ]
 
 [project.optional-dependencies]
