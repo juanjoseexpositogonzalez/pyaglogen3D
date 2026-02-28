@@ -1,5 +1,7 @@
 """AI Assistant views."""
+import json
 import logging
+from typing import Any
 
 import anthropic
 import openai
@@ -13,6 +15,7 @@ from rest_framework.views import APIView
 from .models import AIProviderConfig
 from .permissions import IsAIUser
 from .serializers import AIProviderConfigListSerializer, AIProviderConfigSerializer
+from .services.ai_service import AIService
 from .services.encryption import get_encryption_service
 from .services.providers import ProviderFactory, StopReason
 from .tools.context import ContextManager
@@ -20,6 +23,30 @@ from .tools.executor import ToolExecutor
 from .tools.registry import get_registry
 
 logger = logging.getLogger(__name__)
+
+# System prompt for the AI assistant
+ASSISTANT_SYSTEM_PROMPT = """You are an AI assistant specialized in agglomeration studies and fractal analysis for the PyAglogen3D application.
+
+You help users with:
+- Running and analyzing particle agglomeration simulations
+- Performing fractal analysis on simulation results
+- Understanding different agglomeration algorithms (DLA, DLCA, BA, BPCA, RLCA, RCLA)
+- Managing projects and studies
+- Interpreting results and statistics
+
+You have access to tools that can:
+- List available algorithms and their parameters
+- Run simulations with specific configurations
+- Analyze existing simulation results
+- Perform fractal dimension calculations
+- Get project and study information
+
+When a user asks a question:
+1. Use the appropriate tool(s) to gather information
+2. Explain the results in a clear, helpful way
+3. Offer follow-up suggestions when relevant
+
+Be concise but thorough. Format numbers appropriately and use markdown for clarity when helpful."""
 
 
 class AIProviderConfigViewSet(viewsets.ModelViewSet):
@@ -300,3 +327,199 @@ class ToolExecuteView(APIView):
         response_status = status_map.get(error_type, status.HTTP_500_INTERNAL_SERVER_ERROR)
 
         return Response(result.to_dict(), status=response_status)
+
+
+class ChatView(APIView):
+    """Handle chat conversations with AI assistant.
+
+    Supports multi-turn conversations with automatic tool calling.
+    The AI can use available tools to answer user questions.
+    """
+
+    permission_classes = [IsAuthenticated, IsAIUser]
+    MAX_TOOL_ITERATIONS = 10  # Prevent infinite loops
+
+    def post(self, request: Request) -> Response:
+        """Process a chat message and return AI response.
+
+        Request body:
+            messages: List of message dicts with 'role' and 'content'.
+            project_id: Optional project context for tools.
+
+        Returns:
+            200 with response containing:
+                - message: The AI's final text response
+                - tool_calls: List of tools that were called
+                - usage: Token usage statistics
+        """
+        messages = request.data.get("messages", [])
+        project_id = request.data.get("project_id")
+
+        if not messages:
+            return Response(
+                {"error": "No messages provided"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            # Get AI service for user
+            ai_service = AIService(request.user)
+
+            # Get all tools in provider format
+            registry = get_registry()
+            provider = ai_service.get_provider()
+
+            # Get tools in the appropriate format for the provider
+            if provider.provider_name in ("anthropic",):
+                tools = registry.to_anthropic_format()
+            else:
+                tools = registry.to_openai_format()
+
+            # Create tool executor with context
+            context = ContextManager.from_request(
+                request._request,
+                project_id=project_id,
+            )
+            executor = ToolExecutor(registry, context)
+
+            # Conversation loop - process tool calls until we get a final response
+            conversation = list(messages)
+            all_tool_calls = []
+            total_usage = {"input_tokens": 0, "output_tokens": 0}
+            iterations = 0
+
+            while iterations < self.MAX_TOOL_ITERATIONS:
+                iterations += 1
+
+                # Call AI with tools
+                response = ai_service.complete_with_tools(
+                    messages=conversation,
+                    tools=tools,
+                    max_tokens=4096,
+                    temperature=0.7,
+                    system_prompt=ASSISTANT_SYSTEM_PROMPT,
+                )
+
+                # Track usage
+                total_usage["input_tokens"] += response.usage.input_tokens
+                total_usage["output_tokens"] += response.usage.output_tokens
+
+                # Check for errors
+                if response.stop_reason == StopReason.ERROR:
+                    return Response(
+                        {"error": response.text or "AI request failed"},
+                        status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    )
+
+                # If no tool calls, we're done
+                if not response.has_tool_calls:
+                    return Response({
+                        "message": response.text or "",
+                        "tool_calls": all_tool_calls,
+                        "usage": total_usage,
+                    })
+
+                # Process tool calls
+                # First, add the assistant message with tool calls to conversation
+                assistant_message = self._build_assistant_message(
+                    response, provider.provider_name
+                )
+                conversation.append(assistant_message)
+
+                # Execute each tool and add results
+                for tool_call in response.tool_calls:
+                    logger.info(
+                        f"Chat executing tool: {tool_call.name}",
+                        extra={
+                            "tool_name": tool_call.name,
+                            "user_id": request.user.id,
+                        },
+                    )
+
+                    # Execute the tool
+                    result = executor.execute(tool_call.name, tool_call.arguments)
+
+                    # Track the tool call
+                    tool_info = {
+                        "id": tool_call.id,
+                        "name": tool_call.name,
+                        "arguments": tool_call.arguments,
+                        "success": result.success,
+                        "result": result.data if result.success else None,
+                        "error": result.error.message if result.error else None,
+                    }
+                    all_tool_calls.append(tool_info)
+
+                    # Add tool result to conversation
+                    tool_result_content = (
+                        json.dumps(result.data)
+                        if result.success
+                        else f"Error: {result.error.message if result.error else 'Unknown error'}"
+                    )
+                    conversation.append({
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": tool_result_content,
+                    })
+
+            # Max iterations reached
+            logger.warning(
+                f"Chat reached max tool iterations ({self.MAX_TOOL_ITERATIONS})",
+                extra={"user_id": request.user.id},
+            )
+            return Response({
+                "message": "I apologize, but I encountered too many steps while trying to answer your question. Please try rephrasing or breaking down your request.",
+                "tool_calls": all_tool_calls,
+                "usage": total_usage,
+            })
+
+        except ValueError as e:
+            # No provider configured
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            logger.exception("Chat error", extra={"user_id": request.user.id})
+            return Response(
+                {"error": "An unexpected error occurred. Please try again."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+    def _build_assistant_message(
+        self, response: Any, provider_name: str
+    ) -> dict[str, Any]:
+        """Build assistant message with tool calls for conversation history.
+
+        Different providers have different formats for tool calls in messages.
+        """
+        if provider_name == "anthropic":
+            # Anthropic format: content is a list of text and tool_use blocks
+            content_blocks = []
+            if response.text:
+                content_blocks.append({"type": "text", "text": response.text})
+            for tool_call in response.tool_calls:
+                content_blocks.append({
+                    "type": "tool_use",
+                    "id": tool_call.id,
+                    "name": tool_call.name,
+                    "input": tool_call.arguments,
+                })
+            return {"role": "assistant", "content": content_blocks}
+        else:
+            # OpenAI format: tool_calls is a separate field
+            return {
+                "role": "assistant",
+                "content": response.text or "",
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.name,
+                            "arguments": json.dumps(tc.arguments),
+                        },
+                    }
+                    for tc in response.tool_calls
+                ],
+            }

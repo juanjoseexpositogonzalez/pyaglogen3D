@@ -108,6 +108,31 @@ export interface AIAccessResponse {
   reason: 'staff' | 'granted' | 'debug_mode' | 'not_granted'
 }
 
+// Chat types
+export interface ChatMessage {
+  role: 'user' | 'assistant' | 'tool'
+  content: string | unknown[]
+  tool_call_id?: string
+}
+
+export interface ToolCallInfo {
+  id: string
+  name: string
+  arguments: Record<string, unknown>
+  success: boolean
+  result?: unknown
+  error?: string
+}
+
+export interface ChatResponse {
+  message: string
+  tool_calls: ToolCallInfo[]
+  usage: {
+    input_tokens: number
+    output_tokens: number
+  }
+}
+
 export const aiApi = {
   // Access Check
 
@@ -196,6 +221,25 @@ export const aiApi = {
       method: 'POST',
       body: JSON.stringify({
         arguments: args,
+        project_id: projectId,
+      }),
+    })
+  },
+
+  // Chat
+
+  /**
+   * Send a chat message to the AI assistant.
+   * The AI will automatically use tools as needed to answer.
+   */
+  async chat(
+    messages: ChatMessage[],
+    projectId?: string
+  ): Promise<ChatResponse> {
+    return aiFetch<ChatResponse>('/chat/', {
+      method: 'POST',
+      body: JSON.stringify({
+        messages,
         project_id: projectId,
       }),
     })

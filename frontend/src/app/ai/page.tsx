@@ -6,37 +6,54 @@ import Link from 'next/link'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Select } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { aiApi, type AITool, type AIProvider, type ToolExecutionResult } from '@/lib/ai-api'
+import { aiApi, type AIProvider, type ChatMessage, type ToolCallInfo } from '@/lib/ai-api'
+import { api } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
-import { Loader2, Send, Settings, Wrench, CheckCircle, XCircle, Clock, ChevronDown, ChevronUp, ShieldAlert } from 'lucide-react'
+import {
+  Loader2,
+  Send,
+  Settings,
+  Bot,
+  User,
+  Wrench,
+  CheckCircle,
+  XCircle,
+  ChevronDown,
+  ChevronUp,
+  ShieldAlert,
+  Sparkles,
+} from 'lucide-react'
 
-interface ToolExecution {
+interface DisplayMessage {
   id: string
-  tool: AITool
-  args: Record<string, unknown>
-  result?: ToolExecutionResult
-  isExecuting: boolean
+  role: 'user' | 'assistant'
+  content: string
+  toolCalls?: ToolCallInfo[]
   timestamp: Date
+}
+
+interface Project {
+  id: string
+  name: string
 }
 
 export default function AIAssistantPage() {
   const router = useRouter()
   const { user, isLoading: authLoading } = useAuth()
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const [providers, setProviders] = useState<AIProvider[]>([])
-  const [tools, setTools] = useState<AITool[]>([])
-  const [categories, setCategories] = useState<string[]>([])
-  const [selectedCategory, setSelectedCategory] = useState<string>('')
-  const [selectedTool, setSelectedTool] = useState<AITool | null>(null)
-  const [toolArgs, setToolArgs] = useState<Record<string, string>>({})
-  const [executions, setExecutions] = useState<ToolExecution[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [selectedProject, setSelectedProject] = useState<string>('')
+  const [messages, setMessages] = useState<DisplayMessage[]>([])
+  const [inputValue, setInputValue] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [isSending, setIsSending] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [expandedResults, setExpandedResults] = useState<Set<string>>(new Set())
+  const [expandedToolCalls, setExpandedToolCalls] = useState<Set<string>>(new Set())
   const [hasAccess, setHasAccess] = useState<boolean | null>(null)
 
   useEffect(() => {
@@ -48,6 +65,10 @@ export default function AIAssistantPage() {
   useEffect(() => {
     checkAccessAndLoadData()
   }, [])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   async function checkAccessAndLoadData() {
     try {
@@ -64,20 +85,15 @@ export default function AIAssistantPage() {
     }
   }
 
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [executions])
-
   async function loadData() {
     try {
       setIsLoading(true)
-      const [providersRes, toolsRes] = await Promise.all([
+      const [providersRes, projectsRes] = await Promise.all([
         aiApi.listProviders(),
-        aiApi.listTools(),
+        api.projects.list(),
       ])
       setProviders(providersRes.results || [])
-      setTools(toolsRes.tools || [])
-      setCategories(toolsRes.categories || [])
+      setProjects(projectsRes.results || [])
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data')
     } finally {
@@ -85,136 +101,81 @@ export default function AIAssistantPage() {
     }
   }
 
-  async function loadToolsByCategory(category: string) {
-    try {
-      const res = await aiApi.listTools(category || undefined)
-      setTools(res.tools || [])
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load tools')
-    }
-  }
+  async function handleSendMessage() {
+    const content = inputValue.trim()
+    if (!content || isSending) return
 
-  function handleCategoryChange(category: string) {
-    setSelectedCategory(category)
-    setSelectedTool(null)
-    setToolArgs({})
-    loadToolsByCategory(category)
-  }
-
-  function handleToolSelect(tool: AITool) {
-    setSelectedTool(tool)
-    // Initialize args with empty strings
-    const initialArgs: Record<string, string> = {}
-    if (tool.parameters && typeof tool.parameters === 'object') {
-      const props = (tool.parameters as { properties?: Record<string, unknown> }).properties
-      if (props) {
-        Object.keys(props).forEach(key => {
-          initialArgs[key] = ''
-        })
-      }
-    }
-    setToolArgs(initialArgs)
-  }
-
-  async function handleExecuteTool() {
-    if (!selectedTool) return
-
-    const executionId = Date.now().toString()
-    const newExecution: ToolExecution = {
-      id: executionId,
-      tool: selectedTool,
-      args: { ...toolArgs },
-      isExecuting: true,
-      timestamp: new Date(),
-    }
-
-    setExecutions(prev => [...prev, newExecution])
+    setInputValue('')
     setError(null)
 
+    // Add user message to display
+    const userMessage: DisplayMessage = {
+      id: `user-${Date.now()}`,
+      role: 'user',
+      content,
+      timestamp: new Date(),
+    }
+    setMessages(prev => [...prev, userMessage])
+
+    // Build conversation history for API
+    const chatMessages: ChatMessage[] = messages.map(m => ({
+      role: m.role,
+      content: m.content,
+    }))
+    chatMessages.push({ role: 'user', content })
+
     try {
-      // Parse args - try to convert to appropriate types
-      const parsedArgs: Record<string, unknown> = {}
-      Object.entries(toolArgs).forEach(([key, value]) => {
-        if (value === '') return
-        // Try to parse as JSON (for numbers, booleans, arrays, objects)
-        try {
-          parsedArgs[key] = JSON.parse(value)
-        } catch {
-          parsedArgs[key] = value
-        }
-      })
+      setIsSending(true)
 
-      const result = await aiApi.executeTool(selectedTool.name, parsedArgs)
-
-      setExecutions(prev =>
-        prev.map(e =>
-          e.id === executionId ? { ...e, result, isExecuting: false } : e
-        )
+      const response = await aiApi.chat(
+        chatMessages,
+        selectedProject || undefined
       )
+
+      // Add assistant response
+      const assistantMessage: DisplayMessage = {
+        id: `assistant-${Date.now()}`,
+        role: 'assistant',
+        content: response.message,
+        toolCalls: response.tool_calls.length > 0 ? response.tool_calls : undefined,
+        timestamp: new Date(),
+      }
+      setMessages(prev => [...prev, assistantMessage])
+
     } catch (err) {
-      setExecutions(prev =>
-        prev.map(e =>
-          e.id === executionId
-            ? {
-                ...e,
-                result: {
-                  success: false,
-                  tool_name: selectedTool.name,
-                  error: {
-                    error_type: 'ClientError',
-                    message: err instanceof Error ? err.message : 'Execution failed',
-                  },
-                  execution_time_ms: 0,
-                  is_async: false,
-                },
-                isExecuting: false,
-              }
-            : e
-        )
-      )
+      setError(err instanceof Error ? err.message : 'Failed to send message')
+      // Remove the user message on error
+      setMessages(prev => prev.filter(m => m.id !== userMessage.id))
+      setInputValue(content) // Restore input
+    } finally {
+      setIsSending(false)
+      inputRef.current?.focus()
     }
   }
 
-  function toggleResultExpanded(id: string) {
-    setExpandedResults(prev => {
+  function handleKeyDown(e: React.KeyboardEvent) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      handleSendMessage()
+    }
+  }
+
+  function toggleToolCallExpanded(messageId: string, toolId: string) {
+    const key = `${messageId}-${toolId}`
+    setExpandedToolCalls(prev => {
       const next = new Set(prev)
-      if (next.has(id)) {
-        next.delete(id)
+      if (next.has(key)) {
+        next.delete(key)
       } else {
-        next.add(id)
+        next.add(key)
       }
       return next
     })
   }
 
-  function renderParameterInput(key: string, schema: Record<string, unknown>) {
-    const type = schema.type as string
-    const description = schema.description as string
-    const enumValues = schema.enum as string[] | undefined
-
-    if (enumValues) {
-      return (
-        <Select
-          value={toolArgs[key] || ''}
-          onChange={(e) => setToolArgs(prev => ({ ...prev, [key]: e.target.value }))}
-          options={[
-            { value: '', label: `Select ${key}...` },
-            ...enumValues.map(v => ({ value: v, label: v })),
-          ]}
-          className="bg-gray-700 border-gray-600"
-        />
-      )
-    }
-
-    return (
-      <Input
-        type={type === 'integer' || type === 'number' ? 'number' : 'text'}
-        placeholder={description || key}
-        value={toolArgs[key] || ''}
-        onChange={(e) => setToolArgs(prev => ({ ...prev, [key]: e.target.value }))}
-        className="bg-gray-700 border-gray-600 text-white"
-      />
-    )
+  function clearChat() {
+    setMessages([])
+    setError(null)
   }
 
   if (authLoading || isLoading) {
@@ -256,30 +217,53 @@ export default function AIAssistantPage() {
     <div className="min-h-screen flex flex-col">
       <Header />
 
-      <main className="flex-1 container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-3xl font-bold text-white">AI Assistant</h1>
-            <p className="text-gray-400 mt-1">
-              Execute AI tools for simulation and analysis
-            </p>
+      <main className="flex-1 container mx-auto px-4 py-4 flex flex-col max-w-4xl">
+        {/* Header */}
+        <div className="flex items-center justify-between mb-4">
+          <div className="flex items-center gap-3">
+            <div className="h-10 w-10 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+              <Sparkles className="h-5 w-5 text-white" />
+            </div>
+            <div>
+              <h1 className="text-xl font-bold text-white">AI Assistant</h1>
+              <p className="text-sm text-gray-400">
+                Ask questions about simulations and analysis
+              </p>
+            </div>
           </div>
-          <Link href="/ai/settings">
-            <Button variant="outline">
-              <Settings className="h-4 w-4 mr-2" />
-              Settings
-            </Button>
-          </Link>
+          <div className="flex items-center gap-2">
+            {projects.length > 0 && (
+              <Select
+                value={selectedProject}
+                onChange={(e) => setSelectedProject(e.target.value)}
+                options={[
+                  { value: '', label: 'No project context' },
+                  ...projects.map(p => ({ value: p.id, label: p.name })),
+                ]}
+                className="bg-gray-700 border-gray-600 w-48"
+              />
+            )}
+            {messages.length > 0 && (
+              <Button variant="outline" size="sm" onClick={clearChat}>
+                Clear
+              </Button>
+            )}
+            <Link href="/ai/settings">
+              <Button variant="outline" size="sm">
+                <Settings className="h-4 w-4" />
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {error && (
-          <Alert variant="destructive" className="mb-6">
+          <Alert variant="destructive" className="mb-4">
             <AlertDescription>{error}</AlertDescription>
           </Alert>
         )}
 
         {!hasProviders ? (
-          <Card className="bg-gray-800/50 border-gray-700">
+          <Card className="bg-gray-800/50 border-gray-700 flex-1 flex items-center justify-center">
             <CardContent className="p-8 text-center">
               <Settings className="h-12 w-12 mx-auto text-gray-400 mb-4" />
               <h3 className="text-lg font-medium text-white mb-2">Configure AI Provider</h3>
@@ -295,171 +279,183 @@ export default function AIAssistantPage() {
             </CardContent>
           </Card>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Tool Selection Panel */}
-            <div className="lg:col-span-1 space-y-4">
-              <Card className="bg-gray-800/50 border-gray-700">
-                <CardContent className="p-4">
-                  <h3 className="font-semibold text-white mb-3">Select Tool</h3>
+          <>
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto mb-4 space-y-4 min-h-[400px]">
+              {messages.length === 0 ? (
+                <div className="h-full flex flex-col items-center justify-center text-center p-8">
+                  <Bot className="h-16 w-16 text-gray-500 mb-4" />
+                  <h3 className="text-lg font-medium text-white mb-2">
+                    How can I help you today?
+                  </h3>
+                  <p className="text-gray-400 max-w-md">
+                    Ask me about agglomeration algorithms, run simulations, analyze results, or get help with your studies.
+                  </p>
+                  <div className="mt-6 flex flex-wrap gap-2 justify-center">
+                    {[
+                      'What algorithms are available?',
+                      'Explain DLA vs DLCA',
+                      'How do I run a simulation?',
+                    ].map((suggestion) => (
+                      <button
+                        key={suggestion}
+                        onClick={() => {
+                          setInputValue(suggestion)
+                          inputRef.current?.focus()
+                        }}
+                        className="px-3 py-1.5 bg-gray-700/50 hover:bg-gray-700 text-sm text-gray-300 rounded-lg border border-gray-600 transition-colors"
+                      >
+                        {suggestion}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ) : (
+                messages.map((message) => (
+                  <div key={message.id} className="flex gap-3">
+                    {/* Avatar */}
+                    <div className={`flex-shrink-0 h-8 w-8 rounded-full flex items-center justify-center ${
+                      message.role === 'user'
+                        ? 'bg-blue-600'
+                        : 'bg-gradient-to-br from-purple-500 to-blue-500'
+                    }`}>
+                      {message.role === 'user' ? (
+                        <User className="h-4 w-4 text-white" />
+                      ) : (
+                        <Bot className="h-4 w-4 text-white" />
+                      )}
+                    </div>
 
-                  <div className="space-y-3">
-                    <Select
-                      value={selectedCategory}
-                      onChange={(e) => handleCategoryChange(e.target.value)}
-                      options={[
-                        { value: '', label: 'All Categories' },
-                        ...categories.map(c => ({ value: c, label: c.charAt(0).toUpperCase() + c.slice(1) })),
-                      ]}
-                      className="bg-gray-700 border-gray-600"
-                    />
+                    {/* Message Content */}
+                    <div className="flex-1 space-y-2">
+                      <div className="flex items-center gap-2">
+                        <span className="font-medium text-white">
+                          {message.role === 'user' ? 'You' : 'AI Assistant'}
+                        </span>
+                        <span className="text-xs text-gray-500">
+                          {message.timestamp.toLocaleTimeString()}
+                        </span>
+                      </div>
 
-                    <div className="max-h-[400px] overflow-y-auto space-y-2">
-                      {tools.map(tool => (
-                        <button
-                          key={tool.name}
-                          onClick={() => handleToolSelect(tool)}
-                          className={`w-full text-left p-3 rounded-lg border transition-colors ${
-                            selectedTool?.name === tool.name
-                              ? 'bg-blue-600/20 border-blue-500 text-white'
-                              : 'bg-gray-700/50 border-gray-600 text-gray-300 hover:bg-gray-700'
-                          }`}
-                        >
-                          <div className="flex items-center gap-2">
-                            <Wrench className="h-4 w-4 flex-shrink-0" />
-                            <span className="font-medium text-sm">{tool.name}</span>
-                          </div>
-                          <p className="text-xs text-gray-400 mt-1 line-clamp-2">{tool.description}</p>
-                        </button>
-                      ))}
+                      {/* Tool Calls (shown before content for assistant) */}
+                      {message.role === 'assistant' && message.toolCalls && message.toolCalls.length > 0 && (
+                        <div className="space-y-2">
+                          {message.toolCalls.map((toolCall) => {
+                            const key = `${message.id}-${toolCall.id}`
+                            const isExpanded = expandedToolCalls.has(key)
+                            return (
+                              <div
+                                key={toolCall.id}
+                                className="bg-gray-800/50 rounded-lg border border-gray-700 overflow-hidden"
+                              >
+                                <button
+                                  onClick={() => toggleToolCallExpanded(message.id, toolCall.id)}
+                                  className="w-full flex items-center justify-between p-2 hover:bg-gray-700/50 transition-colors"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    {toolCall.success ? (
+                                      <CheckCircle className="h-4 w-4 text-green-400" />
+                                    ) : (
+                                      <XCircle className="h-4 w-4 text-red-400" />
+                                    )}
+                                    <Wrench className="h-4 w-4 text-gray-400" />
+                                    <span className="text-sm font-medium text-gray-200">
+                                      {toolCall.name}
+                                    </span>
+                                  </div>
+                                  {isExpanded ? (
+                                    <ChevronUp className="h-4 w-4 text-gray-400" />
+                                  ) : (
+                                    <ChevronDown className="h-4 w-4 text-gray-400" />
+                                  )}
+                                </button>
+                                {isExpanded && (
+                                  <div className="border-t border-gray-700 p-3 space-y-2">
+                                    <div>
+                                      <span className="text-xs text-gray-500">Arguments:</span>
+                                      <pre className="mt-1 text-xs text-gray-300 bg-gray-900/50 rounded p-2 overflow-x-auto">
+                                        {JSON.stringify(toolCall.arguments, null, 2)}
+                                      </pre>
+                                    </div>
+                                    <div>
+                                      <span className="text-xs text-gray-500">
+                                        {toolCall.success ? 'Result:' : 'Error:'}
+                                      </span>
+                                      <pre className={`mt-1 text-xs rounded p-2 overflow-x-auto ${
+                                        toolCall.success
+                                          ? 'text-gray-300 bg-gray-900/50'
+                                          : 'text-red-300 bg-red-900/20'
+                                      }`}>
+                                        {toolCall.success
+                                          ? JSON.stringify(toolCall.result, null, 2)
+                                          : toolCall.error}
+                                      </pre>
+                                    </div>
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })}
+                        </div>
+                      )}
+
+                      {/* Text Content */}
+                      <div className={`prose prose-invert max-w-none ${
+                        message.role === 'user' ? 'text-gray-200' : 'text-gray-300'
+                      }`}>
+                        <p className="whitespace-pre-wrap">{message.content}</p>
+                      </div>
                     </div>
                   </div>
-                </CardContent>
-              </Card>
-
-              {/* Tool Parameters */}
-              {selectedTool && (
-                <Card className="bg-gray-800/50 border-gray-700">
-                  <CardContent className="p-4">
-                    <h3 className="font-semibold text-white mb-3">Parameters</h3>
-                    <p className="text-sm text-gray-400 mb-4">{selectedTool.description}</p>
-
-                    <div className="space-y-3">
-                      {selectedTool.parameters &&
-                        typeof selectedTool.parameters === 'object' &&
-                        (selectedTool.parameters as { properties?: Record<string, Record<string, unknown>> }).properties &&
-                        Object.entries(
-                          (selectedTool.parameters as { properties: Record<string, Record<string, unknown>> }).properties
-                        ).map(([key, schema]) => {
-                          const required = (
-                            (selectedTool.parameters as { required?: string[] }).required || []
-                          ).includes(key)
-                          return (
-                            <div key={key} className="space-y-1">
-                              <label className="text-sm text-gray-300">
-                                {key}
-                                {required && <span className="text-red-400 ml-1">*</span>}
-                              </label>
-                              {renderParameterInput(key, schema)}
-                            </div>
-                          )
-                        })}
-
-                      <Button
-                        className="w-full mt-4"
-                        onClick={handleExecuteTool}
-                        disabled={executions.some(e => e.isExecuting)}
-                      >
-                        {executions.some(e => e.isExecuting) ? (
-                          <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                        ) : (
-                          <Send className="h-4 w-4 mr-2" />
-                        )}
-                        Execute Tool
-                      </Button>
-                    </div>
-                  </CardContent>
-                </Card>
+                ))
               )}
+
+              {/* Loading indicator */}
+              {isSending && (
+                <div className="flex gap-3">
+                  <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gradient-to-br from-purple-500 to-blue-500 flex items-center justify-center">
+                    <Bot className="h-4 w-4 text-white" />
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-gray-400" />
+                    <span className="text-gray-400">Thinking...</span>
+                  </div>
+                </div>
+              )}
+
+              <div ref={messagesEndRef} />
             </div>
 
-            {/* Results Panel */}
-            <div className="lg:col-span-2">
-              <Card className="bg-gray-800/50 border-gray-700 h-full">
-                <CardContent className="p-4">
-                  <h3 className="font-semibold text-white mb-3">Results</h3>
-
-                  {executions.length === 0 ? (
-                    <div className="text-center py-12 text-gray-400">
-                      <Wrench className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                      <p>Select a tool and execute it to see results</p>
-                    </div>
+            {/* Input Area */}
+            <div className="border-t border-gray-700 pt-4">
+              <div className="flex gap-2">
+                <textarea
+                  ref={inputRef}
+                  value={inputValue}
+                  onChange={(e) => setInputValue(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  placeholder="Ask me anything about simulations..."
+                  rows={1}
+                  className="flex-1 resize-none bg-gray-800 border border-gray-600 rounded-lg px-4 py-3 text-white placeholder-gray-400 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+                  disabled={isSending}
+                />
+                <Button
+                  onClick={handleSendMessage}
+                  disabled={!inputValue.trim() || isSending}
+                  className="h-auto px-4"
+                >
+                  {isSending ? (
+                    <Loader2 className="h-5 w-5 animate-spin" />
                   ) : (
-                    <div className="space-y-4 max-h-[600px] overflow-y-auto">
-                      {executions.map(execution => (
-                        <div
-                          key={execution.id}
-                          className="bg-gray-700/50 rounded-lg p-4 border border-gray-600"
-                        >
-                          <div className="flex items-center justify-between mb-2">
-                            <div className="flex items-center gap-2">
-                              {execution.isExecuting ? (
-                                <Loader2 className="h-4 w-4 animate-spin text-blue-400" />
-                              ) : execution.result?.success ? (
-                                <CheckCircle className="h-4 w-4 text-green-400" />
-                              ) : (
-                                <XCircle className="h-4 w-4 text-red-400" />
-                              )}
-                              <span className="font-medium text-white">{execution.tool.name}</span>
-                            </div>
-                            <div className="flex items-center gap-2 text-xs text-gray-400">
-                              <Clock className="h-3 w-3" />
-                              {execution.timestamp.toLocaleTimeString()}
-                              {execution.result && (
-                                <span className="ml-2">
-                                  {execution.result.execution_time_ms}ms
-                                </span>
-                              )}
-                            </div>
-                          </div>
-
-                          {execution.result && (
-                            <div>
-                              {execution.result.error ? (
-                                <div className="text-red-400 text-sm">
-                                  <strong>{execution.result.error.error_type}:</strong>{' '}
-                                  {execution.result.error.message}
-                                </div>
-                              ) : (
-                                <div>
-                                  <button
-                                    onClick={() => toggleResultExpanded(execution.id)}
-                                    className="flex items-center gap-1 text-sm text-gray-400 hover:text-white"
-                                  >
-                                    {expandedResults.has(execution.id) ? (
-                                      <ChevronUp className="h-4 w-4" />
-                                    ) : (
-                                      <ChevronDown className="h-4 w-4" />
-                                    )}
-                                    {expandedResults.has(execution.id) ? 'Hide' : 'Show'} result
-                                  </button>
-                                  {expandedResults.has(execution.id) && (
-                                    <pre className="mt-2 p-3 bg-gray-800 rounded text-xs text-gray-300 overflow-x-auto">
-                                      {JSON.stringify(execution.result.result, null, 2)}
-                                    </pre>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                      <div ref={messagesEndRef} />
-                    </div>
+                    <Send className="h-5 w-5" />
                   )}
-                </CardContent>
-              </Card>
+                </Button>
+              </div>
+              <p className="mt-2 text-xs text-gray-500 text-center">
+                Press Enter to send, Shift+Enter for new line
+              </p>
             </div>
-          </div>
+          </>
         )}
       </main>
     </div>
