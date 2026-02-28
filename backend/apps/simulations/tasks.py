@@ -1232,6 +1232,13 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         # Create notification for user
         create_simulation_notification(simulation, success=True)
 
+        # Index simulation for RAG knowledge base
+        try:
+            from apps.rag.tasks import index_simulation_task
+            index_simulation_task.delay(str(simulation.id))
+        except Exception as e:
+            logger.warning(f"Failed to queue RAG indexing for simulation {simulation_id}: {e}")
+
         return {
             "status": "completed",
             "simulation_id": simulation_id,

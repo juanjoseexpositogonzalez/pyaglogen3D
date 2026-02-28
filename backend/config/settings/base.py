@@ -58,6 +58,7 @@ LOCAL_APPS = [
     "apps.simulations",
     "apps.fractal_analysis",
     "apps.ai_assistant",
+    "apps.rag",
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
@@ -243,3 +244,13 @@ AI_DEFAULT_PROVIDER = config("AI_DEFAULT_PROVIDER", default="anthropic")
 AI_DEFAULT_MODEL = config("AI_DEFAULT_MODEL", default="claude-sonnet-4-20250514")
 AI_MAX_TOKENS = config("AI_MAX_TOKENS", default=4096, cast=int)
 AI_TIMEOUT_SECONDS = config("AI_TIMEOUT_SECONDS", default=60, cast=int)
+
+# RAG (Retrieval-Augmented Generation) Settings
+OPENAI_API_KEY = config("OPENAI_API_KEY", default="")
+RAG_EMBEDDING_MODEL = config("RAG_EMBEDDING_MODEL", default="text-embedding-3-small")
+RAG_EMBEDDING_DIMENSIONS = config("RAG_EMBEDDING_DIMENSIONS", default=1536, cast=int)
+RAG_CHUNK_SIZE = config("RAG_CHUNK_SIZE", default=2000, cast=int)
+RAG_CHUNK_OVERLAP = config("RAG_CHUNK_OVERLAP", default=200, cast=int)
+RAG_MAX_SEARCH_RESULTS = config("RAG_MAX_SEARCH_RESULTS", default=5, cast=int)
+RAG_MIN_SIMILARITY_SCORE = config("RAG_MIN_SIMILARITY_SCORE", default=0.5, cast=float)
+RAG_AUTO_INDEX_ON_COMPLETION = config("RAG_AUTO_INDEX_ON_COMPLETION", default=True, cast=bool)
