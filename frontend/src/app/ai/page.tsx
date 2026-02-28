@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { aiApi, type AIProvider, type ChatMessage, type ToolCallInfo } from '@/lib/ai-api'
-import { api } from '@/lib/api'
+import { projectsApi } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
 import {
   Loader2,
@@ -90,7 +90,7 @@ export default function AIAssistantPage() {
       setIsLoading(true)
       const [providersRes, projectsRes] = await Promise.all([
         aiApi.listProviders(),
-        api.projects.list(),
+        projectsApi.list(),
       ])
       setProviders(providersRes.results || [])
       setProjects(projectsRes.results || [])
