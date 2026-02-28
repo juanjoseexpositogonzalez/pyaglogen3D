@@ -58,7 +58,7 @@ LOCAL_APPS = [
     "apps.simulations",
     "apps.fractal_analysis",
     "apps.ai_assistant",
-    "apps.rag",
+    # "apps.rag",  # TODO: Enable when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
 ]
 
 INSTALLED_APPS = DJANGO_APPS + THIRD_PARTY_APPS + LOCAL_APPS
