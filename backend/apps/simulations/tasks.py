@@ -1028,13 +1028,35 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             )
         elif algorithm == "fracval":
             # FracVAL algorithm (Morán et al. 2019) - polydisperse cluster-cluster
+            # Server-side parameter validation to prevent DoS and invalid inputs
+            n_particles = params.get("n_particles", 100)
+            target_df = params.get("target_df", 1.8)
+            target_kf = params.get("target_kf", 1.3)
+            geometric_mean = params.get("geometric_mean", 1.0)
+            geometric_std = params.get("geometric_std", 1.0)
+            max_placement_attempts = params.get("max_placement_attempts", 1000)
+
+            # Validation with safe limits
+            if not (2 <= n_particles <= 10000):
+                raise ValueError("n_particles must be between 2 and 10000")
+            if not (1.0 <= target_df <= 3.0):
+                raise ValueError("target_df must be between 1.0 and 3.0")
+            if not (0.1 <= target_kf <= 2.7):
+                raise ValueError("target_kf must be between 0.1 and 2.7")
+            if not (0.1 <= geometric_mean <= 100.0):
+                raise ValueError("geometric_mean must be between 0.1 and 100.0")
+            if not (1.0 <= geometric_std <= 5.0):
+                raise ValueError("geometric_std must be between 1.0 and 5.0")
+            # Cap max_placement_attempts to prevent DoS
+            max_placement_attempts = min(max(10, max_placement_attempts), 10000)
+
             result = aglogen_core.run_fracval(
-                n_particles=params.get("n_particles", 100),
-                target_df=params.get("target_df", 1.8),
-                target_kf=params.get("target_kf", 1.3),
-                geometric_mean=params.get("geometric_mean", 1.0),
-                geometric_std=params.get("geometric_std", 1.0),
-                max_placement_attempts=params.get("max_placement_attempts", 1000),
+                n_particles=n_particles,
+                target_df=target_df,
+                target_kf=target_kf,
+                geometric_mean=geometric_mean,
+                geometric_std=geometric_std,
+                max_placement_attempts=max_placement_attempts,
                 seed=seed,
             )
         elif algorithm == "limiting":

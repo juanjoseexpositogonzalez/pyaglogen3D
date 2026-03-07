@@ -13,6 +13,49 @@
 //! formed by polydisperse primary particles." Comput. Phys. Commun., 239, 225-237.
 
 use std::f64::consts::PI;
+
+// ============================================================================
+// Algorithm Constants (documented magic numbers)
+// ============================================================================
+
+/// Tolerance for overlap detection: particles overlap if distance < sum_radii * (1 - OVERLAP_TOLERANCE)
+/// A value of 0.01 means 1% penetration is allowed to handle numerical precision issues.
+const OVERLAP_TOLERANCE: f64 = 0.01;
+
+/// Tolerance for contact detection: particles are in contact if distance <= sum_radii * (1 + CONTACT_TOLERANCE)
+/// A value of 0.10 means particles within 10% of touching distance count as contacting.
+const CONTACT_TOLERANCE: f64 = 0.10;
+
+/// Fractal dimension threshold below which structures are considered "very open"
+/// and placement is accepted even without explicit contact (DLA-like structures).
+const OPEN_STRUCTURE_DF_THRESHOLD: f64 = 1.5;
+
+/// Initial box size multiplier for random particle placement before aggregation.
+/// Larger values spread particles more initially, reducing early collisions.
+const INITIAL_BOX_SIZE_MULTIPLIER: f64 = 10.0;
+
+/// Minimum separation multiplier when target Rg calculation fails.
+/// Uses 2x contact distance as fallback to ensure physical separation.
+const FALLBACK_SEPARATION_MULTIPLIER: f64 = 2.0;
+
+/// Minimum number of data points required for reliable Df/kf regression.
+const MIN_REGRESSION_POINTS: usize = 3;
+
+/// Default fractal dimension when regression fails.
+const DEFAULT_DF: f64 = 2.0;
+
+/// Default prefactor when regression fails.
+const DEFAULT_KF: f64 = 1.0;
+
+/// Minimum Rg threshold (relative to rp) for including in regression.
+/// Filters out early aggregation stages with unreliable Rg values.
+const MIN_RG_FOR_REGRESSION: f64 = 0.1;
+
+/// Estimated standard deviation for fractal dimension (conservative estimate).
+const DF_STD_ESTIMATE: f64 = 0.05;
+
+/// Tolerance for geometric mean test validation (30% relative error).
+const GEO_MEAN_TEST_TOLERANCE: f64 = 0.3;
 use std::time::Instant;
 
 use pyo3::prelude::*;
@@ -241,8 +284,8 @@ fn calculate_fractal_dimension_from_evolution(
     rg_values: &[f64],
     rp: f64,
 ) -> (f64, f64, f64) {
-    if n_values.len() < 3 || n_values.len() != rg_values.len() {
-        return (2.0, 1.0, 0.0);
+    if n_values.len() < MIN_REGRESSION_POINTS || n_values.len() != rg_values.len() {
+        return (DEFAULT_DF, DEFAULT_KF, 0.0);
     }
 
     // Use N = kf * (Rg/rp)^Df
@@ -250,12 +293,12 @@ fn calculate_fractal_dimension_from_evolution(
     let data: Vec<(f64, f64)> = n_values
         .iter()
         .zip(rg_values.iter())
-        .filter(|(&n, &rg)| n > 1 && rg > rp * 0.1)
+        .filter(|(&n, &rg)| n > 1 && rg > rp * MIN_RG_FOR_REGRESSION)
         .map(|(&n, &rg)| ((rg / rp).ln(), (n as f64).ln()))
         .collect();
 
-    if data.len() < 3 {
-        return (2.0, 1.0, 0.0);
+    if data.len() < MIN_REGRESSION_POINTS {
+        return (DEFAULT_DF, DEFAULT_KF, 0.0);
     }
 
     // Linear regression
@@ -325,7 +368,7 @@ fn run_fracval_internal(
     // Initialize each particle as its own cluster at origin (will be repositioned during merging)
     // For now, place them randomly in a large volume to start
     let volume_mean_radius = compute_volume_mean_radius(&radii);
-    let initial_box_size = volume_mean_radius * (n_particles as f64).powf(1.0 / target_df) * 10.0;
+    let initial_box_size = volume_mean_radius * (n_particles as f64).powf(1.0 / target_df) * INITIAL_BOX_SIZE_MULTIPLIER;
 
     for i in 0..n_particles {
         positions[i] = Vector3::new(
@@ -379,82 +422,117 @@ fn run_fracval_internal(
             let separation = match compute_required_separation(&cluster1, &cluster2, rg_target) {
                 Some(d) => d,
                 None => {
-                    // If target Rg is too small, use minimum separation
+                    // If target Rg is too small, use minimum separation (fallback)
                     let min_sep =
                         radii[cluster1.particle_indices[0]] + radii[cluster2.particle_indices[0]];
-                    min_sep * 2.0
+                    min_sep * FALLBACK_SEPARATION_MULTIPLIER
                 }
             };
 
             // Try to place cluster2 relative to cluster1
             let mut placement_successful = false;
+            let mut final_positions2: Option<Vec<Vector3>> = None;
+
+            // Store original positions for cluster2 particles (for reference during placement)
+            let original_positions2: Vec<Vector3> = cluster2
+                .particle_indices
+                .iter()
+                .map(|&idx| positions[idx])
+                .collect();
+            let cluster2_original_com = cluster2.center_of_mass;
 
             for _ in 0..max_placement_attempts {
-                // Random direction
+                // Random direction (uniform on sphere)
                 let direction = random_unit_vector(&mut rng);
 
-                // Random rotation for cluster2
+                // Random rotation for cluster2 (uniform on SO(3))
                 let rotation = random_rotation_matrix(&mut rng);
 
-                // Compute new positions for cluster2 particles
-                let cluster2_com = cluster2.center_of_mass;
+                // Compute new positions for cluster2 particles relative to original positions
                 let new_com2 = cluster1.center_of_mass + direction * separation;
 
-                // Apply rotation and translation to cluster2 particles
-                let mut new_positions2 = Vec::new();
-                for &idx in &cluster2.particle_indices {
-                    let relative_pos = positions[idx] - cluster2_com;
-                    let rotated = rotate_vector(&relative_pos, &rotation);
-                    new_positions2.push(new_com2 + rotated);
-                }
+                // Apply rotation and translation to cluster2 particles using ORIGINAL positions
+                let candidate_positions2: Vec<Vector3> = original_positions2
+                    .iter()
+                    .map(|&pos| {
+                        let relative_pos = pos - cluster2_original_com;
+                        let rotated = rotate_vector(&relative_pos, &rotation);
+                        new_com2 + rotated
+                    })
+                    .collect();
 
-                // Temporarily update positions to check overlaps
-                for (i, &idx) in cluster2.particle_indices.iter().enumerate() {
-                    positions[idx] = new_positions2[i];
-                }
+                // Create temporary position lookup for overlap checking
+                // Use candidate positions for cluster2, original positions for cluster1
+                let check_overlaps_with_candidates = || {
+                    for &i in &cluster1.particle_indices {
+                        for (j_local, &j) in cluster2.particle_indices.iter().enumerate() {
+                            let pos_j = candidate_positions2[j_local];
+                            let dist = (positions[i] - pos_j).length();
+                            let min_dist = radii[i] + radii[j];
+                            if dist < min_dist * (1.0 - OVERLAP_TOLERANCE) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                };
 
-                // Check for overlaps
-                if !check_overlaps(
-                    &positions,
-                    &radii,
-                    &cluster1.particle_indices,
-                    &cluster2.particle_indices,
-                ) {
+                let check_contact_with_candidates = || {
+                    for &i in &cluster1.particle_indices {
+                        for (j_local, &j) in cluster2.particle_indices.iter().enumerate() {
+                            let pos_j = candidate_positions2[j_local];
+                            let dist = (positions[i] - pos_j).length();
+                            let contact_dist = radii[i] + radii[j];
+                            if dist <= contact_dist * (1.0 + CONTACT_TOLERANCE) {
+                                return true;
+                            }
+                        }
+                    }
+                    false
+                };
+
+                // Check for overlaps using candidate positions (NOT modifying actual positions)
+                if !check_overlaps_with_candidates() {
                     // Check for contact (at least one pair should be touching or close)
-                    if has_contact(
-                        &positions,
-                        &radii,
-                        &cluster1.particle_indices,
-                        &cluster2.particle_indices,
-                        0.1,
-                    ) {
+                    if check_contact_with_candidates() {
+                        final_positions2 = Some(candidate_positions2);
                         placement_successful = true;
                         break;
                     }
-                    // Even without contact, accept if no overlap (for very open structures)
-                    if target_df < 1.5 {
+                    // Accept without contact for very open structures (low Df)
+                    if target_df < OPEN_STRUCTURE_DF_THRESHOLD {
+                        final_positions2 = Some(candidate_positions2);
                         placement_successful = true;
                         break;
                     }
                 }
             }
 
+            // Only now update actual positions if placement was successful
+            if let Some(new_pos) = final_positions2 {
+                for (i, &idx) in cluster2.particle_indices.iter().enumerate() {
+                    positions[idx] = new_pos[i];
+                }
+            }
+
             if !placement_successful {
                 // Fallback: place cluster2 at contact distance from a random particle in cluster1
+                // Use original (uncorrupted) positions for the fallback calculation
                 let contact_idx1 =
                     cluster1.particle_indices[rng.gen_range(0..cluster1.particle_indices.len())];
-                let contact_idx2 =
-                    cluster2.particle_indices[rng.gen_range(0..cluster2.particle_indices.len())];
+                let local_contact_idx2 = rng.gen_range(0..cluster2.particle_indices.len());
+                let contact_idx2 = cluster2.particle_indices[local_contact_idx2];
 
                 let direction = random_unit_vector(&mut rng);
                 let contact_dist = radii[contact_idx1] + radii[contact_idx2];
 
-                let cluster2_com = cluster2.center_of_mass;
-                let offset =
-                    positions[contact_idx1] + direction * contact_dist - positions[contact_idx2];
+                // Use original position of contact particle in cluster2 for offset calculation
+                let original_pos2 = original_positions2[local_contact_idx2];
+                let offset = positions[contact_idx1] + direction * contact_dist - original_pos2;
 
-                for &idx in &cluster2.particle_indices {
-                    positions[idx] = positions[idx] + offset;
+                // Apply offset to original positions (not potentially corrupted positions)
+                for (i, &idx) in cluster2.particle_indices.iter().enumerate() {
+                    positions[idx] = original_positions2[i] + offset;
                 }
             }
 
@@ -533,7 +611,7 @@ fn run_fracval_internal(
         radii,
         rg_evolution: final_rg_evolution,
         fractal_dimension: actual_df,
-        fractal_dimension_std: 0.05,
+        fractal_dimension_std: DF_STD_ESTIMATE,
         prefactor: actual_kf,
         porosity,
         coordination_mean: coord_mean,
@@ -637,7 +715,7 @@ mod tests {
         // Check that geometric mean is approximately correct
         let log_mean: f64 = radii.iter().map(|r| r.ln()).sum::<f64>() / 100.0;
         let geo_mean = log_mean.exp();
-        assert!((geo_mean - 1.0).abs() < 0.3); // Within 30% tolerance
+        assert!((geo_mean - 1.0).abs() < GEO_MEAN_TEST_TOLERANCE);
     }
 
     #[test]
