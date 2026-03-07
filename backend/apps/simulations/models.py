@@ -15,6 +15,7 @@ class SimulationAlgorithm(models.TextChoices):
     TUNABLE_CC = "tunable_cc", "Tunable Cluster-Cluster"
     FRACVAL = "fracval", "FracVAL (Polydisperse CC)"
     GCCA = "gcca", "Generalized CCA (Tomchuk)"
+    BOX_RFA = "box_rfa", "Box-Counting RFA"
     LIMITING = "limiting", "Limiting Case Geometry"
 
 

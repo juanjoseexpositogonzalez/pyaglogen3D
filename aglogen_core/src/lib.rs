@@ -18,6 +18,7 @@ use fractal::result::PyFractalResult as PyBoxCountingResult;
 use projection::{project_batch, project_to_2d, PyProjectionResult};
 use simulation::ballistic::run_ballistic;
 use simulation::ballistic_cc::run_ballistic_cc;
+use simulation::box_rfa::run_box_rfa;
 use simulation::cca::run_cca;
 use simulation::dla::run_dla;
 use simulation::fracval::run_fracval;
@@ -107,6 +108,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_tunable_cc, m)?)?;
     m.add_function(wrap_pyfunction!(run_fracval, m)?)?;
     m.add_function(wrap_pyfunction!(run_gcca, m)?)?;
+    m.add_function(wrap_pyfunction!(run_box_rfa, m)?)?;
     m.add_function(wrap_pyfunction!(structure_factor, m)?)?;
 
     // Fractal analysis functions

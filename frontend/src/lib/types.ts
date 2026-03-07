@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'gcca' | 'limiting'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'gcca' | 'box_rfa' | 'limiting'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -104,6 +104,15 @@ export interface GccaParams {
   max_placement_attempts?: number
 }
 
+export type BoxRfaConnectivityMethod = 'random_walk' | 'nearest_neighbor'
+
+export interface BoxRfaParams {
+  target_df: number                // Target fractal dimension (1.0-3.0)
+  n_levels: number                 // Refinement levels (4-10)
+  n_particles?: number             // Target particle count (optional, derived from n_levels if not set)
+  connectivity_method: BoxRfaConnectivityMethod
+}
+
 export type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
 export type ChainConfig = 'lineal' | 'cruz2d' | 'asterisco' | 'cruz3d'
 export type PlaneConfig = 'plano' | 'dobleplano' | 'tripleplano'
@@ -139,7 +148,7 @@ export interface FracvalParams {
   max_placement_attempts?: number
 }
 
-export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | GccaParams | LimitingParams
+export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | GccaParams | BoxRfaParams | LimitingParams
 
 // Simulation
 export interface SimulationSummary {

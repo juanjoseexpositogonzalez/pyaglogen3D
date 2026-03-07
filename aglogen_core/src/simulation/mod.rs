@@ -2,6 +2,7 @@
 
 pub mod ballistic;
 pub mod ballistic_cc;
+pub mod box_rfa;
 pub mod cca;
 pub mod dla;
 pub mod fracval;
