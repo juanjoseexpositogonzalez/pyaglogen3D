@@ -29,6 +29,7 @@ use simulation::gcca::{run_gcca, structure_factor};
 use simulation::result::PySimulationResult;
 use simulation::sintering::PySinteringParams;
 use optics::tmatrix::run_tmatrix;
+use optics::dda::run_dda;
 use optics::result::PyOpticalResult;
 
 use numpy::PyReadonlyArray2;
@@ -127,6 +128,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Optical properties functions
     m.add_function(wrap_pyfunction!(run_tmatrix, m)?)?;
+    m.add_function(wrap_pyfunction!(run_dda, m)?)?;
 
     // Utility functions
     m.add_function(wrap_pyfunction!(version, m)?)?;

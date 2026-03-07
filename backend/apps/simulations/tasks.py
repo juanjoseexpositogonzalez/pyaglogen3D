@@ -1472,3 +1472,130 @@ def run_optical_task(
             "simulation_id": simulation_id,
             "error": str(e),
         }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_dda_task(
+    self,
+    simulation_id: str,
+    wavelength: float = 550.0,
+    refractive_index_n: float = 1.95,
+    refractive_index_k: float = 0.79,
+    medium_index: float = 1.0,
+    dipoles_per_wavelength: float = 10.0,
+    polarizability: str = "ldr",
+    solver_tolerance: float = 1e-5,
+    max_iterations: int = 1000,
+) -> dict:
+    """Compute optical properties using Discrete Dipole Approximation (DDA).
+
+    Args:
+        simulation_id: UUID of the completed simulation
+        wavelength: Wavelength in vacuum (nm)
+        refractive_index_n: Real part of particle refractive index
+        refractive_index_k: Imaginary part of particle refractive index
+        medium_index: Refractive index of surrounding medium
+        dipoles_per_wavelength: Dipole spacing control (10-20 typical)
+        polarizability: 'cm' (Clausius-Mossotti), 'ldr' (Lattice Dispersion), 'dgf'
+        solver_tolerance: BiCGSTAB solver tolerance
+        max_iterations: Maximum solver iterations
+
+    Returns:
+        Dictionary with optical properties results
+    """
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    if simulation.status != SimulationStatus.COMPLETED:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": f"Simulation must be completed. Current status: {simulation.status}",
+        }
+
+    if simulation.geometry is None:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Simulation has no geometry data",
+        }
+
+    try:
+        import aglogen_core
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = geometry_array[:, :3].flatten()
+        radii = geometry_array[:, 3]
+
+        logger.info(
+            f"Running DDA optical calculation for simulation {simulation_id} "
+            f"with {len(radii)} particles at λ={wavelength}nm"
+        )
+
+        result = aglogen_core.run_dda(
+            coordinates=coords,
+            radii=radii,
+            wavelength=wavelength,
+            refractive_index_n=refractive_index_n,
+            refractive_index_k=refractive_index_k,
+            medium_index=medium_index,
+            dipoles_per_wavelength=dipoles_per_wavelength,
+            polarizability=polarizability,
+            solver_tolerance=solver_tolerance,
+            max_iterations=max_iterations,
+        )
+
+        optical_results = {
+            "method": "dda",
+            "wavelength": wavelength,
+            "refractive_index": {"n": refractive_index_n, "k": refractive_index_k},
+            "medium_index": medium_index,
+            "c_ext": float(result.c_ext),
+            "c_sca": float(result.c_sca),
+            "c_abs": float(result.c_abs),
+            "q_ext": float(result.q_ext),
+            "q_sca": float(result.q_sca),
+            "q_abs": float(result.q_abs),
+            "asymmetry_g": float(result.asymmetry_g),
+            "single_scatter_albedo": float(result.single_scatter_albedo),
+            "geometric_cross_section": float(result.geometric_cross_section),
+            "execution_time_ms": int(result.execution_time_ms),
+            "dda_params": {
+                "dipoles_per_wavelength": dipoles_per_wavelength,
+                "polarizability": polarizability,
+            },
+        }
+
+        metrics = simulation.metrics or {}
+        metrics["optical_dda"] = optical_results
+        simulation.metrics = metrics
+        simulation.save(update_fields=["metrics"])
+
+        logger.info(
+            f"DDA calculation for {simulation_id} completed: "
+            f"Cext={result.c_ext:.4e}, Csca={result.c_sca:.4e}"
+        )
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "optical_dda": optical_results,
+        }
+
+    except ImportError as e:
+        logger.error(f"aglogen_core not installed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Rust engine not installed",
+        }
+
+    except Exception as e:
+        logger.exception(f"DDA calculation for {simulation_id} failed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
