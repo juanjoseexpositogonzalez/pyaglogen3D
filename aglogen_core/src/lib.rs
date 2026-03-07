@@ -20,6 +20,7 @@ use simulation::ballistic::run_ballistic;
 use simulation::ballistic_cc::run_ballistic_cc;
 use simulation::cca::run_cca;
 use simulation::dla::run_dla;
+use simulation::fracval::run_fracval;
 use simulation::tunable::run_tunable;
 use simulation::tunable_cc::run_tunable_cc;
 use simulation::result::PySimulationResult;
@@ -103,6 +104,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_ballistic_cc, m)?)?;
     m.add_function(wrap_pyfunction!(run_tunable, m)?)?;
     m.add_function(wrap_pyfunction!(run_tunable_cc, m)?)?;
+    m.add_function(wrap_pyfunction!(run_fracval, m)?)?;
 
     // Fractal analysis functions
     m.add_function(wrap_pyfunction!(box_counting, m)?)?;

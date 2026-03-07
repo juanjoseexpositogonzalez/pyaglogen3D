@@ -76,6 +76,7 @@ const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'ballistic_cc', label: 'Ballistic CC (Cluster-Cluster)' },
   { value: 'tunable', label: 'Tunable PC (Filippov method)' },
   { value: 'tunable_cc', label: 'Tunable CC (Cluster-Cluster)' },
+  { value: 'fracval', label: 'FracVAL (Polydisperse CC)' },
   { value: 'limiting', label: 'Limiting Case Geometry (Reference)' },
 ]
 
@@ -137,6 +138,9 @@ interface FormParams {
   // Tunable CC specific
   seed_cluster_size: number | null  // null = use monomers
   max_rotation_attempts: number
+  // FracVAL specific (polydisperse CC)
+  geometric_mean: number      // Geometric mean radius for lognormal distribution
+  geometric_std: number       // Geometric std dev (1.0 = monodisperse)
   // Limiting case specific
   geometry_type: LimitingGeometryType
   configuration_type: ChainConfig | PlaneConfig | SphereConfig
@@ -167,6 +171,8 @@ const defaultParams: FormParams = {
   target_kf: 1.3,
   seed_cluster_size: null,  // null = start with monomers
   max_rotation_attempts: 50,
+  geometric_mean: 1.0,    // FracVAL: geometric mean radius
+  geometric_std: 1.0,     // FracVAL: 1.0 = monodisperse
   geometry_type: 'chain',
   configuration_type: 'lineal',
   packing: 'HC',
@@ -191,6 +197,7 @@ const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   ballistic_cc: 'Ballistic CC: Clusters travel in straight lines and merge on collision. Produces branched structures with Df ~ 1.8-2.2 (thesis section 6.2).',
   tunable: 'Tunable PC (Filippov method): Generate aggregates with target fractal dimension and prefactor. Based on N = kf × (Rg/rp)^Df power law.',
   tunable_cc: 'Tunable CC (Cluster-Cluster): Similar to Tunable PC but merges clusters instead of single particles. Produces more realistic aggregates with controlled Df and kf.',
+  fracval: 'FracVAL (Morán et al. 2019): Polydisperse cluster-cluster aggregation with lognormal size distribution. Adaptive pairing strategy ensures Df and kf control for each aggregate.',
   limiting: 'Reference Geometry: Deterministic canonical structures for calibration. Choose between linear chain (Df=1), hexagonal plane (Df=2), or compact sphere (Df=3).',
 }
 
@@ -612,6 +619,11 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
+    } else if (algorithm === 'fracval') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+      algorithmParams.geometric_mean = params.geometric_mean
+      algorithmParams.geometric_std = params.geometric_std
     } else if (algorithm === 'limiting') {
       algorithmParams.geometry_type = params.geometry_type
       algorithmParams.configuration_type = params.configuration_type
@@ -699,8 +711,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </div>
           )}
 
-          {/* Sticking Probability - hidden for limiting case (deterministic) */}
-          {algorithm !== 'limiting' && (
+          {/* Sticking Probability - hidden for limiting, tunable, and fracval cases */}
+          {!['limiting', 'tunable', 'tunable_cc', 'fracval'].includes(algorithm) && (
             <div className="space-y-2">
               <Label>
                 Sticking Probability: {params.sticking_probability.toFixed(2)}
@@ -735,8 +747,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </p>
           </div>
 
-          {/* Polydisperse Section - hidden for limiting case (canonical geometry) */}
-          {algorithm !== 'limiting' && (
+          {/* Polydisperse Section - hidden for limiting and fracval (FracVAL uses geometric_std) */}
+          {!['limiting', 'fracval'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Label>Size Distribution</Label>
@@ -802,8 +814,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
           )}
 
-          {/* Sintering Section - hidden for limiting case */}
-          {algorithm !== 'limiting' && (
+          {/* Sintering Section - hidden for limiting and fracval cases */}
+          {!['limiting', 'fracval'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1048,6 +1060,74 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Number of rotation attempts to resolve overlaps (10-200)
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'fracval' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.0 = chain, 3.0 = compact sphere)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.1}
+                  max={2.7}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Geometric Mean Radius: {params.geometric_mean.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.0}
+                  step={0.1}
+                  value={[params.geometric_mean]}
+                  onValueChange={([v]) => updateParam('geometric_mean', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Mean radius of lognormal size distribution (normalized units)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Geometric Std Dev (σ_geo): {params.geometric_std.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.geometric_std]}
+                  onValueChange={([v]) => updateParam('geometric_std', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Polydispersity: 1.0 = monodisperse, 1.5-2.0 = typical soot
                 </p>
               </div>
             </>

@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'limiting'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'limiting'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -116,7 +116,16 @@ export interface LimitingParams {
   sintering_coeff?: number
 }
 
-export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | LimitingParams
+export interface FracvalParams {
+  n_particles: number
+  target_df: number
+  target_kf: number
+  geometric_mean: number
+  geometric_std: number
+  max_placement_attempts?: number
+}
+
+export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | LimitingParams
 
 // Simulation
 export interface SimulationSummary {
