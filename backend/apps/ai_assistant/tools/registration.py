@@ -60,6 +60,13 @@ def register_all_tools(registry: ToolRegistry) -> None:
         run_fraktal_from_image_tool,
     )
 
+    # TODO: Enable RAG tools when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
+    # from .rag_tools import (
+    #     get_analysis_insights_handler,
+    #     get_simulation_insights_handler,
+    #     search_knowledge_base_handler,
+    # )
+
     # Utility tools
     registry.register(list_algorithms_tool)
     registry.register(get_project_info_tool)
@@ -92,5 +99,10 @@ def register_all_tools(registry: ToolRegistry) -> None:
     registry.register(compare_simulations_tool)
     registry.register(analyze_parametric_study_tool)
     registry.register(list_analyses_tool)
+
+    # TODO: Enable RAG tools when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
+    # registry.register(search_knowledge_base_handler)
+    # registry.register(get_simulation_insights_handler)
+    # registry.register(get_analysis_insights_handler)
 
     logger.info(f"Registered {len(registry)} AI tools")
