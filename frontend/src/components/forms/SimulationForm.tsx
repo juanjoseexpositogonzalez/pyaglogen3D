@@ -77,6 +77,7 @@ const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'tunable', label: 'Tunable PC (Filippov method)' },
   { value: 'tunable_cc', label: 'Tunable CC (Cluster-Cluster)' },
   { value: 'fracval', label: 'FracVAL (Polydisperse CC)' },
+  { value: 'gcca', label: 'Generalized CCA (Tomchuk)' },
   { value: 'limiting', label: 'Limiting Case Geometry (Reference)' },
 ]
 
@@ -123,6 +124,7 @@ const packingOptions3D: { value: PackingType; label: string; description: string
 ]
 
 type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
+type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
 
 interface FormParams {
   n_particles: number
@@ -141,6 +143,11 @@ interface FormParams {
   // FracVAL specific (polydisperse CC)
   geometric_mean: number      // Geometric mean radius for lognormal distribution
   geometric_std: number       // Geometric std dev (1.0 = monodisperse)
+  // GCCA specific
+  split_strategy: GccaSplitStrategy
+  stochastic_mean_ratio: number
+  stochastic_std_ratio: number
+  max_placement_attempts: number
   // Limiting case specific
   geometry_type: LimitingGeometryType
   configuration_type: ChainConfig | PlaneConfig | SphereConfig
@@ -173,6 +180,11 @@ const defaultParams: FormParams = {
   max_rotation_attempts: 50,
   geometric_mean: 1.0,    // FracVAL: geometric mean radius
   geometric_std: 1.0,     // FracVAL: 1.0 = monodisperse
+  // GCCA defaults
+  split_strategy: 'symmetric',
+  stochastic_mean_ratio: 0.5,
+  stochastic_std_ratio: 0.1,
+  max_placement_attempts: 1000,
   geometry_type: 'chain',
   configuration_type: 'lineal',
   packing: 'HC',
@@ -198,6 +210,7 @@ const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   tunable: 'Tunable PC (Filippov method): Generate aggregates with target fractal dimension and prefactor. Based on N = kf × (Rg/rp)^Df power law.',
   tunable_cc: 'Tunable CC (Cluster-Cluster): Similar to Tunable PC but merges clusters instead of single particles. Produces more realistic aggregates with controlled Df and kf.',
   fracval: 'FracVAL (Morán et al. 2019): Polydisperse cluster-cluster aggregation with lognormal size distribution. Adaptive pairing strategy ensures Df and kf control for each aggregate.',
+  gcca: 'Generalized CCA (Tomchuk & Avdeev 2020): Unified cluster-cluster framework with configurable split strategies. Symmetric recovers Filippov, particle-cluster recovers DLCA-like growth.',
   limiting: 'Reference Geometry: Deterministic canonical structures for calibration. Choose between linear chain (Df=1), hexagonal plane (Df=2), or compact sphere (Df=3).',
 }
 
@@ -624,6 +637,15 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
       algorithmParams.geometric_mean = params.geometric_mean
       algorithmParams.geometric_std = params.geometric_std
+    } else if (algorithm === 'gcca') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+      algorithmParams.split_strategy = params.split_strategy
+      if (params.split_strategy === 'stochastic') {
+        algorithmParams.stochastic_mean_ratio = params.stochastic_mean_ratio
+        algorithmParams.stochastic_std_ratio = params.stochastic_std_ratio
+      }
+      algorithmParams.max_placement_attempts = params.max_placement_attempts
     } else if (algorithm === 'limiting') {
       algorithmParams.geometry_type = params.geometry_type
       algorithmParams.configuration_type = params.configuration_type
@@ -747,8 +769,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </p>
           </div>
 
-          {/* Polydisperse Section - hidden for limiting and fracval (FracVAL uses geometric_std) */}
-          {!['limiting', 'fracval'].includes(algorithm) && (
+          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), and gcca */}
+          {!['limiting', 'fracval', 'gcca'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Label>Size Distribution</Label>
@@ -814,8 +836,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
           )}
 
-          {/* Sintering Section - hidden for limiting and fracval cases */}
-          {!['limiting', 'fracval'].includes(algorithm) && (
+          {/* Sintering Section - hidden for limiting, fracval, and gcca cases */}
+          {!['limiting', 'fracval', 'gcca'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1128,6 +1150,113 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Polydispersity: 1.0 = monodisperse, 1.5-2.0 = typical soot
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'gcca' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.4}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.4 = open/fluffy, 3.0 = compact/dense)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Split Strategy</Label>
+                <div className="flex gap-2">
+                  {(['symmetric', 'particle_cluster', 'stochastic'] as GccaSplitStrategy[]).map((strategy) => (
+                    <Button
+                      key={strategy}
+                      type="button"
+                      variant={params.split_strategy === strategy ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateParam('split_strategy', strategy)}
+                    >
+                      {strategy === 'symmetric' && 'Symmetric'}
+                      {strategy === 'particle_cluster' && 'Particle-Cluster'}
+                      {strategy === 'stochastic' && 'Stochastic'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.split_strategy === 'symmetric' && 'N₁ = N₂: Recovers Filippov CCA behavior'}
+                  {params.split_strategy === 'particle_cluster' && 'N₁ = N-1, N₂ = 1: Single particle addition (like DLCA)'}
+                  {params.split_strategy === 'stochastic' && 'Random split with configurable mean ratio'}
+                </p>
+              </div>
+
+              {params.split_strategy === 'stochastic' && (
+                <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                  <div className="space-y-2">
+                    <Label>Mean Ratio: {params.stochastic_mean_ratio.toFixed(2)}</Label>
+                    <Slider
+                      min={0.1}
+                      max={0.9}
+                      step={0.05}
+                      value={[params.stochastic_mean_ratio]}
+                      onValueChange={([v]) => updateParam('stochastic_mean_ratio', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Mean N₁/N ratio (0.5 = balanced)
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Std Ratio: {params.stochastic_std_ratio.toFixed(2)}</Label>
+                    <Slider
+                      min={0.01}
+                      max={0.3}
+                      step={0.01}
+                      value={[params.stochastic_std_ratio]}
+                      onValueChange={([v]) => updateParam('stochastic_std_ratio', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Standard deviation of ratio
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="max_placement_attempts">Max Placement Attempts</Label>
+                <Input
+                  id="max_placement_attempts"
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={params.max_placement_attempts}
+                  onChange={(e) => updateParam('max_placement_attempts', parseInt(e.target.value) || 1000)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum attempts to place clusters without overlap (100-10000)
                 </p>
               </div>
             </>

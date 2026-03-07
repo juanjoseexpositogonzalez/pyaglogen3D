@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'limiting'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'gcca' | 'limiting'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -90,6 +90,20 @@ export interface TunableCcParams extends TunableParams {
   max_rotation_attempts?: number
 }
 
+export type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
+
+export interface GccaParams {
+  n_particles: number
+  target_df: number
+  target_kf: number
+  radius_min?: number
+  radius_max?: number
+  split_strategy: GccaSplitStrategy
+  stochastic_mean_ratio?: number  // Used when split_strategy = 'stochastic'
+  stochastic_std_ratio?: number   // Used when split_strategy = 'stochastic'
+  max_placement_attempts?: number
+}
+
 export type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
 export type ChainConfig = 'lineal' | 'cruz2d' | 'asterisco' | 'cruz3d'
 export type PlaneConfig = 'plano' | 'dobleplano' | 'tripleplano'
@@ -125,7 +139,7 @@ export interface FracvalParams {
   max_placement_attempts?: number
 }
 
-export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | LimitingParams
+export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | GccaParams | LimitingParams
 
 // Simulation
 export interface SimulationSummary {

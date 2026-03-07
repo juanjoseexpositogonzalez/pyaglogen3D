@@ -23,6 +23,7 @@ use simulation::dla::run_dla;
 use simulation::fracval::run_fracval;
 use simulation::tunable::run_tunable;
 use simulation::tunable_cc::run_tunable_cc;
+use simulation::gcca::{run_gcca, structure_factor};
 use simulation::result::PySimulationResult;
 use simulation::sintering::PySinteringParams;
 
@@ -105,6 +106,8 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(run_tunable, m)?)?;
     m.add_function(wrap_pyfunction!(run_tunable_cc, m)?)?;
     m.add_function(wrap_pyfunction!(run_fracval, m)?)?;
+    m.add_function(wrap_pyfunction!(run_gcca, m)?)?;
+    m.add_function(wrap_pyfunction!(structure_factor, m)?)?;
 
     // Fractal analysis functions
     m.add_function(wrap_pyfunction!(box_counting, m)?)?;
