@@ -13,6 +13,7 @@ class SimulationAlgorithm(models.TextChoices):
     BALLISTIC_CC = "ballistic_cc", "Ballistic Cluster-Cluster"
     TUNABLE = "tunable", "Tunable Sticking Probability"
     TUNABLE_CC = "tunable_cc", "Tunable Cluster-Cluster"
+    FRACVAL = "fracval", "FracVAL (Polydisperse CC)"
     LIMITING = "limiting", "Limiting Case Geometry"
 
 

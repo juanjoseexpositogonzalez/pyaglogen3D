@@ -1026,6 +1026,17 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 sintering_std=sintering_std,
                 seed=seed,
             )
+        elif algorithm == "fracval":
+            # FracVAL algorithm (Morán et al. 2019) - polydisperse cluster-cluster
+            result = aglogen_core.run_fracval(
+                n_particles=params.get("n_particles", 100),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                geometric_mean=params.get("geometric_mean", 1.0),
+                geometric_std=params.get("geometric_std", 1.0),
+                max_placement_attempts=params.get("max_placement_attempts", 1000),
+                seed=seed,
+            )
         elif algorithm == "limiting":
             # Limiting case geometry (deterministic, no simulation)
             import time
