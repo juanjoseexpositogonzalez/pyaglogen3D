@@ -8,6 +8,7 @@ use pyo3::prelude::*;
 
 mod common;
 mod fractal;
+mod optics;
 mod projection;
 mod simulation;
 
@@ -27,6 +28,8 @@ use simulation::tunable_cc::run_tunable_cc;
 use simulation::gcca::{run_gcca, structure_factor};
 use simulation::result::PySimulationResult;
 use simulation::sintering::PySinteringParams;
+use optics::tmatrix::run_tmatrix;
+use optics::result::PyOpticalResult;
 
 use numpy::PyReadonlyArray2;
 
@@ -122,6 +125,9 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(project_to_2d, m)?)?;
     m.add_function(wrap_pyfunction!(project_batch, m)?)?;
 
+    // Optical properties functions
+    m.add_function(wrap_pyfunction!(run_tmatrix, m)?)?;
+
     // Utility functions
     m.add_function(wrap_pyfunction!(version, m)?)?;
 
@@ -133,6 +139,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Granulated2012Params>()?;
     m.add_class::<Voxel2018Params>()?;
     m.add_class::<PySinteringParams>()?;
+    m.add_class::<PyOpticalResult>()?;
 
     Ok(())
 }

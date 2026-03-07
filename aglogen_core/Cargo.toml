@@ -20,6 +20,7 @@ rand_pcg = "0.3"
 rand_distr = "0.4"
 rayon = "1.8"
 thiserror = "1.0"
+num-complex = "0.4"
 
 [dev-dependencies]
 approx = "0.5"

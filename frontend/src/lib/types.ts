@@ -172,6 +172,23 @@ export interface Simulation {
   error_message?: string
 }
 
+// Optical properties from T-Matrix or DDA calculation
+export interface OpticalResults {
+  wavelength: number
+  refractive_index: { n: number; k: number }
+  medium_index: number
+  c_ext: number  // Extinction cross-section (nm²)
+  c_sca: number  // Scattering cross-section (nm²)
+  c_abs: number  // Absorption cross-section (nm²)
+  q_ext: number  // Extinction efficiency
+  q_sca: number  // Scattering efficiency
+  q_abs: number  // Absorption efficiency
+  asymmetry_g: number  // Asymmetry parameter
+  single_scatter_albedo: number  // ω = Csca/Cext
+  geometric_cross_section: number  // Geometric cross-section (nm²)
+  execution_time_ms: number
+}
+
 export interface SimulationMetrics {
   fractal_dimension: number
   fractal_dimension_std: number
@@ -189,6 +206,10 @@ export interface SimulationMetrics {
   acylindricity: number
   principal_moments: [number, number, number]
   principal_axes: [[number, number, number], [number, number, number], [number, number, number]]
+  // Optical properties (optional, computed separately)
+  optical?: OpticalResults
+  // Box-counting analysis (optional)
+  box_counting?: BoxCountingResult
 }
 
 export interface CreateSimulationInput {

@@ -1355,3 +1355,120 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "simulation_id": simulation_id,
             "error": str(e),
         }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_optical_task(
+    self,
+    simulation_id: str,
+    wavelength: float = 550.0,
+    refractive_index_n: float = 1.95,
+    refractive_index_k: float = 0.79,
+    medium_index: float = 1.0,
+) -> dict:
+    """Compute optical properties of a simulation using T-Matrix method.
+
+    Args:
+        simulation_id: UUID of the completed simulation
+        wavelength: Wavelength in vacuum (nm)
+        refractive_index_n: Real part of particle refractive index
+        refractive_index_k: Imaginary part of particle refractive index
+        medium_index: Refractive index of surrounding medium
+
+    Returns:
+        Dictionary with optical properties results
+    """
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    # Check simulation is completed
+    if simulation.status != SimulationStatus.COMPLETED:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": f"Simulation must be completed. Current status: {simulation.status}",
+        }
+
+    if simulation.geometry is None:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Simulation has no geometry data",
+        }
+
+    try:
+        import aglogen_core
+
+        # Load geometry
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = geometry_array[:, :3].flatten()  # Flatten for T-Matrix function
+        radii = geometry_array[:, 3]
+
+        logger.info(
+            f"Running T-Matrix optical calculation for simulation {simulation_id} "
+            f"with {len(radii)} particles at λ={wavelength}nm"
+        )
+
+        # Run T-Matrix calculation
+        result = aglogen_core.run_tmatrix(
+            coordinates=coords,
+            radii=radii,
+            wavelength=wavelength,
+            refractive_index_n=refractive_index_n,
+            refractive_index_k=refractive_index_k,
+            medium_index=medium_index,
+            orientation_averaging=False,
+            n_angles=181,
+        )
+
+        # Build optical results dictionary
+        optical_results = {
+            "wavelength": wavelength,
+            "refractive_index": {"n": refractive_index_n, "k": refractive_index_k},
+            "medium_index": medium_index,
+            "c_ext": float(result.c_ext),
+            "c_sca": float(result.c_sca),
+            "c_abs": float(result.c_abs),
+            "q_ext": float(result.q_ext),
+            "q_sca": float(result.q_sca),
+            "q_abs": float(result.q_abs),
+            "asymmetry_g": float(result.asymmetry_g),
+            "single_scatter_albedo": float(result.single_scatter_albedo),
+            "geometric_cross_section": float(result.geometric_cross_section),
+            "execution_time_ms": int(result.execution_time_ms),
+        }
+
+        # Store in simulation metrics
+        metrics = simulation.metrics or {}
+        metrics["optical"] = optical_results
+        simulation.metrics = metrics
+        simulation.save(update_fields=["metrics"])
+
+        logger.info(
+            f"Optical calculation for {simulation_id} completed: "
+            f"Cext={result.c_ext:.4e}, Csca={result.c_sca:.4e}, g={result.asymmetry_g:.4f}"
+        )
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "optical": optical_results,
+        }
+
+    except ImportError as e:
+        logger.error(f"aglogen_core not installed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Rust engine not installed",
+        }
+
+    except Exception as e:
+        logger.exception(f"Optical calculation for {simulation_id} failed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
