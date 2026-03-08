@@ -1059,6 +1059,20 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 max_placement_attempts=max_placement_attempts,
                 seed=seed,
             )
+        elif algorithm == "gcca":
+            # Generalized CCA (Tomchuk & Avdeev 2020)
+            result = aglogen_core.run_gcca(
+                n_particles=params.get("n_particles", 100),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                radius_min=radius_min,
+                radius_max=radius_max if radius_max else radius_min,
+                split_strategy=params.get("split_strategy", "symmetric"),
+                stochastic_mean_ratio=params.get("stochastic_mean_ratio", 0.5),
+                stochastic_std_ratio=params.get("stochastic_std_ratio", 0.1),
+                max_placement_attempts=params.get("max_placement_attempts", 1000),
+                seed=seed,
+            )
         elif algorithm == "limiting":
             # Limiting case geometry (deterministic, no simulation)
             import time
