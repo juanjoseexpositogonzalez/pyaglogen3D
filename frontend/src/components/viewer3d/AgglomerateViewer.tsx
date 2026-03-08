@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useRef, useEffect } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
-import { OrbitControls, Environment, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
+import { OrbitControls, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
 import { Particles } from './Particles'
 import { useViewerStore, backgroundColors } from '@/stores/viewerStore'
 import { cn } from '@/lib/utils'
@@ -318,8 +318,6 @@ export function AgglomerateViewer({
 
           {/* Handle export requests */}
           <ExportHandler />
-
-          <Environment preset="studio" />
         </Suspense>
       </Canvas>
     </div>

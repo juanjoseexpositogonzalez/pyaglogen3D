@@ -2,7 +2,7 @@
 
 import { Suspense, useMemo, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment } from '@react-three/drei'
+import { OrbitControls } from '@react-three/drei'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Slider } from '@/components/ui/slider'
@@ -317,7 +317,6 @@ function ShapeViewer({ coords, bgColor }: ShapeViewerProps) {
           minDistance={maxDist * 0.5}
           maxDistance={maxDist * 5}
         />
-        <Environment preset="studio" />
       </Suspense>
     </Canvas>
   )
