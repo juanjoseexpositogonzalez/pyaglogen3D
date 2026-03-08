@@ -1080,6 +1080,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             n_levels = params.get("n_levels", 6)
             connectivity_method = params.get("connectivity_method", "random_walk")
             target_n_particles = params.get("n_particles")
+            # single_aggregate: if True, ensures a single connected component (may have higher Df)
+            # if False, allows multiple clusters but achieves more accurate target Df
+            single_aggregate = params.get("single_aggregate", False)  # Default to accurate Df
 
             # Validation with safe limits to prevent OOM/DoS
             if not (1.0 <= target_df <= 3.0):
@@ -1097,6 +1100,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 particle_radius=radius_min,
                 connectivity_method=connectivity_method,
                 target_n_particles=target_n_particles,
+                single_aggregate=single_aggregate,
                 seed=seed,
             )
         elif algorithm == "limiting":
