@@ -434,6 +434,29 @@ fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult {
         .collect();
 
     let n_particles = coords.len();
+
+    // Guard against empty aggregate (critical: prevents division by zero)
+    if n_particles == 0 {
+        return SimulationResult {
+            coordinates: vec![],
+            radii: vec![],
+            rg_evolution: vec![],
+            fractal_dimension: df,
+            fractal_dimension_std: 0.0,
+            prefactor: 1.0,
+            porosity: 0.0,
+            coordination_mean: 0.0,
+            coordination_std: 0.0,
+            execution_time_ms: start_time.elapsed().as_millis() as u64,
+            seed,
+            anisotropy: 0.0,
+            asphericity: 0.0,
+            acylindricity: 0.0,
+            principal_moments: [0.0, 0.0, 0.0],
+            principal_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        };
+    }
+
     let radii: Vec<f64> = vec![params.particle_radius; n_particles];
 
     // Center the aggregate at origin
@@ -450,7 +473,10 @@ fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult {
     let rg = calculate_radius_of_gyration(&coords, &radii);
 
     // Calculate actual Df from the data
-    // Using N = kf * (Rg/rp)^Df, solve for Df
+    // Using N = kf * (Rg/rp)^Df with kf=1 assumption (standard for box-counting method)
+    // This yields: Df = ln(N) / ln(Rg/rp)
+    // Note: This may overestimate Df compared to methods that fit kf simultaneously.
+    // For more accurate Df, use box-counting analysis on the resulting aggregate.
     let rg_over_rp = rg / params.particle_radius;
     let actual_df = if rg_over_rp > 1.0 && n_particles > 1 {
         (n_particles as f64).ln() / rg_over_rp.ln()
