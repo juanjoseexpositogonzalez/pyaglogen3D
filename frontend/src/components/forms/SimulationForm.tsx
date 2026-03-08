@@ -171,6 +171,7 @@ interface FormParams {
   // Box-Counting RFA parameters
   box_rfa_n_levels: number       // Refinement levels (4-10)
   box_rfa_connectivity: BoxRfaConnectivityMethod
+  box_rfa_single_aggregate: boolean  // If true, ensures single connected aggregate (higher Df)
 }
 
 const defaultParams: FormParams = {
@@ -208,6 +209,7 @@ const defaultParams: FormParams = {
   // Box-Counting RFA defaults
   box_rfa_n_levels: 6,
   box_rfa_connectivity: 'random_walk',
+  box_rfa_single_aggregate: false,  // Default: accurate Df (may have isolated particles)
 }
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
@@ -659,6 +661,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_df = params.target_df
       algorithmParams.n_levels = params.box_rfa_n_levels
       algorithmParams.connectivity_method = params.box_rfa_connectivity
+      algorithmParams.single_aggregate = params.box_rfa_single_aggregate
       // n_particles is optional for box_rfa - derived from n_levels if not set
       delete algorithmParams.n_particles
       delete algorithmParams.sticking_probability
@@ -1332,6 +1335,26 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   {params.box_rfa_connectivity === 'random_walk'
                     ? 'Random walk ensures connectivity with natural branching'
                     : 'Nearest neighbor creates more compact structures'
+                  }
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Aggregate Mode</Label>
+                  <Button
+                    type="button"
+                    variant={params.box_rfa_single_aggregate ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => updateParam('box_rfa_single_aggregate', !params.box_rfa_single_aggregate)}
+                  >
+                    {params.box_rfa_single_aggregate ? 'Single Aggregate' : 'Accurate Df'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.box_rfa_single_aggregate
+                    ? 'Guarantees single connected aggregate (Df may be higher than target)'
+                    : 'Achieves accurate target Df (may have a few isolated particles)'
                   }
                 </p>
               </div>
