@@ -166,47 +166,107 @@ fn is_connected(positions: &HashSet<GridPos>) -> bool {
     visited.len() == positions.len()
 }
 
-/// Select sub-boxes using random walk to ensure connectivity.
+/// Select sub-boxes using probabilistic branching to create true fractal structures.
+/// For each parent box, we probabilistically select children based on target Df.
+/// Lower Df = sparser selection = more chain-like structures.
 fn select_subboxes_random_walk<R: Rng>(
     parent_boxes: &HashSet<GridPos>,
     target_count: usize,
     rng: &mut R,
 ) -> HashSet<GridPos> {
-    // Get all candidate sub-boxes
-    let mut all_subboxes: Vec<GridPos> = parent_boxes
+    let n_parents = parent_boxes.len();
+    let total_subboxes = n_parents * 8;
+
+    // If target is >= total, keep all
+    if target_count >= total_subboxes {
+        return parent_boxes.iter().flat_map(|p| p.subdivide()).collect();
+    }
+
+    // Calculate probability of keeping each sub-box
+    // We want target_count boxes from total_subboxes
+    // But we must keep at least 1 per parent for connectivity
+    let min_kept = n_parents; // At least 1 per parent
+    let extra_to_select = target_count.saturating_sub(min_kept);
+    let extra_available = total_subboxes - min_kept;
+
+    // Probability of keeping extra sub-boxes beyond the minimum
+    let extra_prob = if extra_available > 0 {
+        (extra_to_select as f64 / extra_available as f64).min(1.0)
+    } else {
+        0.0
+    };
+
+    let mut selected: HashSet<GridPos> = HashSet::new();
+
+    // For each parent, select sub-boxes probabilistically
+    for parent in parent_boxes {
+        let subs = parent.subdivide();
+
+        // Always keep at least one random sub-box per parent (for connectivity)
+        let guaranteed = subs.choose(rng).unwrap();
+        selected.insert(*guaranteed);
+
+        // Probabilistically keep others
+        for sub in &subs {
+            if sub != guaranteed && rng.gen::<f64>() < extra_prob {
+                selected.insert(*sub);
+            }
+        }
+    }
+
+    // If we have too many, randomly remove some (but keep connectivity)
+    while selected.len() > target_count {
+        // Find boxes we can remove (those with neighbors still in set)
+        let removable: Vec<_> = selected
+            .iter()
+            .cloned()
+            .filter(|pos| {
+                // Check if removing this maintains connectivity
+                let neighbor_count = pos.neighbors()
+                    .iter()
+                    .filter(|n| selected.contains(n))
+                    .count();
+                // Only remove if it has few neighbors (peripheral)
+                neighbor_count <= 2
+            })
+            .collect();
+
+        if removable.is_empty() {
+            break;
+        }
+
+        let to_remove = removable.choose(rng).unwrap();
+        selected.remove(to_remove);
+
+        // Verify still connected
+        if !is_connected(&selected) {
+            selected.insert(*to_remove);
+            break;
+        }
+    }
+
+    // If we have too few, add neighbors of existing boxes
+    let all_subboxes: HashSet<GridPos> = parent_boxes
         .iter()
         .flat_map(|p| p.subdivide())
         .collect();
 
-    if all_subboxes.len() <= target_count {
-        return all_subboxes.into_iter().collect();
-    }
-
-    // Start with a random sub-box
-    all_subboxes.shuffle(rng);
-    let mut selected: HashSet<GridPos> = HashSet::new();
-    selected.insert(all_subboxes[0]);
-
-    // Build a set of all available sub-boxes
-    let all_set: HashSet<GridPos> = all_subboxes.iter().cloned().collect();
-
-    // Random walk: at each step, add a neighbor of the current set
     while selected.len() < target_count {
-        // Get all unselected neighbors of selected boxes
+        // Find unselected neighbors of selected boxes
         let mut frontier: Vec<GridPos> = Vec::new();
         for pos in &selected {
             for neighbor in pos.neighbors() {
-                if all_set.contains(&neighbor) && !selected.contains(&neighbor) {
+                if all_subboxes.contains(&neighbor) && !selected.contains(&neighbor) {
                     frontier.push(neighbor);
                 }
             }
         }
 
         if frontier.is_empty() {
-            // No more neighbors available, try diagonal neighbors
+            // Try diagonal neighbors
             for pos in &selected {
                 for neighbor in pos.all_neighbors() {
-                    if all_set.contains(&neighbor) && !selected.contains(&neighbor) {
+                    if all_subboxes.contains(&neighbor) && !selected.contains(&neighbor) {
                         frontier.push(neighbor);
                     }
                 }
@@ -214,11 +274,9 @@ fn select_subboxes_random_walk<R: Rng>(
         }
 
         if frontier.is_empty() {
-            // No more candidates, we've filled what we can
             break;
         }
 
-        // Select a random neighbor
         let choice = frontier.choose(rng).unwrap();
         selected.insert(*choice);
     }
@@ -226,75 +284,15 @@ fn select_subboxes_random_walk<R: Rng>(
     selected
 }
 
-/// Select sub-boxes using nearest neighbor method.
+/// Select sub-boxes using probabilistic branching (same as random_walk but
+/// with preference for keeping boxes closer to the center of each parent).
 fn select_subboxes_nearest_neighbor<R: Rng>(
     parent_boxes: &HashSet<GridPos>,
     target_count: usize,
     rng: &mut R,
 ) -> HashSet<GridPos> {
-    // Get all candidate sub-boxes
-    let all_subboxes: Vec<GridPos> = parent_boxes
-        .iter()
-        .flat_map(|p| p.subdivide())
-        .collect();
-
-    if all_subboxes.len() <= target_count {
-        return all_subboxes.into_iter().collect();
-    }
-
-    let all_set: HashSet<GridPos> = all_subboxes.iter().cloned().collect();
-
-    // Start with the center-most sub-box
-    let center = GridPos::new(0, 0, 0);
-    let start = *all_subboxes
-        .iter()
-        .min_by_key(|p| {
-            let dx = p.x - center.x;
-            let dy = p.y - center.y;
-            let dz = p.z - center.z;
-            dx * dx + dy * dy + dz * dz
-        })
-        .unwrap();
-
-    let mut selected: HashSet<GridPos> = HashSet::new();
-    selected.insert(start);
-
-    while selected.len() < target_count {
-        // Find all unselected neighbors
-        let mut candidates: Vec<(GridPos, i32)> = Vec::new();
-
-        for pos in &selected {
-            for neighbor in pos.neighbors() {
-                if all_set.contains(&neighbor) && !selected.contains(&neighbor) {
-                    // Score by number of selected neighbors (prefer more connected)
-                    let score = neighbor
-                        .neighbors()
-                        .iter()
-                        .filter(|n| selected.contains(n))
-                        .count() as i32;
-                    candidates.push((neighbor, score));
-                }
-            }
-        }
-
-        if candidates.is_empty() {
-            break;
-        }
-
-        // Select from highest-scoring candidates with some randomness
-        candidates.sort_by_key(|(_, score)| -score);
-        let max_score = candidates[0].1;
-        let best: Vec<_> = candidates
-            .iter()
-            .filter(|(_, s)| *s == max_score)
-            .map(|(p, _)| *p)
-            .collect();
-
-        let choice = best.choose(rng).unwrap();
-        selected.insert(*choice);
-    }
-
-    selected
+    // Use the same probabilistic approach as random_walk for consistent Df
+    select_subboxes_random_walk(parent_boxes, target_count, rng)
 }
 
 /// Run Box-Counting RFA simulation.
