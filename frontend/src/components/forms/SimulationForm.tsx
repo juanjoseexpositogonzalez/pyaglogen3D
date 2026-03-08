@@ -78,6 +78,7 @@ const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'tunable_cc', label: 'Tunable CC (Cluster-Cluster)' },
   { value: 'fracval', label: 'FracVAL (Polydisperse CC)' },
   { value: 'gcca', label: 'Generalized CCA (Tomchuk)' },
+  { value: 'box_rfa', label: 'Box-Counting RFA (Brown et al.)' },
   { value: 'limiting', label: 'Limiting Case Geometry (Reference)' },
 ]
 
@@ -125,6 +126,7 @@ const packingOptions3D: { value: PackingType; label: string; description: string
 
 type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
 type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
+type BoxRfaConnectivityMethod = 'random_walk' | 'nearest_neighbor'
 
 interface FormParams {
   n_particles: number
@@ -166,6 +168,9 @@ interface FormParams {
   sintering_min: number          // for uniform dist
   sintering_max: number          // for uniform dist
   sintering_std: number          // for normal dist
+  // Box-Counting RFA parameters
+  box_rfa_n_levels: number       // Refinement levels (4-10)
+  box_rfa_connectivity: BoxRfaConnectivityMethod
 }
 
 const defaultParams: FormParams = {
@@ -200,6 +205,9 @@ const defaultParams: FormParams = {
   sintering_min: 0.85,
   sintering_max: 0.95,
   sintering_std: 0.05,
+  // Box-Counting RFA defaults
+  box_rfa_n_levels: 6,
+  box_rfa_connectivity: 'random_walk',
 }
 
 const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
@@ -211,6 +219,7 @@ const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   tunable_cc: 'Tunable CC (Cluster-Cluster): Similar to Tunable PC but merges clusters instead of single particles. Produces more realistic aggregates with controlled Df and kf.',
   fracval: 'FracVAL (Morán et al. 2019): Polydisperse cluster-cluster aggregation with lognormal size distribution. Adaptive pairing strategy ensures Df and kf control for each aggregate.',
   gcca: 'Generalized CCA (Tomchuk & Avdeev 2020): Unified cluster-cluster framework with configurable split strategies. Symmetric recovers Filippov, particle-cluster recovers DLCA-like growth.',
+  box_rfa: 'Box-Counting RFA (Brown et al. 2010): Grid-based fractal construction using box-counting measure directly. Creates aggregates with exact target Df through recursive grid refinement.',
   limiting: 'Reference Geometry: Deterministic canonical structures for calibration. Choose between linear chain (Df=1), hexagonal plane (Df=2), or compact sphere (Df=3).',
 }
 
@@ -646,6 +655,13 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
         algorithmParams.stochastic_std_ratio = params.stochastic_std_ratio
       }
       algorithmParams.max_placement_attempts = params.max_placement_attempts
+    } else if (algorithm === 'box_rfa') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.n_levels = params.box_rfa_n_levels
+      algorithmParams.connectivity_method = params.box_rfa_connectivity
+      // n_particles is optional for box_rfa - derived from n_levels if not set
+      delete algorithmParams.n_particles
+      delete algorithmParams.sticking_probability
     } else if (algorithm === 'limiting') {
       algorithmParams.geometry_type = params.geometry_type
       algorithmParams.configuration_type = params.configuration_type
@@ -715,8 +731,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           <CardTitle className="text-lg">Parameters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Number of Particles - hidden for limiting case (controlled by LimitingGeometrySection) */}
-          {algorithm !== 'limiting' && (
+          {/* Number of Particles - hidden for limiting case and box_rfa (particle count determined by algorithm) */}
+          {algorithm !== 'limiting' && algorithm !== 'box_rfa' && (
             <div className="space-y-2">
               <Label htmlFor="n_particles">Number of Particles</Label>
               <Input
@@ -733,8 +749,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </div>
           )}
 
-          {/* Sticking Probability - hidden for limiting, tunable, and fracval cases */}
-          {!['limiting', 'tunable', 'tunable_cc', 'fracval'].includes(algorithm) && (
+          {/* Sticking Probability - hidden for limiting, tunable, fracval, gcca, and box_rfa cases */}
+          {!['limiting', 'tunable', 'tunable_cc', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
             <div className="space-y-2">
               <Label>
                 Sticking Probability: {params.sticking_probability.toFixed(2)}
@@ -769,8 +785,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </p>
           </div>
 
-          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), and gcca */}
-          {!['limiting', 'fracval', 'gcca'].includes(algorithm) && (
+          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), gcca, and box_rfa */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Label>Size Distribution</Label>
@@ -836,8 +852,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
           )}
 
-          {/* Sintering Section - hidden for limiting, fracval, and gcca cases */}
-          {!['limiting', 'fracval', 'gcca'].includes(algorithm) && (
+          {/* Sintering Section - hidden for limiting, fracval, gcca, and box_rfa cases */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -1257,6 +1273,77 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Maximum attempts to place clusters without overlap (100-10000)
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'box_rfa' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target Df achieved through grid refinement (1.0 = chain, 2.0 = plane, 3.0 = compact)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="box_rfa_n_levels">
+                  Refinement Levels: {params.box_rfa_n_levels}
+                </Label>
+                <Slider
+                  min={4}
+                  max={10}
+                  step={1}
+                  value={[params.box_rfa_n_levels]}
+                  onValueChange={([v]) => updateParam('box_rfa_n_levels', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  More levels = more particles (~2^(levels×Df) particles). Level 6 ≈ 100-500 particles.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Connectivity Method</Label>
+                <div className="flex gap-2">
+                  {(['random_walk', 'nearest_neighbor'] as BoxRfaConnectivityMethod[]).map((method) => (
+                    <Button
+                      key={method}
+                      type="button"
+                      variant={params.box_rfa_connectivity === method ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateParam('box_rfa_connectivity', method)}
+                    >
+                      {method === 'random_walk' ? 'Random Walk' : 'Nearest Neighbor'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.box_rfa_connectivity === 'random_walk'
+                    ? 'Random walk ensures connectivity with natural branching'
+                    : 'Nearest neighbor creates more compact structures'
+                  }
+                </p>
+              </div>
+
+              <div className="p-3 bg-primary/5 rounded-lg space-y-2">
+                <div className="flex items-center gap-2">
+                  <Info className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Box-Counting RFA</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Brown et al. (2010): Grid-based algorithm that constructs aggregates with exact target Df.
+                  Uses recursive grid refinement where N_box(ℓ_k) = (ℓ_max/ℓ_k)^Df.
                 </p>
               </div>
             </>

@@ -1073,6 +1073,32 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 max_placement_attempts=params.get("max_placement_attempts", 1000),
                 seed=seed,
             )
+        elif algorithm == "box_rfa":
+            # Box-Counting RFA (Brown et al. 2010) - grid-based fractal construction
+            # Server-side validation to prevent DoS and invalid inputs
+            target_df = params.get("target_df", 1.8)
+            n_levels = params.get("n_levels", 6)
+            connectivity_method = params.get("connectivity_method", "random_walk")
+            target_n_particles = params.get("n_particles")
+
+            # Validation with safe limits to prevent OOM/DoS
+            if not (1.0 <= target_df <= 3.0):
+                raise ValueError("target_df must be between 1.0 and 3.0")
+            if not (3 <= n_levels <= 8):
+                raise ValueError("n_levels must be between 3 and 8 (higher values cause excessive memory usage)")
+            if connectivity_method not in ("random_walk", "nearest_neighbor"):
+                raise ValueError("connectivity_method must be 'random_walk' or 'nearest_neighbor'")
+            if target_n_particles is not None and not (10 <= target_n_particles <= 10000):
+                raise ValueError("target_n_particles must be between 10 and 10000")
+
+            result = aglogen_core.run_box_rfa(
+                target_df=target_df,
+                n_levels=n_levels,
+                particle_radius=radius_min,
+                connectivity_method=connectivity_method,
+                target_n_particles=target_n_particles,
+                seed=seed,
+            )
         elif algorithm == "limiting":
             # Limiting case geometry (deterministic, no simulation)
             import time
