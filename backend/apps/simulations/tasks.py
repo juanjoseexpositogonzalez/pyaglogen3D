@@ -902,6 +902,261 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
     return box_counting_results
 
 
+def fit_power_law_rg(
+    n_values: list[int], rg_values: list[float], rp: float = 1.0
+) -> tuple[float, float, float]:
+    """Fit power-law relationship N = kf * (Rg/rp)^Df to get Df and kf.
+
+    Args:
+        n_values: List of particle counts
+        rg_values: List of corresponding Rg values
+        rp: Primary particle radius
+
+    Returns:
+        Tuple of (Df, kf, R²)
+    """
+    if len(n_values) < 3 or len(rg_values) < 3:
+        return 0.0, 0.0, 0.0
+
+    # Filter out invalid values
+    valid = [(n, rg) for n, rg in zip(n_values, rg_values) if n > 0 and rg > 0]
+    if len(valid) < 3:
+        return 0.0, 0.0, 0.0
+
+    n_arr = np.array([v[0] for v in valid], dtype=np.float64)
+    rg_arr = np.array([v[1] for v in valid], dtype=np.float64)
+
+    # Take log: log(N) = log(kf) + Df * log(Rg/rp)
+    log_n = np.log(n_arr)
+    log_rg_rp = np.log(rg_arr / rp)
+
+    # Linear fit: y = a + b*x where y=log(N), x=log(Rg/rp), b=Df, a=log(kf)
+    # Using least squares
+    A = np.vstack([log_rg_rp, np.ones(len(log_rg_rp))]).T
+    try:
+        result = np.linalg.lstsq(A, log_n, rcond=None)
+        df, log_kf = result[0]
+        kf = math.exp(log_kf)
+
+        # R² calculation
+        residuals = log_n - (df * log_rg_rp + log_kf)
+        ss_res = np.sum(residuals**2)
+        ss_tot = np.sum((log_n - np.mean(log_n)) ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        return float(df), float(kf), float(r_squared)
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def compute_import_metrics(
+    coords: np.ndarray, radii: np.ndarray
+) -> dict:
+    """Compute all metrics for imported geometry.
+
+    Similar to compute_limiting_metrics but also estimates Df/kf from Rg evolution.
+
+    Args:
+        coords: Particle coordinates (N x 3)
+        radii: Particle radii (N,)
+
+    Returns:
+        Dictionary with all computed metrics
+    """
+    n_particles = len(coords)
+    if n_particles == 0:
+        return {
+            "fractal_dimension": 0.0,
+            "fractal_dimension_std": 0.0,
+            "prefactor": 0.0,
+            "radius_of_gyration": 0.0,
+            "porosity": 0.0,
+            "coordination": {"mean": 0.0, "std": 0.0},
+            "rg_evolution": [],
+            "anisotropy": 1.0,
+            "asphericity": 0.0,
+            "acylindricity": 0.0,
+            "principal_moments": [0.0, 0.0, 0.0],
+            "principal_axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        }
+
+    # Use mean radius for calculations
+    mean_radius = float(np.mean(radii))
+
+    # Center of mass (mass-weighted for polydisperse)
+    masses = radii**3  # Mass proportional to volume
+    total_mass = masses.sum()
+    cdg = (coords.T @ masses / total_mass) if total_mass > 0 else coords.mean(axis=0)
+    centered = coords - cdg
+
+    # Radius of gyration (mass-weighted)
+    r_sq = np.sum(centered**2, axis=1)
+    rg = math.sqrt(np.sum(masses * r_sq) / total_mass) if total_mass > 0 else 0.0
+
+    # Porosity calculation
+    particle_volumes = (4.0 / 3.0) * math.pi * radii**3
+    total_particle_volume = particle_volumes.sum()
+    effective_radius = rg + mean_radius
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius ** 3)
+    porosity = max(0.0, 1.0 - total_particle_volume / aggregate_volume) if aggregate_volume > 0 else 0.0
+
+    # Coordination numbers
+    coordinations = []
+    for i in range(n_particles):
+        count = 0
+        for j in range(n_particles):
+            if i != j:
+                dist = np.linalg.norm(coords[i] - coords[j])
+                touching_dist = (radii[i] + radii[j]) * 1.05  # 5% tolerance
+                if dist <= touching_dist:
+                    count += 1
+        coordinations.append(count)
+    coord_mean = float(np.mean(coordinations))
+    coord_std = float(np.std(coordinations))
+
+    # Inertia tensor (mass-weighted)
+    inertia = np.zeros((3, 3))
+    for k, coord in enumerate(centered):
+        m = masses[k]
+        r2 = np.dot(coord, coord)
+        inertia += m * (r2 * np.eye(3) - np.outer(coord, coord))
+    inertia /= total_mass if total_mass > 0 else 1.0
+
+    # Principal moments and axes
+    eigenvalues, eigenvectors = np.linalg.eigh(inertia)
+    idx = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Shape descriptors
+    I1, I2, I3 = eigenvalues
+    anisotropy = float(I3 / I1) if I1 > 1e-10 else 1.0
+    asphericity = float(I3 - 0.5 * (I1 + I2))
+    acylindricity = float(I2 - I1)
+
+    # Rg evolution for power-law fitting
+    n_values = []
+    rg_values = []
+    step = max(1, n_particles // 100)
+    for n in range(10, n_particles + 1, step):
+        subset_masses = masses[:n]
+        subset_total = subset_masses.sum()
+        if subset_total > 0:
+            subset_cdg = (coords[:n].T @ subset_masses / subset_total)
+            subset_centered = coords[:n] - subset_cdg
+            subset_r_sq = np.sum(subset_centered**2, axis=1)
+            subset_rg = math.sqrt(np.sum(subset_masses * subset_r_sq) / subset_total)
+            n_values.append(n)
+            rg_values.append(subset_rg)
+
+    # Fit Df and kf from Rg evolution
+    df, kf, r_squared = fit_power_law_rg(n_values, rg_values, mean_radius)
+
+    # Estimate Df uncertainty based on R²
+    df_std = 0.1 * (1.0 - r_squared) if r_squared > 0.5 else 0.5
+
+    return {
+        "fractal_dimension": df,
+        "fractal_dimension_std": df_std,
+        "prefactor": kf,
+        "radius_of_gyration": float(rg),
+        "porosity": float(porosity),
+        "coordination": {
+            "mean": coord_mean,
+            "std": coord_std,
+        },
+        "rg_evolution": [float(rg) for rg in rg_values],
+        "anisotropy": anisotropy,
+        "asphericity": asphericity,
+        "acylindricity": acylindricity,
+        "principal_moments": eigenvalues.tolist(),
+        "principal_axes": eigenvectors.T.tolist(),
+    }
+
+
+@shared_task(bind=True, max_retries=1)
+def compute_import_metrics_task(self, simulation_id: str) -> dict:
+    """Compute metrics for imported geometry.
+
+    This task is used when importing agglomerate geometry from CSV files.
+    The geometry is already stored, we just need to compute the metrics.
+
+    Args:
+        simulation_id: UUID string of the simulation
+
+    Returns:
+        Dictionary with task result status and metrics
+    """
+    import time
+
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    # Update status to running
+    simulation.status = SimulationStatus.RUNNING
+    simulation.started_at = timezone.now()
+    simulation.save(update_fields=["status", "started_at"])
+
+    try:
+        start_time = time.perf_counter()
+
+        # Load geometry
+        if simulation.geometry is None:
+            raise ValueError("No geometry data found for imported simulation")
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = np.ascontiguousarray(geometry_array[:, :3])
+        radii = np.ascontiguousarray(geometry_array[:, 3])
+
+        # Compute metrics
+        metrics = compute_import_metrics(coords, radii)
+
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # Update simulation
+        simulation.metrics = metrics
+        simulation.execution_time_ms = execution_time_ms
+        simulation.engine_version = "python-import"
+        simulation.status = SimulationStatus.COMPLETED
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        logger.info(
+            f"Import metrics computed for simulation {simulation_id}: "
+            f"Df={metrics['fractal_dimension']:.3f}, "
+            f"Rg={metrics['radius_of_gyration']:.2f}, "
+            f"time={execution_time_ms}ms"
+        )
+
+        # Create notification
+        create_simulation_notification(simulation, success=True)
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "fractal_dimension": metrics["fractal_dimension"],
+            "radius_of_gyration": metrics["radius_of_gyration"],
+            "execution_time_ms": execution_time_ms,
+        }
+
+    except Exception as e:
+        logger.exception(f"Import metrics computation failed: {e}")
+        simulation.status = SimulationStatus.FAILED
+        simulation.error_message = str(e)
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        create_simulation_notification(simulation, success=False)
+
+        return {
+            "status": "failed",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
+
+
 @shared_task(bind=True, max_retries=1)
 def run_simulation_task(self, simulation_id: str) -> dict:
     """Execute simulation using Rust engine."""

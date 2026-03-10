@@ -26,7 +26,8 @@ from .services.projection import (
     render_projection_svg,
     create_projection_filename,
 )
-from .tasks import run_simulation_task
+from .tasks import compute_import_metrics_task, run_simulation_task
+from .utils import parse_csv_geometry
 
 logger = logging.getLogger(__name__)
 
@@ -60,9 +61,58 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         """Create simulation and enqueue task."""
+        import base64
+
         from django.conf import settings
 
         project_id = self.kwargs.get("project_pk")
+        algorithm = serializer.validated_data.get("algorithm")
+        csv_data = self.request.data.get("csv_data")
+
+        # Handle imported algorithm differently
+        if algorithm == "imported" and csv_data:
+            # Parse CSV data
+            csv_bytes = base64.b64decode(csv_data)
+            csv_text = csv_bytes.decode("utf-8")
+            geometry_array, n_particles, radius_min, radius_max = parse_csv_geometry(
+                csv_text
+            )
+
+            # Update parameters with import metadata
+            params = serializer.validated_data.get("parameters", {})
+            params.update(
+                {
+                    "n_particles": n_particles,
+                    "radius_min": float(radius_min),
+                    "radius_max": float(radius_max),
+                    "source": "csv_import",
+                }
+            )
+
+            # Create simulation with geometry stored immediately
+            simulation = serializer.save(project_id=project_id, parameters=params)
+
+            # Store geometry as NumPy binary
+            buffer = io.BytesIO()
+            np.save(buffer, geometry_array)
+            simulation.geometry = buffer.getvalue()
+            simulation.save(update_fields=["geometry"])
+
+            # Queue metrics computation task
+            try:
+                result = compute_import_metrics_task.delay(str(simulation.id))
+                simulation.task_id = result.id
+                simulation.save(update_fields=["task_id"])
+            except Exception:
+                if settings.DEBUG:
+                    # Run synchronously in development if Celery unavailable
+                    compute_import_metrics_task(str(simulation.id))
+                else:
+                    raise
+
+            return
+
+        # Regular simulation flow
         simulation = serializer.save(project_id=project_id)
 
         # Try Celery, fall back to sync execution in development
@@ -71,7 +121,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
             # Store task ID for cancellation
             simulation.task_id = result.id
             simulation.save(update_fields=["task_id"])
-        except Exception as e:
+        except Exception:
             if settings.DEBUG:
                 # Run synchronously in development if Celery unavailable
                 run_simulation_task(str(simulation.id))

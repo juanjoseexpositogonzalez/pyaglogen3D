@@ -1,10 +1,11 @@
 """Simulation serializers."""
+import base64
 import random
 
 from rest_framework import serializers
 
 from .models import ParametricStudy, Simulation
-from .utils import generate_simulation_name
+from .utils import CSVParseError, generate_simulation_name, parse_csv_geometry
 
 
 def generate_seed():
@@ -17,6 +18,11 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     seed = serializers.IntegerField(required=False, default=generate_seed)
     name = serializers.CharField(required=False, allow_blank=True, max_length=255)
+    csv_data = serializers.CharField(
+        required=False,
+        write_only=True,
+        help_text="Base64-encoded CSV data with x, y, z, radius columns (for 'imported' algorithm)",
+    )
 
     class Meta:
         model = Simulation
@@ -35,6 +41,7 @@ class SimulationSerializer(serializers.ModelSerializer):
             "created_at",
             "started_at",
             "completed_at",
+            "csv_data",
         ]
         read_only_fields = [
             "id",
@@ -51,11 +58,47 @@ class SimulationSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         """Auto-generate name if not provided."""
+        # Remove csv_data from validated_data before creating (it's handled in the view)
+        validated_data.pop("csv_data", None)
+
         if not validated_data.get("name"):
             validated_data["name"] = generate_simulation_name(
                 validated_data.get("algorithm", "unknown")
             )
         return super().create(validated_data)
+
+    def validate(self, data):
+        """Cross-field validation."""
+        algorithm = data.get("algorithm") or self.initial_data.get("algorithm")
+
+        # For imported algorithm, csv_data is required
+        if algorithm == "imported":
+            if "csv_data" not in self.initial_data:
+                raise serializers.ValidationError(
+                    {"csv_data": "CSV data is required for imported algorithm"}
+                )
+
+        return data
+
+    def validate_csv_data(self, value: str) -> str:
+        """Validate CSV data format and content."""
+        if not value:
+            return value
+
+        # Decode base64
+        try:
+            csv_bytes = base64.b64decode(value)
+            csv_text = csv_bytes.decode("utf-8")
+        except Exception as e:
+            raise serializers.ValidationError(f"Invalid base64 encoding: {e}")
+
+        # Validate CSV structure using our utility function
+        try:
+            parse_csv_geometry(csv_text)
+        except CSVParseError as e:
+            raise serializers.ValidationError(str(e))
+
+        return value
 
     def validate_parameters(self, value: dict) -> dict:
         """Validate algorithm-specific parameters."""
@@ -83,6 +126,11 @@ class SimulationSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError(
                     "n_particles must be at least 1 for limiting cases"
                 )
+
+        elif algorithm == "imported":
+            # Imported algorithm has minimal parameter requirements
+            # Parameters will be populated by the view after parsing CSV
+            pass
 
         return value
 

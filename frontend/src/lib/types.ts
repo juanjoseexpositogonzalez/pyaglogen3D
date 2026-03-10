@@ -3,7 +3,7 @@
  */
 
 // Enums
-export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'gcca' | 'box_rfa' | 'limiting'
+export type SimulationAlgorithm = 'dla' | 'cca' | 'ballistic' | 'ballistic_cc' | 'tunable' | 'tunable_cc' | 'fracval' | 'gcca' | 'box_rfa' | 'limiting' | 'imported'
 export type SimulationStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
 export type FractalMethod = 'box_counting' | 'sandbox' | 'correlation' | 'lacunarity' | 'multifractal' | 'fraktal_granulated_2012' | 'fraktal_voxel_2018'
 export type AnalysisStatus = 'queued' | 'running' | 'completed' | 'failed' | 'cancelled'
@@ -148,7 +148,15 @@ export interface FracvalParams {
   max_placement_attempts?: number
 }
 
-export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | GccaParams | BoxRfaParams | LimitingParams
+export interface ImportedParams {
+  original_filename: string
+  n_particles?: number      // Set by server after parsing
+  radius_min?: number       // Set by server after parsing
+  radius_max?: number       // Set by server after parsing
+  source?: 'csv_import'     // Set by server
+}
+
+export type SimulationParams = DlaParams | CcaParams | BallisticParams | TunableParams | TunableCcParams | FracvalParams | GccaParams | BoxRfaParams | LimitingParams | ImportedParams
 
 // Simulation
 export interface SimulationSummary {
@@ -218,6 +226,13 @@ export interface CreateSimulationInput {
   algorithm: SimulationAlgorithm
   parameters: SimulationParams
   seed?: number
+  csv_data?: string  // Base64-encoded CSV data (for 'imported' algorithm)
+}
+
+export interface CreateImportedSimulationInput extends Omit<CreateSimulationInput, 'parameters'> {
+  algorithm: 'imported'
+  parameters: ImportedParams
+  csv_data: string  // Base64-encoded CSV data
 }
 
 // Image Analysis
