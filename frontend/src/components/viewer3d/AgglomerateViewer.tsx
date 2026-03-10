@@ -217,6 +217,7 @@ export function AgglomerateViewer({
       style={{ backgroundColor: bgColor }}
     >
       <Canvas
+        key={useOrthographic ? 'ortho' : 'perspective'}
         orthographic={useOrthographic}
         camera={useOrthographic
           ? {
