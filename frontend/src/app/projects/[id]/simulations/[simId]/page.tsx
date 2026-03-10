@@ -19,7 +19,7 @@ import { NeighborGraph } from '@/components/topology'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
 import { FractalPlot } from '@/components/charts'
-import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES } from '@/components/analysis'
+import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES, OpticalPropertiesSection } from '@/components/analysis'
 import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
@@ -545,6 +545,15 @@ export default function SimulationDetailPage({
               <NeighborGraph
                 data={neighborGraph ?? null}
                 isLoading={isGraphLoading}
+              />
+            </div>
+
+            {/* Optical Properties */}
+            <div className="mb-8">
+              <OpticalPropertiesSection
+                projectId={id}
+                simulationId={simId}
+                existingOptical={simulation.metrics.optical}
               />
             </div>
 

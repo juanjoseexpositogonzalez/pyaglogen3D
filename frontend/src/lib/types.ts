@@ -174,9 +174,10 @@ export interface Simulation {
 
 // Optical properties from T-Matrix or DDA calculation
 export interface OpticalResults {
+  method: string  // 'tmatrix' or 'dda'
   wavelength: number
   refractive_index: { n: number; k: number }
-  medium_index: number
+  medium_index?: number
   c_ext: number  // Extinction cross-section (nm²)
   c_sca: number  // Scattering cross-section (nm²)
   c_abs: number  // Absorption cross-section (nm²)
@@ -185,8 +186,8 @@ export interface OpticalResults {
   q_abs: number  // Absorption efficiency
   asymmetry_g: number  // Asymmetry parameter
   single_scatter_albedo: number  // ω = Csca/Cext
-  geometric_cross_section: number  // Geometric cross-section (nm²)
-  execution_time_ms: number
+  geometric_cross_section?: number  // Geometric cross-section (nm²)
+  execution_time_ms?: number
 }
 
 export interface SimulationMetrics {

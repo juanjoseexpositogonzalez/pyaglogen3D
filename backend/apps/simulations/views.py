@@ -676,6 +676,138 @@ class SimulationViewSet(viewsets.ModelViewSet):
             },
         })
 
+    @action(detail=True, methods=["post"], url_path="optical")
+    def optical(self, request: Request, pk=None, **kwargs) -> Response:
+        """Calculate optical properties using T-Matrix or DDA method.
+
+        POST body:
+        {
+            "method": "tmatrix" or "dda",
+            "wavelength": 550.0,           // nm (default: 550)
+            "refractive_index_n": 1.95,    // real part (default: 1.95 for soot)
+            "refractive_index_k": 0.79,    // imaginary part (default: 0.79 for soot)
+            "medium_index": 1.0,           // surrounding medium (default: 1.0 for air)
+            // DDA-specific:
+            "dipoles_per_wavelength": 10.0 // (default: 10)
+        }
+        """
+        import aglogen_core
+
+        simulation = self.get_object()
+
+        if simulation.geometry is None:
+            return Response(
+                {"error": "Geometry not available"},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Parse parameters
+        method = request.data.get("method", "tmatrix").lower()
+        if method not in ("tmatrix", "dda"):
+            return Response(
+                {"error": "Method must be 'tmatrix' or 'dda'"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        try:
+            wavelength = float(request.data.get("wavelength", 550.0))
+            refractive_index_n = float(request.data.get("refractive_index_n", 1.95))
+            refractive_index_k = float(request.data.get("refractive_index_k", 0.79))
+            medium_index = float(request.data.get("medium_index", 1.0))
+            dipoles_per_wavelength = float(request.data.get("dipoles_per_wavelength", 10.0))
+        except (ValueError, TypeError) as e:
+            return Response(
+                {"error": f"Invalid numeric parameter: {e}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Validate ranges
+        if not (100 <= wavelength <= 2000):
+            return Response(
+                {"error": "Wavelength must be between 100 and 2000 nm"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (1.0 <= refractive_index_n <= 4.0):
+            return Response(
+                {"error": "Refractive index (n) must be between 1.0 and 4.0"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if not (0.0 <= refractive_index_k <= 5.0):
+            return Response(
+                {"error": "Refractive index (k) must be between 0.0 and 5.0"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Load geometry
+        coords, radii = self._load_geometry(simulation)
+
+        # Flatten coordinates for the API (expects 1D array)
+        coords_flat = coords.flatten()
+
+        logger.info(
+            f"Running {method.upper()} optical calculation for simulation {simulation.id} "
+            f"with {len(radii)} particles at λ={wavelength}nm"
+        )
+
+        try:
+            if method == "tmatrix":
+                result = aglogen_core.run_tmatrix(
+                    coordinates=coords_flat,
+                    radii=radii,
+                    wavelength=wavelength,
+                    refractive_index_n=refractive_index_n,
+                    refractive_index_k=refractive_index_k,
+                    medium_index=medium_index,
+                    orientation_averaging=False,
+                    n_angles=181,
+                )
+            else:  # DDA
+                result = aglogen_core.run_dda(
+                    coordinates=coords_flat,
+                    radii=radii,
+                    wavelength=wavelength,
+                    refractive_index_n=refractive_index_n,
+                    refractive_index_k=refractive_index_k,
+                    medium_index=medium_index,
+                    dipoles_per_wavelength=dipoles_per_wavelength,
+                )
+
+            # Build response
+            optical_results = {
+                "method": method,
+                "wavelength": wavelength,
+                "refractive_index": {"n": refractive_index_n, "k": refractive_index_k},
+                "medium_index": medium_index,
+                "c_ext": float(result.c_ext),
+                "c_sca": float(result.c_sca),
+                "c_abs": float(result.c_abs),
+                "q_ext": float(result.q_ext),
+                "q_sca": float(result.q_sca),
+                "q_abs": float(result.q_abs),
+                "asymmetry_g": float(result.asymmetry_g),
+                "single_scatter_albedo": float(result.single_scatter_albedo),
+            }
+
+            # Store in simulation metrics
+            metrics = simulation.metrics or {}
+            metrics["optical"] = optical_results
+            simulation.metrics = metrics
+            simulation.save(update_fields=["metrics"])
+
+            logger.info(
+                f"Optical calculation for {simulation.id} completed: "
+                f"Cext={result.c_ext:.4e}, Csca={result.c_sca:.4e}"
+            )
+
+            return Response(optical_results)
+
+        except Exception as e:
+            logger.error(f"Optical calculation failed: {e}")
+            return Response(
+                {"error": f"Optical calculation failed: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
 
 class ParametricStudyViewSet(viewsets.ModelViewSet):
     """ViewSet for ParametricStudy CRUD operations."""
