@@ -348,6 +348,39 @@ export const simulationsApi = {
           : ''
       }`
     ),
+
+  /**
+   * Calculate optical properties using T-Matrix or DDA method.
+   */
+  calculateOptical: (
+    projectId: string,
+    simId: string,
+    params: {
+      method: 'tmatrix' | 'dda'
+      wavelength?: number
+      refractive_index_n?: number
+      refractive_index_k?: number
+      medium_index?: number
+      dipoles_per_wavelength?: number
+    }
+  ) =>
+    request<{
+      method: string
+      wavelength: number
+      refractive_index: { n: number; k: number }
+      medium_index: number
+      c_ext: number
+      c_sca: number
+      c_abs: number
+      q_ext: number
+      q_sca: number
+      q_abs: number
+      asymmetry_g: number
+      single_scatter_albedo: number
+    }>(`/projects/${projectId}/simulations/${simId}/optical/`, {
+      method: 'POST',
+      body: JSON.stringify(params),
+    }),
 }
 
 // Image Analyses API
