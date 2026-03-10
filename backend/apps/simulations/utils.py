@@ -1,7 +1,10 @@
 """Utility functions for simulations."""
+import csv
+import io
 from datetime import datetime
 from typing import Any
 
+import numpy as np
 from django.utils import timezone
 
 
@@ -14,6 +17,7 @@ ALGORITHM_DISPLAY_NAMES = {
     "tunable": "Tunable",
     "tunable_cc": "Tunable CC",
     "limiting": "Limiting Case",
+    "imported": "Imported",
 }
 
 # FRAKTAL model display names
@@ -255,3 +259,81 @@ def apply_sintering_config(
         params["sintering_std"] = sintering_config.get("std", 0.05)
 
     return params
+
+
+class CSVParseError(ValueError):
+    """Error raised when CSV parsing fails."""
+
+    pass
+
+
+def parse_csv_geometry(csv_text: str) -> tuple[np.ndarray, int, float, float]:
+    """Parse CSV geometry data and return particle array.
+
+    Args:
+        csv_text: CSV text content with columns: x, y, z, radius
+
+    Returns:
+        Tuple of (geometry_array, n_particles, radius_min, radius_max)
+        - geometry_array: N x 4 numpy array (x, y, z, radius)
+        - n_particles: Number of particles
+        - radius_min: Minimum particle radius
+        - radius_max: Maximum particle radius
+
+    Raises:
+        CSVParseError: If CSV format is invalid
+    """
+    try:
+        reader = csv.DictReader(io.StringIO(csv_text))
+    except Exception as e:
+        raise CSVParseError(f"Failed to parse CSV: {e}") from e
+
+    # Check for required columns (case-insensitive)
+    if reader.fieldnames is None:
+        raise CSVParseError("CSV file appears to be empty")
+
+    fieldnames_lower = [f.strip().lower() for f in reader.fieldnames]
+    required_columns = {"x", "y", "z", "radius"}
+    missing = required_columns - set(fieldnames_lower)
+    if missing:
+        raise CSVParseError(
+            f"Missing required columns: {missing}. Found: {reader.fieldnames}"
+        )
+
+    # Map lowercase column names to actual column names
+    column_map = {}
+    for fname in reader.fieldnames:
+        lower = fname.strip().lower()
+        if lower in required_columns:
+            column_map[lower] = fname
+
+    rows = []
+    for row_num, row in enumerate(reader, start=2):  # Start at 2 (1-based + header)
+        try:
+            x = float(row[column_map["x"]])
+            y = float(row[column_map["y"]])
+            z = float(row[column_map["z"]])
+            radius = float(row[column_map["radius"]])
+
+            if radius <= 0:
+                raise CSVParseError(
+                    f"Invalid radius at row {row_num}: radius must be positive"
+                )
+
+            rows.append([x, y, z, radius])
+        except (ValueError, KeyError) as e:
+            raise CSVParseError(f"Invalid data at row {row_num}: {e}") from e
+
+    if not rows:
+        raise CSVParseError("No valid particle data found in CSV")
+
+    n_particles = len(rows)
+    if n_particles > 100000:
+        raise CSVParseError(
+            f"Maximum 100,000 particles allowed. Found: {n_particles}"
+        )
+
+    geometry = np.array(rows, dtype=np.float64)
+    radii = geometry[:, 3]
+
+    return geometry, n_particles, float(radii.min()), float(radii.max())

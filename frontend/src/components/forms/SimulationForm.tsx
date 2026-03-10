@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useMemo } from 'react'
+import { useState, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,7 +8,7 @@ import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Info } from 'lucide-react'
+import { Info, Upload, FileText, X } from 'lucide-react'
 import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
 
 /**
@@ -80,6 +80,7 @@ const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
   { value: 'gcca', label: 'Generalized CCA (Tomchuk)' },
   { value: 'box_rfa', label: 'Box-Counting RFA (Brown et al.)' },
   { value: 'limiting', label: 'Limiting Case Geometry (Reference)' },
+  { value: 'imported', label: 'Import from CSV File' },
 ]
 
 type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
@@ -223,6 +224,7 @@ const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
   gcca: 'Generalized CCA (Tomchuk & Avdeev 2020): Unified cluster-cluster framework with configurable split strategies. Symmetric recovers Filippov, particle-cluster recovers DLCA-like growth.',
   box_rfa: 'Box-Counting RFA (Brown et al. 2010): Grid-based fractal construction using box-counting measure directly. Creates aggregates with exact target Df through recursive grid refinement.',
   limiting: 'Reference Geometry: Deterministic canonical structures for calibration. Choose between linear chain (Df=1), hexagonal plane (Df=2), or compact sphere (Df=3).',
+  imported: 'Import from CSV: Load existing agglomerate geometry from a CSV file. File must contain columns: x, y, z, radius (one particle per row). Metrics will be computed automatically.',
 }
 
 /**
@@ -587,14 +589,21 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [seed, setSeed] = useState<string>('')
+  const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [csvError, setCsvError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const handleAlgorithmChange = (value: SimulationAlgorithm) => {
     setAlgorithm(value)
+    // Clear CSV file when switching away from imported
+    if (algorithm === 'imported' && value !== 'imported') {
+      clearCsvFile()
+    }
     // Set sensible defaults when switching algorithms
     if (value === 'limiting') {
       // Default to N=7 (first complete hexagonal ring) for limiting case
       updateParam('n_particles', 7)
-    } else if (params.n_particles < 10) {
+    } else if (value !== 'imported' && params.n_particles < 10) {
       // Reset to default if coming from limiting case with small N
       updateParam('n_particles', 1000)
     }
@@ -604,8 +613,73 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     setParams((prev) => ({ ...prev, [key]: value }))
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    setCsvError(null)
+
+    if (!file) {
+      setCsvFile(null)
+      return
+    }
+
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setCsvError('Please select a CSV file')
+      setCsvFile(null)
+      return
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setCsvError('File size must be less than 10MB')
+      setCsvFile(null)
+      return
+    }
+
+    setCsvFile(file)
+  }
+
+  const clearCsvFile = () => {
+    setCsvFile(null)
+    setCsvError(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // Handle imported algorithm separately
+    if (algorithm === 'imported') {
+      if (!csvFile) {
+        setCsvError('Please select a CSV file to import')
+        return
+      }
+
+      // Read file and convert to base64
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Extract base64 data (remove data:...;base64, prefix)
+        const base64Data = result.split(',')[1]
+
+        onSubmit({
+          name: name.trim() || undefined,
+          algorithm: 'imported',
+          parameters: {
+            original_filename: csvFile.name,
+          },
+          seed: seed ? parseInt(seed) : undefined,
+          csv_data: base64Data,
+        } as CreateSimulationInput)
+      }
+      reader.onerror = () => {
+        setCsvError('Failed to read file')
+      }
+      reader.readAsDataURL(csvFile)
+      return
+    }
 
     // Build algorithm-specific parameters
     // Backend uses dimensionless units (radius ~1.0), we store nm for display
@@ -728,14 +802,87 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
         </CardContent>
       </Card>
 
+      {/* CSV File Upload (only for imported algorithm) */}
+      {algorithm === 'imported' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Import CSV File</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="csv_file">CSV File</Label>
+              <div className="flex gap-2">
+                <Input
+                  ref={fileInputRef}
+                  id="csv_file"
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  className="flex-1"
+                />
+                {csvFile && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={clearCsvFile}
+                    title="Clear file"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {csvError && (
+                <p className="text-sm text-destructive">{csvError}</p>
+              )}
+            </div>
+
+            {csvFile && (
+              <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                <FileText className="h-8 w-8 text-muted-foreground" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{csvFile.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {(csvFile.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="p-3 bg-primary/5 rounded-lg space-y-2">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">CSV Format</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The CSV file must contain columns: <code className="bg-muted px-1 rounded">x</code>,{' '}
+                <code className="bg-muted px-1 rounded">y</code>,{' '}
+                <code className="bg-muted px-1 rounded">z</code>,{' '}
+                <code className="bg-muted px-1 rounded">radius</code> (one particle per row).
+                Maximum 100,000 particles. Headers are required.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Example:
+              </p>
+              <pre className="text-xs bg-muted p-2 rounded font-mono">
+{`x,y,z,radius
+0.0,0.0,0.0,1.0
+2.0,0.0,0.0,1.0
+4.0,0.0,0.0,1.0`}
+              </pre>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Common Parameters */}
       <Card>
         <CardHeader>
           <CardTitle className="text-lg">Parameters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-6">
-          {/* Number of Particles - hidden for limiting case and box_rfa (particle count determined by algorithm) */}
-          {algorithm !== 'limiting' && algorithm !== 'box_rfa' && (
+          {/* Number of Particles - hidden for limiting case, box_rfa, and imported (particle count determined by algorithm/file) */}
+          {algorithm !== 'limiting' && algorithm !== 'box_rfa' && algorithm !== 'imported' && (
             <div className="space-y-2">
               <Label htmlFor="n_particles">Number of Particles</Label>
               <Input
@@ -752,8 +899,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </div>
           )}
 
-          {/* Sticking Probability - hidden for limiting, tunable, fracval, gcca, and box_rfa cases */}
-          {!['limiting', 'tunable', 'tunable_cc', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
+          {/* Sticking Probability - hidden for limiting, tunable, fracval, gcca, box_rfa, and imported cases */}
+          {!['limiting', 'tunable', 'tunable_cc', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
             <div className="space-y-2">
               <Label>
                 Sticking Probability: {params.sticking_probability.toFixed(2)}
@@ -771,25 +918,27 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </div>
           )}
 
-          {/* Primary Particle Radius in nm */}
-          <div className="space-y-2">
-            <Label htmlFor="primary_radius">Primary Particle Radius (nm)</Label>
-            <Input
-              id="primary_radius"
-              type="number"
-              min={1}
-              max={1000}
-              step={1}
-              value={params.primary_particle_radius_nm}
-              onChange={(e) => updateParam('primary_particle_radius_nm', parseFloat(e.target.value) || 25.0)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Physical size of primary particles. Results (Rg, coordinates) will be displayed in nm.
-            </p>
-          </div>
+          {/* Primary Particle Radius in nm - hidden for imported (uses file data) */}
+          {algorithm !== 'imported' && (
+            <div className="space-y-2">
+              <Label htmlFor="primary_radius">Primary Particle Radius (nm)</Label>
+              <Input
+                id="primary_radius"
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                value={params.primary_particle_radius_nm}
+                onChange={(e) => updateParam('primary_particle_radius_nm', parseFloat(e.target.value) || 25.0)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Physical size of primary particles. Results (Rg, coordinates) will be displayed in nm.
+              </p>
+            </div>
+          )}
 
-          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), gcca, and box_rfa */}
-          {!['limiting', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
+          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), gcca, box_rfa, and imported */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <Label>Size Distribution</Label>
@@ -855,8 +1004,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
           )}
 
-          {/* Sintering Section - hidden for limiting, fracval, gcca, and box_rfa cases */}
-          {!['limiting', 'fracval', 'gcca', 'box_rfa'].includes(algorithm) && (
+          {/* Sintering Section - hidden for limiting, fracval, gcca, box_rfa, and imported cases */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
           <div className="space-y-4">
             <div className="flex items-center justify-between">
               <div>

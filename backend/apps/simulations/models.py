@@ -17,6 +17,7 @@ class SimulationAlgorithm(models.TextChoices):
     GCCA = "gcca", "Generalized CCA (Tomchuk)"
     BOX_RFA = "box_rfa", "Box-Counting RFA"
     LIMITING = "limiting", "Limiting Case Geometry"
+    IMPORTED = "imported", "Imported Geometry"
 
 
 class SimulationStatus(models.TextChoices):
