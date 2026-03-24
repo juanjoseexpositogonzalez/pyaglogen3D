@@ -14,6 +14,10 @@ class IsProjectOwnerOrShared(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj) -> bool:
+        # Superusers have full access
+        if request.user.is_superuser:
+            return True
+
         # Check if obj is a project or has a project attribute
         project = getattr(obj, "project", obj)
 
@@ -42,6 +46,10 @@ class IsProjectAdmin(permissions.BasePermission):
     """
 
     def has_object_permission(self, request, view, obj) -> bool:
+        # Superusers have full access
+        if request.user.is_superuser:
+            return True
+
         project = getattr(obj, "project", obj)
 
         # Owner is always admin

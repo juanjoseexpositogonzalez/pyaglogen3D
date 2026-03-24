@@ -22,6 +22,10 @@ class ProjectViewSet(viewsets.ModelViewSet):
         if not user.is_authenticated:
             return Project.objects.filter(is_public=True)
 
+        # Superusers can see all projects
+        if user.is_superuser:
+            return Project.objects.all()
+
         # Get IDs of projects shared with user
         shared_project_ids = ProjectShare.objects.filter(user=user).values_list(
             "project_id", flat=True
