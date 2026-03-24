@@ -277,7 +277,7 @@ class Notification(models.Model):
                     "simulation_id": str(simulation.id),
                     "simulation_name": simulation.name,
                     "algorithm": simulation.algorithm,
-                    "n_particles": simulation.n_particles,
+                    "n_particles": simulation.parameters.get("n_particles"),
                 },
             )
         else:
