@@ -24,12 +24,8 @@ services:
       - postgres_data:/var/lib/postgresql/data
     env_file:
       - backend/.env
-    environment:
-      POSTGRES_DB: ${POSTGRES_DB:-pyaglogen3d}
-      POSTGRES_USER: ${POSTGRES_USER:-pyaglogen3d}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-pyaglogen3d} -d ${POSTGRES_DB:-pyaglogen3d}"]
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -79,6 +75,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    healthcheck:
+      disable: true
     networks:
       - app-network
     restart: unless-stopped
@@ -128,6 +126,8 @@ services:
     build:
       context: ./frontend
       dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL before building frontend}
     ports:
       - "3001:3000"
     env_file:
