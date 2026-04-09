@@ -1,0 +1,153 @@
+# =============================================================================
+# Production Docker Compose for pyAgloGen3D
+# 
+# Services: db (pgvector), redis, backend, worker, beat, frontend
+# 
+# Usage:
+#   docker compose -f docker-compose.prod.yml build
+#   docker compose -f docker-compose.prod.yml up -d
+#
+# Ports:
+#   - Backend API: 8004 (internal 8080) → pyaglogen.flowplanapp.com
+#   - Frontend:    3001 (internal 3000) → pyaglogen.flowplanapp.com
+# =============================================================================
+
+services:
+  # ---------------------------------------------------------------------------
+  # Database: PostgreSQL 16 with pgvector extension
+  # ---------------------------------------------------------------------------
+  db:
+    build:
+      context: ./docker/postgres
+      dockerfile: Dockerfile.prod
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    env_file:
+      - backend/.env
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Redis: Cache and Celery broker
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Backend: Django + Gunicorn (API server)
+  # ---------------------------------------------------------------------------
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8004:8080"
+    env_file:
+      - backend/.env
+    command: >
+      gunicorn
+      --bind 0.0.0.0:8080
+      --workers 2
+      --timeout 120
+      --access-logfile -
+      --error-logfile -
+      config.wsgi:application
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      disable: true
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Worker: Celery background task processor
+  # ---------------------------------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    command: celery -A config worker -l info --concurrency=2
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Beat: Celery periodic task scheduler
+  # ---------------------------------------------------------------------------
+  beat:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    env_file:
+      - backend/.env
+    command: celery -A config beat -l info
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - app-network
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Frontend: Next.js standalone server
+  # ---------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:?set NEXT_PUBLIC_API_URL before building frontend}
+    ports:
+      - "3001:3000"
+    env_file:
+      - frontend/.env
+    depends_on:
+      - backend
+    networks:
+      - app-network
+    restart: unless-stopped
+
+# =============================================================================
+# Networks
+# =============================================================================
+networks:
+  app-network:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+volumes:
+  postgres_data:
+  redis_data:

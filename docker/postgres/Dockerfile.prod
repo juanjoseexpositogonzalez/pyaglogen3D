@@ -1,0 +1,37 @@
+# =============================================================================
+# PostgreSQL 16 with pgvector extension for Docker Compose production
+# Based on official postgres image with pgvector compiled from source
+# =============================================================================
+
+FROM postgres:16-bookworm
+
+# Install build dependencies for pgvector
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        postgresql-server-dev-16 && \
+    rm -rf /var/lib/apt/lists/*
+
+# Install pgvector
+WORKDIR /tmp
+RUN git clone --branch v0.8.0 https://github.com/pgvector/pgvector.git && \
+    cd pgvector && \
+    make && \
+    make install && \
+    cd .. && \
+    rm -rf pgvector
+
+# Clean up build dependencies
+RUN apt-get purge -y --auto-remove \
+        build-essential \
+        git \
+        postgresql-server-dev-16 && \
+    apt-get clean && \
+    rm -rf /var/lib/apt/lists/*
+
+WORKDIR /
+
+# Enable pgvector extension on database creation
+# This script runs after the database is initialized
+COPY init-pgvector.sql /docker-entrypoint-initdb.d/
