@@ -17,8 +17,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libssl-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# Install maturin for building Python wheels from Rust
-RUN pip3 install --break-system-packages maturin==1.4.0
+# Install build-time Python dependencies for the Rust wheel
+RUN pip3 install --break-system-packages "numpy>=1.24" "maturin==1.12.2"
 
 WORKDIR /build
 
