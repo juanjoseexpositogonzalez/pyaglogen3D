@@ -12,7 +12,8 @@ class Migration(migrations.Migration):
     """
 
     dependencies = [
-        ('accounts', '0002_sharing'),
+        ("accounts", "0002_sharing"),
+        ("admin", "0001_initial"),
     ]
 
     operations = [
