@@ -300,6 +300,44 @@ fn check_overlap(cluster1: &TunableCluster, cluster2: &TunableCluster, sintering
     false
 }
 
+/// Relative tolerance accepted when validating inter-cluster contact.
+///
+/// This only covers floating-point drift from the positioning/rotation math; it should
+/// not be large enough to treat a visibly separated pair as a real contact.
+const INTERCLUSTER_CONTACT_REL_TOL: f64 = 1e-4;
+const INTERCLUSTER_CONTACT_ABS_TOL: f64 = 1e-6;
+
+fn intercluster_contact_tolerance(contact_dist: f64) -> f64 {
+    (contact_dist * INTERCLUSTER_CONTACT_REL_TOL).max(INTERCLUSTER_CONTACT_ABS_TOL)
+}
+
+/// Check whether two clusters have at least one real inter-cluster contact.
+fn has_intercluster_contact(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+) -> bool {
+    let dist = cluster1.center_of_mass.distance_to(&cluster2.center_of_mass);
+    let bounding_contact = sintered_contact_distance(cluster1.bounding_radius, cluster2.bounding_radius, sintering_coeff);
+    if dist > bounding_contact + INTERCLUSTER_CONTACT_ABS_TOL {
+        return false;
+    }
+
+    for p1 in &cluster1.particles {
+        for p2 in &cluster2.particles {
+            let d = p1.center.distance_to(&p2.center);
+            let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
+            let tolerance = intercluster_contact_tolerance(contact_dist);
+
+            if d <= contact_dist + tolerance {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
 /// Rotate vector v around axis by angle (in radians) using Rodrigues' formula.
 fn rotate_vector(v: &Vector3, axis: &Vector3, angle: f64) -> Vector3 {
     let cos_a = angle.cos();
@@ -822,19 +860,21 @@ fn run_tunable_cc_internal(
                         );
 
                         if positioned {
+                            let has_contact = has_intercluster_contact(&impacted, &impactor, sintering_coeff);
+
                             // Step 8: Check and resolve overlaps (with sintering)
-                            if !check_overlap(&impacted, &impactor, sintering_coeff) {
+                            if has_contact && !check_overlap(&impacted, &impactor, sintering_coeff) {
                                 merge_success = true;
                                 tunable_merges += 1;
                                 break;
-                            } else if resolve_overlap_by_rotation(
+                            } else if has_contact && resolve_overlap_by_rotation(
                                 &impacted,
                                 &mut impactor,
                                 m2,
                                 params.max_rotation_attempts,
                                 sintering_coeff,
                                 &mut rng,
-                            ) {
+                            ) && has_intercluster_contact(&impacted, &impactor, sintering_coeff) {
                                 merge_success = true;
                                 tunable_merges += 1;
                                 break;
@@ -994,6 +1034,72 @@ fn calculate_fractal_dimension_from_evolution(
 mod tests {
     use super::*;
 
+    fn particles_form_connected_graph(coordinates: &[[f64; 3]], radii: &[f64], sintering_coeff: f64) -> bool {
+        if coordinates.len() <= 1 {
+            return true;
+        }
+
+        let mut visited = vec![false; coordinates.len()];
+        let mut stack = vec![0usize];
+        visited[0] = true;
+
+        while let Some(current) = stack.pop() {
+            for neighbor in 0..coordinates.len() {
+                if visited[neighbor] || current == neighbor {
+                    continue;
+                }
+
+                let c1 = coordinates[current];
+                let c2 = coordinates[neighbor];
+                let dist = ((c1[0] - c2[0]).powi(2)
+                    + (c1[1] - c2[1]).powi(2)
+                    + (c1[2] - c2[2]).powi(2))
+                .sqrt();
+                let contact_dist = sintered_contact_distance(radii[current], radii[neighbor], sintering_coeff);
+                let tolerance = intercluster_contact_tolerance(contact_dist);
+
+                if dist <= contact_dist + tolerance {
+                    visited[neighbor] = true;
+                    stack.push(neighbor);
+                }
+            }
+        }
+
+        visited.into_iter().all(|is_visited| is_visited)
+    }
+
+    #[test]
+    fn test_intercluster_contact_requires_actual_touching() {
+        let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), 1.0));
+        let mut cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), 1.0));
+
+        assert!(can_clusters_connect(&cluster1, &cluster2, 2.0));
+        assert!(!has_intercluster_contact(&cluster1, &cluster2, 1.0));
+
+        cluster2.translate(Vector3::new(-3.0, 0.0, 0.0));
+
+        assert!(has_intercluster_contact(&cluster1, &cluster2, 1.0));
+    }
+
+    #[test]
+    fn test_intercluster_contact_tolerance_only_allows_numerical_noise() {
+        let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), 1.0));
+        let contact_dist = sintered_contact_distance(1.0, 1.0, 1.0);
+        let tolerance = intercluster_contact_tolerance(contact_dist);
+
+        let within_tolerance = TunableCluster::new(Sphere::new(
+            Vector3::new(contact_dist + tolerance * 0.5, 0.0, 0.0),
+            1.0,
+        ));
+        let beyond_tolerance = TunableCluster::new(Sphere::new(
+            Vector3::new(contact_dist + tolerance * 2.0, 0.0, 0.0),
+            1.0,
+        ));
+
+        assert!(has_intercluster_contact(&cluster1, &within_tolerance, 1.0));
+        assert!(!has_intercluster_contact(&cluster1, &beyond_tolerance, 1.0));
+    }
+
     #[test]
     fn test_tunable_cc_deterministic() {
         let params = TunableCcParams {
@@ -1061,6 +1167,23 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn test_tunable_cc_returns_connected_aggregate() {
+        let params = TunableCcParams {
+            n_particles: 40,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 321, None);
+
+        assert!(
+            particles_form_connected_graph(&result.coordinates, &result.radii, 1.0),
+            "Tunable CC should not return a disconnected aggregate"
+        );
     }
 
     #[test]
