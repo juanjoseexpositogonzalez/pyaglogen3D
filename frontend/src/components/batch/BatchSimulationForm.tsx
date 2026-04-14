@@ -8,16 +8,8 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 import { Plus, Trash2, Play } from 'lucide-react'
+import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import type { SimulationAlgorithm, CreateParametricStudyInput } from '@/lib/types'
-
-const algorithmOptions = [
-  { value: 'ballistic', label: 'Ballistic Particle-Cluster' },
-  { value: 'ballistic_cc', label: 'Ballistic Cluster-Cluster' },
-  { value: 'dla', label: 'Diffusion-Limited Aggregation' },
-  { value: 'cca', label: 'Cluster-Cluster Aggregation' },
-  { value: 'tunable', label: 'Tunable Fractal Dimension' },
-  { value: 'limiting', label: 'Limiting Cases (Df=1,2,3)' },
-]
 
 const limitingGeometryOptions = [
   { value: 'chain', label: 'Linear Chain (Df=1)' },
@@ -265,19 +257,31 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const effectiveSeeds = algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1)
   const totalSimulations = totalCombinations * effectiveSeeds
 
-  const parameterOptions = algorithm === 'limiting'
-    ? [
+  const parameterOptions = useMemo(() => {
+    if (algorithm === 'limiting') {
+      return [
         { value: 'configuration_type', label: 'Configuration Type' },
         { value: 'n_particles', label: 'Number of Particles' },
         { value: 'sintering_coeff', label: 'Sintering Coefficient' },
         { value: 'packing', label: 'Packing Type (sphere only)' },
       ]
-    : [
-        { value: 'n_particles', label: 'Number of Particles' },
-        { value: 'sticking_probability', label: 'Sticking Probability' },
-        { value: 'target_df', label: 'Target Df (tunable only)' },
-        { value: 'target_kf', label: 'Target kf (tunable only)' },
-      ]
+    }
+
+    const options = [
+      { value: 'n_particles', label: 'Number of Particles' },
+      { value: 'target_df', label: 'Target Df' },
+    ]
+
+    if (['dla', 'cca', 'ballistic', 'ballistic_cc'].includes(algorithm)) {
+      options.splice(1, 0, { value: 'sticking_probability', label: 'Sticking Probability' })
+    }
+
+    if (['tunable', 'tunable_cc', 'fracval', 'gcca'].includes(algorithm)) {
+      options.push({ value: 'target_kf', label: 'Target kf' })
+    }
+
+    return options
+  }, [algorithm])
 
   return (
     <Card>
@@ -315,7 +319,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             <Select
               value={algorithm}
               onChange={(e) => setAlgorithm(e.target.value as SimulationAlgorithm)}
-              options={algorithmOptions}
+              options={batchSimulationAlgorithmOptions}
             />
           </div>
 

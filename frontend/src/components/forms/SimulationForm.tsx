@@ -9,6 +9,10 @@ import { Slider } from '@/components/ui/slider'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Info, Upload, FileText, X } from 'lucide-react'
+import {
+  singleSimulationAlgorithmOptions,
+  simulationAlgorithmDescriptions,
+} from '@/lib/simulation-algorithms'
 import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
 
 /**
@@ -68,20 +72,6 @@ interface SimulationFormProps {
   onSubmit: (data: CreateSimulationInput) => void
   isLoading?: boolean
 }
-
-const algorithmOptions: { value: SimulationAlgorithm; label: string }[] = [
-  { value: 'dla', label: 'DLA (Diffusion-Limited Aggregation)' },
-  { value: 'cca', label: 'CCA (Brownian Cluster-Cluster)' },
-  { value: 'ballistic', label: 'Ballistic PC (Particle-Cluster)' },
-  { value: 'ballistic_cc', label: 'Ballistic CC (Cluster-Cluster)' },
-  { value: 'tunable', label: 'Tunable PC (Filippov method)' },
-  { value: 'tunable_cc', label: 'Tunable CC (Cluster-Cluster)' },
-  { value: 'fracval', label: 'FracVAL (Polydisperse CC)' },
-  { value: 'gcca', label: 'Generalized CCA (Tomchuk)' },
-  { value: 'box_rfa', label: 'Box-Counting RFA (Brown et al.)' },
-  { value: 'limiting', label: 'Limiting Case Geometry (Reference)' },
-  { value: 'imported', label: 'Import from CSV File' },
-]
 
 type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
 
@@ -211,20 +201,6 @@ const defaultParams: FormParams = {
   box_rfa_n_levels: 6,
   box_rfa_connectivity: 'random_walk',
   box_rfa_single_aggregate: false,  // Default: accurate Df (may have isolated particles)
-}
-
-const algorithmDescriptions: Record<SimulationAlgorithm, string> = {
-  dla: 'Diffusion-Limited Aggregation: Particles undergo random walks and stick upon contact. Produces fractal structures with Df ~ 2.4-2.6.',
-  cca: 'Brownian CCA: Clusters move via Brownian motion and merge on collision. Produces open structures with Df ~ 1.8-2.0.',
-  ballistic: 'Ballistic PC: Particles travel in straight lines towards a growing cluster. Produces denser structures with Df ~ 2.8-3.0.',
-  ballistic_cc: 'Ballistic CC: Clusters travel in straight lines and merge on collision. Produces branched structures with Df ~ 1.8-2.2 (thesis section 6.2).',
-  tunable: 'Tunable PC (Filippov method): Generate aggregates with target fractal dimension and prefactor. Based on N = kf × (Rg/rp)^Df power law.',
-  tunable_cc: 'Tunable CC (Cluster-Cluster): Similar to Tunable PC but merges clusters instead of single particles. Produces more realistic aggregates with controlled Df and kf.',
-  fracval: 'FracVAL (Morán et al. 2019): Polydisperse cluster-cluster aggregation with lognormal size distribution. Adaptive pairing strategy ensures Df and kf control for each aggregate.',
-  gcca: 'Generalized CCA (Tomchuk & Avdeev 2020): Unified cluster-cluster framework with configurable split strategies. Symmetric recovers Filippov, particle-cluster recovers DLCA-like growth.',
-  box_rfa: 'Box-Counting RFA (Brown et al. 2010): Grid-based fractal construction using box-counting measure directly. Creates aggregates with exact target Df through recursive grid refinement.',
-  limiting: 'Reference Geometry: Deterministic canonical structures for calibration. Choose between linear chain (Df=1), hexagonal plane (Df=2), or compact sphere (Df=3).',
-  imported: 'Import from CSV: Load existing agglomerate geometry from a CSV file. File must contain columns: x, y, z, radius (one particle per row). Metrics will be computed automatically.',
 }
 
 /**
@@ -794,10 +770,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           <Select
             value={algorithm}
             onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
-            options={algorithmOptions}
+            options={singleSimulationAlgorithmOptions}
           />
           <p className="text-sm text-muted-foreground">
-            {algorithmDescriptions[algorithm]}
+            {simulationAlgorithmDescriptions[algorithm]}
           </p>
         </CardContent>
       </Card>
