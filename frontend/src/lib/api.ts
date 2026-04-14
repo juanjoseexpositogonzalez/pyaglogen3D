@@ -23,7 +23,7 @@ import { authApi } from './auth-api'
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
-class ApiError extends Error {
+export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
@@ -247,14 +247,25 @@ export const simulationsApi = {
           azimuth_end: params.azimuth_end ?? 150,
           azimuth_step: params.azimuth_step ?? 30,
           elevation_start: params.elevation_start ?? 0,
-          elevation_end: params.elevation_end ?? 150,
+          elevation_end: params.elevation_end ?? 90,
           elevation_step: params.elevation_step ?? 30,
           format: params.format ?? 'png',
         }),
       }
     )
     if (!res.ok) {
-      throw new ApiError('Failed to generate projections', res.status)
+      const contentType = res.headers.get('Content-Type') || ''
+      if (contentType.includes('application/json')) {
+        const error = await res.json().catch(() => ({}))
+        throw new ApiError(
+          error.message || error.detail || 'Failed to generate projections',
+          res.status,
+          error.details
+        )
+      }
+
+      const text = await res.text().catch(() => '')
+      throw new ApiError(text || 'Failed to generate projections', res.status)
     }
     return res.blob()
   },
