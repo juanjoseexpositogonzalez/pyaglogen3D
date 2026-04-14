@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Label } from '@/components/ui/label'
 import { Download, ExternalLink, RefreshCw, Calculator } from 'lucide-react'
+import { getSimulationAlgorithmLabel } from '@/lib/simulation-algorithms'
 import { formatNumber } from '@/lib/utils'
 import type { ParametricStudyResults, BoxCountingResult } from '@/lib/types'
 
@@ -166,7 +167,7 @@ export function BatchResultsTable({
 
         {/* Algorithm info */}
         <div className="flex gap-4 text-sm text-muted-foreground">
-          <span>Algorithm: <span className="font-medium text-foreground">{data.base_algorithm}</span></span>
+          <span>Algorithm: <span className="font-medium text-foreground">{getSimulationAlgorithmLabel(data.base_algorithm)}</span></span>
           <span>Seeds: <span className="font-medium text-foreground">{data.progress.total / Object.values(data.parameter_grid).reduce((acc, v) => acc * (Array.isArray(v) ? v.length : 1), 1)}</span></span>
         </div>
 
