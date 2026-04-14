@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulation, useSimulationGeometry, useNeighborGraph } from '@/hooks/useSimulations'
-import { simulationsApi } from '@/lib/api'
+import { ApiError, simulationsApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
 import { ViewerControls } from '@/components/viewer3d/ViewerControls'
@@ -23,6 +23,7 @@ import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES, OpticalProperti
 import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
@@ -59,6 +60,7 @@ export default function SimulationDetailPage({
   })
   const [isProjectionLoading, setIsProjectionLoading] = useState(false)
   const [isBatchLoading, setIsBatchLoading] = useState(false)
+  const [batchDownloadError, setBatchDownloadError] = useState<string | null>(null)
   const [isExporting, setIsExporting] = useState(false)
   const [showLimitingCases, setShowLimitingCases] = useState(false)
 
@@ -117,6 +119,7 @@ export default function SimulationDetailPage({
 
   const handleBatchDownload = async (params: BatchParams) => {
     setIsBatchLoading(true)
+    setBatchDownloadError(null)
     try {
       const blob = await simulationsApi.getProjectionBatch(id, simId, params)
       // Trigger download
@@ -130,6 +133,11 @@ export default function SimulationDetailPage({
       URL.revokeObjectURL(url)
     } catch (err) {
       console.error('Failed to generate batch projections:', err)
+      setBatchDownloadError(
+        err instanceof ApiError
+          ? err.message
+          : 'Failed to generate projections ZIP. Verify the selected angles and try again.'
+      )
     } finally {
       setIsBatchLoading(false)
     }
@@ -531,12 +539,19 @@ export default function SimulationDetailPage({
                 />
               </div>
               <div className="lg:col-span-1">
-                <ProjectionControls
-                  onPreview={handleProjectionPreview}
-                  onDownloadBatch={handleBatchDownload}
-                  isLoading={isProjectionLoading}
-                  isBatchLoading={isBatchLoading}
-                />
+                <div className="space-y-4">
+                  {batchDownloadError && (
+                    <Alert variant="destructive">
+                      <AlertDescription>{batchDownloadError}</AlertDescription>
+                    </Alert>
+                  )}
+                  <ProjectionControls
+                    onPreview={handleProjectionPreview}
+                    onDownloadBatch={handleBatchDownload}
+                    isLoading={isProjectionLoading}
+                    isBatchLoading={isBatchLoading}
+                  />
+                </div>
               </div>
             </div>
 

@@ -55,7 +55,7 @@ export function ProjectionControls({
   const [azEnd, setAzEnd] = useState(150)
   const [azStep, setAzStep] = useState(30)
   const [elStart, setElStart] = useState(0)
-  const [elEnd, setElEnd] = useState(150)
+  const [elEnd, setElEnd] = useState(90)
   const [elStep, setElStep] = useState(30)
 
   const handlePreview = () => {
