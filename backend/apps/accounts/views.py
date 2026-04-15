@@ -2,6 +2,7 @@
 Authentication views for PyAglogen3D.
 """
 
+import logging
 import secrets
 from datetime import timedelta
 
@@ -29,6 +30,11 @@ from .serializers import (
 )
 
 User = get_user_model()
+logger = logging.getLogger(__name__)
+
+
+class VerificationEmailDeliveryError(Exception):
+    """Raised when a verification email could not be delivered."""
 
 
 def get_tokens_for_user(user) -> dict:
@@ -55,15 +61,25 @@ class RegisterView(generics.CreateAPIView):
         serializer.is_valid(raise_exception=True)
         user = serializer.save()
 
-        # Send verification email
-        self._send_verification_email(user)
+        verification_email_sent = True
+        message = "Registration successful. Please check your email to verify your account."
+
+        try:
+            self._send_verification_email(user)
+        except VerificationEmailDeliveryError:
+            verification_email_sent = False
+            message = (
+                "Registration successful, but we could not send the verification email. "
+                "Please try resending it shortly."
+            )
 
         tokens = get_tokens_for_user(user)
         return Response(
             {
                 "user": UserSerializer(user).data,
                 "tokens": tokens,
-                "message": "Registration successful. Please check your email to verify your account.",
+                "message": message,
+                "verification_email_status": "sent" if verification_email_sent else "failed",
             },
             status=status.HTTP_201_CREATED,
         )
@@ -89,10 +105,14 @@ class RegisterView(generics.CreateAPIView):
                 message=f"Click this link to verify your email: {verify_url}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
-                fail_silently=True,
+                fail_silently=False,
             )
-        except Exception:
-            pass  # Don't fail registration if email fails
+        except Exception as exc:
+            logger.exception(
+                "Failed to send verification email during registration",
+                extra={"user_id": str(user.id), "email": user.email},
+            )
+            raise VerificationEmailDeliveryError from exc
 
 
 class LoginView(APIView):
@@ -237,10 +257,20 @@ class ResendVerificationView(APIView):
             user = User.objects.get(email=email)
         except User.DoesNotExist:
             # Don't reveal if email exists
-            return Response({"message": "If this email exists, a verification link will be sent."})
+            return Response(
+                {
+                    "message": "If this email exists, a verification link will be sent.",
+                    "verification_email_status": "unknown",
+                }
+            )
 
         if user.email_verified:
-            return Response({"message": "Email is already verified."})
+            return Response(
+                {
+                    "message": "Email is already verified.",
+                    "verification_email_status": "not_required",
+                }
+            )
 
         # Invalidate old tokens
         EmailVerificationToken.objects.filter(user=user, used=False).update(used=True)
@@ -262,12 +292,27 @@ class ResendVerificationView(APIView):
                 message=f"Click this link to verify your email: {verify_url}",
                 from_email=settings.DEFAULT_FROM_EMAIL,
                 recipient_list=[user.email],
-                fail_silently=True,
+                fail_silently=False,
             )
         except Exception:
-            pass
+            logger.exception(
+                "Failed to send verification email during resend",
+                extra={"user_id": str(user.id), "email": user.email},
+            )
+            return Response(
+                {
+                    "message": "We could not send the verification email. Please try again shortly.",
+                    "verification_email_status": "failed",
+                },
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
 
-        return Response({"message": "If this email exists, a verification link will be sent."})
+        return Response(
+            {
+                "message": "If this email exists, a verification link will be sent.",
+                "verification_email_status": "sent",
+            }
+        )
 
 
 class OAuthCallbackView(APIView):
