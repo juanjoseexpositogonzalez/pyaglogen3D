@@ -35,3 +35,8 @@ primary_region = 'cdg'
   cpu_kind = 'shared'
   cpus = 1
   processes = ['worker']
+
+# Restart policy: always restart worker if it crashes
+[[restart]]
+  policy = 'always'
+  max_retries = 10

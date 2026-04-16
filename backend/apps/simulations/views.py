@@ -103,12 +103,22 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 result = compute_import_metrics_task.delay(str(simulation.id))
                 simulation.task_id = result.id
                 simulation.save(update_fields=["task_id"])
-            except Exception:
+            except Exception as exc:
                 if settings.DEBUG:
                     # Run synchronously in development if Celery unavailable
                     compute_import_metrics_task(str(simulation.id))
                 else:
-                    raise
+                    logger.error(
+                        f"Failed to queue import metrics {simulation.id}: {exc}"
+                    )
+                    simulation.status = SimulationStatus.FAILED
+                    simulation.error_message = (
+                        "Task broker unavailable. Please try again later."
+                    )
+                    simulation.completed_at = timezone.now()
+                    simulation.save(
+                        update_fields=["status", "error_message", "completed_at"]
+                    )
 
             return
 
@@ -121,12 +131,18 @@ class SimulationViewSet(viewsets.ModelViewSet):
             # Store task ID for cancellation
             simulation.task_id = result.id
             simulation.save(update_fields=["task_id"])
-        except Exception:
+        except Exception as exc:
             if settings.DEBUG:
                 # Run synchronously in development if Celery unavailable
                 run_simulation_task(str(simulation.id))
             else:
-                raise
+                logger.error(f"Failed to queue simulation {simulation.id}: {exc}")
+                simulation.status = SimulationStatus.FAILED
+                simulation.error_message = "Task broker unavailable. Please try again later."
+                simulation.completed_at = timezone.now()
+                simulation.save(
+                    update_fields=["status", "error_message", "completed_at"]
+                )
 
     def destroy(self, request: Request, *args, **kwargs) -> Response:
         """Delete a simulation."""
