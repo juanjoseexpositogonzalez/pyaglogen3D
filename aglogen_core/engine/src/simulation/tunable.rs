@@ -152,6 +152,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             // Try to place particle using tunable geometry
             let mut lb = la_minus.clone();
             let mut placed = false;
+            let mut last_attempted_pos: Option<Vector3> = None;
 
             // Sample sintering coefficient for this particle's contact
             let sintering_coeff = params.sintering.sample(&mut rng);
@@ -173,14 +174,15 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
                     continue;
                 }
 
-                let cos_alpha = (gamma.powi(2) + cb_norm.powi(2) - contact_dist.powi(2))
+                let cos_alpha_raw = (gamma.powi(2) + cb_norm.powi(2) - contact_dist.powi(2))
                     / (2.0 * gamma * cb_norm);
 
-                if cos_alpha.abs() > 1.0 {
-                    lb.retain(|&x| x != ref_idx);
-                    continue;
-                }
-
+                // MATLAB does NOT discard reference particles when |cos_alpha| > 1.
+                // It uses complex acos which naturally handles out-of-range values.
+                // In Rust, we clamp to [-1, 1] instead of discarding — this keeps
+                // the reference particle viable and produces alpha=0 or alpha=pi
+                // as the degenerate cases.
+                let cos_alpha = cos_alpha_raw.clamp(-1.0, 1.0);
                 let alpha = cos_alpha.acos();
 
                 // Find particles that could intersect (LA+)
@@ -204,6 +206,10 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
                     let beta = rng.gen_range(0.0..2.0 * PI);
                     let ca_final = rotate_vector(&ca_dir, &cb_unit, beta);
                     let ca = ca_final * gamma;
+
+                    // Track last attempted position for fallback (matches MATLAB behavior:
+                    // use the last computed position rather than ballistic placement)
+                    last_attempted_pos = Some(ca);
 
                     let has_overlap = la_plus.iter().any(|&i| {
                         let dist = ca.distance_to(&particles[i].center);
@@ -237,24 +243,41 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
                 }
             }
 
-            // Fallback if tunable placement failed after exhausting all candidates
+            // Fallback if tunable placement failed after exhausting all candidates.
+            // MATLAB does NOT use ballistic fallback — it uses the last computed
+            // position at distance gamma from CoM, maintaining the target morphology.
+            // Using ballistic here would produce compact clusters (Df≈2-3) instead
+            // of respecting the target Df.
             if !placed {
-                if let Some(pos) =
-                    place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
-                {
+                if let Some(pos) = last_attempted_pos {
                     particles.push(Sphere::new(pos, new_radius));
                     distances.push(pos.length());
+                } else {
+                    // No position was ever computed (shouldn't happen if la_minus is non-empty).
+                    // Only then fall back to ballistic as last resort.
+                    if let Some(pos) = place_particle_ballistic(
+                        &particles,
+                        &mut rng,
+                        new_radius,
+                        &params.sintering,
+                    ) {
+                        particles.push(Sphere::new(pos, new_radius));
+                        distances.push(pos.length());
+                    }
                 }
             }
         } else {
-            // la_minus is empty — no reference particles available for tunable placement.
-            // Use ballistic placement as fallback.
-            if let Some(pos) =
-                place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
-            {
-                particles.push(Sphere::new(pos, new_radius));
-                distances.push(pos.length());
-            }
+            // la_minus is empty — no reference particles at the right distance.
+            // MATLAB handles this implicitly because it pre-assigns distancias(np) = gamma
+            // BEFORE placement, so in the next iteration the new particle appears at
+            // distance gamma even if it wasn't truly placed there.
+            // We replicate this: place at distance gamma from CoM in a random direction,
+            // in contact with the nearest existing particle.
+            let (dx, dy, dz) = random_point_on_sphere(&mut rng);
+            let dir = Vector3::new(dx, dy, dz);
+            let pos = dir * gamma;
+            particles.push(Sphere::new(pos, new_radius));
+            distances.push(gamma);
         }
 
         // Recenter around new CoM (ALWAYS, regardless of placement path)
