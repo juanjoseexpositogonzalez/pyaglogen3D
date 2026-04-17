@@ -33,5 +33,6 @@ dev = [
 ]
 
 [tool.maturin]
+manifest-path = "python/Cargo.toml"
 features = ["pyo3/extension-module"]
 strip = true

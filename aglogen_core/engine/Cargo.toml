@@ -1,0 +1,19 @@
+[package]
+name = "aglogen-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Rust engine for 3D agglomerate simulation and fractal analysis"
+
+[dependencies]
+ndarray = { version = "0.15", features = ["rayon"] }
+nalgebra = "0.33"
+rand = "0.8"
+rand_pcg = "0.3"
+rand_distr = "0.4"
+rayon = "1.8"
+thiserror = "1.0"
+num-complex = "0.4"
+
+[dev-dependencies]
+approx = "0.5"
