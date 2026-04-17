@@ -3,6 +3,7 @@
 //! This crate provides the #[pymodule], #[pyfunction], #[pyclass] wrappers
 //! that call into the pure Rust aglogen-engine crate.
 
+use ndarray::Array2;
 use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
 use pyo3::prelude::*;
 
@@ -18,6 +19,17 @@ use aglogen_engine::fractal::fraktal::{
 use aglogen_engine::fractal::result::FractalResult;
 use aglogen_engine::optics::dda::compute_dda;
 use aglogen_engine::optics::dda::Polarizability;
+
+/// Convert a numpy array to an engine-compatible ndarray Array2<u8>.
+/// Bridges potential ndarray version mismatch between numpy and engine crates
+/// by copying through raw slice data rather than passing ArrayView2 directly.
+fn numpy_to_engine_array2_u8(np_array: &PyReadonlyArray2<u8>) -> Array2<u8> {
+    let arr = np_array.as_array();
+    let shape = arr.shape();
+    let (rows, cols) = (shape[0], shape[1]);
+    let data: Vec<u8> = arr.iter().copied().collect();
+    Array2::from_shape_vec((rows, cols), data).expect("Shape mismatch in numpy_to_engine_array2_u8")
+}
 use aglogen_engine::optics::result::OpticalResult;
 use aglogen_engine::optics::tmatrix::compute_tmatrix;
 use aglogen_engine::projection::{
@@ -648,7 +660,8 @@ fn fraktal_granulated_2012(
         escala,
         auto_threshold,
     );
-    let result = analyze_granulated_2012(image.as_array(), &params);
+    let engine_image = numpy_to_engine_array2_u8(&image);
+    let result = analyze_granulated_2012(engine_image.view(), &params);
     Ok(result.into())
 }
 
@@ -674,7 +687,8 @@ fn fraktal_voxel_2018(
         m_exponent,
         auto_threshold,
     );
-    let result = analyze_voxel_2018(image.as_array(), &params);
+    let engine_image = numpy_to_engine_array2_u8(&image);
+    let result = analyze_voxel_2018(engine_image.view(), &params);
     Ok(result.into())
 }
 
