@@ -339,7 +339,8 @@ fn has_intercluster_contact(
         cluster2.bounding_radius,
         sintering_coeff,
     );
-    if dist > bounding_contact + INTERCLUSTER_CONTACT_ABS_TOL {
+    let bounding_tolerance = intercluster_contact_tolerance(bounding_contact);
+    if dist > bounding_contact + bounding_tolerance {
         return false;
     }
 
@@ -581,19 +582,38 @@ fn merge_ballistic<R: Rng>(
             * 0.5;
 
         for _ in 0..(launch_dist * 4.0 / step) as usize {
-            // Check for contact (any particle pair touching with sintering)
-            for p1 in &cluster1.particles {
-                for p2 in &cluster2.particles {
-                    let dist = p1.center.distance_to(&p2.center);
-                    let contact_dist =
-                        sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
+            // Check for near-contact (any particle pair within coarse window).
+            // If found, snap cluster2 to exact contact distance so the final
+            // placement satisfies the strict intercluster tolerance used by
+            // the connectivity check.
+            let snap_delta = {
+                let mut delta = None;
+                'search: for p1 in &cluster1.particles {
+                    for p2 in &cluster2.particles {
+                        let dist = p1.center.distance_to(&p2.center);
+                        let contact_dist =
+                            sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
 
-                    if dist <= contact_dist * 1.01 && dist >= contact_dist * 0.9 {
-                        // Found contact, check no overlap with sintering
-                        if !check_overlap(cluster1, cluster2, sintering_coeff) {
-                            return true;
+                        if dist <= contact_dist * 1.01 && dist >= contact_dist * 0.9 {
+                            let gap = dist - contact_dist;
+                            if gap.abs() > 1e-12 {
+                                let dir = (p2.center - p1.center).normalize();
+                                delta = Some(dir * (-gap));
+                            } else {
+                                delta = Some(Vector3::zero());
+                            }
+                            break 'search;
                         }
                     }
+                }
+                delta
+            };
+            if let Some(d) = snap_delta {
+                if d.length() > 1e-14 {
+                    cluster2.translate(d);
+                }
+                if !check_overlap(cluster1, cluster2, sintering_coeff) {
+                    return true;
                 }
             }
 

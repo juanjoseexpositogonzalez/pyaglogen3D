@@ -50,14 +50,19 @@ fn riccati_bessel_chi(n_max: usize, z: Complex64) -> Vec<Complex64> {
     chi
 }
 
-/// Riccati-Bessel function ξ_n(z) = ψ_n(z) + i*χ_n(z)
+/// Riccati-Bessel function ξ_n(z) = ψ_n(z) - i*χ_n(z)
+///
+/// Note: ξ_n(z) = z * h_n^(1)(z) where h_n^(1) is the spherical Hankel function
+/// of the first kind. Since χ_n(z) = -z*y_n(z), we have:
+///   ξ_n = z*j_n + i*z*y_n = ψ_n - i*χ_n
+/// Reference: Bohren & Huffman, eq. 4.13
 fn riccati_bessel_xi(n_max: usize, z: Complex64) -> Vec<Complex64> {
     let psi = riccati_bessel_psi(n_max, z);
     let chi = riccati_bessel_chi(n_max, z);
 
     psi.iter()
         .zip(chi.iter())
-        .map(|(&p, &c)| p + Complex64::i() * c)
+        .map(|(&p, &c)| p - Complex64::i() * c)
         .collect()
 }
 
@@ -91,11 +96,7 @@ fn log_derivative_d(n_max: usize, z: Complex64) -> Vec<Complex64> {
 ///
 /// # Returns
 /// Tuple of (an, bn) vectors of complex coefficients
-pub fn mie_coefficients(
-    n_max: usize,
-    x: f64,
-    m: Complex64,
-) -> (Vec<Complex64>, Vec<Complex64>) {
+pub fn mie_coefficients(n_max: usize, x: f64, m: Complex64) -> (Vec<Complex64>, Vec<Complex64>) {
     let mut an = vec![Complex64::new(0.0, 0.0); n_max + 1];
     let mut bn = vec![Complex64::new(0.0, 0.0); n_max + 1];
 
@@ -187,8 +188,7 @@ pub fn mie_sphere(
             let n_f1 = (n + 1) as f64;
             g_numerator += (n_f * (n_f + 2.0) / (n_f + 1.0))
                 * (an[n] * an[n + 1].conj() + bn[n] * bn[n + 1].conj()).re;
-            g_numerator +=
-                ((2.0 * n_f + 1.0) / (n_f * (n_f + 1.0))) * (an[n] * bn[n].conj()).re;
+            g_numerator += ((2.0 * n_f + 1.0) / (n_f * (n_f + 1.0))) * (an[n] * bn[n].conj()).re;
         }
     }
 
