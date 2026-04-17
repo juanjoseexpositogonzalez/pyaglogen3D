@@ -32,7 +32,8 @@ media/
 
 # Rust
 target/
-Cargo.lock
+# Note: Cargo.lock is tracked for reproducible Docker/production builds.
+# The workspace split requires identical ndarray versions across crates.
 
 # Node
 node_modules/
