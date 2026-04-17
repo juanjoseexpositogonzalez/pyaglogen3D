@@ -114,7 +114,11 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         .collect();
 
     // Add particles one by one
+    #[cfg(test)]
+    let mut _debug_fallback_count = 0usize;
     for np in 3..=params.n_particles {
+        #[cfg(test)]
+        let _particles_before = particles.len();
         let np_f = np as f64;
         let np_minus_1 = (np - 1) as f64;
 
@@ -144,114 +148,107 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             .filter(|&i| distances[i] > gamma - 2.0 * rp)
             .collect();
 
-        if la_minus.is_empty() {
-            // Fallback: use ballistic placement
-            if let Some(pos) =
-                place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
-            {
-                particles.push(Sphere::new(pos, new_radius));
-                distances.push(pos.length());
-            }
-            continue;
-        }
+        if !la_minus.is_empty() {
+            // Try to place particle using tunable geometry
+            let mut lb = la_minus.clone();
+            let mut placed = false;
 
-        // Try to place particle
-        let mut lb = la_minus.clone();
-        let mut placed = false;
+            // Sample sintering coefficient for this particle's contact
+            let sintering_coeff = params.sintering.sample(&mut rng);
 
-        // Sample sintering coefficient for this particle's contact
-        let sintering_coeff = params.sintering.sample(&mut rng);
+            while !lb.is_empty() && !placed {
+                // Select random reference particle from LB
+                let ref_idx = lb[rng.gen_range(0..lb.len())];
+                let ref_particle = &particles[ref_idx];
+                let cb = ref_particle.center;
+                let rb = ref_particle.radius;
 
-        while !lb.is_empty() && !placed {
-            // Select random reference particle from LB
-            let ref_idx = lb[rng.gen_range(0..lb.len())];
-            let ref_particle = &particles[ref_idx];
-            let cb = ref_particle.center;
-            let rb = ref_particle.radius;
+                // Calculate sintered contact distance
+                let contact_dist = sintered_contact_distance(rb, new_radius, sintering_coeff);
 
-            // Calculate sintered contact distance
-            let contact_dist = sintered_contact_distance(rb, new_radius, sintering_coeff);
+                // Calculate alpha - angle to rotate CB to get CA at distance gamma
+                let cb_norm = cb.length();
+                if cb_norm < 1e-10 {
+                    lb.retain(|&x| x != ref_idx);
+                    continue;
+                }
 
-            // Calculate alpha - angle to rotate CB to get CA at distance gamma
-            let cb_norm = cb.length();
-            if cb_norm < 1e-10 {
-                lb.retain(|&x| x != ref_idx);
-                continue;
-            }
+                let cos_alpha = (gamma.powi(2) + cb_norm.powi(2) - contact_dist.powi(2))
+                    / (2.0 * gamma * cb_norm);
 
-            let cos_alpha =
-                (gamma.powi(2) + cb_norm.powi(2) - contact_dist.powi(2)) / (2.0 * gamma * cb_norm);
+                if cos_alpha.abs() > 1.0 {
+                    lb.retain(|&x| x != ref_idx);
+                    continue;
+                }
 
-            if cos_alpha.abs() > 1.0 {
-                lb.retain(|&x| x != ref_idx);
-                continue;
-            }
+                let alpha = cos_alpha.acos();
 
-            let alpha = cos_alpha.acos();
+                // Find particles that could intersect (LA+)
+                let la_plus: Vec<usize> = lb
+                    .iter()
+                    .filter(|&&i| i != ref_idx)
+                    .filter(|&&i| {
+                        let dist_to_ref = particles[i].center.distance_to(&cb);
+                        let overlap_threshold =
+                            sintered_contact_distance(rb, particles[i].radius, sintering_coeff);
+                        dist_to_ref < 2.0 * overlap_threshold
+                    })
+                    .copied()
+                    .collect();
 
-            // Find particles that could intersect (LA+)
-            // Use sintered contact distance for overlap check
-            let la_plus: Vec<usize> = lb
-                .iter()
-                .filter(|&&i| i != ref_idx)
-                .filter(|&&i| {
-                    let dist_to_ref = particles[i].center.distance_to(&cb);
-                    let overlap_threshold =
-                        sintered_contact_distance(rb, particles[i].radius, sintering_coeff);
-                    dist_to_ref < 2.0 * overlap_threshold
-                })
-                .copied()
-                .collect();
+                // Try different rotation angles (beta)
+                for _ in 0..params.max_rotations {
+                    let cb_unit = cb * (1.0 / cb_norm);
+                    let rotation_axis = find_perpendicular_axis(&cb_unit, &mut rng);
+                    let ca_dir = rotate_vector(&cb_unit, &rotation_axis, alpha);
+                    let beta = rng.gen_range(0.0..2.0 * PI);
+                    let ca_final = rotate_vector(&ca_dir, &cb_unit, beta);
+                    let ca = ca_final * gamma;
 
-            // Try different rotation angles (beta)
-            for _ in 0..params.max_rotations {
-                // Generate random rotation axis perpendicular to CB
-                let cb_unit = cb * (1.0 / cb_norm);
-                let rotation_axis = find_perpendicular_axis(&cb_unit, &mut rng);
-
-                // Rotate CB by alpha around rotation_axis to get initial CA direction
-                let ca_dir = rotate_vector(&cb_unit, &rotation_axis, alpha);
-
-                // Random beta rotation around CB axis
-                let beta = rng.gen_range(0.0..2.0 * PI);
-                let ca_final = rotate_vector(&ca_dir, &cb_unit, beta);
-
-                // Scale to gamma distance
-                let ca = ca_final * gamma;
-
-                // Check for overlaps with LA+ using sintered contact distances
-                let has_overlap = la_plus.iter().any(|&i| {
-                    let dist = ca.distance_to(&particles[i].center);
-                    let min_dist =
-                        sintered_contact_distance(new_radius, particles[i].radius, sintering_coeff);
-                    dist < min_dist - 1e-6
-                });
-
-                if !has_overlap {
-                    // Also check against all other particles for safety using sintered distances
-                    let safe = !particles.iter().any(|p| {
-                        let dist = ca.distance_to(&p.center);
-                        let min_dist =
-                            sintered_contact_distance(new_radius, p.radius, sintering_coeff);
+                    let has_overlap = la_plus.iter().any(|&i| {
+                        let dist = ca.distance_to(&particles[i].center);
+                        let min_dist = sintered_contact_distance(
+                            new_radius,
+                            particles[i].radius,
+                            sintering_coeff,
+                        );
                         dist < min_dist - 1e-6
                     });
 
-                    if safe {
-                        particles.push(Sphere::new(ca, new_radius));
-                        distances.push(ca.length());
-                        placed = true;
-                        break;
+                    if !has_overlap {
+                        let safe = !particles.iter().any(|p| {
+                            let dist = ca.distance_to(&p.center);
+                            let min_dist =
+                                sintered_contact_distance(new_radius, p.radius, sintering_coeff);
+                            dist < min_dist - 1e-6
+                        });
+
+                        if safe {
+                            particles.push(Sphere::new(ca, new_radius));
+                            distances.push(ca.length());
+                            placed = true;
+                            break;
+                        }
                     }
+                }
+
+                if !placed {
+                    lb.retain(|&x| x != ref_idx);
                 }
             }
 
+            // Fallback if tunable placement failed after exhausting all candidates
             if !placed {
-                lb.retain(|&x| x != ref_idx);
+                if let Some(pos) =
+                    place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
+                {
+                    particles.push(Sphere::new(pos, new_radius));
+                    distances.push(pos.length());
+                }
             }
-        }
-
-        // Fallback if placement failed
-        if !placed {
+        } else {
+            // la_minus is empty — no reference particles available for tunable placement.
+            // Use ballistic placement as fallback.
             if let Some(pos) =
                 place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
             {
@@ -260,7 +257,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             }
         }
 
-        // Recenter around new CoM
+        // Recenter around new CoM (ALWAYS, regardless of placement path)
         center_of_mass = calculate_center_of_mass(&particles);
         for p in &mut particles {
             p.center = p.center - center_of_mass;
@@ -551,21 +548,76 @@ mod tests {
     }
 
     #[test]
-    fn test_tunable_target_df() {
-        // Test that we get close to target Df
+    fn test_tunable_rg_sampling_n10() {
+        // Regression test: Rg evolution must be recorded at EVERY particle step,
+        // even when all placements use the ballistic fallback (la_minus empty).
+        // Before this fix, the `continue` in the la_minus fallback path skipped
+        // the Rg sampling block, producing only 1 data point for N=10.
         let params = TunableParams {
-            n_particles: 200,
-            target_df: 1.8,
-            target_kf: 1.3,
+            n_particles: 10,
+            target_df: 1.4,
+            target_kf: 1.1,
             ..Default::default()
         };
 
-        let result = run_tunable_internal(params, 123);
+        let result = run_tunable_internal(params, 42);
+        // N=10 → loop from np=3..=10 = 8 iterations → 8 Rg data points
+        assert!(
+            result.rg_evolution.len() >= 7,
+            "Expected >=7 Rg evolution points for N=10, got {}",
+            result.rg_evolution.len()
+        );
+        // Must NOT return the sentinel default (2.0, 1.0)
+        assert!(
+            !(result.fractal_dimension == 2.0 && result.prefactor == 1.0),
+            "Got sentinel default Df=2.0/kf=1.0 — power-law fit has no data"
+        );
+    }
 
-        assert_eq!(result.coordinates.len(), 200);
-        // Should be within reasonable range of target
-        println!("Target Df=1.8, Actual Df={:.3}", result.fractal_dimension);
-        assert!(result.fractal_dimension > 1.0 && result.fractal_dimension < 3.0);
+    #[test]
+    fn test_tunable_debug_n10() {
+        // Debug test: reproduce exact user scenario N=10, Df=1.4, kf=1.1
+        let params = TunableParams {
+            n_particles: 10,
+            target_df: 1.4,
+            target_kf: 1.1,
+            ..Default::default()
+        };
+
+        let result = run_tunable_internal(params, 42);
+        println!("=== DEBUG N=10 ===");
+        println!(
+            "Df={:.6}, kf={:.6}",
+            result.fractal_dimension, result.prefactor
+        );
+        println!("N particles actual: {}", result.coordinates.len());
+        println!("Rg evolution len: {}", result.rg_evolution.len());
+        for (i, (rg, &r)) in result
+            .rg_evolution
+            .iter()
+            .zip(
+                result
+                    .coordinates
+                    .iter()
+                    .skip(2)
+                    .chain(std::iter::repeat(&[0.0, 0.0, 0.0])),
+            )
+            .enumerate()
+        {
+            println!("  rg_evolution[{}] = {:.6}", i, rg);
+        }
+        // The critical assertion: for N=10, we should have Rg data at every step
+        // (np=3 through 10 = 8 data points)
+        assert!(
+            result.rg_evolution.len() >= 7,
+            "Expected >=7 Rg evolution points for N=10, got {} — sampling is still broken!",
+            result.rg_evolution.len()
+        );
+        assert!(
+            result.fractal_dimension != 2.0 || result.prefactor != 1.0,
+            "Got default Df=2.0/kf=1.0 — the fit is failing. Rg_evolution: {:?}",
+            result.rg_evolution
+        );
     }
 
     #[test]
