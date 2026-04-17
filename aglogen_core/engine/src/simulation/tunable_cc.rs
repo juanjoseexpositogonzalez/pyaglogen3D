@@ -900,8 +900,9 @@ fn calculate_fractal_dimension_from_evolution(
     let slope = (n * sum_xy - sum_x * sum_y) / denom;
     let intercept = (sum_y - slope * sum_x) / n;
 
-    let df = slope.max(1.0).min(3.0);
-    let kf = intercept.exp().max(0.1).min(10.0);
+    // Wider clamping to avoid masking broken fits for diagnostic purposes.
+    let df = slope.max(0.5).min(3.5);
+    let kf = intercept.exp().max(0.01).min(100.0);
 
     // R-squared
     let mean_y = sum_y / n;
@@ -1105,6 +1106,40 @@ mod tests {
         assert!(max_r > min_r, "Radii should vary");
         assert!(min_r >= 0.8 - 1e-10);
         assert!(max_r <= 1.2 + 1e-10);
+    }
+
+    #[test]
+    fn test_tunable_cc_rg_evolution_has_enough_points() {
+        // Regression test: Verify that the CC algorithm produces enough Rg
+        // data points for a meaningful power-law fit, and that the fit does
+        // NOT return the default (2.0, 1.0, 0.0) sentinel values.
+        let params = TunableCcParams {
+            n_particles: 20,
+            target_df: 1.4,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(result.coordinates.len(), 20);
+
+        // The Rg evolution should have enough data points for a fit
+        // (at least 3 merges that grow the largest cluster).
+        assert!(
+            result.rg_evolution.len() >= 3,
+            "CC should produce at least 3 Rg data points, got {}",
+            result.rg_evolution.len()
+        );
+
+        // The Df should NOT be exactly 2.0 (the default sentinel for insufficient data).
+        // It may not match the target closely due to ballistic fallback dominance in
+        // CC with monomers, but it should at least be a real fit result.
+        assert!(
+            (result.fractal_dimension - 2.0).abs() > 0.01
+                || (result.prefactor - 1.0).abs() > 0.01,
+            "CC should produce a real fit, not the default (2.0, 1.0) sentinel. Got Df={:.3}, kf={:.3}",
+            result.fractal_dimension, result.prefactor
+        );
     }
 
     #[test]

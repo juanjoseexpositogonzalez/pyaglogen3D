@@ -103,9 +103,9 @@ pub fn calculate_fractal_dimension(n_values: &[usize], rg_values: &[f64]) -> (f6
     let df = if slope.abs() > 0.01 { 1.0 / slope } else { 2.0 };
 
     // kf from intercept: log(Rg) = intercept + slope*log(N)
-    // Rg = exp(intercept) * N^slope = kf^(1/Df) * N^(1/Df)
-    // So kf = exp(intercept * Df)
-    let kf = (intercept * df).exp();
+    // From N = kf * (Rg/rp)^Df, intercept = log(rp) - log(kf)/Df
+    // so kf = exp(-intercept * Df) when rp ~ 1
+    let kf = (-intercept * df).exp();
 
     // R-squared
     let mean_y = sum_y / n;
@@ -124,7 +124,7 @@ pub fn calculate_fractal_dimension(n_values: &[usize], rg_values: &[f64]) -> (f6
         0.0
     };
 
-    (df.max(1.0).min(3.0), kf.max(0.1), r2)
+    (df.max(1.0).min(3.0), kf.max(0.01), r2)
 }
 
 /// Calculate coordination number (number of neighbors) for each particle.

@@ -125,19 +125,17 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         let gamma3 = (np_f / np_minus_1) * ((1.0 / kf).powf(2.0 / df) - constante);
         let gamma4_sq = gamma1 - gamma2 - gamma3;
 
-        if gamma4_sq <= 0.0 {
-            // Fallback: place particle using ballistic-like approach
-            let new_radius = params.random_radius(&mut rng);
-            if let Some(pos) =
-                place_particle_ballistic(&particles, &mut rng, new_radius, &params.sintering)
-            {
-                particles.push(Sphere::new(pos, new_radius));
-                distances.push(pos.length());
-            }
-            continue;
-        }
-
-        let gamma = rp * gamma4_sq.sqrt();
+        // When gamma4_sq <= 0, the target Df/kf is geometrically impossible at
+        // this step (common for small N where the power law hasn't converged).
+        // Instead of falling back to ballistic placement (which ignores the target Df
+        // and produces Df ≈ 1.8-2.0), we use a minimum gamma floor of rp.
+        // This keeps the particle close to the aggregate surface while still
+        // respecting the tunable placement geometry.
+        let gamma = if gamma4_sq <= 0.0 {
+            rp
+        } else {
+            rp * gamma4_sq.sqrt()
+        };
 
         // Find particles that could be in contact at distance gamma (LA-)
         // These are particles where: distance_from_com > gamma - 2*rp
@@ -279,8 +277,10 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             distances.push(particles.last().unwrap().center.length());
         }
 
-        // Track Rg evolution periodically
-        if np % 10 == 0 || np == params.n_particles {
+        // Track Rg evolution at every particle addition.
+        // Sparse sampling (e.g. every 10th) produces too few data points
+        // for small N, causing the power-law fit to fall back to default Df=2.0.
+        {
             let coords: Vec<[f64; 3]> = particles
                 .iter()
                 .map(|p| [p.center.x, p.center.y, p.center.z])
@@ -506,8 +506,9 @@ fn calculate_fractal_dimension_from_evolution(
     let slope = (n * sum_xy - sum_x * sum_y) / denom;
     let intercept = (sum_y - slope * sum_x) / n;
 
-    let df = slope.max(1.0).min(3.0);
-    let kf = intercept.exp().max(0.1).min(10.0);
+    // Wider clamping to avoid masking broken fits for diagnostic purposes.
+    let df = slope.max(0.5).min(3.5);
+    let kf = intercept.exp().max(0.01).min(100.0);
 
     // R-squared
     let mean_y = sum_y / n;
@@ -565,6 +566,40 @@ mod tests {
         // Should be within reasonable range of target
         println!("Target Df=1.8, Actual Df={:.3}", result.fractal_dimension);
         assert!(result.fractal_dimension > 1.0 && result.fractal_dimension < 3.0);
+    }
+
+    #[test]
+    fn test_tunable_low_n_respects_target_df() {
+        // Regression test: Before fixes, N=20 with target Df=1.4 would produce
+        // Df ≈ 1.9-2.0 due to sparse Rg sampling (only 2 data points → default
+        // Df=2.0) and gamma4_sq fallback to ballistic placement.
+        let target_df = 1.4;
+        let params = TunableParams {
+            n_particles: 20,
+            target_df,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+
+        // Run multiple seeds and check the average is closer to target than to 2.0
+        let mut df_sum = 0.0;
+        let n_seeds = 5;
+        for seed in 0..n_seeds {
+            let result = run_tunable_internal(params.clone(), seed as u64);
+            assert_eq!(result.coordinates.len(), 20);
+            df_sum += result.fractal_dimension;
+        }
+        let df_avg = df_sum / n_seeds as f64;
+
+        // The average Df should be closer to the target (1.4) than to 2.0.
+        // With the fixes, we typically get Df ≈ 1.3-1.8 instead of ≈ 2.0.
+        assert!(
+            df_avg < 1.8,
+            "For target Df={}, average over {} seeds was Df={:.3} (too high, likely fallback bug)",
+            target_df,
+            n_seeds,
+            df_avg
+        );
     }
 
     #[test]
