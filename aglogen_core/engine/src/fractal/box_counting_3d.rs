@@ -115,8 +115,8 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
 
     // Step 4: Count boxes at each scale using bit masking
     // Each scale corresponds to masking off the low bits
-    let mut log_scales = Vec::with_capacity(precision as usize);
-    let mut log_counts = Vec::with_capacity(precision as usize);
+    let mut log_scales: Vec<f64> = Vec::with_capacity(precision as usize);
+    let mut log_counts: Vec<f64> = Vec::with_capacity(precision as usize);
 
     // Box size at level k is 2^k (in normalized units)
     // We count unique Morton codes when masking off 3*k low bits
@@ -129,6 +129,29 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
             let box_size = scale * (1u64 << level) as f64 / max_val as f64;
             log_scales.push((1.0 / box_size).ln());
             log_counts.push((box_count as f64).ln());
+        }
+    }
+
+    // Step 4b: Saturation truncation (ported from fit_frac3D.m:4-12)
+    // Data is ordered finest (index 0) → coarsest (last index).
+    // log_counts should monotonically DECREASE (fewer boxes at coarser scales).
+    // Saturation = consecutive fine-scale levels with SAME count (no new boxes
+    // appear when refining further). Scan from coarse→fine (high→low index)
+    // and truncate at the first plateau.
+    if log_counts.len() > 6 {
+        let mut truncate_before = 0;
+        // Scan from second-finest towards coarsest
+        for i in (1..log_counts.len()).rev() {
+            if (log_counts[i] - log_counts[i - 1]).abs() < 1e-12 {
+                // log_counts[i-1] == log_counts[i]: the finer level (i-1) added
+                // no new boxes. Truncate everything at i-1 and finer.
+                truncate_before = i;
+                break;
+            }
+        }
+        if truncate_before > 0 && log_counts.len() - truncate_before >= 3 {
+            log_scales = log_scales[truncate_before..].to_vec();
+            log_counts = log_counts[truncate_before..].to_vec();
         }
     }
 
