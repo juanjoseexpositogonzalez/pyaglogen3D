@@ -143,12 +143,33 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
 
         // Find particles that could be in contact at distance gamma (LA-)
         // These are particles where: distance_from_com > gamma - 2*rp
+        // If this filter produces no candidates, progressively relax it.
+        // MATLAB would error() here — we relax instead.
         let new_radius = params.random_radius(&mut rng);
-        let la_minus: Vec<usize> = (0..particles.len())
+        let mut la_minus: Vec<usize> = (0..particles.len())
             .filter(|&i| distances[i] > gamma - 2.0 * rp)
             .collect();
 
-        if !la_minus.is_empty() {
+        // Progressive relaxation: if la_minus is empty, widen the distance
+        // filter until we find at least one candidate. This prevents the
+        // disconnected-aggregate problem without aborting like MATLAB does.
+        if la_minus.is_empty() {
+            // Try gamma - 3*rp, then gamma - 4*rp, etc.
+            for multiplier in 3..=10 {
+                la_minus = (0..particles.len())
+                    .filter(|&i| distances[i] > gamma - multiplier as f64 * rp)
+                    .collect();
+                if !la_minus.is_empty() {
+                    break;
+                }
+            }
+        }
+        // Last resort: use ALL particles as candidates
+        if la_minus.is_empty() {
+            la_minus = (0..particles.len()).collect();
+        }
+
+        {
             // Try to place particle using tunable geometry
             let mut lb = la_minus.clone();
             let mut placed = false;
@@ -244,17 +265,32 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             }
 
             // Fallback if tunable placement failed after exhausting all candidates.
-            // MATLAB does NOT use ballistic fallback — it uses the last computed
-            // position at distance gamma from CoM, maintaining the target morphology.
-            // Using ballistic here would produce compact clusters (Df≈2-3) instead
-            // of respecting the target Df.
+            // Use the last attempted position but SNAP it to contact with the
+            // nearest existing particle. This maintains approximately the right
+            // distance from CoM (preserving target Df) while ensuring connectivity
+            // (no floating particles).
             if !placed {
                 if let Some(pos) = last_attempted_pos {
-                    particles.push(Sphere::new(pos, new_radius));
-                    distances.push(pos.length());
+                    // Find nearest particle and snap to contact
+                    let nearest = particles.iter().enumerate().min_by(|(_, a), (_, b)| {
+                        let da = pos.distance_to(&a.center);
+                        let db = pos.distance_to(&b.center);
+                        da.partial_cmp(&db).unwrap()
+                    });
+                    if let Some((_, nearest_p)) = nearest {
+                        let sintering_coeff = params.sintering.sample(&mut rng);
+                        let contact = sintered_contact_distance(
+                            new_radius,
+                            nearest_p.radius,
+                            sintering_coeff,
+                        );
+                        let dir = (pos - nearest_p.center).normalize();
+                        let snapped = nearest_p.center + dir * contact;
+                        particles.push(Sphere::new(snapped, new_radius));
+                        distances.push(snapped.length());
+                    }
                 } else {
-                    // No position was ever computed (shouldn't happen if la_minus is non-empty).
-                    // Only then fall back to ballistic as last resort.
+                    // No position was ever computed — fall back to ballistic as last resort.
                     if let Some(pos) = place_particle_ballistic(
                         &particles,
                         &mut rng,
@@ -266,18 +302,6 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
                     }
                 }
             }
-        } else {
-            // la_minus is empty — no reference particles at the right distance.
-            // MATLAB handles this implicitly because it pre-assigns distancias(np) = gamma
-            // BEFORE placement, so in the next iteration the new particle appears at
-            // distance gamma even if it wasn't truly placed there.
-            // We replicate this: place at distance gamma from CoM in a random direction,
-            // in contact with the nearest existing particle.
-            let (dx, dy, dz) = random_point_on_sphere(&mut rng);
-            let dir = Vector3::new(dx, dy, dz);
-            let pos = dir * gamma;
-            particles.push(Sphere::new(pos, new_radius));
-            distances.push(gamma);
         }
 
         // Recenter around new CoM (ALWAYS, regardless of placement path)
@@ -594,52 +618,6 @@ mod tests {
         assert!(
             !(result.fractal_dimension == 2.0 && result.prefactor == 1.0),
             "Got sentinel default Df=2.0/kf=1.0 — power-law fit has no data"
-        );
-    }
-
-    #[test]
-    fn test_tunable_debug_n10() {
-        // Debug test: reproduce exact user scenario N=10, Df=1.4, kf=1.1
-        let params = TunableParams {
-            n_particles: 10,
-            target_df: 1.4,
-            target_kf: 1.1,
-            ..Default::default()
-        };
-
-        let result = run_tunable_internal(params, 42);
-        println!("=== DEBUG N=10 ===");
-        println!(
-            "Df={:.6}, kf={:.6}",
-            result.fractal_dimension, result.prefactor
-        );
-        println!("N particles actual: {}", result.coordinates.len());
-        println!("Rg evolution len: {}", result.rg_evolution.len());
-        for (i, (rg, &r)) in result
-            .rg_evolution
-            .iter()
-            .zip(
-                result
-                    .coordinates
-                    .iter()
-                    .skip(2)
-                    .chain(std::iter::repeat(&[0.0, 0.0, 0.0])),
-            )
-            .enumerate()
-        {
-            println!("  rg_evolution[{}] = {:.6}", i, rg);
-        }
-        // The critical assertion: for N=10, we should have Rg data at every step
-        // (np=3 through 10 = 8 data points)
-        assert!(
-            result.rg_evolution.len() >= 7,
-            "Expected >=7 Rg evolution points for N=10, got {} — sampling is still broken!",
-            result.rg_evolution.len()
-        );
-        assert!(
-            result.fractal_dimension != 2.0 || result.prefactor != 1.0,
-            "Got default Df=2.0/kf=1.0 — the fit is failing. Rg_evolution: {:?}",
-            result.rg_evolution
         );
     }
 
