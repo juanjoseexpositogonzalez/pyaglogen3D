@@ -27,7 +27,9 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
-import { getScaleFactorNm } from '@/lib/units'
+import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
+import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function SimulationDetailPage({
   params,
@@ -36,6 +38,7 @@ export default function SimulationDetailPage({
 }) {
   const { id, simId } = params
   const router = useRouter()
+  const { user } = useAuth()
   const { data: project } = useProject(id)
   const { data: simulation, isLoading, error, refetch } = useSimulation(id, simId)
   const { data: geometry } = useSimulationGeometry(
@@ -224,6 +227,21 @@ export default function SimulationDetailPage({
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to {project?.name || 'Project'}
         </Link>
+
+        {/* Unit convention transition banner — shown only for legacy (v1/null) simulations */}
+        {(() => {
+          const schemaVersion = getSchemaVersion(
+            (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
+          )
+          if (schemaVersion === 'v2') return null
+          return (
+            <UnitConventionBanner
+              simulationId={simId}
+              schemaVersion={schemaVersion}
+              userId={user?.id ?? 'anonymous'}
+            />
+          )
+        })()}
 
         {/* Header */}
         <div className="flex items-start justify-between mb-8">

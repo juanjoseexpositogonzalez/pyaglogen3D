@@ -14,7 +14,9 @@ import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
-import { getScaleFactorNm } from '@/lib/units'
+import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
+import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
+import { useAuth } from '@/contexts/AuthContext'
 
 export default function ProjectDetailPage({
   params,
@@ -22,6 +24,7 @@ export default function ProjectDetailPage({
   params: { id: string }
 }) {
   const { id } = params
+  const { user } = useAuth()
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
   const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
@@ -133,6 +136,16 @@ export default function ProjectDetailPage({
 
   const simulationList = simulations?.results ?? []
 
+  // Show the unit-convention banner once at the top if ANY listed simulation
+  // resolves to the legacy (v1/null) schema. A single top-of-page banner keeps
+  // the list visually clean instead of rendering per-row.
+  const hasLegacySim = simulationList.some(
+    (s) =>
+      getSchemaVersion(
+        (s.parameters ?? {}) as unknown as Record<string, unknown>,
+      ) !== 'v2',
+  )
+
   return (
     <div className="min-h-screen">
       <Header />
@@ -146,6 +159,15 @@ export default function ProjectDetailPage({
           <ArrowLeft className="h-4 w-4 mr-2" />
           Back to Projects
         </Link>
+
+        {/* Unit convention banner — shown once if any legacy simulation is in the list */}
+        {hasLegacySim && (
+          <UnitConventionBanner
+            simulationId={id}
+            schemaVersion={'v1'}
+            userId={user?.id ?? 'anonymous'}
+          />
+        )}
 
         {/* Project Header */}
         <div className="flex items-start justify-between mb-8">
