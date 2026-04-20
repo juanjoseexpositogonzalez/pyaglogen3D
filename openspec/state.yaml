@@ -1,0 +1,36 @@
+project: pyaglogen3d
+artifact_store: openspec
+initialized_at: 2026-04-18
+stack:
+  rust:
+    version: "1.94.0"
+    workspace: aglogen_core/
+    members: [engine, python]
+    test_cmd: "cd aglogen_core && cargo test -p aglogen-engine"
+    env: "PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1"
+  python:
+    version: ">=3.11"
+    framework: django
+    test_cmd: "cd backend && pytest"
+    lint_cmd: "cd backend && ruff check"
+    type_check_cmd: "cd backend && mypy ."
+  frontend:
+    framework: nextjs
+    version: "14.2"
+    test_cmd: null
+    lint_cmd: "cd frontend && npm run lint"
+    type_check_cmd: "cd frontend && npm run type-check"
+conventions:
+  commits: conventional
+  branches: "fix/pya-N-*, feature/*, rescue/*"
+  no_ai_attribution: true
+  issue_tracker: "Jira (project PYA)"
+  pr_target: main
+deploy:
+  docker: "Easypanel on VPS"
+  alt: "Fly.io"
+strict_tdd: false  # existing codebase, pragmatic testing not strict TDD
+notes:
+  - "Frontend is Next.js 14 (not SvelteKit as initially assumed)"
+  - "Frontend has no test runner configured yet — only lint + type-check"
+  - "Rust engine has 160+ passing tests"

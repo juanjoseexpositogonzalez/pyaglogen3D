@@ -242,11 +242,7 @@ pub fn calculate_inertia_tensor(coordinates: &[[f64; 3]], radii: &[f64]) -> Iner
     }
 
     // Construct symmetric inertia tensor matrix
-    let inertia_matrix = Matrix3::new(
-        ixx, ixy, ixz,
-        ixy, iyy, iyz,
-        ixz, iyz, izz,
-    );
+    let inertia_matrix = Matrix3::new(ixx, ixy, ixz, ixy, iyy, iyz, ixz, iyz, izz);
 
     // Compute eigendecomposition
     let eigen = SymmetricEigen::new(inertia_matrix);
@@ -294,11 +290,7 @@ pub fn calculate_inertia_tensor(coordinates: &[[f64; 3]], radii: &[f64]) -> Iner
 
     // Acylindricity: deviation from cylindrical symmetry
     // c = I2 - I1, normalized
-    let acylindricity = if trace > 0.0 {
-        (i2 - i1) / trace
-    } else {
-        0.0
-    };
+    let acylindricity = if trace > 0.0 { (i2 - i1) / trace } else { 0.0 };
 
     InertiaTensorResult {
         principal_moments: sorted_eigenvalues,
@@ -312,6 +304,8 @@ pub fn calculate_inertia_tensor(coordinates: &[[f64; 3]], radii: &[f64]) -> Iner
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::fractal::kf_analytic::{self, PackingMode};
+    use approx::assert_relative_eq;
 
     #[test]
     fn test_center_of_gravity() {
@@ -432,5 +426,140 @@ mod tests {
         assert_eq!(coord[1], 2); // Middle particle: 2 neighbors
         assert_eq!(coord[2], 2); // Middle particle: 2 neighbors
         assert_eq!(coord[3], 1); // End particle: 1 neighbor
+    }
+
+    // -------------------------------------------------------------------------
+    // Rg correctness tests (T1 — verify-rg change)
+    //
+    // These freeze the correct behaviour of `calculate_radius_of_gyration` as
+    // a mass-weighted Rg for spheres. The formula itself MUST NOT change; only
+    // tests are added. See openspec/changes/verify-rg/specs/rg-unit-contract.md.
+    // -------------------------------------------------------------------------
+
+    /// Helper: build a linear chain of N touching unit spheres along the x-axis,
+    /// centred on the origin. Positions are `(2*i - (N-1), 0, 0)` for `i in 0..N`.
+    fn linear_chain(n: usize) -> (Vec<[f64; 3]>, Vec<f64>) {
+        let coords: Vec<[f64; 3]> = (0..n)
+            .map(|i| [2.0 * i as f64 - (n as f64 - 1.0), 0.0, 0.0])
+            .collect();
+        let radii = vec![1.0; n];
+        (coords, radii)
+    }
+
+    #[test]
+    fn test_rg_scaling_invariance() {
+        // Rg(α·coords, α·radii) == α · Rg(coords, radii)
+        let coords = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [-1.0, 0.0, 2.0]];
+        let radii = vec![1.0, 1.2, 0.8];
+        let base_rg = calculate_radius_of_gyration(&coords, &radii);
+
+        for &alpha in &[2.0_f64, 10.0, 0.1] {
+            let scaled_coords: Vec<[f64; 3]> = coords
+                .iter()
+                .map(|c| [c[0] * alpha, c[1] * alpha, c[2] * alpha])
+                .collect();
+            let scaled_radii: Vec<f64> = radii.iter().map(|r| r * alpha).collect();
+            let scaled_rg = calculate_radius_of_gyration(&scaled_coords, &scaled_radii);
+
+            assert_relative_eq!(scaled_rg, alpha * base_rg, epsilon = 1e-10);
+        }
+    }
+
+    #[test]
+    fn test_rg_translation_invariance() {
+        // Translating all coordinates by a constant vector leaves Rg unchanged.
+        let coords = vec![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [-1.0, 0.0, 2.0]];
+        let radii = vec![1.0, 1.2, 0.8];
+        let t = [17.3_f64, -4.1, 9.0];
+
+        let translated: Vec<[f64; 3]> = coords
+            .iter()
+            .map(|c| [c[0] + t[0], c[1] + t[1], c[2] + t[2]])
+            .collect();
+
+        let rg_original = calculate_radius_of_gyration(&coords, &radii);
+        let rg_translated = calculate_radius_of_gyration(&translated, &radii);
+
+        assert_relative_eq!(rg_translated, rg_original, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_rg_dimer_closed_form() {
+        // Two unit spheres (r=1) at x=±1 (touching at distance 2).
+        // cg = origin, d_i = 1, Ip = 2*(3/5 + 1) = 16/5, mp = 2.
+        // Rg = sqrt(Ip/mp) = sqrt(8/5) = sqrt(1 + 3/5).
+        let coords = vec![[-1.0, 0.0, 0.0], [1.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+
+        let rg = calculate_radius_of_gyration(&coords, &radii);
+        let expected = (1.0_f64 + 3.0 / 5.0).sqrt();
+
+        assert_relative_eq!(rg, expected, epsilon = 1e-10);
+    }
+
+    #[test]
+    fn test_rg_linear_chain_matches_kf_analytic() {
+        // Chain of N touching unit spheres along x, centred on origin.
+        // kf_analytic::radius_of_gyration returns the *diameter* of gyration dg;
+        // convert to Rg via dg / 2.
+        for &n in &[3_usize, 5, 10] {
+            let (coords, radii) = linear_chain(n);
+            let rg_numeric = calculate_radius_of_gyration(&coords, &radii);
+
+            let dg = kf_analytic::radius_of_gyration(&PackingMode::Line, n, 2.0)
+                .expect("kf_analytic Line should return Some for n >= 1");
+            let rg_analytic = dg / 2.0;
+
+            assert_relative_eq!(rg_numeric, rg_analytic, epsilon = 1e-6);
+        }
+    }
+
+    #[test]
+    fn test_rg_hex_plane_matches_kf_analytic() {
+        // Centred hex planar packings of unit spheres touching at distance 2.
+        // - N = 7  : 1 central + 6 neighbours at radius 2 (capas=1)
+        // - N = 19 : + 12 next-ring neighbours (capas=2)
+        //
+        // kf_analytic::radius_of_gyration(PlaneHC, capas, dp) returns dg (diameter
+        // of gyration); Rg = dg / 2.
+
+        // --- capas=1, N=7 ---
+        let mut coords_7: Vec<[f64; 3]> = vec![[0.0, 0.0, 0.0]];
+        for k in 0..6 {
+            let angle = (k as f64) * std::f64::consts::FRAC_PI_3; // 60° steps
+            coords_7.push([2.0 * angle.cos(), 2.0 * angle.sin(), 0.0]);
+        }
+        let radii_7 = vec![1.0; 7];
+
+        let rg_numeric_7 = calculate_radius_of_gyration(&coords_7, &radii_7);
+        let dg_7 = kf_analytic::radius_of_gyration(&PackingMode::PlaneHC, 1, 2.0)
+            .expect("kf_analytic PlaneHC should return Some for capas=1");
+        let rg_analytic_7 = dg_7 / 2.0;
+
+        assert_relative_eq!(rg_numeric_7, rg_analytic_7, epsilon = 1e-6);
+
+        // --- capas=2, N=19 ---
+        // Second ring: 12 spheres of the centred-hex layer 2 packing. Six lie on
+        // the hex axes at radius 4 (angles k*60°); six sit between them at
+        // radius 2*sqrt(3), at angles (k*60° + 30°).
+        let mut coords_19 = coords_7.clone();
+        for k in 0..6 {
+            let angle = (k as f64) * std::f64::consts::FRAC_PI_3;
+            coords_19.push([4.0 * angle.cos(), 4.0 * angle.sin(), 0.0]);
+        }
+        let r_between = 2.0 * 3.0_f64.sqrt();
+        for k in 0..6 {
+            let angle = (k as f64) * std::f64::consts::FRAC_PI_3 + std::f64::consts::FRAC_PI_6; // + 30°
+            coords_19.push([r_between * angle.cos(), r_between * angle.sin(), 0.0]);
+        }
+        let radii_19 = vec![1.0; 19];
+        assert_eq!(coords_19.len(), 19);
+
+        let rg_numeric_19 = calculate_radius_of_gyration(&coords_19, &radii_19);
+        let dg_19 = kf_analytic::radius_of_gyration(&PackingMode::PlaneHC, 2, 2.0)
+            .expect("kf_analytic PlaneHC should return Some for capas=2");
+        let rg_analytic_19 = dg_19 / 2.0;
+
+        assert_relative_eq!(rg_numeric_19, rg_analytic_19, epsilon = 1e-6);
     }
 }

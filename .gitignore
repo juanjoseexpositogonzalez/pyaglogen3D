@@ -68,3 +68,4 @@ htmlcov/
 
 # Zone identifiers (WSL)
 *:Zone.Identifier
+frontend/tsconfig.tsbuildinfo
