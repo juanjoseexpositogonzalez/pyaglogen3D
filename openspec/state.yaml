@@ -1,6 +1,9 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
+last_archived: verify-rg-2026-04-20
+archived_changes:
+  - verify-rg-2026-04-20
 stack:
   rust:
     version: "1.94.0"
