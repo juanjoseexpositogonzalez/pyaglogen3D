@@ -146,8 +146,8 @@ interface FormParams {
   configuration_type: ChainConfig | PlaneConfig | SphereConfig
   packing: PackingType
   layers: number | null  // layer-based input
-  // Primary particle size for display scaling
-  primary_particle_radius_nm: number
+  // Primary particle size for display scaling (v2 schema: diameter `dpo` in nm)
+  primary_particle_diameter_nm: number
   // Polydisperse radius ratio (all algorithms)
   radius_ratio_min: number  // ratio relative to primary (1.0 = same size)
   radius_ratio_max: number
@@ -186,7 +186,7 @@ const defaultParams: FormParams = {
   configuration_type: 'lineal',
   packing: 'HC',
   layers: null,
-  primary_particle_radius_nm: 25.0,  // typical soot primary particle
+  primary_particle_diameter_nm: 25.0,  // typical soot primary particle diameter (dpo)
   radius_ratio_min: 1.0,
   radius_ratio_max: 1.0,
   polydisperse: false,
@@ -658,12 +658,14 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     }
 
     // Build algorithm-specific parameters
-    // Backend uses dimensionless units (radius ~1.0), we store nm for display
+    // Backend uses dimensionless units (radius ~1.0); we persist the primary
+    // particle DIAMETER in nm for result scaling (v2 schema). The legacy
+    // primary_particle_radius_nm key is never written from this form.
     let algorithmParams: Record<string, number | boolean | string | undefined> = {
       n_particles: params.n_particles,
       sticking_probability: params.sticking_probability,
-      // Store primary particle size in nm for result scaling
-      primary_particle_radius_nm: params.primary_particle_radius_nm,
+      // v2 schema: primary particle diameter (dpo) in nm
+      primary_particle_diameter_nm: params.primary_particle_diameter_nm,
       // Send dimensionless ratios to backend
       radius_min: params.radius_ratio_min,
       // Only include radius_max if polydisperse
@@ -894,21 +896,21 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             </div>
           )}
 
-          {/* Primary Particle Radius in nm - hidden for imported (uses file data) */}
+          {/* Primary Particle Diameter in nm - hidden for imported (uses file data) */}
           {algorithm !== 'imported' && (
             <div className="space-y-2">
-              <Label htmlFor="primary_radius">Primary Particle Radius (nm)</Label>
+              <Label htmlFor="primary_diameter">Primary Particle Diameter (nm)</Label>
               <Input
-                id="primary_radius"
+                id="primary_diameter"
                 type="number"
                 min={1}
                 max={1000}
                 step={1}
-                value={params.primary_particle_radius_nm}
-                onChange={(e) => updateParam('primary_particle_radius_nm', parseFloat(e.target.value) || 25.0)}
+                value={params.primary_particle_diameter_nm}
+                onChange={(e) => updateParam('primary_particle_diameter_nm', parseFloat(e.target.value) || 25.0)}
               />
               <p className="text-xs text-muted-foreground">
-                Physical size of primary particles. Results (Rg, coordinates) will be displayed in nm.
+                Primary particle diameter (dpo) in nm (soot convention). Results (Rg, coordinates) will be displayed in nm.
               </p>
             </div>
           )}
@@ -943,7 +945,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
               <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
                   <Label htmlFor="radius_ratio_min">
-                    Min Ratio ({(params.radius_ratio_min * params.primary_particle_radius_nm).toFixed(1)} nm)
+                    Min Ratio ({(params.radius_ratio_min * params.primary_particle_diameter_nm).toFixed(1)} nm)
                   </Label>
                   <Input
                     id="radius_ratio_min"
@@ -957,7 +959,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 </div>
                 <div className="space-y-2">
                   <Label htmlFor="radius_ratio_max">
-                    Max Ratio ({(params.radius_ratio_max * params.primary_particle_radius_nm).toFixed(1)} nm)
+                    Max Ratio ({(params.radius_ratio_max * params.primary_particle_diameter_nm).toFixed(1)} nm)
                   </Label>
                   <Input
                     id="radius_ratio_max"
@@ -973,8 +975,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             )}
             <p className="text-xs text-muted-foreground">
               {params.polydisperse
-                ? `Particle radii will vary from ${(params.radius_ratio_min * params.primary_particle_radius_nm).toFixed(1)} to ${(params.radius_ratio_max * params.primary_particle_radius_nm).toFixed(1)} nm`
-                : `All particles will have radius ${params.primary_particle_radius_nm} nm`
+                ? `Particle sizes will vary from ${(params.radius_ratio_min * params.primary_particle_diameter_nm).toFixed(1)} to ${(params.radius_ratio_max * params.primary_particle_diameter_nm).toFixed(1)} nm (diameter)`
+                : `All particles will have diameter ${params.primary_particle_diameter_nm} nm`
               }
             </p>
           </div>

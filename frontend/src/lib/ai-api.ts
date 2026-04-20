@@ -179,6 +179,14 @@ export interface RecentSimulation {
   project_name: string
   created_at: string
   completed_at: string | null
+  /**
+   * Optional. When the backend exposes simulation parameters on this endpoint,
+   * the frontend can resolve the Rg nm scale via `getScaleFactorNm(parameters)`.
+   * Currently the backend does NOT populate this field (see
+   * RecentSimulationsView in backend/apps/ai_assistant/views.py); Rg is
+   * rendered as the dimensionless engine value until parameters are wired.
+   */
+  parameters?: Record<string, unknown>
   metrics: {
     fractal_dimension: number | null
     radius_of_gyration: number | null

@@ -1,10 +1,17 @@
 """Simulation serializers."""
+
 import base64
 import random
 
 from rest_framework import serializers
 
 from .models import ParametricStudy, Simulation
+from .services.params import (
+    PARAM_KEY_DIAMETER,
+    PARAM_KEY_RADIUS_LEGACY,
+    PARAM_KEY_SCHEMA_VERSION,
+    SCHEMA_VERSION_CURRENT,
+)
 from .utils import CSVParseError, generate_simulation_name, parse_csv_geometry
 
 
@@ -57,7 +64,7 @@ class SimulationSerializer(serializers.ModelSerializer):
         ]
 
     def create(self, validated_data):
-        """Auto-generate name if not provided."""
+        """Auto-generate name and stamp the v2 parameter schema."""
         # Remove csv_data from validated_data before creating (it's handled in the view)
         validated_data.pop("csv_data", None)
 
@@ -65,6 +72,29 @@ class SimulationSerializer(serializers.ModelSerializer):
             validated_data["name"] = generate_simulation_name(
                 validated_data.get("algorithm", "unknown")
             )
+
+        # Stamp parameters_schema_version = "v2" on every new simulation and
+        # convert any legacy primary_particle_radius_nm payload from older
+        # clients to primary_particle_diameter_nm (radius * 2). New writes MUST
+        # NEVER persist the legacy key. See services/params.py for the shim.
+        params = validated_data.get("parameters")
+        if isinstance(params, dict):
+            params = dict(params)  # copy — don't mutate caller's dict
+            if PARAM_KEY_DIAMETER not in params and PARAM_KEY_RADIUS_LEGACY in params:
+                legacy_radius = params.pop(PARAM_KEY_RADIUS_LEGACY)
+                try:
+                    legacy_radius_f = float(legacy_radius)
+                except (TypeError, ValueError):
+                    legacy_radius_f = None
+                if legacy_radius_f is not None and legacy_radius_f > 0:
+                    params[PARAM_KEY_DIAMETER] = legacy_radius_f * 2.0
+            else:
+                # If both keys are present, drop the legacy one: we never
+                # persist it going forward.
+                params.pop(PARAM_KEY_RADIUS_LEGACY, None)
+            params[PARAM_KEY_SCHEMA_VERSION] = SCHEMA_VERSION_CURRENT
+            validated_data["parameters"] = params
+
         return super().create(validated_data)
 
     def validate(self, data):
@@ -112,13 +142,9 @@ class SimulationSerializer(serializers.ModelSerializer):
                         f"Missing required parameter: {field}"
                     )
             if value["n_particles"] < 10:
-                raise serializers.ValidationError(
-                    "n_particles must be at least 10"
-                )
+                raise serializers.ValidationError("n_particles must be at least 10")
             if value["n_particles"] > 100000:
-                raise serializers.ValidationError(
-                    "n_particles must be at most 100,000"
-                )
+                raise serializers.ValidationError("n_particles must be at most 100,000")
 
         elif algorithm == "limiting":
             # Limiting cases allow any N >= 1
@@ -230,7 +256,9 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             if not (0.5 <= max_val <= 1.0):
                 raise serializers.ValidationError("max must be between 0.5 and 1.0")
             if min_val > max_val:
-                raise serializers.ValidationError("min must be less than or equal to max")
+                raise serializers.ValidationError(
+                    "min must be less than or equal to max"
+                )
         elif dist_type == "normal":
             mean = value.get("mean", 0.9)
             std = value.get("std", 0.05)
@@ -264,7 +292,11 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             return value
 
         # Ensure valid keys
-        valid_keys = {"include_boundaries", "include_theoretical", "theoretical_extremes"}
+        valid_keys = {
+            "include_boundaries",
+            "include_theoretical",
+            "theoretical_extremes",
+        }
         for key in value.keys():
             if key not in valid_keys:
                 raise serializers.ValidationError(

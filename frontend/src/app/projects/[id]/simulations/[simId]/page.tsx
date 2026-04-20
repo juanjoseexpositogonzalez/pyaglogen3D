@@ -27,6 +27,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
+import { getScaleFactorNm } from '@/lib/units'
 
 export default function SimulationDetailPage({
   params,
@@ -195,10 +196,12 @@ export default function SimulationDetailPage({
     )
   }
 
-  // Get scale factor from parameters (nm), default to 1.0 for backward compatibility
-  const scaleFactor = (simulation?.parameters as { primary_particle_radius_nm?: number })
-    ?.primary_particle_radius_nm ?? 1.0
-  const hasPhysicalUnits = scaleFactor !== 1.0
+  // Scale factor (nm per dimensionless engine unit) resolved via the shim.
+  // Handles v1 (primary_particle_radius_nm) and v2 (primary_particle_diameter_nm)
+  // schemas uniformly, with a default of 25.0 nm when neither key is present.
+  const scaleFactor = getScaleFactorNm(
+    (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
+  )
 
   // Scale coordinates and radii for display
   const coordinates = (geometry?.coordinates ?? []).map(([x, y, z]) => [
@@ -374,8 +377,8 @@ export default function SimulationDetailPage({
                 value={formatNumber(simulation.metrics.prefactor, 3)}
               />
               <MetricsCard
-                label={`Radius of Gyration${hasPhysicalUnits ? ' (nm)' : ''}`}
-                value={formatNumber(simulation.metrics.radius_of_gyration * scaleFactor, hasPhysicalUnits ? 1 : 2)}
+                label="Radius of Gyration (nm)"
+                value={formatNumber(simulation.metrics.radius_of_gyration * scaleFactor, 1)}
               />
               <MetricsCard
                 label="Porosity"

@@ -3,23 +3,36 @@
 import dynamic from 'next/dynamic'
 import { useMemo } from 'react'
 import type { PlotParams } from 'react-plotly.js'
+import { getScaleFactorNm } from '@/lib/units'
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 
 interface RgEvolutionChartProps {
   rgEvolution: number[]
+  /**
+   * Simulation parameters, used to resolve the nm scale factor via the shim.
+   * When omitted the default scale (DEFAULT_DIAMETER_NM / 2 = 25 nm) is used.
+   */
+  parameters?: Record<string, unknown>
   className?: string
 }
 
-export function RgEvolutionChart({ rgEvolution, className }: RgEvolutionChartProps) {
+export function RgEvolutionChart({ rgEvolution, parameters, className }: RgEvolutionChartProps) {
   const { xData, yData } = useMemo(() => {
+    // Empty series → empty arrays; the early-return below renders "no data".
+    if (rgEvolution.length === 0) {
+      return { xData: [] as number[], yData: [] as number[] }
+    }
+    const scale = getScaleFactorNm(parameters)
     // Create N values from 1 to length of rgEvolution
     const n = rgEvolution.map((_, i) => i + 1)
     return {
       xData: n.map((v) => Math.log10(v)),
-      yData: rgEvolution.map((v) => Math.log10(v)),
+      // Scale the unitless engine Rg to nm before taking log10, so the axis
+      // truly represents log10(Rg/nm).
+      yData: rgEvolution.map((v) => Math.log10(v * scale)),
     }
-  }, [rgEvolution])
+  }, [rgEvolution, parameters])
 
   if (rgEvolution.length === 0) {
     return (
@@ -61,7 +74,7 @@ export function RgEvolutionChart({ rgEvolution, className }: RgEvolutionChartPro
       color: '#e2e8f0',
     },
     yaxis: {
-      title: { text: 'log10(Rg)', font: { color: '#e2e8f0' } },
+      title: { text: 'log10(Rg/nm)', font: { color: '#e2e8f0' } },
       gridcolor: '#334155',
       zerolinecolor: '#475569',
       color: '#e2e8f0',

@@ -1,4 +1,5 @@
 """Simulation views."""
+
 import csv
 import io
 import logging
@@ -21,6 +22,7 @@ from .serializers import (
     SimulationDetailSerializer,
     SimulationSerializer,
 )
+from .services.params import get_scale_factor_nm
 from .services.projection import (
     render_projection_png,
     render_projection_svg,
@@ -138,7 +140,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
             else:
                 logger.error(f"Failed to queue simulation {simulation.id}: {exc}")
                 simulation.status = SimulationStatus.FAILED
-                simulation.error_message = "Task broker unavailable. Please try again later."
+                simulation.error_message = (
+                    "Task broker unavailable. Please try again later."
+                )
                 simulation.completed_at = timezone.now()
                 simulation.save(
                     update_fields=["status", "error_message", "completed_at"]
@@ -161,7 +165,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         if simulation.status not in [SimulationStatus.QUEUED, SimulationStatus.RUNNING]:
             return Response(
-                {"error": f"Cannot cancel simulation with status '{simulation.status}'"},
+                {
+                    "error": f"Cannot cancel simulation with status '{simulation.status}'"
+                },
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
@@ -182,6 +188,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
         if simulation.task_id:
             try:
                 from celery.result import AsyncResult
+
                 result = AsyncResult(simulation.task_id)
                 result.revoke(terminate=True)
                 logger.info(f"Revoked Celery task {simulation.task_id}")
@@ -202,7 +209,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
         simulations = Simulation.objects.filter(project_id=project_id, is_batch=False)
 
         # Cancel any running tasks first
-        for sim in simulations.filter(status__in=[SimulationStatus.QUEUED, SimulationStatus.RUNNING]):
+        for sim in simulations.filter(
+            status__in=[SimulationStatus.QUEUED, SimulationStatus.RUNNING]
+        ):
             self._cancel_task(sim)
 
         count = simulations.count()
@@ -290,6 +299,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Project using Rust
         import aglogen_core
+
         proj = aglogen_core.project_to_2d(coords, radii, azimuth, elevation)
 
         # Render image
@@ -385,8 +395,10 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Generate batch projections using Rust
         import aglogen_core
+
         projections = aglogen_core.project_batch(
-            coords, radii,
+            coords,
+            radii,
             azimuth_start=az_start,
             azimuth_end=az_end,
             azimuth_step=az_step,
@@ -397,14 +409,23 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Create ZIP file with all projections
         zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zf:
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for proj in projections:
-                bounds = (proj.bounds[0], proj.bounds[1], proj.bounds[2], proj.bounds[3])
+                bounds = (
+                    proj.bounds[0],
+                    proj.bounds[1],
+                    proj.bounds[2],
+                    proj.bounds[3],
+                )
 
                 if img_format == "png":
-                    image_data = render_projection_png(proj.x, proj.y, proj.radii, bounds)
+                    image_data = render_projection_png(
+                        proj.x, proj.y, proj.radii, bounds
+                    )
                 else:
-                    image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
+                    image_data = render_projection_svg(
+                        proj.x, proj.y, proj.radii, bounds
+                    )
 
                 filename = create_projection_filename(
                     str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
@@ -413,7 +434,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         zip_buffer.seek(0)
         response = HttpResponse(zip_buffer.read(), content_type="application/zip")
-        response["Content-Disposition"] = f'attachment; filename="{simulation.id}_projections.zip"'
+        response["Content-Disposition"] = (
+            f'attachment; filename="{simulation.id}_projections.zip"'
+        )
         return response
 
     def _load_geometry(self, simulation: Simulation) -> tuple[np.ndarray, np.ndarray]:
@@ -452,7 +475,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
         geometrical_center = (geom_min + geom_max) / 2
 
         # Calculate distances from center of gravity
-        distances_from_cdg = np.linalg.norm(coords - center_of_gravity, axis=2 if coords.ndim > 2 else 1)
+        distances_from_cdg = np.linalg.norm(
+            coords - center_of_gravity, axis=2 if coords.ndim > 2 else 1
+        )
         distance_order = np.argsort(distances_from_cdg) + 1  # 1-based ranking
 
         # Calculate per-particle coordination numbers
@@ -462,28 +487,78 @@ class SimulationViewSet(viewsets.ModelViewSet):
         output = io.StringIO()
         writer = csv.writer(output)
 
+        # Scale factor for Rg: engine emits a dimensionless value; every read
+        # boundary multiplies by diameter/2 to display in nm. The shim handles
+        # both v1 (primary_particle_radius_nm) and v2 (primary_particle_diameter_nm).
+        rg_scale_nm = get_scale_factor_nm(simulation.parameters)
+        rg_nm = simulation.metrics.get("radius_of_gyration", 0) * rg_scale_nm
+
         # Section 1: Agglomerate Properties
         writer.writerow(["# AGGLOMERATE PROPERTIES"])
         writer.writerow(["Property", "Value", "Unit"])
         writer.writerow(["Simulation ID", str(simulation.id), ""])
         writer.writerow(["Algorithm", simulation.algorithm, ""])
         writer.writerow(["Number of Particles", n_particles, ""])
-        writer.writerow(["Fractal Dimension (Df)", f"{simulation.metrics.get('fractal_dimension', 0):.4f}", ""])
-        writer.writerow(["Df Std. Dev.", f"{simulation.metrics.get('fractal_dimension_std', 0):.4f}", ""])
-        writer.writerow(["Prefactor (kf)", f"{simulation.metrics.get('prefactor', 0):.4f}", ""])
-        writer.writerow(["Radius of Gyration (Rg)", f"{simulation.metrics.get('radius_of_gyration', 0):.4f}", "particle radii"])
-        writer.writerow(["Porosity", f"{simulation.metrics.get('porosity', 0):.4f}", ""])
-        writer.writerow(["Coordination Mean", f"{simulation.metrics.get('coordination', {}).get('mean', 0):.4f}", ""])
-        writer.writerow(["Coordination Std. Dev.", f"{simulation.metrics.get('coordination', {}).get('std', 0):.4f}", ""])
+        writer.writerow(
+            [
+                "Fractal Dimension (Df)",
+                f"{simulation.metrics.get('fractal_dimension', 0):.4f}",
+                "",
+            ]
+        )
+        writer.writerow(
+            [
+                "Df Std. Dev.",
+                f"{simulation.metrics.get('fractal_dimension_std', 0):.4f}",
+                "",
+            ]
+        )
+        writer.writerow(
+            ["Prefactor (kf)", f"{simulation.metrics.get('prefactor', 0):.4f}", ""]
+        )
+        writer.writerow(
+            [
+                "Radius of Gyration (Rg)",
+                f"{rg_nm:.4f}",
+                "nm",
+            ]
+        )
+        writer.writerow(
+            ["Porosity", f"{simulation.metrics.get('porosity', 0):.4f}", ""]
+        )
+        writer.writerow(
+            [
+                "Coordination Mean",
+                f"{simulation.metrics.get('coordination', {}).get('mean', 0):.4f}",
+                "",
+            ]
+        )
+        writer.writerow(
+            [
+                "Coordination Std. Dev.",
+                f"{simulation.metrics.get('coordination', {}).get('std', 0):.4f}",
+                "",
+            ]
+        )
         writer.writerow([])
 
         # Shape Analysis
         writer.writerow(["# SHAPE ANALYSIS (Inertia Tensor)"])
         writer.writerow(["Property", "Value", "Unit"])
-        writer.writerow(["Anisotropy (Imax/Imin)", f"{simulation.metrics.get('anisotropy', 0):.4f}", ""])
-        writer.writerow(["Asphericity", f"{simulation.metrics.get('asphericity', 0):.6f}", ""])
-        writer.writerow(["Acylindricity", f"{simulation.metrics.get('acylindricity', 0):.6f}", ""])
-        moments = simulation.metrics.get('principal_moments', [0, 0, 0])
+        writer.writerow(
+            [
+                "Anisotropy (Imax/Imin)",
+                f"{simulation.metrics.get('anisotropy', 0):.4f}",
+                "",
+            ]
+        )
+        writer.writerow(
+            ["Asphericity", f"{simulation.metrics.get('asphericity', 0):.6f}", ""]
+        )
+        writer.writerow(
+            ["Acylindricity", f"{simulation.metrics.get('acylindricity', 0):.6f}", ""]
+        )
+        moments = simulation.metrics.get("principal_moments", [0, 0, 0])
         writer.writerow(["Principal Moment I1 (min)", f"{moments[0]:.4f}", ""])
         writer.writerow(["Principal Moment I2", f"{moments[1]:.4f}", ""])
         writer.writerow(["Principal Moment I3 (max)", f"{moments[2]:.4f}", ""])
@@ -492,41 +567,63 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # Centers
         writer.writerow(["# GEOMETRIC CENTERS"])
         writer.writerow(["Property", "X", "Y", "Z"])
-        writer.writerow(["Center of Gravity", f"{center_of_gravity[0]:.6f}", f"{center_of_gravity[1]:.6f}", f"{center_of_gravity[2]:.6f}"])
-        writer.writerow(["Geometrical Center", f"{geometrical_center[0]:.6f}", f"{geometrical_center[1]:.6f}", f"{geometrical_center[2]:.6f}"])
+        writer.writerow(
+            [
+                "Center of Gravity",
+                f"{center_of_gravity[0]:.6f}",
+                f"{center_of_gravity[1]:.6f}",
+                f"{center_of_gravity[2]:.6f}",
+            ]
+        )
+        writer.writerow(
+            [
+                "Geometrical Center",
+                f"{geometrical_center[0]:.6f}",
+                f"{geometrical_center[1]:.6f}",
+                f"{geometrical_center[2]:.6f}",
+            ]
+        )
         writer.writerow([])
 
         # Section 2: Particle Data
         writer.writerow(["# PARTICLE DATA"])
-        writer.writerow([
-            "Particle #",
-            "X",
-            "Y",
-            "Z",
-            "Radius",
-            "Coordination #",
-            "Distance from CDG",
-            "Distance Rank"
-        ])
+        writer.writerow(
+            [
+                "Particle #",
+                "X",
+                "Y",
+                "Z",
+                "Radius",
+                "Coordination #",
+                "Distance from CDG",
+                "Distance Rank",
+            ]
+        )
 
         for i in range(n_particles):
             dist = distances_from_cdg[i]
-            rank = np.where(distance_order == i + 1)[0][0] + 1  # Find rank for this particle
-            writer.writerow([
-                i + 1,  # 1-based particle number (depositional order)
-                f"{coords[i, 0]:.6f}",
-                f"{coords[i, 1]:.6f}",
-                f"{coords[i, 2]:.6f}",
-                f"{radii[i]:.6f}",
-                coordination_numbers[i],
-                f"{dist:.6f}",
-                rank
-            ])
+            rank = (
+                np.where(distance_order == i + 1)[0][0] + 1
+            )  # Find rank for this particle
+            writer.writerow(
+                [
+                    i + 1,  # 1-based particle number (depositional order)
+                    f"{coords[i, 0]:.6f}",
+                    f"{coords[i, 1]:.6f}",
+                    f"{coords[i, 2]:.6f}",
+                    f"{radii[i]:.6f}",
+                    coordination_numbers[i],
+                    f"{dist:.6f}",
+                    rank,
+                ]
+            )
 
         # Return CSV response
         output.seek(0)
         response = HttpResponse(output.read(), content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{simulation.id}_export.csv"'
+        response["Content-Disposition"] = (
+            f'attachment; filename="{simulation.id}_export.csv"'
+        )
         return response
 
     def _calculate_coordination_numbers(
@@ -613,43 +710,55 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         for i in range(n_particles):
             dist_from_cdg = float(np.linalg.norm(coords[i] - center_of_gravity))
-            nodes.append({
-                "id": i + 1,  # 1-based ID (depositional order)
-                "x": float(coords[i, 0]),
-                "y": float(coords[i, 1]),
-                "z": float(coords[i, 2]),
-                "radius": float(radii[i]),
-                "coordination": len(adjacency[i]),
-                "distance_from_cdg": dist_from_cdg,
-            })
+            nodes.append(
+                {
+                    "id": i + 1,  # 1-based ID (depositional order)
+                    "x": float(coords[i, 0]),
+                    "y": float(coords[i, 1]),
+                    "z": float(coords[i, 2]),
+                    "radius": float(radii[i]),
+                    "coordination": len(adjacency[i]),
+                    "distance_from_cdg": dist_from_cdg,
+                }
+            )
 
             # Add edges (avoiding duplicates)
             for j in adjacency[i]:
                 edge_key = tuple(sorted([i, j]))
                 if edge_key not in edge_set:
                     edge_set.add(edge_key)
-                    edges.append({
-                        "source": i + 1,  # 1-based
-                        "target": j + 1,  # 1-based
-                    })
+                    edges.append(
+                        {
+                            "source": i + 1,  # 1-based
+                            "target": j + 1,  # 1-based
+                        }
+                    )
 
         # Calculate graph statistics
         coordination_numbers = [len(adj) for adj in adjacency]
         stats = {
             "n_particles": n_particles,
             "n_edges": len(edges),
-            "avg_coordination": float(np.mean(coordination_numbers)) if coordination_numbers else 0,
-            "max_coordination": max(coordination_numbers) if coordination_numbers else 0,
-            "min_coordination": min(coordination_numbers) if coordination_numbers else 0,
+            "avg_coordination": float(np.mean(coordination_numbers))
+            if coordination_numbers
+            else 0,
+            "max_coordination": max(coordination_numbers)
+            if coordination_numbers
+            else 0,
+            "min_coordination": min(coordination_numbers)
+            if coordination_numbers
+            else 0,
             # Graph connectivity metrics
             "is_connected": self._is_graph_connected(adjacency),
         }
 
-        return Response({
-            "nodes": nodes,
-            "edges": edges,
-            "stats": stats,
-        })
+        return Response(
+            {
+                "nodes": nodes,
+                "edges": edges,
+                "stats": stats,
+            }
+        )
 
     def _is_graph_connected(self, adjacency: list[list[int]]) -> bool:
         """Check if the graph is fully connected using BFS."""
@@ -719,28 +828,32 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Run box-counting analysis
         import aglogen_core
+
         result = aglogen_core.box_counting_agglomerate(
-            coords, radii,
+            coords,
+            radii,
             points_per_sphere=points_per_sphere,
             precision=precision,
         )
 
-        return Response({
-            "dimension": result.dimension,
-            "r_squared": result.r_squared,
-            "std_error": result.std_error,
-            "confidence_interval": list(result.confidence_interval),
-            "log_scales": result.log_scales.tolist(),
-            "log_values": result.log_values.tolist(),
-            "residuals": result.residuals.tolist(),
-            "linear_region_start": result.linear_region_start,
-            "execution_time_ms": result.execution_time_ms,
-            "parameters": {
-                "points_per_sphere": points_per_sphere,
-                "precision": precision,
-                "n_particles": len(coords),
-            },
-        })
+        return Response(
+            {
+                "dimension": result.dimension,
+                "r_squared": result.r_squared,
+                "std_error": result.std_error,
+                "confidence_interval": list(result.confidence_interval),
+                "log_scales": result.log_scales.tolist(),
+                "log_values": result.log_values.tolist(),
+                "residuals": result.residuals.tolist(),
+                "linear_region_start": result.linear_region_start,
+                "execution_time_ms": result.execution_time_ms,
+                "parameters": {
+                    "points_per_sphere": points_per_sphere,
+                    "precision": precision,
+                    "n_particles": len(coords),
+                },
+            }
+        )
 
     @action(detail=True, methods=["post"], url_path="optical")
     def optical(self, request: Request, pk=None, **kwargs) -> Response:
@@ -780,7 +893,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
             refractive_index_n = float(request.data.get("refractive_index_n", 1.95))
             refractive_index_k = float(request.data.get("refractive_index_k", 0.79))
             medium_index = float(request.data.get("medium_index", 1.0))
-            dipoles_per_wavelength = float(request.data.get("dipoles_per_wavelength", 10.0))
+            dipoles_per_wavelength = float(
+                request.data.get("dipoles_per_wavelength", 10.0)
+            )
         except (ValueError, TypeError) as e:
             return Response(
                 {"error": f"Invalid numeric parameter: {e}"},
@@ -974,7 +1089,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             params = dict(study.base_parameters)
             for i, name in enumerate(param_names):
                 params[name] = combo[i]
-            combo_str = ", ".join(f"{name}={combo[i]}" for i, name in enumerate(param_names))
+            combo_str = ", ".join(
+                f"{name}={combo[i]}" for i, name in enumerate(param_names)
+            )
             create_simulation(params, "grid", combo_str)
 
         # 2. Limiting cases (if enabled)
@@ -991,7 +1108,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
             # 3. Sintering extremes (if limiting cases AND sintering enabled)
             if study.sintering_config:
-                sintering_cases = generate_sintering_extreme_cases(study.base_parameters)
+                sintering_cases = generate_sintering_extreme_cases(
+                    study.base_parameters
+                )
                 for case_type, description, params in sintering_cases:
                     # Don't apply the study's sintering config for extreme cases
                     # since they define their own sintering
@@ -1036,7 +1155,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         simulations = instance.simulations.all()
         count = simulations.count()
         simulations.delete()
-        logger.info(f"Deleted parametric study {instance.id} and {count} associated simulations")
+        logger.info(
+            f"Deleted parametric study {instance.id} and {count} associated simulations"
+        )
         instance.delete()
 
     @action(detail=True, methods=["get"])
@@ -1055,19 +1176,27 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "execution_time_ms": sim.execution_time_ms,
             }
             if sim.metrics:
-                result_data.update({
-                    "fractal_dimension": sim.metrics.get("fractal_dimension"),
-                    "fractal_dimension_std": sim.metrics.get("fractal_dimension_std"),
-                    "prefactor": sim.metrics.get("prefactor"),
-                    "radius_of_gyration": sim.metrics.get("radius_of_gyration"),
-                    "porosity": sim.metrics.get("porosity"),
-                    "coordination_mean": sim.metrics.get("coordination", {}).get("mean"),
-                    "coordination_std": sim.metrics.get("coordination", {}).get("std"),
-                    "anisotropy": sim.metrics.get("anisotropy"),
-                    "asphericity": sim.metrics.get("asphericity"),
-                    "acylindricity": sim.metrics.get("acylindricity"),
-                    "box_counting": sim.metrics.get("box_counting"),
-                })
+                result_data.update(
+                    {
+                        "fractal_dimension": sim.metrics.get("fractal_dimension"),
+                        "fractal_dimension_std": sim.metrics.get(
+                            "fractal_dimension_std"
+                        ),
+                        "prefactor": sim.metrics.get("prefactor"),
+                        "radius_of_gyration": sim.metrics.get("radius_of_gyration"),
+                        "porosity": sim.metrics.get("porosity"),
+                        "coordination_mean": sim.metrics.get("coordination", {}).get(
+                            "mean"
+                        ),
+                        "coordination_std": sim.metrics.get("coordination", {}).get(
+                            "std"
+                        ),
+                        "anisotropy": sim.metrics.get("anisotropy"),
+                        "asphericity": sim.metrics.get("asphericity"),
+                        "acylindricity": sim.metrics.get("acylindricity"),
+                        "box_counting": sim.metrics.get("box_counting"),
+                    }
+                )
             results.append(result_data)
 
         # Calculate study status based on simulations
@@ -1076,22 +1205,24 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         failed = study.simulations.filter(status="failed").count()
         running = study.simulations.filter(status__in=["queued", "running"]).count()
 
-        return Response({
-            "study_id": str(study.id),
-            "name": study.name,
-            "description": study.description,
-            "base_algorithm": study.base_algorithm,
-            "base_parameters": study.base_parameters,
-            "parameter_grid": study.parameter_grid,
-            "status": "completed" if running == 0 else "running",
-            "progress": {
-                "total": total,
-                "completed": completed,
-                "failed": failed,
-                "running": running,
-            },
-            "results": results,
-        })
+        return Response(
+            {
+                "study_id": str(study.id),
+                "name": study.name,
+                "description": study.description,
+                "base_algorithm": study.base_algorithm,
+                "base_parameters": study.base_parameters,
+                "parameter_grid": study.parameter_grid,
+                "status": "completed" if running == 0 else "running",
+                "progress": {
+                    "total": total,
+                    "completed": completed,
+                    "failed": failed,
+                    "running": running,
+                },
+                "results": results,
+            }
+        )
 
     @action(detail=True, methods=["get"], url_path="export")
     def export_csv(self, request: Request, pk=None, **kwargs) -> HttpResponse:
@@ -1103,7 +1234,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         - Box-counting columns if include_box_counting is enabled
         """
         study = self.get_object()
-        simulations = study.simulations.filter(status="completed").order_by("created_at")
+        simulations = study.simulations.filter(status="completed").order_by(
+            "created_at"
+        )
 
         output = io.StringIO()
         writer = csv.writer(output)
@@ -1111,13 +1244,26 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Determine all parameter keys from the grid
         param_keys = list(study.parameter_grid.keys())
 
-        # Build header row
-        header = ["Simulation ID", "Name", "Seed"] + param_keys + [
-            "Df", "Df_std", "kf", "Rg", "Porosity",
-            "Coord_Mean", "Coord_Std",
-            "Anisotropy", "Asphericity", "Acylindricity",
-            "Execution_ms"
-        ]
+        # Build header row. Rg is scaled to nm at the read boundary via the
+        # schema-v1/v2 shim; the column name carries the unit so consumers can
+        # identify it without a separate Unit column.
+        header = (
+            ["Simulation ID", "Name", "Seed"]
+            + param_keys
+            + [
+                "Df",
+                "Df_std",
+                "kf",
+                "Rg_nm",
+                "Porosity",
+                "Coord_Mean",
+                "Coord_Std",
+                "Anisotropy",
+                "Asphericity",
+                "Acylindricity",
+                "Execution_ms",
+            ]
+        )
 
         # Add sintering columns if configured
         if study.sintering_config:
@@ -1132,46 +1278,60 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Data rows
         for sim in simulations:
             if sim.metrics:
-                row = [
-                    str(sim.id),
-                    sim.name or "",
-                    sim.seed,
-                ] + [sim.parameters.get(key, "") for key in param_keys] + [
-                    f"{sim.metrics.get('fractal_dimension', 0):.4f}",
-                    f"{sim.metrics.get('fractal_dimension_std', 0):.4f}",
-                    f"{sim.metrics.get('prefactor', 0):.4f}",
-                    f"{sim.metrics.get('radius_of_gyration', 0):.4f}",
-                    f"{sim.metrics.get('porosity', 0):.4f}",
-                    f"{sim.metrics.get('coordination', {}).get('mean', 0):.4f}",
-                    f"{sim.metrics.get('coordination', {}).get('std', 0):.4f}",
-                    f"{sim.metrics.get('anisotropy', 0):.4f}",
-                    f"{sim.metrics.get('asphericity', 0):.6f}",
-                    f"{sim.metrics.get('acylindricity', 0):.6f}",
-                    sim.execution_time_ms or 0,
-                ]
+                # Per-row nm scaling for Rg: shim resolves v1 vs v2 per sim so
+                # a mixed-version batch produces correct values throughout.
+                rg_scale_nm = get_scale_factor_nm(sim.parameters)
+                rg_nm = sim.metrics.get("radius_of_gyration", 0) * rg_scale_nm
+                row = (
+                    [
+                        str(sim.id),
+                        sim.name or "",
+                        sim.seed,
+                    ]
+                    + [sim.parameters.get(key, "") for key in param_keys]
+                    + [
+                        f"{sim.metrics.get('fractal_dimension', 0):.4f}",
+                        f"{sim.metrics.get('fractal_dimension_std', 0):.4f}",
+                        f"{sim.metrics.get('prefactor', 0):.4f}",
+                        f"{rg_nm:.4f}",
+                        f"{sim.metrics.get('porosity', 0):.4f}",
+                        f"{sim.metrics.get('coordination', {}).get('mean', 0):.4f}",
+                        f"{sim.metrics.get('coordination', {}).get('std', 0):.4f}",
+                        f"{sim.metrics.get('anisotropy', 0):.4f}",
+                        f"{sim.metrics.get('asphericity', 0):.6f}",
+                        f"{sim.metrics.get('acylindricity', 0):.6f}",
+                        sim.execution_time_ms or 0,
+                    ]
+                )
 
                 # Add sintering data if configured
                 if study.sintering_config:
-                    row.extend([
-                        sim.parameters.get("sintering_type", "fixed"),
-                        f"{sim.parameters.get('sintering_coeff', 1.0):.3f}",
-                    ])
+                    row.extend(
+                        [
+                            sim.parameters.get("sintering_type", "fixed"),
+                            f"{sim.parameters.get('sintering_coeff', 1.0):.3f}",
+                        ]
+                    )
 
                 # Add box-counting data if enabled
                 if study.include_box_counting:
                     bc = sim.metrics.get("box_counting", {})
-                    row.extend([
-                        f"{bc.get('dimension', 0):.4f}",
-                        f"{bc.get('r_squared', 0):.4f}",
-                        f"{bc.get('std_error', 0):.6f}",
-                        bc.get("execution_time_ms", 0),
-                    ])
+                    row.extend(
+                        [
+                            f"{bc.get('dimension', 0):.4f}",
+                            f"{bc.get('r_squared', 0):.4f}",
+                            f"{bc.get('std_error', 0):.6f}",
+                            bc.get("execution_time_ms", 0),
+                        ]
+                    )
 
                 writer.writerow(row)
 
         output.seek(0)
         response = HttpResponse(output.read(), content_type="text/csv")
-        response["Content-Disposition"] = f'attachment; filename="{study.id}_results.csv"'
+        response["Content-Disposition"] = (
+            f'attachment; filename="{study.id}_results.csv"'
+        )
         return response
 
     @action(detail=True, methods=["post"], url_path="run-box-counting")
@@ -1254,7 +1414,8 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
                 # Run box-counting
                 bc_result = aglogen_core.box_counting_agglomerate(
-                    coords, radii,
+                    coords,
+                    radii,
                     points_per_sphere=points_per_sphere,
                     precision=precision,
                 )
@@ -1280,14 +1441,18 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
             except Exception as e:
                 results["failed"] += 1
-                results["errors"].append({
-                    "simulation_id": str(sim.id),
-                    "error": str(e),
-                })
+                results["errors"].append(
+                    {
+                        "simulation_id": str(sim.id),
+                        "error": str(e),
+                    }
+                )
 
-        return Response({
-            "status": "completed",
-            "message": f"Box-counting completed: {results['processed']} processed, "
-                       f"{results['skipped']} skipped (already done), {results['failed']} failed",
-            "results": results,
-        })
+        return Response(
+            {
+                "status": "completed",
+                "message": f"Box-counting completed: {results['processed']} processed, "
+                f"{results['skipped']} skipped (already done), {results['failed']} failed",
+                "results": results,
+            }
+        )

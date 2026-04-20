@@ -19,6 +19,7 @@ import {
 } from '@/lib/ai-api'
 import { projectsApi } from '@/lib/api'
 import { useAuth } from '@/contexts/AuthContext'
+import { getScaleFactorNm } from '@/lib/units'
 import {
   Loader2,
   Send,
@@ -852,16 +853,33 @@ export default function AIAssistantPage() {
                         <span>{sim.algorithm}</span>
                         {sim.n_particles && <span>{sim.n_particles}p</span>}
                       </div>
-                      {sim.metrics && sim.status === 'completed' && (
-                        <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
-                          {sim.metrics.fractal_dimension && (
-                            <span>Df: {sim.metrics.fractal_dimension.toFixed(2)}</span>
-                          )}
-                          {sim.metrics.radius_of_gyration && (
-                            <span>Rg: {sim.metrics.radius_of_gyration.toFixed(1)}</span>
-                          )}
-                        </div>
-                      )}
+                      {sim.metrics && sim.status === 'completed' && (() => {
+                        // The backend recent-simulations endpoint currently does
+                        // not expose parameters (see RecentSimulation type). When
+                        // parameters are present we scale Rg to nm; otherwise we
+                        // show the dimensionless engine value to avoid silently
+                        // displaying a wrong default-scaled number.
+                        const hasParams =
+                          sim.parameters !== undefined && sim.parameters !== null
+                        const scale = hasParams
+                          ? getScaleFactorNm(sim.parameters as Record<string, unknown>)
+                          : null
+                        return (
+                          <div className="flex items-center gap-2 text-xs text-gray-500 mt-1">
+                            {sim.metrics?.fractal_dimension && (
+                              <span>Df: {sim.metrics.fractal_dimension.toFixed(2)}</span>
+                            )}
+                            {sim.metrics?.radius_of_gyration != null && (
+                              <span>
+                                Rg:{' '}
+                                {scale !== null
+                                  ? `${(sim.metrics.radius_of_gyration * scale).toFixed(1)} nm`
+                                  : `${sim.metrics.radius_of_gyration.toFixed(2)} (engine)`}
+                              </span>
+                            )}
+                          </div>
+                        )
+                      })()}
                       <div className="flex items-center gap-1 text-xs text-gray-500 mt-1">
                         <Clock className="h-3 w-3" />
                         {new Date(sim.created_at).toLocaleString()}

@@ -135,6 +135,9 @@ export interface LimitingParams {
   configuration_type: ChainConfig | PlaneConfig | SphereConfig
   packing: PackingType
   layers?: number
+  /** v2 schema (new writes): primary particle diameter (dpo) in nm. */
+  primary_particle_diameter_nm?: number
+  /** v1 legacy schema (reads only): resolve via getScaleFactorNm() helper. */
   primary_particle_radius_nm?: number
   sintering_coeff?: number
 }

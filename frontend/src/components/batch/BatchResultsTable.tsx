@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Download, ExternalLink, RefreshCw, Calculator } from 'lucide-react'
 import { getSimulationAlgorithmLabel } from '@/lib/simulation-algorithms'
 import { formatNumber } from '@/lib/utils'
+import { getScaleFactorNm } from '@/lib/units'
 import type { ParametricStudyResults, BoxCountingResult } from '@/lib/types'
 
 /**
@@ -210,7 +211,7 @@ export function BatchResultsTable({
                   ))}
                   <th className="px-3 py-2 text-right font-medium">Df</th>
                   <th className="px-3 py-2 text-right font-medium">kf</th>
-                  <th className="px-3 py-2 text-right font-medium">Rg</th>
+                  <th className="px-3 py-2 text-right font-medium">Rg (nm)</th>
                   <th className="px-3 py-2 text-right font-medium">Anisotropy</th>
                   <th className="px-3 py-2 text-right font-medium">Porosity</th>
                   <th className="px-3 py-2 text-right font-medium">BC Df</th>
@@ -245,7 +246,13 @@ export function BatchResultsTable({
                       {result.prefactor ? formatNumber(result.prefactor, 3) : '-'}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
-                      {result.radius_of_gyration ? formatNumber(result.radius_of_gyration, 2) : '-'}
+                      {result.radius_of_gyration
+                        ? formatNumber(
+                            result.radius_of_gyration *
+                              getScaleFactorNm(result.parameters),
+                            1,
+                          )
+                        : '-'}
                     </td>
                     <td className="px-3 py-2 text-right font-mono">
                       {result.anisotropy ? formatNumber(result.anisotropy, 2) : '-'}

@@ -14,6 +14,7 @@ import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
+import { getScaleFactorNm } from '@/lib/units'
 
 export default function ProjectDetailPage({
   params,
@@ -273,9 +274,9 @@ export default function ProjectDetailPage({
 
                         <div className="flex items-center gap-4">
                           {sim.status === 'completed' && sim.metrics && (() => {
-                            const scale = (sim.parameters as { primary_particle_radius_nm?: number })
-                              ?.primary_particle_radius_nm ?? 1.0
-                            const hasUnits = scale !== 1.0
+                            const scale = getScaleFactorNm(
+                              (sim.parameters ?? {}) as unknown as Record<string, unknown>,
+                            )
                             return (
                               <div className="text-right">
                                 <p className="text-sm">
@@ -287,9 +288,9 @@ export default function ProjectDetailPage({
                                 <p className="text-sm">
                                   <span className="text-muted-foreground">Rg = </span>
                                   <span className="font-mono">
-                                    {formatNumber(sim.metrics.radius_of_gyration * scale, hasUnits ? 1 : 2)}
+                                    {formatNumber(sim.metrics.radius_of_gyration * scale, 1)}
                                   </span>
-                                  {hasUnits && <span className="text-muted-foreground text-xs"> nm</span>}
+                                  <span className="text-muted-foreground text-xs"> nm</span>
                                 </p>
                               </div>
                             )

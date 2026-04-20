@@ -1,4 +1,5 @@
 """Simulation Celery tasks."""
+
 import io
 import logging
 import math
@@ -20,6 +21,7 @@ def create_simulation_notification(simulation, success: bool = True) -> None:
     """
     try:
         from apps.ai_assistant.models import Notification
+
         Notification.create_simulation_notification(
             user=simulation.project.owner,
             simulation=simulation,
@@ -28,7 +30,9 @@ def create_simulation_notification(simulation, success: bool = True) -> None:
         logger.info(f"Created notification for simulation {simulation.id}")
     except Exception as e:
         # Don't fail the task if notification creation fails
-        logger.warning(f"Failed to create notification for simulation {simulation.id}: {e}")
+        logger.warning(
+            f"Failed to create notification for simulation {simulation.id}: {e}"
+        )
 
 
 # ============================================================================
@@ -40,17 +44,17 @@ def create_simulation_notification(simulation, success: bool = True) -> None:
 # ============================================================================
 
 # Df=1 configuration types
-DF1_CONFIGS = ['lineal', 'cruz2d', 'asterisco', 'cruz3d']
+DF1_CONFIGS = ["lineal", "cruz2d", "asterisco", "cruz3d"]
 
 # Df=2 configuration types
-DF2_CONFIGS = ['plano', 'dobleplano', 'tripleplano']
+DF2_CONFIGS = ["plano", "dobleplano", "tripleplano"]
 
 # Df=3 configuration types
-DF3_CONFIGS = ['cuboctaedro']
+DF3_CONFIGS = ["cuboctaedro"]
 
 # Packing types for 2D (plane) and 3D (sphere) configurations
-PACKING_2D = ['HC', 'CS']  # Hexagonal Compact, Cubic Simple
-PACKING_3D = ['HC', 'CS', 'CCC']  # + Face-Centered Cubic
+PACKING_2D = ["HC", "CS"]  # Hexagonal Compact, Cubic Simple
+PACKING_3D = ["HC", "CS", "CCC"]  # + Face-Centered Cubic
 
 
 def infer_geometry_from_config(configuration_type: str) -> tuple[str, float]:
@@ -63,14 +67,14 @@ def infer_geometry_from_config(configuration_type: str) -> tuple[str, float]:
         Tuple of (geometry_type, df)
     """
     if configuration_type in DF1_CONFIGS:
-        return ('chain', 1.0)
+        return ("chain", 1.0)
     elif configuration_type in DF2_CONFIGS:
-        return ('plane', 2.0)
+        return ("plane", 2.0)
     elif configuration_type in DF3_CONFIGS:
-        return ('sphere', 3.0)
+        return ("sphere", 3.0)
     else:
         # Default to chain/lineal
-        return ('chain', 1.0)
+        return ("chain", 1.0)
 
 
 def generate_linear_chain(
@@ -287,7 +291,7 @@ def generate_hexagonal_plane(
     n_particles: int = None,
     layers: int = None,
     radius: float = 1.0,
-    packing: str = 'HC',
+    packing: str = "HC",
     complete_rings: bool = True,
     sintering_coeff: float = 1.0,
 ) -> np.ndarray:
@@ -308,7 +312,7 @@ def generate_hexagonal_plane(
     """
     d = sintering_coeff * 2.0 * radius
 
-    if packing.upper() == 'CS':
+    if packing.upper() == "CS":
         # Cubic Simple: square grid
         if layers is not None:
             n_side = layers + 1
@@ -369,7 +373,7 @@ def generate_hexagonal_plane(
                     py = corner_y + t * (next_corner_y - corner_y)
                     all_positions.append((px, py, 0.0))
 
-    all_positions.sort(key=lambda p: p[0]**2 + p[1]**2)
+    all_positions.sort(key=lambda p: p[0] ** 2 + p[1] ** 2)
     coords = np.array(all_positions[:n_particles])
 
     if len(coords) > 0:
@@ -379,7 +383,7 @@ def generate_hexagonal_plane(
 
 
 def generate_doble_plano(
-    layers: int, radius: float = 1.0, packing: str = 'HC', sintering_coeff: float = 1.0
+    layers: int, radius: float = 1.0, packing: str = "HC", sintering_coeff: float = 1.0
 ) -> np.ndarray:
     """Generate two perpendicular planes (Df=2, config='dobleplano').
 
@@ -398,7 +402,7 @@ def generate_doble_plano(
     d = sintering_coeff * 2.0 * radius
     coords = []
 
-    if packing.upper() == 'HC':
+    if packing.upper() == "HC":
         esferas2 = layers * 2 + 1
 
         # First plane (xy-plane, horizontal)
@@ -509,7 +513,7 @@ def get_complete_shell_counts() -> list[tuple[int, str]]:
 
 
 def generate_cuboctaedro(
-    layers: int, radius: float = 1.0, packing: str = 'HC', sintering_coeff: float = 1.0
+    layers: int, radius: float = 1.0, packing: str = "HC", sintering_coeff: float = 1.0
 ) -> np.ndarray:
     """Generate a 3D compact structure (Df=3, config='cuboctaedro').
 
@@ -527,7 +531,7 @@ def generate_cuboctaedro(
     d = sintering_coeff * 2.0 * radius
     coords = []
 
-    if packing.upper() == 'HC':
+    if packing.upper() == "HC":
         esferas2 = layers * 2 + 1
 
         # Base hexagonal layer
@@ -552,7 +556,11 @@ def generate_cuboctaedro(
             for j in range(1, esferas2 // 2 + 1):
                 for i in range(1, esferas2 - j - (k - 1) + 1):
                     xx = (k - 1) * radius + radius * j + d * (i - 1)
-                    yy = math.sqrt(3) / 3 - math.sqrt(3) * (j - 1) + (k - 1) * math.sqrt(3) / 3
+                    yy = (
+                        math.sqrt(3) / 3
+                        - math.sqrt(3) * (j - 1)
+                        + (k - 1) * math.sqrt(3) / 3
+                    )
                     zz = 1.6345 * k
                     coords.append([xx, yy, zz])
 
@@ -569,11 +577,15 @@ def generate_cuboctaedro(
             for j in range(1, esferas2 // 2 + 1):
                 for i in range(1, esferas2 - j - (k - 1) + 1):
                     xx = (k - 1) * radius + radius * j + d * (i - 1)
-                    yy = -math.sqrt(3) / 3 + math.sqrt(3) * (j - 1) - (k - 1) * math.sqrt(3) / 3
+                    yy = (
+                        -math.sqrt(3) / 3
+                        + math.sqrt(3) * (j - 1)
+                        - (k - 1) * math.sqrt(3) / 3
+                    )
                     zz = -1.6345 * k
                     coords.append([xx, yy, zz])
 
-    elif packing.upper() == 'CS':
+    elif packing.upper() == "CS":
         # Cubic Simple packing
         n_side = layers + 1
         for j in range(n_side):
@@ -581,7 +593,7 @@ def generate_cuboctaedro(
                 for k in range(n_side):
                     coords.append([d * i, d * j, d * k])
 
-    elif packing.upper() == 'CCC':
+    elif packing.upper() == "CCC":
         # Face-Centered Cubic packing
         n_side = layers + 1
         spacing = 4 / math.sqrt(3)
@@ -590,18 +602,26 @@ def generate_cuboctaedro(
         for j in range(n_side):
             for i in range(n_side):
                 for k in range(n_side):
-                    coords.append([spacing * radius * i, spacing * radius * j, spacing * radius * k])
+                    coords.append(
+                        [
+                            spacing * radius * i,
+                            spacing * radius * j,
+                            spacing * radius * k,
+                        ]
+                    )
 
         # Face-center positions (offset)
         offset = 2 / math.sqrt(3)
         for j in range(layers):
             for i in range(layers):
                 for k in range(layers):
-                    coords.append([
-                        offset + spacing * radius * i,
-                        offset + spacing * radius * j,
-                        offset + spacing * radius * k
-                    ])
+                    coords.append(
+                        [
+                            offset + spacing * radius * i,
+                            offset + spacing * radius * j,
+                            offset + spacing * radius * k,
+                        ]
+                    )
 
     coords = np.array(coords) if coords else np.zeros((0, 3))
     coords = np.unique(np.round(coords, 10), axis=0)
@@ -611,8 +631,11 @@ def generate_cuboctaedro(
 
 
 def generate_hcp_sphere(
-    n_particles: int = None, layers: int = None, radius: float = 1.0,
-    packing: str = 'HC', sintering_coeff: float = 1.0
+    n_particles: int = None,
+    layers: int = None,
+    radius: float = 1.0,
+    packing: str = "HC",
+    sintering_coeff: float = 1.0,
 ) -> np.ndarray:
     """Generate a 3D compact structure (Df=3).
 
@@ -646,48 +669,59 @@ def generate_hcp_sphere(
         return np.array([[-radius, 0.0, 0.0], [radius, 0.0, 0.0]])
 
     if n_particles == 3:
-        coords = np.array([
-            [0.0, 0.0, 0.0],
-            [d, 0.0, 0.0],
-            [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
-        ])
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+            ]
+        )
         coords -= coords.mean(axis=0)
         return coords
 
     if n_particles == 4:
         h = d * math.sqrt(2.0 / 3.0)
-        coords = np.array([
-            [0.0, 0.0, 0.0],
-            [d, 0.0, 0.0],
-            [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
-            [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
-        ])
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
+            ]
+        )
         coords -= coords.mean(axis=0)
         return coords
 
     if n_particles == 5:
         h = d * math.sqrt(2.0 / 3.0)
-        coords = np.array([
-            [0.0, 0.0, 0.0],
-            [d, 0.0, 0.0],
-            [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
-            [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
-            [d / 2.0, d * math.sqrt(3.0) / 6.0, -h],
-        ])
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, -h],
+            ]
+        )
         coords -= coords.mean(axis=0)
         return coords
 
     if n_particles == 6:
         a = d / math.sqrt(2.0)
-        return np.array([
-            [a, 0.0, 0.0], [-a, 0.0, 0.0],
-            [0.0, a, 0.0], [0.0, -a, 0.0],
-            [0.0, 0.0, a], [0.0, 0.0, -a],
-        ])
+        return np.array(
+            [
+                [a, 0.0, 0.0],
+                [-a, 0.0, 0.0],
+                [0.0, a, 0.0],
+                [0.0, -a, 0.0],
+                [0.0, 0.0, a],
+                [0.0, 0.0, -a],
+            ]
+        )
 
     # For larger N, use cuboctaedro with appropriate layers
     # Estimate layers needed (rough approximation)
-    estimated_layers = int(math.ceil((n_particles / 13) ** (1/3)))
+    estimated_layers = int(math.ceil((n_particles / 13) ** (1 / 3)))
     return generate_cuboctaedro(max(1, estimated_layers), radius, packing)
 
 
@@ -732,11 +766,15 @@ def compute_limiting_metrics(
     # Porosity calculation
     # Porosity = 1 - (total particle volume) / (effective aggregate volume)
     # Effective volume is based on a sphere with radius = Rg + radius (to enclose particles)
-    particle_volume = (4.0 / 3.0) * math.pi * (radius ** 3)
+    particle_volume = (4.0 / 3.0) * math.pi * (radius**3)
     total_particle_volume = n_particles * particle_volume
     effective_radius = rg + radius  # Rg plus one particle radius to enclose
-    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius ** 3)
-    porosity = max(0.0, 1.0 - total_particle_volume / aggregate_volume) if aggregate_volume > 0 else 0.0
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius**3)
+    porosity = (
+        max(0.0, 1.0 - total_particle_volume / aggregate_volume)
+        if aggregate_volume > 0
+        else 0.0
+    )
 
     # Compute coordination numbers (count neighbors within 2.1 * radius)
     radius = 1.0
@@ -949,9 +987,7 @@ def fit_power_law_rg(
         return 0.0, 0.0, 0.0
 
 
-def compute_import_metrics(
-    coords: np.ndarray, radii: np.ndarray
-) -> dict:
+def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
     """Compute all metrics for imported geometry.
 
     Similar to compute_limiting_metrics but also estimates Df/kf from Rg evolution.
@@ -997,8 +1033,12 @@ def compute_import_metrics(
     particle_volumes = (4.0 / 3.0) * math.pi * radii**3
     total_particle_volume = particle_volumes.sum()
     effective_radius = rg + mean_radius
-    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius ** 3)
-    porosity = max(0.0, 1.0 - total_particle_volume / aggregate_volume) if aggregate_volume > 0 else 0.0
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius**3)
+    porosity = (
+        max(0.0, 1.0 - total_particle_volume / aggregate_volume)
+        if aggregate_volume > 0
+        else 0.0
+    )
 
     # Coordination numbers
     coordinations = []
@@ -1042,7 +1082,7 @@ def compute_import_metrics(
         subset_masses = masses[:n]
         subset_total = subset_masses.sum()
         if subset_total > 0:
-            subset_cdg = (coords[:n].T @ subset_masses / subset_total)
+            subset_cdg = coords[:n].T @ subset_masses / subset_total
             subset_centered = coords[:n] - subset_cdg
             subset_r_sq = np.sum(subset_centered**2, axis=1)
             subset_rg = math.sqrt(np.sum(subset_masses * subset_r_sq) / subset_total)
@@ -1181,13 +1221,31 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             f"with {params.get('n_particles', 1000)} particles"
         )
 
+        # NOTE on units: the Rust engine is dimensionless. The primary-particle
+        # diameter (`primary_particle_diameter_nm`, v2) / radius
+        # (`primary_particle_radius_nm`, v1) is NOT an engine input — it is a
+        # display/export scale applied at every read boundary via
+        # apps.simulations.services.params.get_scale_factor_nm. Below, the
+        # engine receives the per-particle distribution sizes (`radius_min` /
+        # `radius_max`) directly from the stored parameters in engine units,
+        # unchanged across schema versions.
+
         # Get radius parameters (support both old and new parameter names)
-        radius_min = params.get("radius_min") or params.get("seed_radius") or params.get("particle_radius") or 1.0
-        radius_max = params.get("radius_max")  # None means monodisperse (same as radius_min)
+        radius_min = (
+            params.get("radius_min")
+            or params.get("seed_radius")
+            or params.get("particle_radius")
+            or 1.0
+        )
+        radius_max = params.get(
+            "radius_max"
+        )  # None means monodisperse (same as radius_min)
 
         # Get sintering parameters
         sintering_coeff = params.get("sintering_coeff", 1.0)  # 1.0 = no sintering
-        sintering_type = params.get("sintering_type", "fixed")  # "fixed", "uniform", or "normal"
+        sintering_type = params.get(
+            "sintering_type", "fixed"
+        )  # "fixed", "uniform", or "normal"
         sintering_min = params.get("sintering_min", 0.85)  # For uniform distribution
         sintering_max = params.get("sintering_max", 0.95)  # For uniform distribution
         sintering_std = params.get("sintering_std", 0.05)  # For normal distribution
@@ -1337,16 +1395,24 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             target_n_particles = params.get("n_particles")
             # single_aggregate: if True, ensures a single connected component (may have higher Df)
             # if False, allows multiple clusters but achieves more accurate target Df
-            single_aggregate = params.get("single_aggregate", False)  # Default to accurate Df
+            single_aggregate = params.get(
+                "single_aggregate", False
+            )  # Default to accurate Df
 
             # Validation with safe limits to prevent OOM/DoS
             if not (1.0 <= target_df <= 3.0):
                 raise ValueError("target_df must be between 1.0 and 3.0")
             if not (3 <= n_levels <= 8):
-                raise ValueError("n_levels must be between 3 and 8 (higher values cause excessive memory usage)")
+                raise ValueError(
+                    "n_levels must be between 3 and 8 (higher values cause excessive memory usage)"
+                )
             if connectivity_method not in ("random_walk", "nearest_neighbor"):
-                raise ValueError("connectivity_method must be 'random_walk' or 'nearest_neighbor'")
-            if target_n_particles is not None and not (10 <= target_n_particles <= 10000):
+                raise ValueError(
+                    "connectivity_method must be 'random_walk' or 'nearest_neighbor'"
+                )
+            if target_n_particles is not None and not (
+                10 <= target_n_particles <= 10000
+            ):
                 raise ValueError("target_n_particles must be between 10 and 10000")
 
             result = aglogen_core.run_box_rfa(
@@ -1361,6 +1427,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         elif algorithm == "limiting":
             # Limiting case geometry (deterministic, no simulation)
             import time
+
             start_time = time.perf_counter()
 
             n_particles = params.get("n_particles", 100)
@@ -1383,15 +1450,21 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 config = configuration_type or "lineal"
 
                 if config == "lineal":
-                    coordinates = generate_linear_chain(n_particles, radius, sintering_coeff)
+                    coordinates = generate_linear_chain(
+                        n_particles, radius, sintering_coeff
+                    )
                 elif config == "cruz2d":
                     coordinates = generate_cruz2d(n_particles, radius, sintering_coeff)
                 elif config == "asterisco":
-                    coordinates = generate_asterisco(n_particles, radius, sintering_coeff)
+                    coordinates = generate_asterisco(
+                        n_particles, radius, sintering_coeff
+                    )
                 elif config == "cruz3d":
                     coordinates = generate_cruz3d(n_particles, radius, sintering_coeff)
                 else:
-                    coordinates = generate_linear_chain(n_particles, radius, sintering_coeff)
+                    coordinates = generate_linear_chain(
+                        n_particles, radius, sintering_coeff
+                    )
 
             elif geometry_type == "plane":
                 df = 2.0
@@ -1404,21 +1477,33 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                         radius=radius,
                         packing=packing,
                         complete_rings=True,
-                        sintering_coeff=sintering_coeff
+                        sintering_coeff=sintering_coeff,
                     )
                 elif config == "dobleplano":
-                    use_layers = layers if layers is not None else max(1, int(math.sqrt(n_particles / 4)))
-                    coordinates = generate_doble_plano(use_layers, radius, packing, sintering_coeff)
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int(math.sqrt(n_particles / 4)))
+                    )
+                    coordinates = generate_doble_plano(
+                        use_layers, radius, packing, sintering_coeff
+                    )
                 elif config == "tripleplano":
-                    use_layers = layers if layers is not None else max(1, int(math.sqrt(n_particles / 6)))
-                    coordinates = generate_triple_plano(use_layers, radius, sintering_coeff)
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int(math.sqrt(n_particles / 6)))
+                    )
+                    coordinates = generate_triple_plano(
+                        use_layers, radius, sintering_coeff
+                    )
                 else:
                     coordinates = generate_hexagonal_plane(
                         n_particles=n_particles,
                         radius=radius,
                         packing=packing,
                         complete_rings=True,
-                        sintering_coeff=sintering_coeff
+                        sintering_coeff=sintering_coeff,
                     )
 
             elif geometry_type == "sphere":
@@ -1428,13 +1513,21 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 # For small N (1-6), use special configurations
                 if n_particles <= 6 and layers is None:
                     coordinates = generate_hcp_sphere(
-                        n_particles=n_particles, radius=radius, packing=packing,
-                        sintering_coeff=sintering_coeff
+                        n_particles=n_particles,
+                        radius=radius,
+                        packing=packing,
+                        sintering_coeff=sintering_coeff,
                     )
                 else:
                     # Use layer-based or estimate layers from n_particles
-                    use_layers = layers if layers is not None else max(1, int((n_particles / 13) ** (1/3)))
-                    coordinates = generate_cuboctaedro(use_layers, radius, packing, sintering_coeff)
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int((n_particles / 13) ** (1 / 3)))
+                    )
+                    coordinates = generate_cuboctaedro(
+                        use_layers, radius, packing, sintering_coeff
+                    )
             else:
                 raise ValueError(f"Unknown geometry type: {geometry_type}")
 
@@ -1496,7 +1589,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             try:
                 bc_result = run_box_counting_if_configured(simulation_id)
             except Exception as e:
-                logger.warning(f"Box-counting failed for limiting case {simulation_id}: {e}")
+                logger.warning(
+                    f"Box-counting failed for limiting case {simulation_id}: {e}"
+                )
                 # Don't fail the whole simulation for box-counting error
 
             # Create notification for user
@@ -1513,10 +1608,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             raise ValueError(f"Unknown algorithm: {algorithm}")
 
         # Convert coordinates to bytes (N x 4: x, y, z, radius)
-        geometry_array = np.column_stack([
-            result.coordinates,
-            result.radii.reshape(-1, 1)
-        ])
+        geometry_array = np.column_stack(
+            [result.coordinates, result.radii.reshape(-1, 1)]
+        )
         buffer = io.BytesIO()
         np.save(buffer, geometry_array)
         simulation.geometry = buffer.getvalue()
