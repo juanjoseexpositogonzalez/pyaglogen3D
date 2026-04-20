@@ -13,6 +13,9 @@ function dismissKey(userId: string): string {
 }
 
 describe("UnitConventionBanner", () => {
+  // localStorage is provided by the test setup (src/test/setup.ts) which
+  // installs a working InMemoryStorage because jsdom 23 + Node 22+ leave
+  // window.localStorage as a no-op due to the experimental Node global.
   beforeEach(() => {
     localStorage.clear();
   });
