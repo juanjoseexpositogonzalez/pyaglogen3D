@@ -62,14 +62,17 @@ services:
       - "8004:8080"
     env_file:
       - backend/.env
+    # Apply pending migrations before starting the server.
+    # Django's migrate is idempotent — safe to run on every restart.
     command: >
-      gunicorn
-      --bind 0.0.0.0:8080
-      --workers 2
-      --timeout 120
-      --access-logfile -
-      --error-logfile -
-      config.wsgi:application
+      sh -c "python manage.py migrate --noinput &&
+             gunicorn
+             --bind 0.0.0.0:8080
+             --workers 2
+             --timeout 120
+             --access-logfile -
+             --error-logfile -
+             config.wsgi:application"
     depends_on:
       db:
         condition: service_healthy
