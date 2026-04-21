@@ -32,10 +32,10 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the application. NODE_ENV=production is explicit so Next.js
-# produces a production build deterministically regardless of what the
-# local .env or compose file sets.
-ENV NODE_ENV=production
+# Build the application. We do NOT set NODE_ENV=production here because
+# that would prevent access to devDependencies (tailwind, postcss,
+# typescript, @types/*) which Next.js needs at build time. Next.js
+# internally treats `next build` as production regardless.
 ENV NEXT_TELEMETRY_DISABLED=1
 # Belt-and-braces: nuke any .next dir that might leak in via build context
 # (although .dockerignore should prevent this). Guarantees a clean build.
