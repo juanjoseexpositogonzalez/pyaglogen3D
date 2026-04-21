@@ -1077,18 +1077,62 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
     asphericity = float(I3 - 0.5 * (I1 + I2))
     acylindricity = float(I2 - I1)
 
-    # Fractal dimension is no longer computed from an Rg-law fit on the
-    # import path: that approach depended on the particle add-order which
-    # is not preserved (or even meaningful) for CSV / .mat imports and
-    # produced misleading values (see explore.md §4.3). Leave Df as None
-    # until T6 wires aglogen_core.box_counting_agglomerate with an N ≥ 50
-    # guard. Other geometric metrics (Rg, porosity, coordination, shape)
-    # are order-independent and stay.
-    # TODO(T6): wire aglogen_core.box_counting_agglomerate here.
+    # Fractal dimension via box-counting (T6).
+    #
+    # Why box-counting instead of an Rg-law fit: the Rg-law approach depended
+    # on the particle add-order which is not preserved (or even meaningful)
+    # for CSV / .mat imports and produced misleading values (see explore.md
+    # §4.3). Box-counting is order-independent — it measures how the sphere-
+    # coverage scales with box size — so it's the correct primary Df source
+    # for imported geometries.
+    #
+    # Threshold: we require N >= 50 before trusting the fit. Below ~50
+    # particles there aren't enough points to resolve the power-law region
+    # at multiple scales and any Df < 3.0 is noise-dominated.
+    #
+    # Failure policy: if aglogen_core raises (ffi, degenerate geometry,
+    # installation issue) we log a warning, set Df to None with a note, and
+    # keep the rest of the metrics — a metrics failure must NEVER crash an
+    # import task.
+    fractal_dimension: float | None = None
+    fractal_dimension_std: float | None = None
+    notes: dict[str, str] = {}
 
-    return {
-        "fractal_dimension": None,
-        "fractal_dimension_std": None,
+    if n_particles < 50:
+        notes["fractal_dimension"] = (
+            "Insufficient particles for stable box-counting (N < 50)"
+        )
+    else:
+        try:
+            import aglogen_core
+
+            bc_result = aglogen_core.box_counting_agglomerate(
+                np.ascontiguousarray(coords, dtype=np.float64),
+                np.ascontiguousarray(radii, dtype=np.float64),
+                precision=18,
+            )
+            fractal_dimension = float(bc_result.dimension)
+            # aglogen_core returns the intrinsic std-error of the log-log
+            # fit slope; prefer it over a crude R²-derived approximation.
+            std_err = float(bc_result.std_error)
+            fractal_dimension_std = std_err if math.isfinite(std_err) else None
+            if not math.isfinite(fractal_dimension):
+                fractal_dimension = None
+                fractal_dimension_std = None
+                notes["fractal_dimension"] = (
+                    "Box-counting returned non-finite dimension"
+                )
+        except Exception as exc:  # noqa: BLE001 — metrics must never crash import
+            logger.warning(
+                "Box-counting failed for imported geometry: %s", exc, exc_info=True
+            )
+            fractal_dimension = None
+            fractal_dimension_std = None
+            notes["fractal_dimension"] = f"Box-counting failed: {exc}"
+
+    result = {
+        "fractal_dimension": fractal_dimension,
+        "fractal_dimension_std": fractal_dimension_std,
         "radius_of_gyration": float(rg),
         "porosity": float(porosity),
         "coordination": {
@@ -1101,6 +1145,9 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
         "principal_moments": eigenvalues.tolist(),
         "principal_axes": eigenvectors.T.tolist(),
     }
+    if notes:
+        result["notes"] = notes
+    return result
 
 
 @shared_task(bind=True, max_retries=1)

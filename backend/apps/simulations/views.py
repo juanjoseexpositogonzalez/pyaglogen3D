@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import zipfile
+from typing import Any
 
 import numpy as np
 from django.http import HttpResponse
@@ -31,8 +32,46 @@ from .services.projection import (
     render_projection_svg,
     create_projection_filename,
 )
+from .services.mat_parser import MatParseError, parse_mat_geometry
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
+
+# Rejection message for .dat uploads — spec R7 scenario "`.dat` upload". The
+# view returns this verbatim so the frontend can display it as-is. If you
+# change one word here, update the corresponding scenario in
+# openspec/changes/import-aggregate/specs/import-aggregate-contract.md (R7).
+_DAT_REJECTION_MESSAGE = (
+    "The .dat format from Box-Counter contains tessellated surface "
+    "points, not per-particle coordinates. To import an aggregate, "
+    "use CSV (.csv) or MATLAB (.mat) with per-particle "
+    "(x, y, z, radius) data."
+)
+
+
+def _resolve_import_format(original_filename: str, explicit_format: str | None) -> str:
+    """Determine the importer to dispatch to.
+
+    Priority:
+
+    1. An explicit ``format`` field from the payload (``"csv"``, ``"mat"``,
+       or ``"dat"``) wins — the frontend sets this from its own file-type
+       detection, and we trust it over a potentially-stripped filename.
+    2. Otherwise, fall back to the filename extension.
+    3. Default: ``"csv"`` (preserves pre-change behaviour for clients that
+       don't send either hint).
+    """
+    if explicit_format:
+        return explicit_format.lower().strip().lstrip(".")
+    if original_filename:
+        lower = original_filename.lower()
+        if lower.endswith(".mat"):
+            return "mat"
+        if lower.endswith(".dat"):
+            return "dat"
+        if lower.endswith(".csv"):
+            return "csv"
+    return "csv"
+
 
 logger = logging.getLogger(__name__)
 
@@ -74,17 +113,24 @@ class SimulationViewSet(viewsets.ModelViewSet):
     ) -> tuple[np.ndarray, dict]:
         """Decode + parse + stamp helper for geometry imports.
 
-        Centralizes the import pipeline so the imported-algorithm branch of
-        ``perform_create`` — and, in Phase 3, the MATLAB ``.mat`` branch —
-        goes through a single entry point. For this task only CSV is wired;
-        the ``fmt`` hint prepares the signature for future MATLAB routing.
+        Centralizes the import pipeline so both the CSV and MATLAB ``.mat``
+        branches of ``perform_create`` go through a single entry point. The
+        ``fmt`` argument chooses the parser:
+
+        - ``"csv"`` → :func:`parse_csv_geometry` over UTF-8 text.
+        - ``"mat"`` → :func:`parse_mat_geometry` over raw bytes.
+
+        ``.dat`` is NOT handled here — it's rejected earlier in
+        :meth:`create` before base64 decoding runs (T10).
 
         Args:
-            csv_data: Base64-encoded payload (CSV text for now).
+            csv_data: Base64-encoded payload. For CSV it decodes to UTF-8
+                text; for ``.mat`` it decodes to arbitrary binary bytes.
             extra_parameters: The serializer's ``validated_data["parameters"]``
                 dict (may already contain user-supplied keys). A *copy* is
                 returned with the import stamps injected.
-            fmt: Source format hint (``"csv"`` today; ``"mat"`` reserved for T9).
+            fmt: Source format. Must be ``"csv"`` or ``"mat"``; anything else
+                is routed as CSV for backwards compatibility.
             original_filename: Filename from the request payload (optional).
 
         Returns:
@@ -100,44 +146,110 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         from rest_framework import serializers as drf_serializers
 
-        # Decode base64 → CSV text. Base64 format is already validated by
-        # the serializer (see validate_csv_data); a failure here would be a
-        # programmer error, so we still raise 400 instead of 500.
+        # Step 1: base64 → raw bytes. Base64 syntax is already validated by
+        # the serializer (see ``validate_csv_data``); a failure here would be
+        # a programmer error, but we still raise 400 instead of 500 to keep
+        # the HTTP contract honest.
         try:
-            csv_bytes = base64.b64decode(csv_data)
-            csv_text = csv_bytes.decode("utf-8")
+            raw_bytes = base64.b64decode(csv_data)
         except Exception as exc:
             raise drf_serializers.ValidationError(
-                {"csv_data": f"Failed to decode CSV payload: {exc}"}
+                {"csv_data": f"Failed to decode payload: {exc}"}
             )
 
-        # Parse ONCE — the serializer no longer re-parses (T3). Convert
-        # CSVParseError to a DRF 400 so bad content is a client error, not
-        # a 500.
-        try:
-            geometry_array, n_particles, radius_min, radius_max = parse_csv_geometry(
-                csv_text
-            )
-        except CSVParseError as exc:
-            raise drf_serializers.ValidationError({"csv_data": str(exc)})
+        # Step 2: dispatch on format. The parser owns all shape/content
+        # validation. Each parser raises a format-specific error that we
+        # translate to DRF 400 so bad content is a client error, not 500.
+        import_metadata: dict[str, Any]
+        if fmt == "mat":
+            try:
+                geometry_array, import_metadata = parse_mat_geometry(raw_bytes)
+            except MatParseError as exc:
+                raise drf_serializers.ValidationError({"csv_data": str(exc)})
+            n_particles = int(geometry_array.shape[0])
+            radii = geometry_array[:, 3]
+            radius_min = float(radii.min())
+            radius_max = float(radii.max())
+            source_stamp = "mat_import"
+        else:
+            # CSV path — decode to text first. A non-UTF-8 payload here means
+            # the client mislabeled the format (e.g. sent a .mat as .csv); the
+            # message points at the likely cause.
+            try:
+                csv_text = raw_bytes.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise drf_serializers.ValidationError(
+                    {"csv_data": f"CSV payload is not valid UTF-8: {exc}"}
+                )
+            try:
+                (
+                    geometry_array,
+                    n_particles,
+                    radius_min,
+                    radius_max,
+                ) = parse_csv_geometry(csv_text)
+            except CSVParseError as exc:
+                raise drf_serializers.ValidationError({"csv_data": str(exc)})
+            # ``import_metadata`` is empty for CSV until T12 wires the
+            # ``#key=value`` metadata sniffer (Phase 4).
+            import_metadata = {}
+            source_stamp = "csv_import"
 
-        # Stamp v2 import-contract parameters (R3). The serializer's create()
-        # adds parameters_schema_version="v2" on top of what we write here.
+        # Step 3: stamp v2 import-contract parameters (R3). The serializer's
+        # create() adds ``parameters_schema_version="v2"`` on top of what we
+        # write here. ``primary_particle_diameter_nm`` is derived from the
+        # mean radius in the file's native unit — for MATLAB files we assume
+        # nm per design Component 4 (no per-file unit metadata for .mat in
+        # MVP). If a future format carries an explicit diameter override in
+        # its metadata dict, wire it here before the stamp.
         params = dict(extra_parameters) if extra_parameters else {}
-        radii = geometry_array[:, 3]
-        # Implicit diameter: 2 * mean(radius). Metadata override lands in T12.
-        mean_radius_nm = float(np.mean(radii))
-        params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius_nm
-        params["source"] = "csv_import"
+        mean_radius = float(np.mean(geometry_array[:, 3]))
+        params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
+        params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
-        params["original_format"] = fmt
-        params["import_metadata"] = {}
+        params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"
+        params["import_metadata"] = import_metadata
         # Geometry stats preserved for backwards-compat with UI code reading them.
         params["n_particles"] = n_particles
-        params["radius_min"] = float(radius_min)
-        params["radius_max"] = float(radius_max)
+        params["radius_min"] = radius_min
+        params["radius_max"] = radius_max
 
         return geometry_array, params
+
+    def create(self, request: Request, *args, **kwargs) -> Response:
+        """Create a simulation, with format-aware pre-dispatch for imports.
+
+        For ``algorithm="imported"`` uploads we inspect the filename (and the
+        optional ``format`` field) BEFORE the serializer runs so that:
+
+        - ``.dat`` uploads are rejected immediately with the spec R7 message,
+          skipping both base64 decode and UTF-8 check (T10).
+        - ``.mat`` uploads reach the MATLAB parser without tripping the
+          serializer's CSV-specific UTF-8 validation (the binary payload would
+          fail to decode as UTF-8).
+
+        Everything else — CSV imports, regular algorithms — falls through to
+        DRF's default :meth:`create` unchanged.
+        """
+        if request.data.get("algorithm") == "imported":
+            original_filename = request.data.get("original_filename", "")
+            explicit_format = request.data.get("format")
+            fmt = _resolve_import_format(original_filename, explicit_format)
+
+            if fmt == "dat":
+                # T10: spec R7 explicit rejection. Happens BEFORE any parsing
+                # (no base64 decode, no UTF-8 check). The message is a
+                # verbatim copy of the spec scenario — do not paraphrase.
+                return Response(
+                    {"detail": _DAT_REJECTION_MESSAGE},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            # Stash the resolved format so perform_create can route to the
+            # right parser without re-sniffing.
+            self._import_fmt = fmt
+
+        return super().create(request, *args, **kwargs)
 
     def perform_create(self, serializer):
         """Create simulation and enqueue task."""
@@ -151,10 +263,11 @@ class SimulationViewSet(viewsets.ModelViewSet):
         if algorithm == "imported" and csv_data:
             extra_params = serializer.validated_data.get("parameters", {})
             original_filename = self.request.data.get("original_filename", "")
+            fmt = getattr(self, "_import_fmt", "csv")
             geometry_array, params = self._process_import_payload(
                 csv_data,
                 extra_params,
-                fmt="csv",
+                fmt=fmt,
                 original_filename=original_filename,
             )
 

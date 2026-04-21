@@ -118,17 +118,19 @@ class SimulationSerializer(serializers.ModelSerializer):
         return data
 
     def validate_csv_data(self, value: str) -> str:
-        """Validate CSV payload format (not content).
+        """Validate import payload format (not content).
 
-        Content validation (columns, radius sign, N ≤ 100k) happens exactly
-        once in the view via ``parse_csv_geometry`` — see T3 of the
-        import-aggregate change: the serializer MUST NOT re-parse the CSV
-        or the payload is decoded and tokenized twice per upload.
+        Content validation (columns, shape, radius sign, N ≤ 100k) happens
+        exactly once in the view via the appropriate parser — see T3 of the
+        import-aggregate change: the serializer MUST NOT re-parse the upload
+        or the payload is decoded and tokenized twice.
 
         Here we only ensure:
 
         1. The value is valid base64.
-        2. The value decodes to valid UTF-8.
+        2. For CSV uploads, the value decodes to valid UTF-8. For MATLAB
+           ``.mat`` uploads the payload is binary and the UTF-8 check is
+           skipped — the parser owns all shape validation.
         3. The encoded payload is under the backend size cap (defense in
            depth against a client that bypasses the UI 10 MB guard).
         """
@@ -143,10 +145,24 @@ class SimulationSerializer(serializers.ModelSerializer):
         except Exception as e:
             raise serializers.ValidationError(f"Invalid base64 encoding: {e}")
 
-        try:
-            csv_bytes.decode("utf-8")
-        except UnicodeDecodeError as e:
-            raise serializers.ValidationError(f"CSV is not valid UTF-8: {e}")
+        # Skip UTF-8 enforcement when the upload is binary (.mat). The view
+        # dispatches on filename/format BEFORE the parser runs; checking the
+        # extension here lets a binary payload slip past this validator
+        # without a second filename-sniffing helper. CSV uploads still pay
+        # the UTF-8 toll — that's the cheap fail-fast for garbled text.
+        fmt_hint = self.initial_data.get("format") if self.initial_data else None
+        filename = (
+            self.initial_data.get("original_filename", "") if self.initial_data else ""
+        )
+        is_binary_format = (fmt_hint or "").lower().lstrip(
+            "."
+        ) == "mat" or filename.lower().endswith(".mat")
+
+        if not is_binary_format:
+            try:
+                csv_bytes.decode("utf-8")
+            except UnicodeDecodeError as e:
+                raise serializers.ValidationError(f"CSV is not valid UTF-8: {e}")
 
         return value
 
