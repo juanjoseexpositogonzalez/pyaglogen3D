@@ -10,6 +10,14 @@ interface ParticlesProps {
   colorMode: ColorMode
   coordination?: number[]
   opacity?: number
+  /**
+   * Optional override for the uniform color applied when no other color mode
+   * produces a color (i.e. the `default`/`uniform` branch). Accepts any value
+   * supported by `THREE.Color#set` — hex string (e.g. `"#ff0000"`) or number
+   * (e.g. `0xff0000`). When omitted, the historical default (`0x4488ff`) is
+   * preserved, keeping existing callers visually identical.
+   */
+  uniformColor?: string | number
 }
 
 export function Particles({
@@ -18,6 +26,7 @@ export function Particles({
   colorMode,
   coordination,
   opacity = 1,
+  uniformColor,
 }: ParticlesProps) {
   const meshRef = useRef<THREE.InstancedMesh>(null)
   const count = coordinates.length
@@ -91,14 +100,18 @@ export function Particles({
           break
         }
         default:
-          // Uniform blue
-          color.setHex(0x4488ff)
+          // Uniform color — caller-provided override wins, otherwise default blue.
+          if (uniformColor !== undefined) {
+            color.set(uniformColor as THREE.ColorRepresentation)
+          } else {
+            color.setHex(0x4488ff)
+          }
       }
       colors.push(color)
     }
 
     return { matrices, colors }
-  }, [coordinates, radii, colorMode, coordination, count])
+  }, [coordinates, radii, colorMode, coordination, count, uniformColor])
 
   // Apply transforms and colors when they change
   useEffect(() => {

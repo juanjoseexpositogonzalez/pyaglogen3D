@@ -4,10 +4,23 @@ import { Suspense, useMemo, useRef, useEffect } from 'react'
 import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
 import { Particles } from './Particles'
-import { useViewerStore, backgroundColors } from '@/stores/viewerStore'
+import {
+  useViewerStore,
+  backgroundColors,
+  DEFAULT_CAMERA_SCOPE,
+} from '@/stores/viewerStore'
 import { cn } from '@/lib/utils'
 import type { ColorMode } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
+
+/**
+ * Identifies which scope in `useViewerStore` a viewer should read/write its
+ * camera angles from. Undefined → the default `"single"` scope (legacy
+ * behavior, single-sim detail page).
+ */
+export interface CameraSource {
+  scope: string
+}
 
 // Colors for principal axes (similar to coordinate axes but distinguishable)
 const PRINCIPAL_AXIS_COLORS = ['#ff6b6b', '#51cf66', '#339af0'] as const
@@ -50,7 +63,13 @@ function ExportHandler() {
  * Tracks camera position and updates store with azimuth/elevation angles.
  * Must be placed inside Canvas.
  */
-function CameraTracker({ controlsRef }: { controlsRef: React.RefObject<OrbitControlsImpl | null> }) {
+function CameraTracker({
+  controlsRef,
+  scope = DEFAULT_CAMERA_SCOPE,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>
+  scope?: string
+}) {
   const setCameraAngles = useViewerStore((s) => s.setCameraAngles)
   const { camera } = useThree()
 
@@ -78,7 +97,8 @@ function CameraTracker({ controlsRef }: { controlsRef: React.RefObject<OrbitCont
 
     setCameraAngles(
       Math.round(normalizedAzimuth),
-      Math.round(elevation)
+      Math.round(elevation),
+      scope,
     )
   })
 
@@ -130,6 +150,18 @@ interface AgglomerateViewerProps {
   coordination?: number[]
   principalAxes?: [[number, number, number], [number, number, number], [number, number, number]]
   className?: string
+  /**
+   * Optional uniform color applied to the instanced particle mesh. Forwarded
+   * to `<Particles uniformColor={...} />`. When undefined, the viewer keeps
+   * its historical default (single-sim behavior).
+   */
+  colorOverride?: string | number
+  /**
+   * Optional camera state scoping. When provided, the internal
+   * `CameraTracker` writes to `cameraScopes[cameraSource.scope]` instead of
+   * the default `"single"` scope. Undefined preserves legacy behavior.
+   */
+  cameraSource?: CameraSource
 }
 
 export function AgglomerateViewer({
@@ -139,6 +171,8 @@ export function AgglomerateViewer({
   coordination,
   principalAxes,
   className,
+  colorOverride,
+  cameraSource,
 }: AgglomerateViewerProps) {
   const controlsRef = useRef<OrbitControlsImpl>(null)
   const {
@@ -251,6 +285,7 @@ export function AgglomerateViewer({
             colorMode={colorMode}
             coordination={coordination}
             opacity={particleOpacity}
+            uniformColor={colorOverride}
           />
 
           {/* Grid - scaled to agglomerate size */}
@@ -315,7 +350,7 @@ export function AgglomerateViewer({
           />
 
           {/* Track camera position for Az/El display */}
-          <CameraTracker controlsRef={controlsRef} />
+          <CameraTracker controlsRef={controlsRef} scope={cameraSource?.scope} />
 
           {/* Handle export requests */}
           <ExportHandler />
