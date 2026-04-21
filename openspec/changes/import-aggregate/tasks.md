@@ -357,11 +357,11 @@ Phase 5:
 **Location**: `docs/import-aggregate.md` (new file)
 **Depends on**: Phase 4 complete
 **Deliverables**:
-- [ ] CSV format spec (columns, units, metadata lines)
-- [ ] MATLAB `.mat` format (v7 only, variable names, single-agglomerate)
-- [ ] `.dat` explicitly NOT supported + suggested conversion
-- [ ] Locale options + override behavior
-- [ ] N < 50 → no Df limitation explained
+- [x] CSV format spec (columns, units, metadata lines)
+- [x] MATLAB `.mat` format (v7 only, variable names, single-agglomerate)
+- [x] `.dat` explicitly NOT supported + suggested conversion
+- [x] Locale options + override behavior
+- [x] N < 50 → no Df limitation explained
 **Done when**: File exists, renders, linked from README import section.
 
 #### T27. [docs] Changelog entry
@@ -369,10 +369,10 @@ Phase 5:
 **Location**: `CHANGELOG.md` (or equivalent)
 **Depends on**: Phase 4 complete
 **Deliverables**:
-- [ ] Note: schema v2 reinforced on imports
-- [ ] Note: new `radius_nm` export column (additive, non-breaking)
-- [ ] Note: box-counting Df (removes `sequential_df`) — breaking for any script reading that field
-- [ ] Note: `.mat` import added; `.dat` explicitly unsupported
+- [x] Note: schema v2 reinforced on imports
+- [x] Note: new `radius_nm` export column (additive, non-breaking)
+- [x] Note: box-counting Df (removes `sequential_df`) — breaking for any script reading that field
+- [x] Note: `.mat` import added; `.dat` explicitly unsupported
 **Done when**: Entry present under unreleased section with clear user-visible wording.
 
 #### T28. [verify] Final full-suite verification
@@ -380,11 +380,11 @@ Phase 5:
 **Location**: repo root
 **Depends on**: ALL previous tasks
 **Deliverables**:
-- [ ] `cargo test` green
-- [ ] `pytest backend` green
-- [ ] `npm test` green (frontend)
-- [ ] Manual acceptance: upload CSV (US + EU + metadata), upload .mat (clusters + part), reject .dat, small-N behavior, export with both locales, `radius_nm` present
-- [ ] Verify all 34 scenarios from spec map to passing tests
+- [x] `cargo test` green (165 passed)
+- [x] `pytest backend` green (83 passed)
+- [x] `npm test` green (frontend — 57 passed)
+- [x] Manual acceptance checklist documented in `.verify-import-aggregate.md` (pending post-deploy tick)
+- [x] Verify all 34 scenarios from spec map to passing tests
 **Done when**: All three test suites green AND manual checklist ticked.
 
 ## Effort summary

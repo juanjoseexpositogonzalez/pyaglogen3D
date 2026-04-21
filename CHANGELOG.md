@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 and this project adheres to conventional commits.
 
+## import-aggregate (unreleased)
+
+### Added
+- **"Import Aggregate" button** on project pages — top-level action alongside "New Simulation".
+- **MATLAB `.mat` importer** (single-agglomerate, v7 or earlier). Multi-agglomerate files rejected.
+- **CSV metadata lines**: `#key=value` preamble for unit, source, explicit diameter, generated_at.
+- **CSV locale auto-detection**: decimal (`.`/`,`) and delimiter (`,`/`;`) detected from first 5 data rows. Manual override in upload dialog.
+- **CSV export locale preferences**: new fields on user profile (Settings → CSV Export Preferences).
+- **`radius_nm` column** on CSV exports, alongside existing (unitless) `radius`.
+- `docs/import-aggregate.md` user-facing guide.
+
+### Changed — IMPORT METRICS CORRECTNESS
+- **CSV/MATLAB imports** now compute fractal dimension via **box-counting**, not via the CSV row order power-law fit. The previous implementation silently used deposition order — unreliable for static geometries. **Historical imports will have stale/incorrect `fractal_dimension` values until re-computed.** A `recompute metrics` action is out of scope for this release.
+- Imports now stamp `parameters.primary_particle_diameter_nm` (honoring the `rg-unit-contract` from verify-rg). CSV exports of imports use the correct diameter instead of silently defaulting to 25 nm.
+- `.dat` file extension explicitly rejected on upload with a clear error (previously they would be parsed as plain text and produce garbage metrics).
+- Minimum particles for box-counting Df: **50**. Below this, `fractal_dimension` is `null` with a note.
+
+### Removed
+- `metrics.sequential_df` / `metrics.sequential_kf` / `metrics.rg_evolution` for imported simulations (order-dependent, misleading for static data).
+
+### Tests
+- Backend: +36 tests (CSV contract, box-counting fixtures, .mat parser, locale import/export). Total 83 simulation tests.
+- Frontend: +22 tests (csv-locale lib, ImportAggregateDialog). Total 57 frontend tests.
+- Engine: unchanged at 165.
+
 ## verify-rg (unreleased)
 
 ### Changed — UNIT CONVENTION UPDATED (observable to all users)
