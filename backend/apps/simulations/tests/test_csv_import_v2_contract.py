@@ -141,10 +141,11 @@ def test_csv_import_stamps_schema_version_v2() -> None:
 
 @pytest.mark.django_db
 def test_csv_import_stamps_source_filename_and_format() -> None:
-    """Three metadata stamps land unchanged: source, original_filename, original_format.
+    """Four metadata stamps land: source, original_filename, original_format, import_metadata.
 
-    Also verifies ``import_metadata`` is present (empty until T12 wires the
-    ``#key=value`` sniffer).
+    With T12 the ``import_metadata`` dict is populated by the CSV parser:
+    at minimum ``unit`` defaults to ``"nm"`` and the locale sniffer stamps
+    ``detected_decimal`` / ``detected_delimiter`` / ``locale_warning``.
     """
     user = _make_user()
     project = _make_project(user)
@@ -158,7 +159,13 @@ def test_csv_import_stamps_source_filename_and_format() -> None:
     assert sim.parameters["source"] == "csv_import"
     assert sim.parameters["original_filename"] == "my-aggregate.csv"
     assert sim.parameters["original_format"] == "csv"
-    assert sim.parameters["import_metadata"] == {}
+    # T12+T13: metadata dict is populated (not empty) — contains defaults +
+    # locale sniffer output.
+    meta = sim.parameters["import_metadata"]
+    assert meta["unit"] == "nm"
+    assert meta["detected_delimiter"] == ","
+    assert meta["detected_decimal"] == "."
+    assert "locale_warning" in meta
 
 
 # --- Content-validation rejections (400, not 500) ---------------------------

@@ -7,7 +7,11 @@ Includes OAuth provider tracking and email verification status.
 
 import uuid
 
-from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
+from django.contrib.auth.models import (
+    AbstractBaseUser,
+    BaseUserManager,
+    PermissionsMixin,
+)
 from django.db import models
 
 
@@ -73,6 +77,22 @@ class User(AbstractBaseUser, PermissionsMixin):
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
 
+    # CSV locale preferences — applied to every CSV export the user triggers.
+    # Defaults (``.`` / ``,``) preserve the pre-feature US-centric behavior;
+    # European users can switch to ``,`` / ``;`` without re-importing.
+    csv_decimal_separator = models.CharField(
+        max_length=1,
+        choices=[(".", "."), (",", ",")],
+        default=".",
+        help_text="Decimal separator for CSV exports",
+    )
+    csv_column_delimiter = models.CharField(
+        max_length=1,
+        choices=[(",", ","), (";", ";")],
+        default=",",
+        help_text="Column delimiter for CSV exports",
+    )
+
     # Timestamps
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
@@ -101,7 +121,9 @@ class EmailVerificationToken(models.Model):
     """Token for email verification."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name="verification_tokens")
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name="verification_tokens"
+    )
     token = models.CharField(max_length=64, unique=True)
     created_at = models.DateTimeField(auto_now_add=True)
     expires_at = models.DateTimeField()

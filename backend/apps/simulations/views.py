@@ -76,6 +76,62 @@ def _resolve_import_format(original_filename: str, explicit_format: str | None) 
 logger = logging.getLogger(__name__)
 
 
+# --- CSV export locale helpers ----------------------------------------------
+
+# Matches a "pure numeric cell" — optional sign, digits, optional single
+# decimal point, optional exponent. We only rewrite `.` → `,` on cells that
+# match this, so non-numeric strings (IDs, names, unit labels) stay intact.
+import re as _re
+
+_NUMERIC_CELL_RE = _re.compile(r"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$")
+
+
+def _get_user_csv_locale(request: Request) -> tuple[str, str]:
+    """Return ``(decimal, delimiter)`` for the authenticated user.
+
+    Falls back to ``(".", ",")`` when the user is unauthenticated or when
+    the profile fields are missing (e.g. during tests that bypass the
+    migration). Anonymous exports have always produced US-format CSV.
+    """
+    user = getattr(request, "user", None)
+    decimal = getattr(user, "csv_decimal_separator", ".") or "."
+    delimiter = getattr(user, "csv_column_delimiter", ",") or ","
+    # Defensive: both attrs are CharField(max_length=1), but reject anything
+    # we couldn't handle (e.g. a corrupted DB value) by falling back to US.
+    if decimal not in (".", ","):
+        decimal = "."
+    if delimiter not in (",", ";", "\t"):
+        delimiter = ","
+    return decimal, delimiter
+
+
+def _localize_numeric_cell(cell: Any, decimal: str) -> Any:
+    """Rewrite a numeric cell's decimal separator for EU-locale output.
+
+    Only pure numeric string cells are touched. Non-string values are
+    returned as-is (csv.writer converts them via ``str()`` on write, and
+    those conversions use ``.`` by default — we never emit them through
+    ``_localize_numeric_cell`` for EU output because the caller pre-formats
+    floats with f-strings first, see T15/T16).
+    """
+    if decimal != ",":
+        return cell
+    if isinstance(cell, str) and _NUMERIC_CELL_RE.match(cell):
+        return cell.replace(".", ",")
+    return cell
+
+
+def _write_localized_row(writer: Any, row: list[Any], decimal: str) -> None:
+    """Write a CSV row with decimal-separator localization applied.
+
+    ``writer`` MUST already have been constructed with the user's column
+    delimiter, so no delimiter handling happens here.
+    """
+    if decimal == ",":
+        row = [_localize_numeric_cell(cell, decimal) for cell in row]
+    writer.writerow(row)
+
+
 class SimulationViewSet(viewsets.ModelViewSet):
     """ViewSet for Simulation CRUD operations."""
 
@@ -172,39 +228,52 @@ class SimulationViewSet(viewsets.ModelViewSet):
             radius_max = float(radii.max())
             source_stamp = "mat_import"
         else:
-            # CSV path — decode to text first. A non-UTF-8 payload here means
-            # the client mislabeled the format (e.g. sent a .mat as .csv); the
-            # message points at the likely cause.
-            try:
-                csv_text = raw_bytes.decode("utf-8")
-            except UnicodeDecodeError as exc:
-                raise drf_serializers.ValidationError(
-                    {"csv_data": f"CSV payload is not valid UTF-8: {exc}"}
-                )
+            # CSV path — the parser now accepts raw bytes directly and owns
+            # the UTF-8 decode + metadata strip + locale sniff. Any failure
+            # is surfaced as a 400 via CSVParseError.
             try:
                 (
                     geometry_array,
                     n_particles,
                     radius_min,
                     radius_max,
-                ) = parse_csv_geometry(csv_text)
+                    import_metadata,
+                ) = parse_csv_geometry(raw_bytes)
             except CSVParseError as exc:
                 raise drf_serializers.ValidationError({"csv_data": str(exc)})
-            # ``import_metadata`` is empty for CSV until T12 wires the
-            # ``#key=value`` metadata sniffer (Phase 4).
-            import_metadata = {}
             source_stamp = "csv_import"
 
         # Step 3: stamp v2 import-contract parameters (R3). The serializer's
         # create() adds ``parameters_schema_version="v2"`` on top of what we
-        # write here. ``primary_particle_diameter_nm`` is derived from the
-        # mean radius in the file's native unit — for MATLAB files we assume
-        # nm per design Component 4 (no per-file unit metadata for .mat in
-        # MVP). If a future format carries an explicit diameter override in
-        # its metadata dict, wire it here before the stamp.
+        # write here. Diameter precedence (CSV only — .mat has no metadata
+        # dict in MVP):
+        #   1. metadata["primary_particle_diameter_nm"] explicit override
+        #   2. metadata["unit"] == "dimensionless" → DEFAULT_DIAMETER_NM
+        #   3. fallback: 2 * mean(radius) from the file's native unit
         params = dict(extra_parameters) if extra_parameters else {}
-        mean_radius = float(np.mean(geometry_array[:, 3]))
-        params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
+        meta_diameter = (
+            import_metadata.get("primary_particle_diameter_nm")
+            if isinstance(import_metadata, dict)
+            else None
+        )
+        meta_unit = (
+            import_metadata.get("unit") if isinstance(import_metadata, dict) else None
+        )
+        if (
+            isinstance(meta_diameter, (int, float))
+            and not isinstance(meta_diameter, bool)
+            and meta_diameter > 0
+        ):
+            params[PARAM_KEY_DIAMETER] = float(meta_diameter)
+        elif meta_unit == "dimensionless":
+            # Import a normalized-radius geometry: use the historical default
+            # diameter so downstream nm-scaling stays sensible.
+            from .services.params import DEFAULT_DIAMETER_NM
+
+            params[PARAM_KEY_DIAMETER] = DEFAULT_DIAMETER_NM
+        else:
+            mean_radius = float(np.mean(geometry_array[:, 3]))
+            params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
         params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
         params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"
@@ -667,91 +736,91 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # Calculate per-particle coordination numbers
         coordination_numbers = self._calculate_coordination_numbers(coords, radii)
 
-        # Create CSV
+        # Create CSV with user-preferred delimiter + decimal (T15). Anonymous
+        # or test-bypass callers fall through to US defaults (",", ".").
+        decimal, delimiter = _get_user_csv_locale(request)
         output = io.StringIO()
-        writer = csv.writer(output)
+        writer = csv.writer(output, delimiter=delimiter)
+
+        def wrow(row: list[Any]) -> None:
+            """Row-writer closure that applies decimal localization once."""
+            _write_localized_row(writer, row, decimal)
 
         # Scale factor for Rg: engine emits a dimensionless value; every read
         # boundary multiplies by diameter/2 to display in nm. The shim handles
         # both v1 (primary_particle_radius_nm) and v2 (primary_particle_diameter_nm).
+        # The same scale converts per-particle engine radii to nm for the new
+        # ``Radius (nm)`` row and the ``radius_nm`` particle column (T15).
         rg_scale_nm = get_scale_factor_nm(simulation.parameters)
         rg_nm = simulation.metrics.get("radius_of_gyration", 0) * rg_scale_nm
 
         # Section 1: Agglomerate Properties
-        writer.writerow(["# AGGLOMERATE PROPERTIES"])
-        writer.writerow(["Property", "Value", "Unit"])
-        writer.writerow(["Simulation ID", str(simulation.id), ""])
-        writer.writerow(["Algorithm", simulation.algorithm, ""])
-        writer.writerow(["Number of Particles", n_particles, ""])
-        writer.writerow(
+        wrow(["# AGGLOMERATE PROPERTIES"])
+        wrow(["Property", "Value", "Unit"])
+        wrow(["Simulation ID", str(simulation.id), ""])
+        wrow(["Algorithm", simulation.algorithm, ""])
+        wrow(["Number of Particles", n_particles, ""])
+        wrow(
             [
                 "Fractal Dimension (Df)",
                 f"{simulation.metrics.get('fractal_dimension', 0):.4f}",
                 "",
             ]
         )
-        writer.writerow(
+        wrow(
             [
                 "Df Std. Dev.",
                 f"{simulation.metrics.get('fractal_dimension_std', 0):.4f}",
                 "",
             ]
         )
-        writer.writerow(
-            ["Prefactor (kf)", f"{simulation.metrics.get('prefactor', 0):.4f}", ""]
-        )
-        writer.writerow(
+        wrow(["Prefactor (kf)", f"{simulation.metrics.get('prefactor', 0):.4f}", ""])
+        wrow(
             [
                 "Radius of Gyration (Rg)",
                 f"{rg_nm:.4f}",
                 "nm",
             ]
         )
-        writer.writerow(
-            ["Porosity", f"{simulation.metrics.get('porosity', 0):.4f}", ""]
-        )
-        writer.writerow(
+        wrow(["Porosity", f"{simulation.metrics.get('porosity', 0):.4f}", ""])
+        wrow(
             [
                 "Coordination Mean",
                 f"{simulation.metrics.get('coordination', {}).get('mean', 0):.4f}",
                 "",
             ]
         )
-        writer.writerow(
+        wrow(
             [
                 "Coordination Std. Dev.",
                 f"{simulation.metrics.get('coordination', {}).get('std', 0):.4f}",
                 "",
             ]
         )
-        writer.writerow([])
+        wrow([])
 
         # Shape Analysis
-        writer.writerow(["# SHAPE ANALYSIS (Inertia Tensor)"])
-        writer.writerow(["Property", "Value", "Unit"])
-        writer.writerow(
+        wrow(["# SHAPE ANALYSIS (Inertia Tensor)"])
+        wrow(["Property", "Value", "Unit"])
+        wrow(
             [
                 "Anisotropy (Imax/Imin)",
                 f"{simulation.metrics.get('anisotropy', 0):.4f}",
                 "",
             ]
         )
-        writer.writerow(
-            ["Asphericity", f"{simulation.metrics.get('asphericity', 0):.6f}", ""]
-        )
-        writer.writerow(
-            ["Acylindricity", f"{simulation.metrics.get('acylindricity', 0):.6f}", ""]
-        )
+        wrow(["Asphericity", f"{simulation.metrics.get('asphericity', 0):.6f}", ""])
+        wrow(["Acylindricity", f"{simulation.metrics.get('acylindricity', 0):.6f}", ""])
         moments = simulation.metrics.get("principal_moments", [0, 0, 0])
-        writer.writerow(["Principal Moment I1 (min)", f"{moments[0]:.4f}", ""])
-        writer.writerow(["Principal Moment I2", f"{moments[1]:.4f}", ""])
-        writer.writerow(["Principal Moment I3 (max)", f"{moments[2]:.4f}", ""])
-        writer.writerow([])
+        wrow(["Principal Moment I1 (min)", f"{moments[0]:.4f}", ""])
+        wrow(["Principal Moment I2", f"{moments[1]:.4f}", ""])
+        wrow(["Principal Moment I3 (max)", f"{moments[2]:.4f}", ""])
+        wrow([])
 
         # Centers
-        writer.writerow(["# GEOMETRIC CENTERS"])
-        writer.writerow(["Property", "X", "Y", "Z"])
-        writer.writerow(
+        wrow(["# GEOMETRIC CENTERS"])
+        wrow(["Property", "X", "Y", "Z"])
+        wrow(
             [
                 "Center of Gravity",
                 f"{center_of_gravity[0]:.6f}",
@@ -759,7 +828,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 f"{center_of_gravity[2]:.6f}",
             ]
         )
-        writer.writerow(
+        wrow(
             [
                 "Geometrical Center",
                 f"{geometrical_center[0]:.6f}",
@@ -767,17 +836,20 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 f"{geometrical_center[2]:.6f}",
             ]
         )
-        writer.writerow([])
+        wrow([])
 
-        # Section 2: Particle Data
-        writer.writerow(["# PARTICLE DATA"])
-        writer.writerow(
+        # Section 2: Particle Data. The new ``radius_nm`` column (T15) is
+        # additive — the legacy dimensionless ``Radius`` column stays in
+        # place so downstream scripts that parse by index don't break.
+        wrow(["# PARTICLE DATA"])
+        wrow(
             [
                 "Particle #",
                 "X",
                 "Y",
                 "Z",
                 "Radius",
+                "radius_nm",
                 "Coordination #",
                 "Distance from CDG",
                 "Distance Rank",
@@ -789,13 +861,15 @@ class SimulationViewSet(viewsets.ModelViewSet):
             rank = (
                 np.where(distance_order == i + 1)[0][0] + 1
             )  # Find rank for this particle
-            writer.writerow(
+            radius_nm_cell = float(radii[i]) * rg_scale_nm
+            wrow(
                 [
                     i + 1,  # 1-based particle number (depositional order)
                     f"{coords[i, 0]:.6f}",
                     f"{coords[i, 1]:.6f}",
                     f"{coords[i, 2]:.6f}",
                     f"{radii[i]:.6f}",
+                    f"{radius_nm_cell:.6f}",
                     coordination_numbers[i],
                     f"{dist:.6f}",
                     rank,
@@ -1422,15 +1496,23 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             "created_at"
         )
 
+        # Apply user CSV locale prefs (T16). Anonymous callers and fixtures
+        # that don't set profile fields fall through to US defaults.
+        decimal, delimiter = _get_user_csv_locale(request)
         output = io.StringIO()
-        writer = csv.writer(output)
+        writer = csv.writer(output, delimiter=delimiter)
+
+        def wrow(row: list[Any]) -> None:
+            _write_localized_row(writer, row, decimal)
 
         # Determine all parameter keys from the grid
         param_keys = list(study.parameter_grid.keys())
 
-        # Build header row. Rg is scaled to nm at the read boundary via the
-        # schema-v1/v2 shim; the column name carries the unit so consumers can
-        # identify it without a separate Unit column.
+        # Build header row. Rg and primary-particle radius are both in nm at
+        # the read boundary via the schema-v1/v2 shim; the column names carry
+        # the unit so consumers can identify them without a separate Unit
+        # column. ``radius_nm`` (T16) is the per-row primary-particle radius
+        # (``diameter/2``) — additive, per-sim scaling.
         header = (
             ["Simulation ID", "Name", "Seed"]
             + param_keys
@@ -1439,6 +1521,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "Df_std",
                 "kf",
                 "Rg_nm",
+                "radius_nm",
                 "Porosity",
                 "Coord_Mean",
                 "Coord_Std",
@@ -1457,15 +1540,18 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         if study.include_box_counting:
             header.extend(["BC_Df", "BC_R2", "BC_StdError", "BC_Time_ms"])
 
-        writer.writerow(header)
+        wrow(header)
 
         # Data rows
         for sim in simulations:
             if sim.metrics:
-                # Per-row nm scaling for Rg: shim resolves v1 vs v2 per sim so
-                # a mixed-version batch produces correct values throughout.
+                # Per-row nm scaling: shim resolves v1 vs v2 per sim so a
+                # mixed-version batch produces correct values throughout.
                 rg_scale_nm = get_scale_factor_nm(sim.parameters)
                 rg_nm = sim.metrics.get("radius_of_gyration", 0) * rg_scale_nm
+                # radius_nm = diameter / 2 = scale factor. Matches verify-rg
+                # convention where ``Rg_nm = Rg_engine * scale_factor_nm``.
+                radius_nm = rg_scale_nm
                 row = (
                     [
                         str(sim.id),
@@ -1478,6 +1564,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         f"{sim.metrics.get('fractal_dimension_std', 0):.4f}",
                         f"{sim.metrics.get('prefactor', 0):.4f}",
                         f"{rg_nm:.4f}",
+                        f"{radius_nm:.4f}",
                         f"{sim.metrics.get('porosity', 0):.4f}",
                         f"{sim.metrics.get('coordination', {}).get('mean', 0):.4f}",
                         f"{sim.metrics.get('coordination', {}).get('std', 0):.4f}",
@@ -1509,7 +1596,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         ]
                     )
 
-                writer.writerow(row)
+                wrow(row)
 
         output.seek(0)
         response = HttpResponse(output.read(), content_type="text/csv")

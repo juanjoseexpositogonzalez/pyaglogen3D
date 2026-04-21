@@ -1,11 +1,16 @@
 """Utility functions for simulations."""
+
 import csv
 import io
+import logging
+import re
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
 
 
 # Algorithm display names
@@ -51,9 +56,14 @@ THEORETICAL_EXTREMES: dict[str, dict[str, list[float]]] = {
     "limiting": {
         "configuration_type": [
             # Df=1 (chain) configurations
-            "lineal", "cruz2d", "asterisco", "cruz3d",
+            "lineal",
+            "cruz2d",
+            "asterisco",
+            "cruz3d",
             # Df=2 (plane) configurations
-            "plano", "dobleplano", "tripleplano",
+            "plano",
+            "dobleplano",
+            "tripleplano",
             # Df=3 (sphere) configurations
             "cuboctaedro",
         ],
@@ -267,28 +277,254 @@ class CSVParseError(ValueError):
     pass
 
 
-def parse_csv_geometry(csv_text: str) -> tuple[np.ndarray, int, float, float]:
-    """Parse CSV geometry data and return particle array.
+# --- CSV metadata + locale helpers ------------------------------------------
+
+# Supported `#key=value` metadata keys extracted from the file header. Unknown
+# keys are preserved under ``metadata["_unknown_keys"]`` for forward-compat so
+# a newer CSV that carries extra hints never causes an older parser to reject.
+_SUPPORTED_METADATA_KEYS: frozenset[str] = frozenset(
+    {"unit", "primary_particle_diameter_nm", "source", "generated_at"}
+)
+
+# Keys that must be coerced to float when present. Unit / source / generated_at
+# stay as strings.
+_FLOAT_METADATA_KEYS: frozenset[str] = frozenset({"primary_particle_diameter_nm"})
+
+# Locale sniffer thresholds. Spec R2 scenario "Small sample size emits warning"
+# fires when fewer than this many data rows are available.
+_LOCALE_SNIFF_SAMPLE_SIZE: int = 5
+
+# Regex for extracting `# key=value` comment lines. Leading whitespace after
+# the `#` is tolerated — authors write `#unit=nm` and `# unit = nm` alike.
+_METADATA_LINE_PATTERN = re.compile(r"^#\s*(.*)$")
+
+
+def _split_metadata_comments(raw_text: str) -> tuple[list[str], dict[str, Any]]:
+    """Strip leading ``#key=value`` lines and return ``(body_lines, metadata)``.
+
+    Only consecutive ``#``-prefixed lines at the top of the file are consumed
+    (matching the spec: metadata lives "before the column header"). Blank
+    lines between metadata and the body are preserved in the body so the
+    delimiter sniffer operates on the real data region only.
+
+    Behavior details:
+
+    - ``# key=value`` → stamped into ``metadata`` with string value.
+    - ``# key = value`` (spaces around ``=``) → whitespace trimmed.
+    - ``# not a pair`` → malformed, logged + skipped (NOT an error — R1).
+    - Unknown keys → logged + preserved in ``metadata["_unknown_keys"]``.
+    - Float keys (see ``_FLOAT_METADATA_KEYS``) → coerced; invalid → skipped
+      with a log warning, value NOT stamped (so the caller can apply its own
+      default).
+    """
+    lines = raw_text.splitlines(keepends=True)
+    metadata: dict[str, Any] = {}
+    unknown: dict[str, str] = {}
+    cursor = 0
+
+    for line in lines:
+        stripped = line.rstrip("\r\n")
+        match = _METADATA_LINE_PATTERN.match(stripped)
+        if match is None:
+            break
+        cursor += 1
+
+        payload = match.group(1).strip()
+        if "=" not in payload:
+            if payload:
+                # Only log non-empty malformed lines; empty `#` is just a
+                # decorative separator and deserves no noise.
+                logger.debug("CSV metadata line has no `=`: %r", stripped)
+            continue
+
+        key_raw, _, value_raw = payload.partition("=")
+        key = key_raw.strip()
+        value = value_raw.strip()
+        if not key:
+            logger.debug("CSV metadata line has empty key: %r", stripped)
+            continue
+
+        if key in _FLOAT_METADATA_KEYS:
+            try:
+                metadata[key] = float(value)
+            except ValueError:
+                logger.warning(
+                    "CSV metadata %s=%r is not a float; skipping", key, value
+                )
+            continue
+
+        if key in _SUPPORTED_METADATA_KEYS:
+            metadata[key] = value
+        else:
+            # Forward-compat: retained but clearly separated from the
+            # supported key namespace.
+            unknown[key] = value
+            logger.info("CSV metadata line carried unknown key %r", key)
+
+    if unknown:
+        metadata["_unknown_keys"] = unknown
+
+    return lines[cursor:], metadata
+
+
+def _sniff_csv_locale(sample_lines: list[str]) -> dict[str, Any]:
+    """Detect CSV delimiter and decimal separator from up to 5 data rows.
+
+    Returns a dict with keys ``delimiter``, ``decimal``, ``warning``:
+
+    - ``delimiter`` ∈ ``{",", ";", "\\t"}`` — prefers ``csv.Sniffer`` result;
+      falls back to ``","`` if the sniffer can't tell.
+    - ``decimal`` ∈ ``{".", ","}`` — counted over numeric-looking tokens:
+        * only ``.`` seen → ``.``
+        * only ``,`` seen → ``,``
+        * both or neither → default ``.``
+    - ``warning`` is ``True`` when fewer than ``_LOCALE_SNIFF_SAMPLE_SIZE`` rows
+      were available, signaling low confidence. Empty input also warns.
+
+    The detector never raises — it degrades gracefully to the US-centric
+    default so a bad file still gets parsed and the user sees a proper data
+    error instead of a locale error.
+    """
+    # Strip blank lines so we don't under-count rows when the author padded.
+    trimmed = [line.strip() for line in sample_lines if line.strip()]
+    warning = len(trimmed) < _LOCALE_SNIFF_SAMPLE_SIZE
+
+    if not trimmed:
+        return {"delimiter": ",", "decimal": ".", "warning": True}
+
+    # Delimiter: csv.Sniffer is pretty good over a small joined sample. If it
+    # raises (e.g. all rows are a single token), fall back to ","'.
+    joined = "\n".join(trimmed[:_LOCALE_SNIFF_SAMPLE_SIZE])
+    delimiter = ","
+    try:
+        dialect = csv.Sniffer().sniff(joined, delimiters=",;\t")
+        delimiter = dialect.delimiter
+    except csv.Error:
+        delimiter = ","
+
+    # Decimal: scan numeric-looking tokens for ``.`` vs ``,``. Non-numeric
+    # tokens are ignored — they can't disambiguate.
+    has_dot = False
+    has_comma = False
+    for line in trimmed[:_LOCALE_SNIFF_SAMPLE_SIZE]:
+        for token in line.split(delimiter):
+            token = token.strip()
+            if not token:
+                continue
+            # A token is "numeric-looking" if it consists of digits plus at
+            # most one of the two separators (we count per-token, not per-file).
+            if any(ch.isdigit() for ch in token):
+                if "." in token:
+                    has_dot = True
+                if "," in token:
+                    has_comma = True
+
+    if has_dot and not has_comma:
+        decimal = "."
+    elif has_comma and not has_dot:
+        decimal = ","
+    else:
+        decimal = "."
+
+    return {"delimiter": delimiter, "decimal": decimal, "warning": warning}
+
+
+def _normalize_numeric_cell(raw: str, decimal: str) -> str:
+    """Normalize a numeric cell so Python's ``float()`` can parse it.
+
+    When ``decimal == ","`` we replace the FIRST comma with a dot so numbers
+    like ``"1,25"`` parse as ``1.25``. We do not touch non-numeric strings.
+    """
+    if decimal != ",":
+        return raw
+    # Only rewrite when the token looks numeric — avoids munging stray string
+    # columns in a future schema expansion.
+    stripped = raw.strip()
+    if not stripped:
+        return raw
+    if any(ch.isdigit() for ch in stripped):
+        return raw.replace(",", ".", 1)
+    return raw
+
+
+def parse_csv_geometry(
+    raw: bytes | str,
+    *,
+    decimal_override: str | None = None,
+    delimiter_override: str | None = None,
+) -> tuple[np.ndarray, int, float, float, dict[str, Any]]:
+    """Parse CSV geometry with metadata + locale detection.
 
     Args:
-        csv_text: CSV text content with columns: x, y, z, radius
+        raw: CSV content. ``bytes`` is decoded as UTF-8; ``str`` is used as-is
+            (keeps backward-compat with callers that already decoded).
+        decimal_override: Optional explicit decimal separator (``"." | ","``).
+            When set, skips decimal sniffing.
+        delimiter_override: Optional explicit column delimiter
+            (``"," | ";" | "\\t"``). When set, skips delimiter sniffing.
 
     Returns:
-        Tuple of (geometry_array, n_particles, radius_min, radius_max)
-        - geometry_array: N x 4 numpy array (x, y, z, radius)
-        - n_particles: Number of particles
-        - radius_min: Minimum particle radius
-        - radius_max: Maximum particle radius
+        ``(geometry, n_particles, radius_min, radius_max, metadata)``:
+
+        - ``geometry``: ``(N, 4)`` float64 array of ``(x, y, z, radius)``.
+        - ``metadata``: dict with header ``#key=value`` pairs plus locale
+          fields ``detected_decimal``, ``detected_delimiter``, and
+          ``locale_warning`` (``True`` when fewer than 5 data rows were
+          available for sniffing). Defaults ``unit="nm"`` when the header
+          omits it.
 
     Raises:
-        CSVParseError: If CSV format is invalid
+        CSVParseError: on invalid format or data. Note malformed ``#`` lines
+            are LOGGED, not raised (spec R1 scenario "Malformed metadata").
     """
+    # --- Step 0: bytes → text --------------------------------------------
+    if isinstance(raw, bytes):
+        try:
+            csv_text = raw.decode("utf-8")
+        except UnicodeDecodeError as exc:
+            raise CSVParseError(f"CSV payload is not valid UTF-8: {exc}") from exc
+    else:
+        csv_text = raw
+
+    # --- Step 1: strip #metadata lines -----------------------------------
+    body_lines, metadata = _split_metadata_comments(csv_text)
+    metadata.setdefault("unit", "nm")
+
+    # --- Step 2: detect or honor locale ----------------------------------
+    # Rule (see _sniff_csv_locale): the sniffer always runs, but if the
+    # caller provided explicit overrides we take them verbatim. The detected
+    # value is still stamped for UI traceability.
+    if delimiter_override is not None and decimal_override is not None:
+        if delimiter_override == "," and decimal_override == ",":
+            # Same char can't be both. Reject with a clear error instead of
+            # silently producing garbage numbers.
+            raise CSVParseError(
+                "delimiter and decimal cannot both be ','; pick different characters"
+            )
+
+    sniffed = _sniff_csv_locale(body_lines)
+    delimiter = (
+        delimiter_override if delimiter_override is not None else sniffed["delimiter"]
+    )
+    decimal = decimal_override if decimal_override is not None else sniffed["decimal"]
+
+    if delimiter == "," and decimal == ",":
+        # Even when sniffed this ambiguity is pathological — force decimal
+        # to "." to keep parsing going, and warn.
+        decimal = "."
+        sniffed["warning"] = True
+
+    metadata["detected_delimiter"] = delimiter
+    metadata["detected_decimal"] = decimal
+    metadata["locale_warning"] = bool(sniffed["warning"])
+
+    # --- Step 3: parse body via csv.DictReader ---------------------------
+    body_text = "".join(body_lines)
     try:
-        reader = csv.DictReader(io.StringIO(csv_text))
+        reader = csv.DictReader(io.StringIO(body_text), delimiter=delimiter)
     except Exception as e:
         raise CSVParseError(f"Failed to parse CSV: {e}") from e
 
-    # Check for required columns (case-insensitive)
     if reader.fieldnames is None:
         raise CSVParseError("CSV file appears to be empty")
 
@@ -300,20 +536,19 @@ def parse_csv_geometry(csv_text: str) -> tuple[np.ndarray, int, float, float]:
             f"Missing required columns: {missing}. Found: {reader.fieldnames}"
         )
 
-    # Map lowercase column names to actual column names
-    column_map = {}
+    column_map: dict[str, str] = {}
     for fname in reader.fieldnames:
         lower = fname.strip().lower()
         if lower in required_columns:
             column_map[lower] = fname
 
-    rows = []
+    rows: list[list[float]] = []
     for row_num, row in enumerate(reader, start=2):  # Start at 2 (1-based + header)
         try:
-            x = float(row[column_map["x"]])
-            y = float(row[column_map["y"]])
-            z = float(row[column_map["z"]])
-            radius = float(row[column_map["radius"]])
+            x = float(_normalize_numeric_cell(row[column_map["x"]], decimal))
+            y = float(_normalize_numeric_cell(row[column_map["y"]], decimal))
+            z = float(_normalize_numeric_cell(row[column_map["z"]], decimal))
+            radius = float(_normalize_numeric_cell(row[column_map["radius"]], decimal))
 
             if radius <= 0:
                 raise CSVParseError(
@@ -329,11 +564,15 @@ def parse_csv_geometry(csv_text: str) -> tuple[np.ndarray, int, float, float]:
 
     n_particles = len(rows)
     if n_particles > 100000:
-        raise CSVParseError(
-            f"Maximum 100,000 particles allowed. Found: {n_particles}"
-        )
+        raise CSVParseError(f"Maximum 100,000 particles allowed. Found: {n_particles}")
 
     geometry = np.array(rows, dtype=np.float64)
     radii = geometry[:, 3]
 
-    return geometry, n_particles, float(radii.min()), float(radii.max())
+    return (
+        geometry,
+        n_particles,
+        float(radii.min()),
+        float(radii.max()),
+        metadata,
+    )
