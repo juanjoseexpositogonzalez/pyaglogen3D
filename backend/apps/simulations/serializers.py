@@ -12,7 +12,14 @@ from .services.params import (
     PARAM_KEY_SCHEMA_VERSION,
     SCHEMA_VERSION_CURRENT,
 )
-from .utils import CSVParseError, generate_simulation_name, parse_csv_geometry
+from .utils import generate_simulation_name
+
+# Backend-side cap for base64-encoded CSV payloads. Matches the frontend's
+# 10 MB client guard; enforced here so a pathological payload cannot slip
+# past the UI and reach the parser. Base64 inflates size by ~33%, so a
+# 10 MB raw file encodes to ~13.3 MB — we cap the encoded length to keep
+# the check cheap (no decode required).
+_CSV_MAX_BASE64_BYTES = 14 * 1024 * 1024
 
 
 def generate_seed():
@@ -111,22 +118,35 @@ class SimulationSerializer(serializers.ModelSerializer):
         return data
 
     def validate_csv_data(self, value: str) -> str:
-        """Validate CSV data format and content."""
+        """Validate CSV payload format (not content).
+
+        Content validation (columns, radius sign, N ≤ 100k) happens exactly
+        once in the view via ``parse_csv_geometry`` — see T3 of the
+        import-aggregate change: the serializer MUST NOT re-parse the CSV
+        or the payload is decoded and tokenized twice per upload.
+
+        Here we only ensure:
+
+        1. The value is valid base64.
+        2. The value decodes to valid UTF-8.
+        3. The encoded payload is under the backend size cap (defense in
+           depth against a client that bypasses the UI 10 MB guard).
+        """
         if not value:
             return value
 
-        # Decode base64
+        if len(value) > _CSV_MAX_BASE64_BYTES:
+            raise serializers.ValidationError("CSV payload too large (max ~10 MB).")
+
         try:
-            csv_bytes = base64.b64decode(value)
-            csv_text = csv_bytes.decode("utf-8")
+            csv_bytes = base64.b64decode(value, validate=True)
         except Exception as e:
             raise serializers.ValidationError(f"Invalid base64 encoding: {e}")
 
-        # Validate CSV structure using our utility function
         try:
-            parse_csv_geometry(csv_text)
-        except CSVParseError as e:
-            raise serializers.ValidationError(str(e))
+            csv_bytes.decode("utf-8")
+        except UnicodeDecodeError as e:
+            raise serializers.ValidationError(f"CSV is not valid UTF-8: {e}")
 
         return value
 

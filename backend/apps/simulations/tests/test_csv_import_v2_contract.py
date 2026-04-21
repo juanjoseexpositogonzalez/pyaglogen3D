@@ -1,0 +1,291 @@
+"""Tests for the CSV-import v2 parameter contract (Phase 1 gate).
+
+These tests lock in the correctness fixes from tasks T1–T4 of the
+``import-aggregate`` change:
+
+- T2: every CSV import stamps the five v2 import keys
+  (``primary_particle_diameter_nm``, ``source``, ``original_filename``,
+  ``original_format``, ``import_metadata``) BEFORE the model is saved, plus
+  the ``parameters_schema_version = "v2"`` stamped by the serializer.
+- T3: the parser runs exactly once per upload — the serializer no longer
+  re-parses the CSV it has already validated.
+- T4: ``compute_import_metrics`` no longer writes the Rg-law-fit fields
+  (``sequential_df`` style); ``fractal_dimension`` / ``fractal_dimension_std``
+  are ``None`` until T6 wires box-counting.
+
+All requests go through the real DRF viewset using ``APIClient`` so the
+contract is verified at the HTTP boundary, not only in unit calls.
+"""
+
+from __future__ import annotations
+
+import base64
+from unittest.mock import patch
+
+import numpy as np
+import pytest
+from django.urls import reverse
+from rest_framework.test import APIClient
+
+from apps.accounts.models import User
+from apps.projects.models import Project
+from apps.simulations.models import Simulation
+from apps.simulations.services.params import (
+    PARAM_KEY_DIAMETER,
+    PARAM_KEY_SCHEMA_VERSION,
+)
+
+
+# --- Fixture helpers ---------------------------------------------------------
+
+
+def _make_user() -> User:
+    """Each test creates its own user to keep fixtures hermetic."""
+    import uuid
+
+    return User.objects.create_user(
+        email=f"csv-import-{uuid.uuid4()}@example.com",
+        password="irrelevant",
+    )
+
+
+def _make_project(owner: User) -> Project:
+    return Project.objects.create(name="CSV Import Test", owner=owner)
+
+
+def _authed_client(user: User) -> APIClient:
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _csv_payload(rows: list[tuple[float, float, float, float]]) -> str:
+    """Encode an (x, y, z, radius) ndarray as base64-utf8 CSV text.
+
+    Base64 encoding matches what the frontend sends today.
+    """
+    header = "x,y,z,radius\n"
+    body = "\n".join(f"{x},{y},{z},{r}" for x, y, z, r in rows)
+    raw = (header + body).encode("utf-8")
+    return base64.b64encode(raw).decode("ascii")
+
+
+def _create_url(project: Project) -> str:
+    return reverse("project-simulations-list", kwargs={"project_pk": project.id})
+
+
+def _post_import(
+    client: APIClient,
+    project: Project,
+    rows: list[tuple[float, float, float, float]],
+    *,
+    original_filename: str = "agg.csv",
+    extra_parameters: dict | None = None,
+    csv_override: str | None = None,
+):
+    """POST a CSV import; returns the DRF response."""
+    payload = {
+        "algorithm": "imported",
+        "parameters": extra_parameters or {},
+        "seed": 42,
+        "csv_data": csv_override if csv_override is not None else _csv_payload(rows),
+        "original_filename": original_filename,
+    }
+    return client.post(_create_url(project), payload, format="json")
+
+
+# --- T2: five import-contract stamps + v2 schema version ---------------------
+
+
+@pytest.mark.django_db
+def test_csv_import_stamps_diameter_from_mean_radius() -> None:
+    """primary_particle_diameter_nm = 2 * mean(radius) when no metadata override.
+
+    Uses N=10 spheres with radii in [10, 15] nm — mean radius is 12.5 nm, so
+    the stamped diameter must be 25.0 nm. Locks R3 scenario "Implicit diameter
+    from mean radius".
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    radii = [10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 10.5, 12.5, 13.5, 14.5]
+    rows = [(float(i), 0.0, 0.0, r) for i, r in enumerate(radii)]
+    expected_diameter = 2.0 * float(np.mean(radii))
+
+    response = _post_import(client, project, rows)
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert PARAM_KEY_DIAMETER in sim.parameters
+    assert sim.parameters[PARAM_KEY_DIAMETER] == pytest.approx(expected_diameter)
+
+
+@pytest.mark.django_db
+def test_csv_import_stamps_schema_version_v2() -> None:
+    """The serializer's existing v2 stamp still lands on CSV imports.
+
+    T2 must NOT touch the serializer's ``parameters_schema_version`` write.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 1.0) for i in range(5)]
+    response = _post_import(client, project, rows)
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert sim.parameters[PARAM_KEY_SCHEMA_VERSION] == "v2"
+
+
+@pytest.mark.django_db
+def test_csv_import_stamps_source_filename_and_format() -> None:
+    """Three metadata stamps land unchanged: source, original_filename, original_format.
+
+    Also verifies ``import_metadata`` is present (empty until T12 wires the
+    ``#key=value`` sniffer).
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 1.0) for i in range(3)]
+    response = _post_import(client, project, rows, original_filename="my-aggregate.csv")
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert sim.parameters["source"] == "csv_import"
+    assert sim.parameters["original_filename"] == "my-aggregate.csv"
+    assert sim.parameters["original_format"] == "csv"
+    assert sim.parameters["import_metadata"] == {}
+
+
+# --- Content-validation rejections (400, not 500) ---------------------------
+
+
+@pytest.mark.django_db
+def test_csv_import_missing_radius_column_rejected() -> None:
+    """CSV without a ``radius`` column must be rejected at the API boundary."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    # No 'radius' column.
+    raw = b"x,y,z\n0,0,0\n1,1,1\n"
+    payload = base64.b64encode(raw).decode("ascii")
+    response = _post_import(client, project, rows=[], csv_override=payload)
+
+    assert response.status_code == 400, response.content
+
+
+@pytest.mark.django_db
+def test_csv_import_negative_radius_rejected() -> None:
+    """A negative radius must produce 400 (not 500)."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(0.0, 0.0, 0.0, -1.0), (1.0, 0.0, 0.0, 1.0)]
+    response = _post_import(client, project, rows)
+
+    assert response.status_code == 400, response.content
+
+
+@pytest.mark.django_db
+def test_csv_import_invalid_base64_rejected() -> None:
+    """Malformed base64 must yield 400, not bubble up as 500."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    # Characters outside the base64 alphabet.
+    response = _post_import(client, project, rows=[], csv_override="not!valid!base64!")
+
+    assert response.status_code == 400, response.content
+
+
+# --- T3: single-parse guarantee ---------------------------------------------
+
+
+@pytest.mark.django_db
+def test_csv_import_parses_exactly_once() -> None:
+    """``parse_csv_geometry`` is called EXACTLY once per upload.
+
+    Before T3, the serializer validator re-parsed the CSV after the view
+    had already parsed it to build the geometry — a wasted decode + tokenize
+    pass on every import. The patch intercepts the parser and asserts
+    ``call_count == 1``.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 1.0) for i in range(5)]
+
+    import apps.simulations.views as views_module
+
+    with patch.object(
+        views_module,
+        "parse_csv_geometry",
+        wraps=views_module.parse_csv_geometry,
+    ) as spy:
+        response = _post_import(client, project, rows)
+
+    assert response.status_code == 201, response.content
+    assert spy.call_count == 1, (
+        f"parse_csv_geometry should run exactly once per import; "
+        f"got {spy.call_count} calls"
+    )
+
+
+# --- T4: sequential_df / Rg-law fit is gone ---------------------------------
+
+
+@pytest.mark.django_db
+def test_compute_import_metrics_no_sequential_df() -> None:
+    """After import completes, ``metrics`` must not carry Rg-law-fit fields.
+
+    Celery runs eagerly in tests (``CELERY_TASK_ALWAYS_EAGER = True``), so the
+    metrics task fires inline during the POST. T4 removed the Rg-law fit
+    entirely, so ``rg_evolution`` must also be absent from import metrics.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 1.0) for i in range(10)]
+    response = _post_import(client, project, rows)
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    sim.refresh_from_db()
+
+    metrics = sim.metrics or {}
+    # The Rg-law fit used to write these keys in the imported path:
+    assert "sequential_df" not in metrics
+    assert "sequential_kf" not in metrics
+    # Removed by T4 because per-particle add order is not meaningful for imports.
+    assert "rg_evolution" not in metrics
+    # Fractal dimension is explicitly None until T6 wires box-counting.
+    assert metrics.get("fractal_dimension") is None
+    assert metrics.get("fractal_dimension_std") is None
+    # Non-fractal metrics still land.
+    assert isinstance(metrics.get("radius_of_gyration"), float)
+
+
+# --- Additional defensive check --------------------------------------------
+
+
+@pytest.mark.django_db
+def test_csv_import_empty_body_rejected() -> None:
+    """A CSV with only a header (no data rows) must be rejected cleanly."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"x,y,z,radius\n"
+    payload = base64.b64encode(raw).decode("ascii")
+    response = _post_import(client, project, rows=[], csv_override=payload)
+
+    assert response.status_code == 400, response.content

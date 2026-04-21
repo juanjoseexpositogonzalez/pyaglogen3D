@@ -22,14 +22,17 @@ from .serializers import (
     SimulationDetailSerializer,
     SimulationSerializer,
 )
-from .services.params import get_scale_factor_nm
+from .services.params import (
+    PARAM_KEY_DIAMETER,
+    get_scale_factor_nm,
+)
 from .services.projection import (
     render_projection_png,
     render_projection_svg,
     create_projection_filename,
 )
 from .tasks import compute_import_metrics_task, run_simulation_task
-from .utils import parse_csv_geometry
+from .utils import CSVParseError, parse_csv_geometry
 
 logger = logging.getLogger(__name__)
 
@@ -61,10 +64,83 @@ class SimulationViewSet(viewsets.ModelViewSet):
             queryset = queryset.filter(is_batch=False)
         return queryset
 
-    def perform_create(self, serializer):
-        """Create simulation and enqueue task."""
+    def _process_import_payload(
+        self,
+        csv_data: str,
+        extra_parameters: dict,
+        *,
+        fmt: str = "csv",
+        original_filename: str = "",
+    ) -> tuple[np.ndarray, dict]:
+        """Decode + parse + stamp helper for geometry imports.
+
+        Centralizes the import pipeline so the imported-algorithm branch of
+        ``perform_create`` — and, in Phase 3, the MATLAB ``.mat`` branch —
+        goes through a single entry point. For this task only CSV is wired;
+        the ``fmt`` hint prepares the signature for future MATLAB routing.
+
+        Args:
+            csv_data: Base64-encoded payload (CSV text for now).
+            extra_parameters: The serializer's ``validated_data["parameters"]``
+                dict (may already contain user-supplied keys). A *copy* is
+                returned with the import stamps injected.
+            fmt: Source format hint (``"csv"`` today; ``"mat"`` reserved for T9).
+            original_filename: Filename from the request payload (optional).
+
+        Returns:
+            A tuple ``(geometry_array, stamped_parameters)`` where
+            ``geometry_array`` is an ``(N, 4)`` float64 array and
+            ``stamped_parameters`` contains the five keys required by the
+            v2 import contract (R3): ``primary_particle_diameter_nm``,
+            ``source``, ``original_filename``, ``original_format``,
+            ``import_metadata``. The serializer stamps
+            ``parameters_schema_version`` on top of these.
+        """
         import base64
 
+        from rest_framework import serializers as drf_serializers
+
+        # Decode base64 → CSV text. Base64 format is already validated by
+        # the serializer (see validate_csv_data); a failure here would be a
+        # programmer error, so we still raise 400 instead of 500.
+        try:
+            csv_bytes = base64.b64decode(csv_data)
+            csv_text = csv_bytes.decode("utf-8")
+        except Exception as exc:
+            raise drf_serializers.ValidationError(
+                {"csv_data": f"Failed to decode CSV payload: {exc}"}
+            )
+
+        # Parse ONCE — the serializer no longer re-parses (T3). Convert
+        # CSVParseError to a DRF 400 so bad content is a client error, not
+        # a 500.
+        try:
+            geometry_array, n_particles, radius_min, radius_max = parse_csv_geometry(
+                csv_text
+            )
+        except CSVParseError as exc:
+            raise drf_serializers.ValidationError({"csv_data": str(exc)})
+
+        # Stamp v2 import-contract parameters (R3). The serializer's create()
+        # adds parameters_schema_version="v2" on top of what we write here.
+        params = dict(extra_parameters) if extra_parameters else {}
+        radii = geometry_array[:, 3]
+        # Implicit diameter: 2 * mean(radius). Metadata override lands in T12.
+        mean_radius_nm = float(np.mean(radii))
+        params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius_nm
+        params["source"] = "csv_import"
+        params["original_filename"] = original_filename or ""
+        params["original_format"] = fmt
+        params["import_metadata"] = {}
+        # Geometry stats preserved for backwards-compat with UI code reading them.
+        params["n_particles"] = n_particles
+        params["radius_min"] = float(radius_min)
+        params["radius_max"] = float(radius_max)
+
+        return geometry_array, params
+
+    def perform_create(self, serializer):
+        """Create simulation and enqueue task."""
         from django.conf import settings
 
         project_id = self.kwargs.get("project_pk")
@@ -73,25 +149,20 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Handle imported algorithm differently
         if algorithm == "imported" and csv_data:
-            # Parse CSV data
-            csv_bytes = base64.b64decode(csv_data)
-            csv_text = csv_bytes.decode("utf-8")
-            geometry_array, n_particles, radius_min, radius_max = parse_csv_geometry(
-                csv_text
+            extra_params = serializer.validated_data.get("parameters", {})
+            original_filename = self.request.data.get("original_filename", "")
+            geometry_array, params = self._process_import_payload(
+                csv_data,
+                extra_params,
+                fmt="csv",
+                original_filename=original_filename,
             )
 
-            # Update parameters with import metadata
-            params = serializer.validated_data.get("parameters", {})
-            params.update(
-                {
-                    "n_particles": n_particles,
-                    "radius_min": float(radius_min),
-                    "radius_max": float(radius_max),
-                    "source": "csv_import",
-                }
-            )
-
-            # Create simulation with geometry stored immediately
+            # Serializer.save() merges our stamped params into validated_data
+            # BEFORE the model is persisted, and its create() adds the v2
+            # schema_version stamp. The import-contract keys therefore land on
+            # Simulation.parameters in the initial INSERT, not via a follow-up
+            # update — required by R3.
             simulation = serializer.save(project_id=project_id, parameters=params)
 
             # Store geometry as NumPy binary

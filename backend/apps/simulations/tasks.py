@@ -1002,13 +1002,16 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
     n_particles = len(coords)
     if n_particles == 0:
         return {
-            "fractal_dimension": 0.0,
-            "fractal_dimension_std": 0.0,
+            # Df removed from imports: the Rg-law fit (compute_import_metrics
+            # before T4) was misleading because per-particle add order is not
+            # preserved across formats. T6 will wire
+            # aglogen_core.box_counting_agglomerate as the primary Df source.
+            "fractal_dimension": None,
+            "fractal_dimension_std": None,
             "prefactor": 0.0,
             "radius_of_gyration": 0.0,
             "porosity": 0.0,
             "coordination": {"mean": 0.0, "std": 0.0},
-            "rg_evolution": [],
             "anisotropy": 1.0,
             "asphericity": 0.0,
             "acylindricity": 0.0,
@@ -1074,38 +1077,24 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
     asphericity = float(I3 - 0.5 * (I1 + I2))
     acylindricity = float(I2 - I1)
 
-    # Rg evolution for power-law fitting
-    n_values = []
-    rg_values = []
-    step = max(1, n_particles // 100)
-    for n in range(10, n_particles + 1, step):
-        subset_masses = masses[:n]
-        subset_total = subset_masses.sum()
-        if subset_total > 0:
-            subset_cdg = coords[:n].T @ subset_masses / subset_total
-            subset_centered = coords[:n] - subset_cdg
-            subset_r_sq = np.sum(subset_centered**2, axis=1)
-            subset_rg = math.sqrt(np.sum(subset_masses * subset_r_sq) / subset_total)
-            n_values.append(n)
-            rg_values.append(subset_rg)
-
-    # Fit Df and kf from Rg evolution
-    df, kf, r_squared = fit_power_law_rg(n_values, rg_values, mean_radius)
-
-    # Estimate Df uncertainty based on R²
-    df_std = 0.1 * (1.0 - r_squared) if r_squared > 0.5 else 0.5
+    # Fractal dimension is no longer computed from an Rg-law fit on the
+    # import path: that approach depended on the particle add-order which
+    # is not preserved (or even meaningful) for CSV / .mat imports and
+    # produced misleading values (see explore.md §4.3). Leave Df as None
+    # until T6 wires aglogen_core.box_counting_agglomerate with an N ≥ 50
+    # guard. Other geometric metrics (Rg, porosity, coordination, shape)
+    # are order-independent and stay.
+    # TODO(T6): wire aglogen_core.box_counting_agglomerate here.
 
     return {
-        "fractal_dimension": df,
-        "fractal_dimension_std": df_std,
-        "prefactor": kf,
+        "fractal_dimension": None,
+        "fractal_dimension_std": None,
         "radius_of_gyration": float(rg),
         "porosity": float(porosity),
         "coordination": {
             "mean": coord_mean,
             "std": coord_std,
         },
-        "rg_evolution": [float(rg) for rg in rg_values],
         "anisotropy": anisotropy,
         "asphericity": asphericity,
         "acylindricity": acylindricity,
@@ -1163,9 +1152,11 @@ def compute_import_metrics_task(self, simulation_id: str) -> dict:
         simulation.completed_at = timezone.now()
         simulation.save()
 
+        df = metrics.get("fractal_dimension")
+        df_str = f"{df:.3f}" if isinstance(df, (int, float)) else "N/A"
         logger.info(
             f"Import metrics computed for simulation {simulation_id}: "
-            f"Df={metrics['fractal_dimension']:.3f}, "
+            f"Df={df_str}, "
             f"Rg={metrics['radius_of_gyration']:.2f}, "
             f"time={execution_time_ms}ms"
         )
