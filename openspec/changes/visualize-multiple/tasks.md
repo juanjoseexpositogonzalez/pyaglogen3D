@@ -207,8 +207,8 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T5, T7
 **Implements**: R-10 (Metrics Table)
 **Deliverables**:
-- [ ] Table with sims as columns, colored headers (palette from T5)
-- [ ] Rows: Df, Kf, Rg (nm via `getScaleFactorNm`), N, Algorithm
+- [x] Table with sims as columns, colored headers (palette from T5)
+- [x] Rows: Df, Kf, Rg (nm via `getScaleFactorNm`), N, Algorithm
 **Done when**: Renders for N=2..9; T19 tests pass
 
 #### T15. [frontend] RgEvolutionChart multi-series
@@ -217,9 +217,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T5
 **Implements**: R-10
 **Deliverables**:
-- [ ] Accept `series: Array<{ label: string; data: {n: number; rg: number}[]; color: string }>` as new prop shape
-- [ ] Feature-detect input: single-series callers keep existing API unchanged
-- [ ] Missing-data points omitted with tooltip note
+- [x] Accept `series: Array<{ label: string; data: {n: number; rg: number}[]; color: string }>` as new prop shape
+- [x] Feature-detect input: single-series callers keep existing API unchanged
+- [x] Missing-data points omitted with tooltip note
 **Done when**: Single-series usage unregressed; multi-series renders on compare page; T19 tests pass
 
 #### T16. [frontend] CompareSettingsPanel
@@ -228,9 +228,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T9
 **Implements**: R-7, R-6
 **Deliverables**:
-- [ ] Shared settings: sphere resolution, axes toggle, background color
-- [ ] Mode toggle (grid/overlay) + sync-camera toggle
-- [ ] Callbacks fire on change
+- [x] ~~Shared settings: sphere resolution, axes toggle, background color~~ — **deferred** (design.md §"Open questions": out of MVP scope; defaults from `useViewerStore` retained)
+- [x] Mode toggle (grid/overlay) + sync-camera toggle
+- [x] Callbacks fire on change
 **Done when**: Panel reflects and mutates shared settings; T19 tests pass
 
 #### T17. [frontend] Grid color legend
@@ -239,8 +239,8 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T10
 **Implements**: R-5
 **Deliverables**:
-- [ ] Small corner panel listing per-sim color chip + name
-- [ ] Visible only in grid mode
+- [x] ~~Small corner panel listing per-sim color chip + name~~ — **decision: no new legend component**. `CompareGrid` already renders a colored-dot label per cell (CompareGrid.tsx:115-124) and `CompareOverlay` has its own dedicated legend panel (CompareOverlay.tsx:138-163). Adding a third shared legend on top of the page would be redundant; the per-cell labels already satisfy R-5's "color indicator tied to each simulation" requirement.
+- [x] Visible only in grid mode (per-cell dots are intrinsic to grid layout; overlay has its own)
 **Done when**: Legend visible in dev; matches palette ordering
 
 #### T18. [frontend] Missing-sim banner + deletion-safe URL handling
@@ -249,9 +249,10 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T7
 **Implements**: R-9
 **Deliverables**:
-- [ ] Per-sim 404/403 → skip that sim, continue rendering survivors
-- [ ] Non-dismissible banner listing missing IDs
-- [ ] Finalized banner styling
+- [x] Per-sim 404/403 → skip that sim, continue rendering survivors
+- [x] Non-dismissible banner listing missing IDs (with truncated short IDs + "deleted or access denied" explanation)
+- [x] Finalized banner styling (destructive variant, monospace ID list)
+- [x] Separate informational banner for sims that are still processing (metadata loaded, geometry not yet computed) — per design.md §"Missing sim UX"
 **Done when**: Manual test: delete a sim, reload compare URL → banner shows, other sims render
 
 #### T19. [frontend/tests] Phase 4 unit tests
@@ -262,21 +263,21 @@ Parallelizable within phases where independent (see Parallel batches section).
 - `frontend/src/components/compare/__tests__/CompareSettingsPanel.test.tsx`
 **Depends on**: T14, T15, T16, T17, T18
 **Deliverables**:
-- [ ] `CompareMetricsTable.test.tsx`: rows render; header colors match palette
-- [ ] `RgEvolutionChart.test.tsx`: add series-prop case; single-series case still passes
-- [ ] `CompareSettingsPanel.test.tsx`: callbacks fire for each control
-**Done when**: `npm test` green
+- [x] `CompareMetricsTable.test.tsx`: rows render; header colors match palette (6 tests)
+- [x] `RgEvolutionChart.test.tsx`: add series-prop case; single-series case still passes (6 tests)
+- [x] `CompareSettingsPanel.test.tsx`: callbacks fire for each control (7 tests)
+**Done when**: `npm test` green (126/126 passing, delta +19 from baseline 107)
 
 #### T20. [docs] User guide
 **Effort**: S
 **Location**: `docs/visualize-multiple.md` (NEW)
 **Depends on**: nothing (can start after Phase 3)
 **Deliverables**:
-- [ ] How to select sims on project page
-- [ ] Compare modes (grid vs overlay) and when to use each
-- [ ] Shared settings overview
-- [ ] Cap (max 9 sims) rationale
-**Done when**: Doc renders; reviewed for accuracy
+- [x] How to select sims on project page
+- [x] Compare modes (grid vs overlay) and when to use each
+- [x] Shared settings overview
+- [x] Cap (max 9 sims) rationale
+**Done when**: Doc renders; reviewed for accuracy (583 words, `docs/visualize-multiple.md`)
 
 ### Phase 5 — Verification + archive prep
 

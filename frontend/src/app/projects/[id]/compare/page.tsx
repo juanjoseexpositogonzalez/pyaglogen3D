@@ -1,28 +1,33 @@
 'use client'
 
 /**
- * Multi-aggregate Compare page — Phase 3 (T12) adds mode toggle + real viewers.
+ * Multi-aggregate Compare page — Phase 4 polish (T14-T18).
  *
  * Reads `?sims=<csv>` from the URL, fetches each simulation's metadata
- * and geometry in parallel, partitions results into loaded/missing, and
- * renders either `<CompareGrid>` or `<CompareOverlay>` inside a shared
- * `<CompareCameraProvider>` based on the selected mode.
+ * and geometry in parallel, partitions results into
+ * loaded / missing / processing, and composes the full compare UI:
  *
- * Phase 3 changes:
- *   - Wraps the rendered viewer in `<CompareCameraProvider>` so all
- *     cells share a camera scope (or each owns its own when unsynced).
- *   - Adds an inline mode toggle (Grid / Overlay) and a sync toggle.
- *     Both are simple button-segment controls for now; the polished
- *     `CompareSettingsPanel` comes in T16.
- *   - Maps loaded sims → `CompareSim` shape (id, name, parameters,
- *     geometry) that both grid and overlay consume.
+ *   ┌─────────────────────────────────────────────────────────────┐
+ *   │ Header / breadcrumb / title                                 │
+ *   │ Truncation banner (>9 sim ids)                              │
+ *   │ Missing-sim banner (404/403 fetches)                        │
+ *   │ Still-processing note (sim exists but no geometry yet)      │
+ *   │ CompareSettingsPanel (mode + sync toggles)                  │
+ *   │ CompareGrid  |  CompareOverlay                              │
+ *   │ CompareMetricsTable                                         │
+ *   │ RgEvolutionChart (multi-series)                             │
+ *   └─────────────────────────────────────────────────────────────┘
  *
- * Deferred to Phase 4:
- *   - Metrics table (T14)
- *   - Multi-series Rg chart (T15)
- *   - Polished settings panel (T16)
- *   - Corner legend panel for grid mode (T17)
- *   - Finalized missing-sim banner styling (T18)
+ * Decisions for Phase 4:
+ *   - No top-level color legend: each grid cell already has its own
+ *     colored-dot label (CompareGrid:115-124), and overlay has its own
+ *     legend panel (CompareOverlay:138-163). A third shared legend would
+ *     be redundant.
+ *   - Missing vs processing are tracked separately: a 404/403 fetch goes
+ *     into `missing[]` and renders the destructive "could not be loaded"
+ *     banner; a sim that returns metadata but whose status is still
+ *     `queued`/`running` goes into `processing[]` and renders a
+ *     separate, informational note.
  */
 import { useQueries } from '@tanstack/react-query'
 import { ArrowLeft } from 'lucide-react'
@@ -31,6 +36,8 @@ import { useParams, useSearchParams } from 'next/navigation'
 import { useMemo, useState } from 'react'
 
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { RgEvolutionChart } from '@/components/charts/RgEvolutionChart'
+import type { RgSeries } from '@/components/charts/RgEvolutionChart'
 import {
   CompareCameraProvider,
   useCompareCamera,
@@ -39,10 +46,17 @@ import {
   CompareGrid,
   type CompareSim,
 } from '@/components/compare/CompareGrid'
+import {
+  CompareMetricsTable,
+  type CompareSimWithMetrics,
+} from '@/components/compare/CompareMetricsTable'
 import { CompareOverlay } from '@/components/compare/CompareOverlay'
+import {
+  CompareSettingsPanel,
+  type CompareMode,
+} from '@/components/compare/CompareSettingsPanel'
 import { Header } from '@/components/layout/Header'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
-import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { simulationsApi } from '@/lib/api'
 import {
@@ -51,14 +65,11 @@ import {
   parseCompareSimsParam,
 } from '@/lib/compare-utils'
 import type { GeometryData, Simulation } from '@/lib/types'
-import { cn } from '@/lib/utils'
 
 interface CompareFetchResult {
   simulation: Simulation
   geometry: GeometryData | null
 }
-
-type CompareMode = 'grid' | 'overlay'
 
 async function fetchSimulationWithGeometry(
   projectId: string,
@@ -86,6 +97,15 @@ function deriveSimName(sim: Simulation): string {
   return `${sim.algorithm.toUpperCase()} · ${sim.id.slice(0, 8)}`
 }
 
+/**
+ * Truncate a sim id for display in banners (8-char prefix keeps messages
+ * readable while remaining unique enough for users to identify sims in
+ * Django admin / logs).
+ */
+function shortId(id: string): string {
+  return id.length > 8 ? `${id.slice(0, 8)}…` : id
+}
+
 export default function CompareSimulationsPage() {
   const params = useParams<{ id: string }>()
   const searchParams = useSearchParams()
@@ -105,6 +125,12 @@ export default function CompareSimulationsPage() {
 
   const loaded: Array<{ id: string; result: CompareFetchResult }> = []
   const missing: string[] = []
+  /**
+   * Sims whose metadata loaded successfully but whose `status` isn't
+   * `completed` yet (queued / running / failed / cancelled). These are
+   * surfaced as a softer, informational note — they aren't data errors.
+   */
+  const processing: Array<{ id: string; name: string }> = []
   let anyLoading = false
 
   for (let i = 0; i < ids.length; i++) {
@@ -117,31 +143,76 @@ export default function CompareSimulationsPage() {
       missing.push(ids[i])
       continue
     }
-    loaded.push({ id: ids[i], result: q.data })
+    const result = q.data
+    if (result.simulation.status !== 'completed' && !result.geometry) {
+      processing.push({
+        id: ids[i],
+        name: deriveSimName(result.simulation),
+      })
+      continue
+    }
+    loaded.push({ id: ids[i], result })
   }
 
   const colorMap = useMemo(() => getCompareColorPalette(ids), [ids])
 
-  // Map loaded sims → CompareSim shape consumed by Grid + Overlay.
-  const compareSims: CompareSim[] = useMemo(
+  // Map loaded sims → CompareSim + metrics shape for Grid/Overlay/Table/Chart.
+  const compareSims: CompareSimWithMetrics[] = useMemo(
     () =>
       loaded.map(({ id, result }) => ({
         id,
         name: deriveSimName(result.simulation),
-        // `SimulationParams` is a union — cast to a plain record so
-        // `getScaleFactorNm` (which takes `Record<string, unknown>`) can
-        // read `primary_particle_diameter_nm` / `primary_particle_radius_nm`
-        // without the union narrowing noise.
         parameters: result.simulation.parameters as unknown as Record<
           string,
           unknown
         >,
         geometry: result.geometry,
+        algorithm: result.simulation.algorithm,
+        metrics: result.simulation.metrics
+          ? {
+              fractal_dimension: result.simulation.metrics.fractal_dimension,
+              prefactor: result.simulation.metrics.prefactor,
+              radius_of_gyration: result.simulation.metrics.radius_of_gyration,
+              n_particles: null, // not surfaced by SimulationMetrics today
+            }
+          : null,
       })),
     [loaded],
   )
 
-  const isEmpty = !anyLoading && loaded.length === 0
+  // CompareGrid/Overlay only need the narrower CompareSim shape.
+  const gridSims: CompareSim[] = useMemo(
+    () =>
+      compareSims.map((s) => ({
+        id: s.id,
+        name: s.name,
+        parameters: s.parameters,
+        geometry: s.geometry,
+      })),
+    [compareSims],
+  )
+
+  // Build multi-series chart data for the Rg evolution chart. Sims
+  // without rg_evolution produce an empty series — the chart lists them
+  // under the plot as "no evolution data available".
+  const rgSeries: RgSeries[] = useMemo(
+    () =>
+      compareSims.map((sim) => {
+        const raw = loaded.find((l) => l.id === sim.id)?.result.simulation
+          .metrics?.rg_evolution
+        return {
+          label: sim.name,
+          color: colorMap[sim.id] ?? '#999999',
+          rgEvolution: Array.isArray(raw) ? raw : [],
+          parameters: sim.parameters,
+        }
+      }),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [compareSims, colorMap],
+  )
+
+  const isEmpty =
+    !anyLoading && loaded.length === 0 && processing.length === 0
 
   return (
     <div className="min-h-screen">
@@ -178,12 +249,39 @@ export default function CompareSimulationsPage() {
         )}
 
         {missing.length > 0 && (
-          <Alert variant="destructive">
+          <Alert variant="destructive" data-testid="compare-missing-banner">
             <AlertTitle>
               {missing.length} of {ids.length} simulations could not be loaded
             </AlertTitle>
             <AlertDescription>
-              <span className="font-mono text-xs">{missing.join(', ')}</span>
+              <p className="mb-1">
+                They were probably deleted or you don&apos;t have access.
+              </p>
+              <ul className="space-y-0.5 font-mono text-xs">
+                {missing.map((id) => (
+                  <li key={id} data-sim-id={id}>
+                    {shortId(id)}
+                  </li>
+                ))}
+              </ul>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {processing.length > 0 && (
+          <Alert data-testid="compare-processing-banner">
+            <AlertTitle>
+              {processing.length} simulation{processing.length === 1 ? '' : 's'}{' '}
+              still processing
+            </AlertTitle>
+            <AlertDescription>
+              <ul className="space-y-0.5 text-xs">
+                {processing.map((p) => (
+                  <li key={p.id}>
+                    {p.name}: geometry is still being computed
+                  </li>
+                ))}
+              </ul>
             </AlertDescription>
           </Alert>
         )}
@@ -209,7 +307,12 @@ export default function CompareSimulationsPage() {
 
         {loaded.length > 0 && (
           <CompareCameraProvider>
-            <CompareBody simulations={compareSims} colorMap={colorMap} />
+            <CompareBody
+              simulations={compareSims}
+              gridSims={gridSims}
+              rgSeries={rgSeries}
+              colorMap={colorMap}
+            />
           </CompareCameraProvider>
         )}
       </main>
@@ -218,16 +321,19 @@ export default function CompareSimulationsPage() {
 }
 
 /**
- * Inner body rendered inside the camera provider. Hosts the mode/sync
- * toggles and swaps between grid and overlay. Kept as a separate
- * component so the toggles can call `useCompareCamera()` (which needs to
- * sit inside the provider).
+ * Inner body rendered inside the camera provider. Hosts the settings
+ * panel and swaps between grid and overlay. Kept as a separate component
+ * so `useCompareCamera()` can be called inside the provider.
  */
 function CompareBody({
   simulations,
+  gridSims,
+  rgSeries,
   colorMap,
 }: {
-  simulations: CompareSim[]
+  simulations: CompareSimWithMetrics[]
+  gridSims: CompareSim[]
+  rgSeries: RgSeries[]
   colorMap: Record<string, string>
 }) {
   const [mode, setMode] = useState<CompareMode>('grid')
@@ -235,63 +341,22 @@ function CompareBody({
 
   return (
     <>
-      {/* Inline toolbar — real settings panel comes in T16. */}
-      <div
-        data-testid="compare-toolbar"
-        className="flex flex-wrap items-center gap-3"
-      >
-        <div
-          role="group"
-          aria-label="View mode"
-          className="inline-flex overflow-hidden rounded-md border"
-        >
-          <Button
-            type="button"
-            variant={mode === 'grid' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setMode('grid')}
-            className={cn('rounded-none', mode !== 'grid' && 'text-foreground')}
-            data-testid="compare-mode-grid"
-            aria-pressed={mode === 'grid'}
-          >
-            Grid
-          </Button>
-          <Button
-            type="button"
-            variant={mode === 'overlay' ? 'default' : 'ghost'}
-            size="sm"
-            onClick={() => setMode('overlay')}
-            className={cn(
-              'rounded-none',
-              mode !== 'overlay' && 'text-foreground',
-            )}
-            data-testid="compare-mode-overlay"
-            aria-pressed={mode === 'overlay'}
-          >
-            Overlay
-          </Button>
-        </div>
-
-        {/* Sync toggle is only meaningful in grid mode (overlay already
-            shares a single canvas/camera) — but we render it always for
-            UX simplicity. */}
-        <Button
-          type="button"
-          variant={synchronised ? 'default' : 'outline'}
-          size="sm"
-          onClick={toggleSync}
-          data-testid="compare-sync-toggle"
-          aria-pressed={synchronised}
-        >
-          {synchronised ? 'Cameras: synced' : 'Cameras: independent'}
-        </Button>
-      </div>
+      <CompareSettingsPanel
+        mode={mode}
+        onModeChange={setMode}
+        synchronised={synchronised}
+        onToggleSync={toggleSync}
+      />
 
       {mode === 'grid' ? (
-        <CompareGrid simulations={simulations} colorMap={colorMap} />
+        <CompareGrid simulations={gridSims} colorMap={colorMap} />
       ) : (
-        <CompareOverlay simulations={simulations} colorMap={colorMap} />
+        <CompareOverlay simulations={gridSims} colorMap={colorMap} />
       )}
+
+      <CompareMetricsTable simulations={simulations} colorMap={colorMap} />
+
+      <RgEvolutionChart series={rgSeries} />
     </>
   )
 }
