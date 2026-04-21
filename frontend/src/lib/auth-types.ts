@@ -2,6 +2,9 @@
  * TypeScript types for authentication.
  */
 
+export type CsvDecimalSeparator = '.' | ','
+export type CsvColumnDelimiter = ',' | ';'
+
 export interface User {
   id: string
   email: string
@@ -13,6 +16,10 @@ export interface User {
   avatar_url: string | null
   oauth_provider: 'google' | 'github' | ''
   created_at: string
+  // CSV export preferences — persisted server-side, applied to every CSV
+  // export the user triggers. Default to US-centric ``.``/``,``.
+  csv_decimal_separator: CsvDecimalSeparator
+  csv_column_delimiter: CsvColumnDelimiter
 }
 
 export interface AuthTokens {
@@ -57,4 +64,6 @@ export interface UpdateProfileData {
   first_name?: string
   last_name?: string
   avatar_url?: string
+  csv_decimal_separator?: CsvDecimalSeparator
+  csv_column_delimiter?: CsvColumnDelimiter
 }

@@ -81,8 +81,8 @@ export const simulationAlgorithms: SimulationAlgorithmMetadata[] = [
   },
   {
     value: 'imported',
-    label: 'Import from CSV File',
-    description: 'Import from CSV: Load existing agglomerate geometry from a CSV file. File must contain columns: x, y, z, radius (one particle per row). Metrics will be computed automatically.',
+    label: 'Import from CSV File (advanced — prefer "Import Aggregate" button)',
+    description: 'Import from CSV: Load existing agglomerate geometry from a CSV file. File must contain columns: x, y, z, radius (one particle per row). Metrics will be computed automatically. For most users, the top-level "Import Aggregate" button on the project page is the recommended flow — it supports MATLAB .mat files and locale auto-detection.',
     supportsSingle: true,
     supportsBatch: false,
   },

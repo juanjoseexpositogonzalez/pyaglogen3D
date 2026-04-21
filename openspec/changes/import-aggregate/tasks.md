@@ -324,9 +324,9 @@ Phase 5:
 **Location**: `frontend/src/app/projects/[id]/page.tsx`
 **Depends on**: T21
 **Deliverables**:
-- [ ] Button prominently placed above simulation list
-- [ ] Opens `ImportAggregateDialog`
-- [ ] On success, refreshes simulation list (existing hook)
+- [x] Button prominently placed above simulation list
+- [x] Opens `ImportAggregateDialog`
+- [x] On success, refreshes simulation list (existing hook)
 **Done when**: Click button → dialog opens; complete upload → list refreshes.
 
 #### T24. [frontend] Deprioritize `imported` entry in SimulationForm
@@ -334,9 +334,9 @@ Phase 5:
 **Location**: `frontend/src/components/forms/SimulationForm.tsx`
 **Depends on**: T21
 **Deliverables**:
-- [ ] `imported` source option still works (no removal)
-- [ ] Hint text added: `"For most users, use the 'Import Aggregate' button above the simulation list."`
-- [ ] Option moved to bottom of dropdown if applicable
+- [x] `imported` source option still works (no removal)
+- [x] Hint text added: `"For most users, use the 'Import Aggregate' button above the simulation list."`
+- [x] Option moved to bottom of dropdown if applicable
 **Done when**: Form renders with hint; legacy path still functional.
 
 #### T25. [frontend] CSV preferences in settings
@@ -344,10 +344,10 @@ Phase 5:
 **Location**: `frontend/src/app/settings/page.tsx` (create if missing) + API binding
 **Depends on**: T14
 **Deliverables**:
-- [ ] Settings page exists (minimal shell if new)
-- [ ] "CSV Preferences" section with two dropdowns (decimal, delimiter)
-- [ ] Save button persists to user profile via existing user PATCH endpoint
-- [ ] Loads current values on mount
+- [x] Settings page exists (minimal shell if new)
+- [x] "CSV Preferences" section with two dropdowns (decimal, delimiter)
+- [x] Save button persists to user profile via existing user PATCH endpoint
+- [x] Loads current values on mount
 **Done when**: Change prefs → reload page → values persisted; CSV export reflects choice.
 
 ### Phase 5 — Docs + verification

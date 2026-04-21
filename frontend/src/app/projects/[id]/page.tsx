@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
 import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
@@ -12,11 +13,12 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers, Upload } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
 import { useAuth } from '@/contexts/AuthContext'
+import { ImportAggregateDialog } from '@/components/forms/ImportAggregateDialog'
 
 export default function ProjectDetailPage({
   params,
@@ -25,6 +27,7 @@ export default function ProjectDetailPage({
 }) {
   const { id } = params
   const { user } = useAuth()
+  const router = useRouter()
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
   const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
@@ -36,6 +39,7 @@ export default function ProjectDetailPage({
   const [deleteAllSimsConfirm, setDeleteAllSimsConfirm] = useState(false)
   const [deleteAllFraktalConfirm, setDeleteAllFraktalConfirm] = useState(false)
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false)
+  const [importDialogOpen, setImportDialogOpen] = useState(false)
 
   const handleCancel = async (simId: string, e: React.MouseEvent) => {
     e.preventDefault()
@@ -202,6 +206,13 @@ export default function ProjectDetailPage({
                 FRAKTAL Analysis
               </Button>
             </Link>
+            <Button
+              variant="outline"
+              onClick={() => setImportDialogOpen(true)}
+            >
+              <Upload className="h-4 w-4 mr-2" />
+              Import Aggregate
+            </Button>
             <Link href={`/projects/${id}/simulations/new`}>
               <Button>
                 <Plus className="h-4 w-4 mr-2" />
@@ -527,6 +538,17 @@ export default function ProjectDetailPage({
           )}
         </div>
       </main>
+
+      <ImportAggregateDialog
+        projectId={id}
+        open={importDialogOpen}
+        onClose={() => setImportDialogOpen(false)}
+        onSuccess={(simulationId) => {
+          setImportDialogOpen(false)
+          refetch()
+          router.push(`/projects/${id}/simulations/${simulationId}`)
+        }}
+      />
     </div>
   )
 }

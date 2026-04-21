@@ -27,8 +27,20 @@ class UserSerializer(serializers.ModelSerializer):
             "avatar_url",
             "oauth_provider",
             "created_at",
+            # CSV export preferences — writable so users can persist their
+            # locale via PATCH /api/v1/auth/me/. Choices are validated by the
+            # model (see apps.accounts.models.User).
+            "csv_decimal_separator",
+            "csv_column_delimiter",
         ]
-        read_only_fields = ["id", "email", "email_verified", "is_staff", "oauth_provider", "created_at"]
+        read_only_fields = [
+            "id",
+            "email",
+            "email_verified",
+            "is_staff",
+            "oauth_provider",
+            "created_at",
+        ]
 
 
 class RegisterSerializer(serializers.ModelSerializer):
@@ -43,7 +55,9 @@ class RegisterSerializer(serializers.ModelSerializer):
 
     def validate(self, attrs: dict) -> dict:
         if attrs["password"] != attrs["password_confirm"]:
-            raise serializers.ValidationError({"password_confirm": "Passwords do not match."})
+            raise serializers.ValidationError(
+                {"password_confirm": "Passwords do not match."}
+            )
         return attrs
 
     def create(self, validated_data: dict) -> User:
@@ -62,7 +76,9 @@ class ChangePasswordSerializer(serializers.Serializer):
     """Serializer for password change."""
 
     old_password = serializers.CharField(write_only=True)
-    new_password = serializers.CharField(write_only=True, validators=[validate_password])
+    new_password = serializers.CharField(
+        write_only=True, validators=[validate_password]
+    )
 
     def validate_old_password(self, value: str) -> str:
         user = self.context["request"].user

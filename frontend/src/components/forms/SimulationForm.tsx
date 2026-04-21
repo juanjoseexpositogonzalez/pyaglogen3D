@@ -8,7 +8,8 @@ import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Info, Upload, FileText, X } from 'lucide-react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Info, FileText, X } from 'lucide-react'
 import {
   singleSimulationAlgorithmOptions,
   simulationAlgorithmDescriptions,
@@ -787,6 +788,15 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
             <CardTitle className="text-lg">Import CSV File</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                For most imports, use the <strong>Import Aggregate</strong> button on the
+                project page — it supports MATLAB <code className="bg-muted px-1 rounded">.mat</code> files
+                and CSV locale auto-detection. This legacy form is kept for backwards compatibility.
+              </AlertDescription>
+            </Alert>
+
             <div className="space-y-2">
               <Label htmlFor="csv_file">CSV File</Label>
               <div className="flex gap-2">
