@@ -83,5 +83,10 @@ EXPOSE 8080
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/health/')" || exit 1
 
-# Default command (can be overridden in fly.toml)
-CMD ["gunicorn", "--bind", "0.0.0.0:8080", "--workers", "2", "--timeout", "120", "config.wsgi:application"]
+# Default command — runs migrations then starts gunicorn.
+# Using sh -c so `migrate` runs BEFORE gunicorn every startup. Django's
+# migrate is idempotent so this is safe on every container restart, and
+# guarantees schema sync regardless of whether the deploy platform uses
+# this image directly (Easypanel, Fly.io, bare Docker) or via docker-compose.
+# fly.toml [processes] can still override via its own command string.
+CMD ["sh", "-c", "python manage.py migrate --noinput && exec gunicorn --bind 0.0.0.0:8080 --workers 2 --timeout 120 config.wsgi:application"]
