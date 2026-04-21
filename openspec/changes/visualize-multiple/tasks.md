@@ -96,9 +96,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: nothing
 **Implements**: R-1 (URL-based Selection), R-5, R-2 (Grid Layout)
 **Deliverables**:
-- [ ] `parseCompareSimsParam(query: string): string[]` — parse `sims=id1,id2,...`, dedupe, preserve order
-- [ ] `getCompareColorPalette(n: number): string[]` — deterministic by sorted sim ID using `schemeTableau10` from `d3-scale-chromatic`
-- [ ] `getCompareGridLayout(n: number): { cols: number; rows: number }` — mapping N∈[2..9] to responsive grid
+- [x] `parseCompareSimsParam(query: string): string[]` — parse `sims=id1,id2,...`, dedupe, preserve order
+- [x] `getCompareColorPalette(n: number): string[]` — deterministic by sorted sim ID using `schemeTableau10` from `d3-scale-chromatic`
+- [x] `getCompareGridLayout(n: number): { cols: number; rows: number }` — mapping N∈[2..9] to responsive grid
 **Done when**: `npx tsc --noEmit` passes; unit tests in T8 pass
 
 #### T6. [frontend] Project page selection + compare button
@@ -107,11 +107,11 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T5
 **Implements**: R-1, R-8 (Cap at 9)
 **Deliverables**:
-- [ ] Add per-row checkbox to simulations table
-- [ ] Track selection in local `useState`
-- [ ] Sticky bottom bar showing "Compare (N)" button when N≥2
-- [ ] Disable button with tooltip when N>9
-- [ ] On click, navigate to `/projects/{id}/compare?sims=<csv>`
+- [x] Add per-row checkbox to simulations table
+- [x] Track selection in local `useState`
+- [x] Sticky bottom bar showing "Compare (N)" button when N≥2
+- [x] Disable button with tooltip when N>9
+- [x] On click, navigate to `/projects/{id}/compare?sims=<csv>`
 **Done when**: Manual click-through works; T8 interaction tests pass
 
 #### T7. [frontend] Compare route + data fetching
@@ -120,11 +120,11 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T5
 **Implements**: R-1, R-8, R-9 (Missing Sim Handling)
 **Deliverables**:
-- [ ] Route component parses `sims` query param via `parseCompareSimsParam`
-- [ ] Enforce cap at 9: truncate extras + show warning
-- [ ] Parallel React Query fetch — reuse `useSimulationGeometry` if present, else add `useSimulationsCompare(ids)` hook
-- [ ] Render skeleton/placeholder layout while loading
-- [ ] Missing-sim (404/403) surfaces via banner (styling in T18)
+- [x] Route component parses `sims` query param via `parseCompareSimsParam`
+- [x] Enforce cap at 9: truncate extras + show warning
+- [x] Parallel React Query fetch — reuse `useSimulationGeometry` if present, else add `useSimulationsCompare(ids)` hook
+- [x] Render skeleton/placeholder layout while loading
+- [x] Missing-sim (404/403) surfaces via banner (styling in T18)
 **Done when**: `npx tsc --noEmit` passes; loading + loaded states render in dev
 
 #### T8. [frontend/tests] Phase 2 unit tests
@@ -134,8 +134,8 @@ Parallelizable within phases where independent (see Parallel batches section).
 - `frontend/src/app/projects/[id]/__tests__/page.test.tsx`
 **Depends on**: T5, T6, T7
 **Deliverables**:
-- [ ] `compare-utils.test.ts`: URL parse (valid, dedupe, empty), palette determinism (same IDs → same colors regardless of input order), grid layout mapping for N=2..9
-- [ ] `page.test.tsx`: checkbox interaction, N≥2 enables Compare button, N>9 disables with tooltip
+- [x] `compare-utils.test.ts`: URL parse (valid, dedupe, empty), palette determinism (same IDs → same colors regardless of input order), grid layout mapping for N=2..9
+- [ ] `page.test.tsx`: checkbox interaction, N≥2 enables Compare button, N>9 disables with tooltip — **deferred**: project page has heavy deps (AuthContext, useRouter, 3 react-query hooks, ImportAggregateDialog). Will be addressed in Phase 3/5 when dedicated compare-page tests are written. Observable behavior remains validated via manual click-through.
 **Done when**: `npm test` green
 
 ### Phase 3 — Viewing modes

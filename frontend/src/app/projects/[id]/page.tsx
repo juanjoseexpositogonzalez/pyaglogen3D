@@ -11,11 +11,13 @@ import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers, Upload } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers, Upload, GitCompare } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
+import { MAX_COMPARE_SIMS } from '@/lib/compare-utils'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
 import { useAuth } from '@/contexts/AuthContext'
 import { ImportAggregateDialog } from '@/components/forms/ImportAggregateDialog'
@@ -40,6 +42,32 @@ export default function ProjectDetailPage({
   const [deleteAllFraktalConfirm, setDeleteAllFraktalConfirm] = useState(false)
   const [bulkDeleteLoading, setBulkDeleteLoading] = useState(false)
   const [importDialogOpen, setImportDialogOpen] = useState(false)
+
+  // Compare selection — local state (URL is the source of truth on the
+  // /compare page itself, this set just drives the checkboxes + nav button).
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+
+  const toggleSelection = (simId: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(simId)) {
+        next.delete(simId)
+      } else if (next.size < MAX_COMPARE_SIMS) {
+        next.add(simId)
+      } else {
+        // Cap: the 10th+ click is ignored. The disabled visual state on
+        // unchecked boxes (see below) communicates why.
+        return prev
+      }
+      return next
+    })
+  }
+
+  const handleCompare = () => {
+    if (selectedIds.size < 2) return
+    const ids = Array.from(selectedIds).join(',')
+    router.push(`/projects/${id}/compare?sims=${ids}`)
+  }
 
   const handleCancel = async (simId: string, e: React.MouseEvent) => {
     e.preventDefault()
@@ -280,7 +308,10 @@ export default function ProjectDetailPage({
             </Card>
           ) : (
             <div className="grid gap-4">
-              {simulationList.map((sim) => (
+              {simulationList.map((sim) => {
+                const isSelected = selectedIds.has(sim.id)
+                const capReached = !isSelected && selectedIds.size >= MAX_COMPARE_SIMS
+                return (
                 <Link
                   key={sim.id}
                   href={`/projects/${id}/simulations/${sim.id}`}
@@ -289,6 +320,18 @@ export default function ProjectDetailPage({
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
+                          {/* Compare selection checkbox — does NOT navigate (R1/S1.6). */}
+                          <Checkbox
+                            aria-label={`Select ${sim.algorithm} simulation for comparison`}
+                            checked={isSelected}
+                            disabled={capReached}
+                            title={capReached ? `Maximum ${MAX_COMPARE_SIMS} simulations at once` : undefined}
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                            }}
+                            onCheckedChange={() => toggleSelection(sim.id)}
+                          />
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">
@@ -382,7 +425,8 @@ export default function ProjectDetailPage({
                     </CardContent>
                   </Card>
                 </Link>
-              ))}
+                )
+              })}
             </div>
           )}
         </div>
@@ -538,6 +582,30 @@ export default function ProjectDetailPage({
           )}
         </div>
       </main>
+
+      {/* Sticky Compare bar — only when ≥2 sims selected (R1/S1.3). */}
+      {selectedIds.size >= 2 && (
+        <div
+          role="region"
+          aria-label="Compare simulations"
+          className="fixed bottom-4 right-4 z-50 flex items-center gap-3 rounded-lg border bg-background p-3 shadow-lg"
+        >
+          <span className="text-sm text-muted-foreground">
+            {selectedIds.size} selected
+          </span>
+          <Button onClick={handleCompare} size="sm">
+            <GitCompare className="h-4 w-4 mr-2" />
+            Compare ({selectedIds.size})
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => setSelectedIds(new Set())}
+          >
+            Clear
+          </Button>
+        </div>
+      )}
 
       <ImportAggregateDialog
         projectId={id}
