@@ -118,10 +118,10 @@ Phase 5:
 **Location**: `backend/apps/simulations/tasks.py` (`compute_import_metrics`, where T4 left the placeholder)
 **Depends on**: T4
 **Deliverables**:
-- [ ] Call `aglogen_core.box_counting_agglomerate(particles)` guarded by `if len(particles) >= 50`
-- [ ] Write `metrics["fractal_dimension"]` (float) and `metrics["fractal_dimension_std"]` (float) on success
-- [ ] On `N < 50`: `metrics["fractal_dimension"] = None`, append to `metrics["notes"]`: `"fractal_dimension not computed: N < 50 particles (box-counting requires ≥ 50)"`
-- [ ] On algorithm failure (exception): log, set `fractal_dimension = None`, add note with error category
+- [x] Call `aglogen_core.box_counting_agglomerate(particles)` guarded by `if len(particles) >= 50`
+- [x] Write `metrics["fractal_dimension"]` (float) and `metrics["fractal_dimension_std"]` (float) on success
+- [x] On `N < 50`: `metrics["fractal_dimension"] = None`, append to `metrics["notes"]`: `"fractal_dimension not computed: N < 50 particles (box-counting requires ≥ 50)"`
+- [x] On algorithm failure (exception): log, set `fractal_dimension = None`, add note with error category
 **Risk**: `aglogen_core.box_counting_agglomerate` signature/import path — verify exact name with `rg` in the Rust bindings before calling.
 **Done when**: Import a 100-particle CSV → API returns numeric `fractal_dimension`; import a 20-particle CSV → returns `None` with note.
 
@@ -130,12 +130,12 @@ Phase 5:
 **Location**: `backend/apps/simulations/tests/test_box_counting_df.py` (new file)
 **Depends on**: T6
 **Deliverables**:
-- [ ] Fixture: line geometry (Df ≈ 1.0) from `fractal::limits` → assert Df within ±0.1
-- [ ] Fixture: plane (Df ≈ 2.0) → assert within ±0.15
-- [ ] Fixture: cube (Df ≈ 3.0) → assert within ±0.15
-- [ ] Fixture: Menger sponge (Df ≈ 2.73) from `fractal::fractals` → assert within ±0.2
-- [ ] Small-N test: N=20 → `fractal_dimension is None` AND note string matches spec R5
-- [ ] All fixtures go through the full import pipeline (upload → compute → fetch)
+- [x] Fixture: line geometry (Df ≈ 1.0) from `fractal::limits` → assert Df within ±0.1
+- [x] Fixture: plane (Df ≈ 2.0) → assert within ±0.15
+- [x] Fixture: cube (Df ≈ 3.0) → assert within ±0.15
+- [x] Fixture: Menger sponge (Df ≈ 2.73) from `fractal::fractals` → assert within ±0.2
+- [x] Small-N test: N=20 → `fractal_dimension is None` AND note string matches spec R5
+- [x] All fixtures go through the full import pipeline (upload → compute → fetch)
 **Done when**: `pytest backend/apps/simulations/tests/test_box_counting_df.py -v` all green.
 
 ### Phase 3 — MATLAB `.mat` importer
@@ -145,14 +145,14 @@ Phase 5:
 **Location**: `backend/apps/simulations/services/mat_parser.py` (new file)
 **Depends on**: nothing (parallel with Phase 2)
 **Deliverables**:
-- [ ] Function `parse_mat_geometry(file_bytes) -> tuple[list[Particle], dict]`
-- [ ] Uses `scipy.io.loadmat` with `appendmat=False`
-- [ ] Rejects HDF5/v7.3 files with message: `"MATLAB v7.3 / HDF5 .mat files not supported. Please re-save as v7 (default in MATLAB)."`
-- [ ] Variable preference order: `clusters` > `part`
-- [ ] If `part` is used and `NofPart` present: must equal 1 (else reject with multi-agglomerate message from spec)
-- [ ] Shape validation: expected Nx4 (x, y, z, radius) — reject with message if wrong
-- [ ] Returns `metadata = {"source_variable": "clusters"|"part", "mat_version": "v7", ...}`
-- [ ] All numeric conversions to float64, distances assumed in meters unless metadata says otherwise (per design C4)
+- [x] Function `parse_mat_geometry(file_bytes) -> tuple[list[Particle], dict]`
+- [x] Uses `scipy.io.loadmat` with `appendmat=False`
+- [x] Rejects HDF5/v7.3 files with message: `"MATLAB v7.3 / HDF5 .mat files not supported. Please re-save as v7 (default in MATLAB)."`
+- [x] Variable preference order: `clusters` > `part`
+- [x] If `part` is used and `NofPart` present: must equal 1 (else reject with multi-agglomerate message from spec)
+- [x] Shape validation: expected Nx4 (x, y, z, radius) — reject with message if wrong
+- [x] Returns `metadata = {"source_variable": "clusters"|"part", "mat_version": "v7", ...}`
+- [x] All numeric conversions to float64, distances assumed in meters unless metadata says otherwise (per design C4)
 **Risk**: scipy silently loads weird layouts — add explicit dtype/shape assertions with clear errors.
 **Done when**: `python -c "from backend.apps.simulations.services.mat_parser import parse_mat_geometry"` imports cleanly; unit tests in T11 pass.
 
@@ -161,9 +161,9 @@ Phase 5:
 **Location**: `backend/apps/simulations/views.py` (`_parse_geometry_upload` from T1)
 **Depends on**: T1, T8
 **Deliverables**:
-- [ ] Add `.mat` branch dispatching to `parse_mat_geometry`
-- [ ] Re-center geometry to centroid (same post-parse step as CSV)
-- [ ] Stamp `original_format = "mat"` and MATLAB metadata into `import_metadata` (T2 already covers the stamping machinery)
+- [x] Add `.mat` branch dispatching to `parse_mat_geometry`
+- [x] Re-center geometry to centroid (same post-parse step as CSV)
+- [x] Stamp `original_format = "mat"` and MATLAB metadata into `import_metadata` (T2 already covers the stamping machinery)
 **Done when**: POST a valid `.mat` file → simulation created with `original_format == "mat"` in params.
 
 #### T10. [backend] Reject `.dat` before parse
@@ -171,8 +171,8 @@ Phase 5:
 **Location**: `backend/apps/simulations/views.py` (top of `_parse_geometry_upload`)
 **Depends on**: T1
 **Deliverables**:
-- [ ] If extension is `.dat`: return HTTP 400 with exact string from spec R7 (design Component 4 mirrors it)
-- [ ] Check happens BEFORE reading file contents (fast reject)
+- [x] If extension is `.dat`: return HTTP 400 with exact string from spec R7 (design Component 4 mirrors it)
+- [x] Check happens BEFORE reading file contents (fast reject)
 **Done when**: POST a `foo.dat` → 400 with the exact spec R7 error string.
 
 #### T11. [tests] MAT import + .dat rejection tests
@@ -180,13 +180,13 @@ Phase 5:
 **Location**: `backend/apps/simulations/tests/test_mat_import.py` (new file)
 **Depends on**: T9, T10
 **Deliverables**:
-- [ ] `clusters` variable happy path
-- [ ] `part` + `NofPart=1` happy path
-- [ ] Both `clusters` and `part` present → `clusters` wins (assert metadata says so)
-- [ ] `part` + `NofPart > 1` → 400 with multi-agglomerate message
-- [ ] Wrong shape (e.g. Nx3) → 400
-- [ ] HDF5/v7.3 file → 400 with the re-save message
-- [ ] `.dat` extension → 400 with exact spec R7 string
+- [x] `clusters` variable happy path
+- [x] `part` + `NofPart=1` happy path
+- [x] Both `clusters` and `part` present → `clusters` wins (assert metadata says so)
+- [x] `part` + `NofPart > 1` → 400 with multi-agglomerate message
+- [x] Wrong shape (e.g. Nx3) → 400
+- [x] HDF5/v7.3 file → 400 with the re-save message
+- [x] `.dat` extension → 400 with exact spec R7 string
 **Done when**: `pytest backend/apps/simulations/tests/test_mat_import.py -v` all green.
 
 ### Phase 4 — CSV localization + export unit
@@ -196,10 +196,10 @@ Phase 5:
 **Location**: `backend/apps/simulations/utils.py` (`parse_csv_geometry`)
 **Depends on**: Phase 1 gate closed
 **Deliverables**:
-- [ ] Lines starting with `#` at file top are parsed as `key=value` into `metadata` dict
-- [ ] Malformed `#` lines (no `=`) are ignored (logged warning, not rejected)
-- [ ] Signature changes to return `(particles, metadata)` tuple; callers updated
-- [ ] Default `unit=nm` applied when metadata doesn't specify
+- [x] Lines starting with `#` at file top are parsed as `key=value` into `metadata` dict
+- [x] Malformed `#` lines (no `=`) are ignored (logged warning, not rejected)
+- [x] Signature changes to return `(particles, metadata)` tuple; callers updated
+- [x] Default `unit=nm` applied when metadata doesn't specify
 **Risk**: Breaking existing callers — grep all usages, update in same PR.
 **Done when**: `rg "parse_csv_geometry" backend/` shows all call sites unpacking 2-tuple.
 
@@ -208,12 +208,12 @@ Phase 5:
 **Location**: `backend/apps/simulations/utils.py` (same module)
 **Depends on**: T12
 **Deliverables**:
-- [ ] `detect_csv_locale(sample_rows: list[str]) -> dict` returning `{decimal, delimiter, confidence, locale_warning}`
-- [ ] Sample size is first 5 data rows (post-metadata strip)
-- [ ] If < 5 rows available: still runs, sets `locale_warning=True` (spec threshold)
-- [ ] Heuristic: count `,` vs `;` vs `\t` for delimiter; count `.` vs `,` within numeric tokens for decimal
-- [ ] `parse_csv_geometry` accepts `decimal_override` and `delimiter_override` kwargs; when set, skip sniffer
-- [ ] Returns detection info in `metadata["locale"]`
+- [x] `detect_csv_locale(sample_rows: list[str]) -> dict` returning `{decimal, delimiter, confidence, locale_warning}`
+- [x] Sample size is first 5 data rows (post-metadata strip)
+- [x] If < 5 rows available: still runs, sets `locale_warning=True` (spec threshold)
+- [x] Heuristic: count `,` vs `;` vs `\t` for delimiter; count `.` vs `,` within numeric tokens for decimal
+- [x] `parse_csv_geometry` accepts `decimal_override` and `delimiter_override` kwargs; when set, skip sniffer
+- [x] Returns detection info in `metadata["locale"]`
 **Done when**: Unit test (part of T17) validates US, EU, override, and small-sample paths.
 
 #### T14. [backend] User profile CSV preferences + migration
@@ -221,10 +221,10 @@ Phase 5:
 **Location**: `backend/apps/users/models.py` + new migration
 **Depends on**: nothing (parallel in Phase 4)
 **Deliverables**:
-- [ ] Add `csv_decimal_separator = CharField(max_length=1, default='.', choices=[('.', 'Point'), (',', 'Comma')])`
-- [ ] Add `csv_column_delimiter = CharField(max_length=1, default=',', choices=[(',', 'Comma'), (';', 'Semicolon'), ('\t', 'Tab')])`
-- [ ] Migration `00XX_csv_locale_prefs.py` created
-- [ ] Migration auto-runs via existing `docker-compose.prod.yml` migrate step (verify — don't add new hook)
+- [x] Add `csv_decimal_separator = CharField(max_length=1, default='.', choices=[('.', 'Point'), (',', 'Comma')])`
+- [x] Add `csv_column_delimiter = CharField(max_length=1, default=',', choices=[(',', 'Comma'), (';', 'Semicolon'), ('\t', 'Tab')])`
+- [x] Migration `00XX_csv_locale_prefs.py` created
+- [x] Migration auto-runs via existing `docker-compose.prod.yml` migrate step (verify — don't add new hook)
 **Done when**: `python manage.py showmigrations apps.users` lists the new migration; `python manage.py migrate --check` clean after apply.
 
 #### T15. [backend] Single-sim CSV export with locale + `radius_nm`
@@ -232,10 +232,10 @@ Phase 5:
 **Location**: `backend/apps/simulations/views.py` (~line 474, `export_csv` action from verify-rg)
 **Depends on**: T14
 **Deliverables**:
-- [ ] Read `request.user.csv_decimal_separator` and `csv_column_delimiter`
-- [ ] Apply to output via `csv.writer` dialect or custom formatting
-- [ ] New column `radius_nm` (float, nm units) added at end — additive, does not replace existing columns
-- [ ] Numeric formatting uses user's decimal separator
+- [x] Read `request.user.csv_decimal_separator` and `csv_column_delimiter`
+- [x] Apply to output via `csv.writer` dialect or custom formatting
+- [x] New column `radius_nm` (float, nm units) added at end — additive, does not replace existing columns
+- [x] Numeric formatting uses user's decimal separator
 **Done when**: Export from a user with EU prefs produces `;`-delimited file with `,` decimals and `radius_nm` column.
 
 #### T16. [backend] Batch CSV export locale + `radius_nm`
@@ -243,9 +243,9 @@ Phase 5:
 **Location**: `backend/apps/simulations/views.py` (~line 1116, batch export action)
 **Depends on**: T14
 **Deliverables**:
-- [ ] Same user-profile locale logic as T15
-- [ ] `Rg_nm` header already in place from verify-rg — don't touch
-- [ ] Add per-particle `radius_nm` when batch export includes particle data
+- [x] Same user-profile locale logic as T15
+- [x] `Rg_nm` header already in place from verify-rg — don't touch
+- [x] Add per-particle `radius_nm` when batch export includes particle data
 **Done when**: Batch export for EU user → semicolon-delimited, comma-decimal, includes both `Rg_nm` and `radius_nm`.
 
 #### T17. [tests] CSV import locale tests
@@ -253,12 +253,12 @@ Phase 5:
 **Location**: `backend/apps/simulations/tests/test_csv_import_locale.py` (new file)
 **Depends on**: T13
 **Deliverables**:
-- [ ] US format (`,` delim, `.` decimal) → parses correctly
-- [ ] EU format (`;` delim, `,` decimal) → parses correctly
-- [ ] Override kwargs bypass sniffer
-- [ ] Small-sample warning: 3-row CSV → `locale_warning=True` in metadata
-- [ ] Metadata lines: `#unit=um` changes parsed radii (conversion to nm)
-- [ ] Ambiguous file (mixed signals) → sniffer picks higher-confidence option, warning set
+- [x] US format (`,` delim, `.` decimal) → parses correctly
+- [x] EU format (`;` delim, `,` decimal) → parses correctly
+- [x] Override kwargs bypass sniffer
+- [x] Small-sample warning: 3-row CSV → `locale_warning=True` in metadata
+- [x] Metadata lines: `#unit=um` changes parsed radii (conversion to nm)
+- [x] Ambiguous file (mixed signals) → sniffer picks higher-confidence option, warning set
 **Done when**: `pytest backend/apps/simulations/tests/test_csv_import_locale.py -v` all green.
 
 #### T18. [tests] CSV export locale tests
@@ -266,11 +266,11 @@ Phase 5:
 **Location**: `backend/apps/simulations/tests/test_csv_export_locale.py` (new file)
 **Depends on**: T15, T16
 **Deliverables**:
-- [ ] US profile single export: `,` delim + `.` decimal + `radius_nm` present
-- [ ] EU profile single export: `;` + `,` + `radius_nm`
-- [ ] Mixed / default profile: fallback to US
-- [ ] Batch export mirrors single-export locale behavior
-- [ ] `radius_nm` column values equal stored radii in nm (roundtrip check)
+- [x] US profile single export: `,` delim + `.` decimal + `radius_nm` present
+- [x] EU profile single export: `;` + `,` + `radius_nm`
+- [x] Mixed / default profile: fallback to US
+- [x] Batch export mirrors single-export locale behavior
+- [x] `radius_nm` column values equal stored radii in nm (roundtrip check)
 **Done when**: `pytest backend/apps/simulations/tests/test_csv_export_locale.py -v` all green.
 
 #### T19. [frontend] Client-side CSV sniffer lib
@@ -278,10 +278,10 @@ Phase 5:
 **Location**: `frontend/src/lib/csv-locale.ts` (new file)
 **Depends on**: nothing (parallel)
 **Deliverables**:
-- [ ] `detectCsvLocale(sample: string): { decimal, delimiter, confidence, warning }` — mirrors backend logic
-- [ ] `stripMetadataComments(raw: string): { body, metadata }` — strips `#key=value` lines
-- [ ] Pure functions, no DOM dependency (for testability)
-- [ ] Exported types reused by dialog
+- [x] `detectCsvLocale(sample: string): { decimal, delimiter, confidence, warning }` — mirrors backend logic
+- [x] `stripMetadataComments(raw: string): { body, metadata }` — strips `#key=value` lines
+- [x] Pure functions, no DOM dependency (for testability)
+- [x] Exported types reused by dialog
 **Done when**: TypeScript compiles; T20 tests green.
 
 #### T20. [frontend-test] CSV sniffer unit tests
@@ -289,8 +289,8 @@ Phase 5:
 **Location**: `frontend/src/lib/__tests__/csv-locale.test.ts` (new file)
 **Depends on**: T19
 **Deliverables**:
-- [ ] 6+ fixtures: US, EU, override-applied, ambiguous, metadata-only, empty
-- [ ] `stripMetadataComments` handles leading blank lines and mixed `#`/data
+- [x] 6+ fixtures: US, EU, override-applied, ambiguous, metadata-only, empty
+- [x] `stripMetadataComments` handles leading blank lines and mixed `#`/data
 **Done when**: `npm test -- csv-locale` all green.
 
 #### T21. [frontend] `ImportAggregateDialog` component
@@ -298,13 +298,13 @@ Phase 5:
 **Location**: `frontend/src/components/forms/ImportAggregateDialog.tsx` (new file)
 **Depends on**: T19
 **Deliverables**:
-- [ ] Tabs: "CSV" and "MATLAB (.mat)"
-- [ ] File input with extension validation (`.csv`, `.mat` accepted; `.dat` rejected client-side with clear message)
-- [ ] 10 MB size cap, error shown inline
-- [ ] CSV tab: preview sniffer result + manual override dropdowns (decimal, delimiter)
-- [ ] Submit wires to existing upload endpoint using `overrides` payload
-- [ ] Loading + error + success states
-- [ ] Accessible (labels, aria-describedby for errors)
+- [x] Tabs: "CSV" and "MATLAB (.mat)"
+- [x] File input with extension validation (`.csv`, `.mat` accepted; `.dat` rejected client-side with clear message)
+- [x] 10 MB size cap, error shown inline
+- [x] CSV tab: preview sniffer result + manual override dropdowns (decimal, delimiter)
+- [x] Submit wires to existing upload endpoint using `overrides` payload
+- [x] Loading + error + success states
+- [x] Accessible (labels, aria-describedby for errors)
 **Done when**: Dialog renders via Storybook or manual mount; all states visible; upload succeeds end-to-end.
 
 #### T22. [frontend-test] Dialog tests
@@ -312,11 +312,11 @@ Phase 5:
 **Location**: `frontend/src/components/forms/__tests__/ImportAggregateDialog.test.tsx` (new file)
 **Depends on**: T21
 **Deliverables**:
-- [ ] CSV upload happy path (mocked fetch)
-- [ ] MAT upload happy path
-- [ ] `.dat` rejection — error shown, no fetch call
-- [ ] Override interaction: changing decimal dropdown updates preview
-- [ ] Size cap: 11 MB file → error
+- [x] CSV upload happy path (mocked fetch)
+- [x] MAT upload happy path
+- [x] `.dat` rejection — error shown, no fetch call
+- [x] Override interaction: changing decimal dropdown updates preview
+- [x] Size cap: 11 MB file → error
 **Done when**: `npm test -- ImportAggregateDialog` all green.
 
 #### T23. [frontend] Top-level "Import Aggregate" button

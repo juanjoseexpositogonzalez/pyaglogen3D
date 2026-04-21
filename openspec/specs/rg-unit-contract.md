@@ -62,6 +62,7 @@ verified via tests; the formula itself MUST NOT be modified by this change.
 Every simulation's stored `parameters` MUST carry an explicit
 `parameters_schema_version` field so readers can dispatch on format rather than
 probing for keys. Legacy simulations without the field MUST remain readable.
+Imported simulations (CSV and `.mat`) MUST also satisfy this contract.
 
 #### Scenario: New simulation is written as v2
 
@@ -80,10 +81,20 @@ probing for keys. Legacy simulations without the field MUST remain readable.
 - THEN it is treated as schema `v1`
 - AND loading succeeds with no data loss
 
+#### Scenario: Imported simulation is written as v2
+
+- GIVEN a simulation is created via the import pipeline (CSV or `.mat`)
+- WHEN its parameters are persisted
+- THEN `parameters.parameters_schema_version == "v2"`
+- AND `parameters.primary_particle_diameter_nm` is present
+- AND its value is either the explicit metadata override or
+  `2 * mean(radius)` (or `50.0` when `unit=dimensionless`)
+
 ### Requirement: Read-side shim for parameter keys
 
 A single helper MUST resolve the primary-particle diameter in nm from either
 schema version, so downstream callers never branch on schema version themselves.
+Imported simulations MUST be resolved by the same shim without special-casing.
 
 #### Scenario: v2 parameters present
 
@@ -110,6 +121,15 @@ schema version, so downstream callers never branch on schema version themselves.
 - WHEN the parameters are written
 - THEN `primary_particle_diameter_nm` is set
 - AND `primary_particle_radius_nm` is not written
+
+#### Scenario: Imported simulation resolves via the shim
+
+- GIVEN an imported simulation whose parameters were stamped with an
+  explicit `primary_particle_diameter_nm = D`
+- WHEN `getPrimaryParticleDiameterNm(params)` is called during CSV export
+  or any display surface
+- THEN it returns `D`
+- AND CSV export scales `radius_nm = radius_engine × (D / 2)` correctly
 
 ### Requirement: Backend CSV export includes Unit column and nm-scaled Rg
 
