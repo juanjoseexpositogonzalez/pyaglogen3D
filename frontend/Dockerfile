@@ -32,9 +32,14 @@ ENV NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL}
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Build the application
+# Build the application. NODE_ENV=production is explicit so Next.js
+# produces a production build deterministically regardless of what the
+# local .env or compose file sets.
+ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
-RUN npm run build
+# Belt-and-braces: nuke any .next dir that might leak in via build context
+# (although .dockerignore should prevent this). Guarantees a clean build.
+RUN rm -rf .next && npm run build
 
 # -----------------------------------------------------------------------------
 # Stage 3: Production runner
