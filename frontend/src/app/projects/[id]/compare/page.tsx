@@ -173,7 +173,13 @@ export default function CompareSimulationsPage() {
               fractal_dimension: result.simulation.metrics.fractal_dimension,
               prefactor: result.simulation.metrics.prefactor,
               radius_of_gyration: result.simulation.metrics.radius_of_gyration,
-              n_particles: null, // not surfaced by SimulationMetrics today
+              // N is stored on simulation.parameters (not metrics); fall back to
+              // the actual particle count from geometry if parameters is missing it.
+              n_particles:
+                (result.simulation.parameters as { n_particles?: number })
+                  ?.n_particles ??
+                result.geometry?.coordinates.length ??
+                null,
             }
           : null,
       })),
