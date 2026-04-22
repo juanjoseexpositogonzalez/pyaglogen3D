@@ -6,7 +6,11 @@
 //! Based on Matlab's create2DImages.m which uses viewmtx for the
 //! rotation transformation.
 
+pub mod directions;
+
 use std::f64::consts::PI;
+
+use self::directions::Direction;
 
 /// Result of a 2D projection operation.
 #[derive(Debug, Clone)]
@@ -126,6 +130,29 @@ pub fn project_batch_internal(
     }
 
     results
+}
+
+/// Project `coordinates` once per `Direction`, returning one
+/// [`ProjectionResult`] per input direction.
+///
+/// This is the direction-driven counterpart to [`project_batch_internal`].
+/// It is the single iteration point used by the grid and fibonacci export
+/// modes (see `projection-export-contract` spec R1/R2/R7). No rendering or
+/// rasterization is performed here — callers render on the Python side.
+///
+/// # Arguments
+/// * `coordinates` - 3D particle coordinates as slice of [x, y, z].
+/// * `radii` - Particle radii, one per coordinate.
+/// * `directions` - Viewing directions (azimuth/elevation pairs).
+pub fn project_directions_internal(
+    coordinates: &[[f64; 3]],
+    radii: &[f64],
+    directions: &[Direction],
+) -> Vec<ProjectionResult> {
+    directions
+        .iter()
+        .map(|d| project_to_2d_internal(coordinates, radii, d.azimuth_deg, d.elevation_deg))
+        .collect()
 }
 
 /// Build view transformation matrix from azimuth and elevation angles.
