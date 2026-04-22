@@ -133,6 +133,147 @@ async function authFetch(
   return res
 }
 
+// -----------------------------------------------------------------------------
+// Projections export — types + polling helper (shared by simulationsApi.exportProjections)
+// -----------------------------------------------------------------------------
+
+/**
+ * Payload accepted by the ``projection/batch/`` endpoint under the new
+ * mode-aware contract. ``mode`` is optional — omitting it (or passing
+ * ``"legacy"``) preserves the pre-change behavior byte-for-byte (R3).
+ */
+export interface ExportProjectionsPayload {
+  mode?: 'legacy' | 'grid' | 'fibonacci'
+
+  // Grid mode
+  n_az?: number
+  n_el?: number
+
+  // Fibonacci mode
+  n?: number
+
+  // Shared knobs (grid + fibonacci)
+  img_size?: number
+
+  // Legacy mode (all existing fields preserved — see R3)
+  azimuth_start?: number
+  azimuth_end?: number
+  azimuth_step?: number
+  elevation_start?: number
+  elevation_end?: number
+  elevation_step?: number
+  format?: 'png' | 'svg'
+}
+
+export interface ExportProjectionsOptions {
+  onProgress?: (progress: number, current: number, total: number) => void
+  /** Poll interval for the async path, in ms. Default: 1000 (1 Hz). */
+  pollIntervalMs?: number
+  /** Total wait budget before giving up, in ms. Default: 30 * 60 * 1000. */
+  maxWaitMs?: number
+}
+
+interface ProjectionsStatusProcessing {
+  status: 'processing'
+  progress?: number
+  current?: number
+  total?: number
+}
+
+interface ProjectionsStatusDone {
+  status: 'done'
+  download_url: string
+}
+
+interface ProjectionsStatusFailed {
+  status: 'failed'
+  error?: string
+}
+
+type ProjectionsStatusResponse =
+  | ProjectionsStatusProcessing
+  | ProjectionsStatusDone
+  | ProjectionsStatusFailed
+
+/**
+ * Resolve a backend-returned download URL (e.g.
+ * ``"/api/v1/projections-status/xyz/download/"``) against the API base.
+ * The backend emits absolute-from-root paths, but ``API_BASE`` may be any
+ * origin — strip the ``/api/v1`` prefix and re-prepend ``API_BASE`` so the
+ * request targets the same host the client was talking to all along.
+ */
+function resolveDownloadUrl(downloadUrl: string): string {
+  if (/^https?:\/\//i.test(downloadUrl)) {
+    return downloadUrl
+  }
+  // Backend paths all start with "/api/v1/..."; API_BASE already ends with
+  // "/api/v1" (or whatever the deployment maps it to). Concatenate the tail
+  // after that common prefix.
+  const prefix = '/api/v1'
+  if (downloadUrl.startsWith(prefix)) {
+    return `${API_BASE}${downloadUrl.slice(prefix.length)}`
+  }
+  return `${API_BASE}${downloadUrl.startsWith('/') ? '' : '/'}${downloadUrl}`
+}
+
+async function pollProjectionsUntilDone(
+  jobId: string,
+  onProgress?: (progress: number, current: number, total: number) => void,
+  pollIntervalMs = 1000,
+  maxWaitMs = 30 * 60 * 1000
+): Promise<Blob> {
+  const startedAt = Date.now()
+  const statusUrl = `${API_BASE}/projections-status/${jobId}/`
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const statusRes = await authFetch(statusUrl)
+    if (!statusRes.ok) {
+      throw new ApiError(
+        `Projection status check failed (HTTP ${statusRes.status})`,
+        statusRes.status
+      )
+    }
+
+    const body = (await statusRes.json().catch(() => ({}))) as
+      | ProjectionsStatusResponse
+      | Record<string, never>
+
+    if (body && 'status' in body && body.status === 'done') {
+      const downloadUrl = resolveDownloadUrl(body.download_url)
+      const dl = await authFetch(downloadUrl)
+      if (!dl.ok) {
+        throw new ApiError(
+          `Projection download failed (HTTP ${dl.status})`,
+          dl.status
+        )
+      }
+      return dl.blob()
+    }
+
+    if (body && 'status' in body && body.status === 'failed') {
+      throw new ApiError(
+        body.error || 'Projection generation failed',
+        500
+      )
+    }
+
+    if (body && 'status' in body && body.status === 'processing' && onProgress) {
+      onProgress(
+        typeof body.progress === 'number' ? body.progress : 0,
+        typeof body.current === 'number' ? body.current : 0,
+        typeof body.total === 'number' ? body.total : 0
+      )
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  throw new ApiError(
+    'Projection export timed out (> 30 minutes without completion)',
+    408
+  )
+}
+
 // Projects API
 export const projectsApi = {
   list: () => request<PaginatedResponse<Project>>('/projects/'),
@@ -268,6 +409,76 @@ export const simulationsApi = {
       throw new ApiError(text || 'Failed to generate projections', res.status)
     }
     return res.blob()
+  },
+
+  /**
+   * Export projections using the new mode-based endpoint (grid | fibonacci |
+   * legacy). Hits the same URL as `getProjectionBatch` but with a ``mode``
+   * field that the backend dispatches on.
+   *
+   * Sync path (N ≤ 200): backend responds ``200`` + ``application/zip``;
+   * resolve with the Blob directly.
+   *
+   * Async path (N > 200): backend responds ``202`` + JSON ``{job_id}``;
+   * poll ``/projections-status/{job_id}/`` every second until the job is
+   * ``done`` (then fetch the download URL) or ``failed`` (then reject).
+   *
+   * ``onProgress`` is invoked on every poll tick while the job is still
+   * running so the UI can drive a progress bar. It is never called on the
+   * sync path.
+   */
+  exportProjections: async (
+    projectId: string,
+    simId: string,
+    payload: ExportProjectionsPayload,
+    options?: ExportProjectionsOptions
+  ): Promise<Blob> => {
+    const res = await authFetch(
+      `${API_BASE}/projects/${projectId}/simulations/${simId}/projection/batch/`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      }
+    )
+
+    // Sync path — backend already rendered the ZIP.
+    if (res.status === 200) {
+      return res.blob()
+    }
+
+    // Async path — poll the status endpoint until the Celery job settles.
+    if (res.status === 202) {
+      const data = (await res.json().catch(() => ({}))) as {
+        job_id?: string
+      }
+      if (!data.job_id) {
+        throw new ApiError(
+          'Async projection job accepted but no job_id returned',
+          502
+        )
+      }
+      return pollProjectionsUntilDone(
+        data.job_id,
+        options?.onProgress,
+        options?.pollIntervalMs,
+        options?.maxWaitMs
+      )
+    }
+
+    // Any other status is an error — surface the JSON detail/message if
+    // present, otherwise fall back to the raw text.
+    const contentType = res.headers.get('Content-Type') || ''
+    if (contentType.includes('application/json')) {
+      const error = await res.json().catch(() => ({}))
+      throw new ApiError(
+        error.message || error.detail || 'Failed to export projections',
+        res.status,
+        error.details
+      )
+    }
+    const text = await res.text().catch(() => '')
+    throw new ApiError(text || 'Failed to export projections', res.status)
   },
 
   /**

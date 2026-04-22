@@ -1,2 +1,9 @@
-export { ProjectionControls, type ProjectionParams, type BatchParams } from './ProjectionControls'
+export {
+  ProjectionControls,
+  computeGridCount,
+  type ProjectionParams,
+  type BatchParams,
+  type ProjectionMode,
+  type ExportProgress,
+} from './ProjectionControls'
 export { ProjectionViewer } from './ProjectionViewer'
