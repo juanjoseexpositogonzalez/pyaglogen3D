@@ -1,3 +1,31 @@
+## projections-export-fix (unreleased)
+
+### Added
+
+- **Grid mode** — uniform azimuth × elevation sampling with automatic pole deduplication. Emits exactly `n_az * (n_el − 2) + 2` projections.
+- **Fibonacci lattice mode** — exact N uniform projections via golden-angle spiral. Mathematically optimal sphere coverage.
+- **metadata.json** inside every export ZIP with per-projection `{index, filename, azimuth, elevation}` records.
+- **Async Celery path** for N > 200 projections: endpoint returns `202 {job_id}`, frontend polls `/projections-status/{job_id}/` and downloads when ready.
+- User guide at `docs/projections-export.md`.
+
+### Changed — silent projection drops FIXED
+
+- The old export silently emitted fewer projections than the UI promised (e.g., "generate 24" but ZIP contained 19). Root cause: a half-baked pole dedup in `projection/mod.rs` only fired when elevations landed exactly on ±90° AND skipped non-first azimuths — partial, fragile, and mismatched with the UI count formula.
+- Fix: dedicated `generate_direction_grid` (Rust) with correct pole math + frontend preview formula that matches backend output exactly.
+
+### Fixed
+
+- Matplotlib figure leak risk in large batches (N > 200) — single rendering helper with `plt.close(fig)` in `finally`.
+
+### Infrastructure
+
+- New Rust module `aglogen_core::projection::directions` with `Direction` struct + `generate_grid` + `generate_fibonacci`.
+- Python bindings: `aglogen_core.generate_direction_grid(n_az, n_el)`, `aglogen_core.generate_direction_fibonacci(n)`, `aglogen_core.project_directions(coords, radii, directions)`.
+- Backend service `apps.simulations.services.projections` (pure Python) for ZIP + metadata assembly.
+- Endpoints: extended `POST /projection/batch/` with `mode` dispatch; new `GET /projections-status/{job_id}/` polling + `/projections-status/{job_id}/download/` streaming.
+- Celery task `build_projections_zip_task` with progress reporting every 10 projections.
+- 50 new tests: 7 Rust unit (directions.rs), 28 backend (services + integration + polling), 20 frontend (ProjectionControls + api polling).
+
 ## visualize-multiple (unreleased)
 
 ### Added

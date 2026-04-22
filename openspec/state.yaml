@@ -1,11 +1,12 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: visualize-multiple-2026-04-22
+last_archived: projections-export-fix-2026-04-22
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
   - visualize-multiple-2026-04-22
+  - projections-export-fix-2026-04-22
 stack:
   rust:
     version: "1.94.0"

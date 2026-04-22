@@ -2,15 +2,15 @@
 
 ## Phase 1: Rust Direction Generators
 
-- [ ] 1.1 [M] Create `aglogen_core/engine/src/projection/directions.rs` with `Direction { dx, dy, dz, azimuth_deg, elevation_deg }` struct, `generate_grid(n_az, n_el)` (exact pole dedup, R1), and `generate_fibonacci(n)` (golden-angle lattice, `azimuth = atan2(z, x).to_degrees().rem_euclid(360)`, R2). Math per design Component 1.
+- [x] 1.1 [M] Create `aglogen_core/engine/src/projection/directions.rs` with `Direction { dx, dy, dz, azimuth_deg, elevation_deg }` struct, `generate_grid(n_az, n_el)` (exact pole dedup, R1), and `generate_fibonacci(n)` (golden-angle lattice, `azimuth = atan2(z, x).to_degrees().rem_euclid(360)`, R2). Math per design Component 1.
   - Depends on: none
   - Done when: `cargo build -p aglogen-engine` compiles clean.
 
-- [ ] 1.2 [M] Create `aglogen_core/engine/src/projection/mod.rs` exposing `project_directions_internal(coords, radii, &[Direction], img_size) -> Vec<Projection2D>` as the shared plug point. Wire module from `lib.rs`. Leave `project_batch_internal` untouched (legacy backcompat, R3).
+- [x] 1.2 [M] Create `aglogen_core/engine/src/projection/mod.rs` exposing `project_directions_internal(coords, radii, &[Direction], img_size) -> Vec<Projection2D>` as the shared plug point. Wire module from `lib.rs`. Leave `project_batch_internal` untouched (legacy backcompat, R3).
   - Depends on: 1.1
   - Done when: `cargo build -p aglogen-engine` compiles clean; `project_batch_internal` signature unchanged.
 
-- [ ] 1.3 [tests][S] Add unit tests in `directions.rs`:
+- [x] 1.3 [tests][S] Add unit tests in `directions.rs`:
   - R1: grid count formula `n_az*(n_el-2) + 2` for `n_el ∈ {2,3,4,5,7}`, `n_az ∈ {4,10}`.
   - R2: fibonacci returns exact N for `n ∈ {1,2,50,500}`; all directions unique within epsilon.
   - R7: azimuth/elevation math — poles (0,0,±1) → el=±90; cardinals (1,0,0)/(0,1,0) → az=0/90.
@@ -34,14 +34,14 @@
 
 ## Phase 3: Backend Services, Endpoint, Celery
 
-- [ ] 3.1 [S] Create `backend/apps/simulations/services/projections.py` with:
+- [x] 3.1 [S] Create `backend/apps/simulations/services/projections.py` with:
   - `build_projection_filename(index: int, azimuth: float, elevation: float, fmt: str = "png") -> str` → `proj_{idx:03d}_Az{AAA}_El{±EEE}.{fmt}` (R4).
   - `build_metadata_json(mode, n_requested, directions, parameters) -> dict` (R5 shape).
   - `build_projection_zip(directions, image_bytes_list, mode, n_requested, parameters) -> bytes` — writes named PNGs + `metadata.json` into in-memory ZIP.
   - Depends on: none
   - Done when: module imports without error; functions callable.
 
-- [ ] 3.2 [tests][S] Create `backend/apps/simulations/tests/test_projection_services.py`:
+- [x] 3.2 [tests][S] Create `backend/apps/simulations/tests/test_projection_services.py`:
   - Filename format for `(0, 45.0, -30.0)` → `proj_000_Az045_El-030.png` (R4).
   - `Az360` wraps to `Az000`; elevation sign preserved.
   - Metadata JSON has keys `{mode, n_requested, n_generated, directions[], parameters}` (R5).
@@ -49,7 +49,7 @@
   - Depends on: 3.1
   - Done when: `uv run pytest backend/apps/simulations/tests/test_projection_services.py --no-migrations` passes.
 
-- [ ] 3.3 [M] Modify `backend/apps/simulations/views.py` export-projections endpoint to accept `mode` query/body param:
+- [x] 3.3 [M] Modify `backend/apps/simulations/views.py` export-projections endpoint to accept `mode` query/body param:
   - `mode` omitted or `legacy` → current code path unchanged (R3 backcompat).
   - `mode=grid` → require `n_az, n_el`; call `generate_direction_grid`; N = `n_az*(n_el-2)+2`.
   - `mode=fibonacci` → require `n`; call `generate_direction_fibonacci`; N = n.
@@ -59,7 +59,7 @@
   - Depends on: 2.1, 3.1
   - Done when: endpoint returns correct status codes for each branch; manual `curl` test with grid/fibonacci/legacy succeeds.
 
-- [ ] 3.4 [M] Add `build_projections_zip_task(self, sim_id, mode, n_requested, directions, parameters)` to `backend/apps/simulations/tasks.py`:
+- [x] 3.4 [M] Add `build_projections_zip_task(self, sim_id, mode, n_requested, directions, parameters)` to `backend/apps/simulations/tasks.py`:
   - Mirror `compute_import_metrics_task` local-disk storage pattern for the resulting ZIP (same directory as `simulation.geometry`).
   - Progress reporting every 10 projections via `self.update_state(state="PROGRESS", meta={"progress": float, "current": int, "total": int})` — match exact keys used by `compute_import_metrics_task`.
   - On completion, persist ZIP path on the simulation record and return `{download_url: ...}`.
@@ -67,11 +67,11 @@
   - Depends on: 3.1, 3.3
   - Done when: task importable by Celery worker; dispatch from endpoint produces a job_id.
 
-- [ ] 3.5 [S] Add polling endpoint `GET /api/v1/projections-status/{job_id}/` in `views.py` + register in `urls.py`. Returns `{state: "processing"|"done"|"failed", progress: 0.0..1.0, download_url?: str, error?: str}` per R6. Use Celery `AsyncResult(job_id)` to read state/meta.
+- [x] 3.5 [S] Add polling endpoint `GET /api/v1/projections-status/{job_id}/` in `views.py` + register in `urls.py`. Returns `{state: "processing"|"done"|"failed", progress: 0.0..1.0, download_url?: str, error?: str}` per R6. Use Celery `AsyncResult(job_id)` to read state/meta.
   - Depends on: 3.4
   - Done when: polling a valid running/completed job_id returns correct JSON shape.
 
-- [ ] 3.6 [tests][M] Create `backend/apps/simulations/tests/test_export_projections_modes.py`:
+- [x] 3.6 [tests][M] Create `backend/apps/simulations/tests/test_export_projections_modes.py`:
   - Grid `n_az=10, n_el=5` → sync, 200, ZIP has 32 PNGs + metadata.json.
   - Fibonacci `n=50` → sync, 200, ZIP has 50 PNGs.
   - Legacy (no `mode`) → byte-equivalent to pre-change baseline (snapshot compare on deterministic seed — R3).
@@ -83,7 +83,7 @@
   - Depends on: 3.3, 3.4, 3.5
   - Done when: `uv run pytest backend/apps/simulations/tests/test_export_projections_modes.py --no-migrations` passes.
 
-- [ ] 3.7 [tests][S] Create `backend/apps/simulations/tests/test_projections_status_polling.py`:
+- [x] 3.7 [tests][S] Create `backend/apps/simulations/tests/test_projections_status_polling.py`:
   - Running job → `state=processing`, progress increases on repeated poll.
   - Completed job → `state=done`, `download_url` present.
   - Failed job → `state=failed`, `error` populated.
@@ -93,7 +93,7 @@
 
 ## Phase 4: Frontend Mode Selector + Polling
 
-- [ ] 4.1 [M] Modify `frontend/src/components/projection/ProjectionControls.tsx`:
+- [x] 4.1 [M] Modify `frontend/src/components/projection/ProjectionControls.tsx`:
   - Add mode selector: `Grid` (default) | `Fibonacci` | `Legacy`.
   - Conditional inputs: Grid shows `n_az, n_el`; Fibonacci shows `n`; Legacy shows current controls unchanged.
   - Client-side preview count: Grid = `n_az * (n_el - 2) + 2`; Fibonacci = `n`; Legacy = existing formula.
@@ -101,20 +101,20 @@
   - Depends on: 3.3 contract stable
   - Done when: component renders each mode's inputs; preview count updates live.
 
-- [ ] 4.2 [M] Add `exportProjections(simId, payload, onProgress?)` to `frontend/src/lib/api.ts`:
+- [x] 4.2 [M] Add `exportProjections(simId, payload, onProgress?)` to `frontend/src/lib/api.ts`:
   - Sync path: request returns `200` + `application/zip` → resolve with Blob.
   - Async path: request returns `202` + `{job_id}` → poll `GET /projections-status/{job_id}/` at ~1Hz; call `onProgress(progress)` on each tick; on `state=done` fetch `download_url` and resolve with Blob; on `state=failed` reject with error.
   - Depends on: 3.5 contract stable
   - Done when: function exported; TypeScript types match backend response shape.
 
-- [ ] 4.3 [tests][S] Create `frontend/src/components/projection/__tests__/ProjectionControls.test.tsx`:
+- [x] 4.3 [tests][S] Create `frontend/src/components/projection/__tests__/ProjectionControls.test.tsx`:
   - Switching mode updates visible inputs (Grid hides `n`, Fibonacci hides `n_az/n_el`, Legacy hides both new sets).
   - Preview count for `n_az=10, n_el=5` → `32`; for `n=50` → `50`.
   - Submit payload shape per mode.
   - Depends on: 4.1
   - Done when: `npm test -- ProjectionControls` passes.
 
-- [ ] 4.4 [tests][S] Create `frontend/src/lib/__tests__/api-projections.test.ts`:
+- [x] 4.4 [tests][S] Create `frontend/src/lib/__tests__/api-projections.test.ts`:
   - Mock fetch returning `200` + blob → `exportProjections` resolves with blob; `onProgress` not required.
   - Mock `202` → poll returns `processing` (progress 0.5) → `done` → resolves with blob; `onProgress` called with values in `[0, 1]`.
   - Mock `202` → poll returns `failed` → rejects with error message.
@@ -123,22 +123,22 @@
 
 ## Phase 5: Docs + Verification
 
-- [ ] 5.1 [S] Create `docs/projections-export.md` user guide per design Component 10 — covers mode selection, grid vs fibonacci tradeoffs, ZIP contents, async polling, and filename format.
+- [x] 5.1 [S] Create `docs/projections-export.md` user guide per design Component 10 — covers mode selection, grid vs fibonacci tradeoffs, ZIP contents, async polling, and filename format.
   - Depends on: Phase 3 complete
   - Done when: file exists and cross-references spec R-numbers.
 
-- [ ] 5.2 [verify] Run full test suite:
+- [x] 5.2 [verify] Run full test suite:
   - `cargo test -p aglogen-engine projection`
   - `uv run pytest backend/apps/simulations/tests/ --no-migrations`
   - `cd frontend && npm test`
   - Depends on: all prior tasks
   - Done when: all three commands exit 0.
 
-- [ ] 5.3 [verify] `cd frontend && npx tsc --noEmit` — zero errors.
+- [x] 5.3 [verify] `cd frontend && npx tsc --noEmit` — zero errors.
   - Depends on: 4.1, 4.2
   - Done when: command exits 0.
 
-- [ ] 5.4 [changelog] Prepend entry to `CHANGELOG.md`:
+- [x] 5.4 [changelog] Prepend entry to `CHANGELOG.md`:
   - **Added**: Grid mode with exact pole dedup; Fibonacci lattice mode; `metadata.json` in ZIP; async dispatch for N > 200.
   - **Fixed**: silent projection drops in grid discretization; half-baked pole dedup emitting 19 when UI promised 24.
   - **Backcompat**: legacy mode unchanged byte-for-byte.
