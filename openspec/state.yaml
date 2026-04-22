@@ -1,10 +1,11 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: import-aggregate-2026-04-21
+last_archived: visualize-multiple-2026-04-22
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
+  - visualize-multiple-2026-04-22
 stack:
   rust:
     version: "1.94.0"
@@ -21,7 +22,7 @@ stack:
   frontend:
     framework: nextjs
     version: "14.2"
-    test_cmd: null
+    test_cmd: "cd frontend && npm test"
     lint_cmd: "cd frontend && npm run lint"
     type_check_cmd: "cd frontend && npm run type-check"
 conventions:
@@ -36,5 +37,5 @@ deploy:
 strict_tdd: false  # existing codebase, pragmatic testing not strict TDD
 notes:
   - "Frontend is Next.js 14 (not SvelteKit as initially assumed)"
-  - "Frontend has no test runner configured yet — only lint + type-check"
+  - "Frontend uses vitest (126 tests as of visualize-multiple-2026-04-22); lint + type-check also required"
   - "Rust engine has 160+ passing tests"

@@ -46,9 +46,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: nothing
 **Implements**: R-5 (Consistent Color Encoding)
 **Deliverables**:
-- [ ] Add `uniformColor?: string | number` prop to Particles component
-- [ ] When provided, apply as the InstancedMesh material color; when absent, preserve current `0x4488ff` default
-- [ ] No changes to existing call sites required (prop is optional)
+- [x] Add `uniformColor?: string | number` prop to Particles component
+- [x] When provided, apply as the InstancedMesh material color; when absent, preserve current `0x4488ff` default
+- [x] No changes to existing call sites required (prop is optional)
 **Done when**: `npx tsc --noEmit` passes and existing single-sim viewer renders unchanged in dev
 
 #### T2. [frontend] Scope viewer camera state
@@ -57,11 +57,11 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: nothing
 **Implements**: R-DELTA-1 (Camera State Scoping)
 **Deliverables**:
-- [ ] Introduce scope key model: `"single"` (default) vs `"compare/{sessionId}"`
-- [ ] Refactor store reads/writes to be keyed by scope
-- [ ] Keep `useViewerState()` (no-arg) behavior unchanged — implicitly uses `"single"` scope
-- [ ] Add `useViewerState(scope)` overload for compare callers
-- [ ] Ensure writes to one scope never mutate another scope's camera state
+- [x] Introduce scope key model: `"single"` (default) vs `"compare/{sessionId}"`
+- [x] Refactor store reads/writes to be keyed by scope
+- [x] Keep `useViewerState()` (no-arg) behavior unchanged — implicitly uses `"single"` scope
+- [x] Add `useViewerState(scope)` overload for compare callers
+- [x] Ensure writes to one scope never mutate another scope's camera state
 **Done when**: `npx tsc --noEmit` passes; unit tests in T4 pass
 
 #### T3. [frontend] Thread color + camera scope through AgglomerateViewer
@@ -70,9 +70,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T1, T2
 **Implements**: R-5, R-DELTA-1
 **Deliverables**:
-- [ ] Accept optional `cameraSource?: CameraSource` prop, thread to CameraTracker's scope key
-- [ ] Accept optional `colorOverride?: string | number` prop, thread to Particles as `uniformColor`
-- [ ] Defaults preserve current single-sim behavior
+- [x] Accept optional `cameraSource?: CameraSource` prop, thread to CameraTracker's scope key
+- [x] Accept optional `colorOverride?: string | number` prop, thread to Particles as `uniformColor`
+- [x] Defaults preserve current single-sim behavior
 **Done when**: `npx tsc --noEmit` passes; existing viewer route unaffected
 
 #### T4. [frontend/tests] Phase 1 unit tests
@@ -83,9 +83,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 - `frontend/src/components/viewer3d/__tests__/AgglomerateViewer.test.tsx`
 **Depends on**: T1, T2, T3
 **Deliverables**:
-- [ ] `Particles.test.tsx`: `uniformColor` applied to material; default color preserved when prop absent
-- [ ] `viewerStore.test.ts`: `"single"` and `"compare/abc"` scopes are isolated — writes to one do not affect the other
-- [ ] `AgglomerateViewer.test.tsx`: `colorOverride` and `cameraSource` props are forwarded correctly
+- [x] `Particles.test.tsx`: `uniformColor` applied to material; default color preserved when prop absent
+- [x] `viewerStore.test.ts`: `"single"` and `"compare/abc"` scopes are isolated — writes to one do not affect the other
+- [x] `AgglomerateViewer.test.tsx`: `colorOverride` and `cameraSource` props are forwarded correctly
 **Done when**: `npm test` (Phase 1 files) green
 
 ### Phase 2 — Compare page scaffolding
@@ -146,10 +146,10 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T2
 **Implements**: R-6 (Synced Camera), R-DELTA-1
 **Deliverables**:
-- [ ] React Context providing broadcast of camera state (position, target, zoom)
-- [ ] Debounce writes to 16ms (~1 frame)
-- [ ] `synchronised: boolean` toggle (default true)
-- [ ] Generate session ID once per mount → scope key `compare/{sessionId}`
+- [x] React Context providing broadcast of camera state (position, target, zoom)
+- [x] Debounce writes to 16ms (~1 frame)
+- [x] `synchronised: boolean` toggle (default true)
+- [x] Generate session ID once per mount → scope key `compare/{sessionId}`
 **Done when**: `npx tsc --noEmit` passes; T13 tests pass
 
 #### T10. [frontend] CompareGrid mode
@@ -158,10 +158,10 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T3, T5, T9
 **Implements**: R-2, R-3 (Per-viewer Scaling), R-5, R-6
 **Deliverables**:
-- [ ] Responsive CSS grid using layouts from `getCompareGridLayout`
-- [ ] Each cell = `AgglomerateViewer` with scaled coords via `getScaleFactorNm(sim)`
-- [ ] Sim label + color dot overlay per cell
-- [ ] All cells subscribe to `CompareCameraProvider`
+- [x] Responsive CSS grid using layouts from `getCompareGridLayout`
+- [x] Each cell = `AgglomerateViewer` with scaled coords via `getScaleFactorNm(sim)`
+- [x] Sim label + color dot overlay per cell
+- [x] All cells subscribe to `CompareCameraProvider`
 **Done when**: Dev render shows N=2..9 grids correctly; T13 layout tests pass
 
 #### T11. [frontend] CompareOverlay mode
@@ -170,10 +170,10 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T1, T5, T9
 **Implements**: R-4 (Overlay CoM Alignment), R-5, R-6
 **Deliverables**:
-- [ ] Single R3F Canvas
-- [ ] For each sim: normalize coords to nm + translate to own center-of-mass + render `Particles` with `uniformColor = palette[i]`
-- [ ] Shared `OrbitControls`
-- [ ] Legend overlay (per-sim color + label)
+- [x] Single R3F Canvas
+- [x] For each sim: normalize coords to nm + translate to own center-of-mass + render `Particles` with `uniformColor = palette[i]`
+- [x] Shared `OrbitControls`
+- [x] Legend overlay (per-sim color + label)
 **Done when**: Dev render shows aligned CoM overlay with distinct colors; T13 tests pass
 
 #### T12. [frontend] Mode toggle in compare page
@@ -182,8 +182,8 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Depends on**: T10, T11
 **Implements**: R-7 (Mode Toggle)
 **Deliverables**:
-- [ ] Toggle control switching between `CompareGrid` and `CompareOverlay`
-- [ ] Preserve mode in local state (or URL — implementer choice; default local)
+- [x] Toggle control switching between `CompareGrid` and `CompareOverlay`
+- [x] Preserve mode in local state (or URL — implementer choice; default local)
 **Done when**: Toggle swaps the rendered component without unmounting provider
 
 #### T13. [frontend/tests] Phase 3 component tests
@@ -194,9 +194,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 - `frontend/src/components/compare/__tests__/CompareOverlay.test.tsx`
 **Depends on**: T9, T10, T11
 **Deliverables**:
-- [ ] `CompareCameraProvider`: broadcasts to subscribers; debounces writes at 16ms
-- [ ] `CompareGrid`: layout adapts per N (2, 4, 9)
-- [ ] `CompareOverlay`: CoM alignment correct; colors distinct per sim
+- [x] `CompareCameraProvider`: broadcasts to subscribers; debounces writes at 16ms
+- [x] `CompareGrid`: layout adapts per N (2, 4, 9)
+- [x] `CompareOverlay`: CoM alignment correct; colors distinct per sim
 **Done when**: `npm test` green
 
 ### Phase 4 — Accompanying views + polish
@@ -286,9 +286,9 @@ Parallelizable within phases where independent (see Parallel batches section).
 **Location**: repo root
 **Depends on**: T4, T8, T13, T19, T20
 **Deliverables**:
-- [ ] `npm test` green
-- [ ] `npx tsc --noEmit` clean
-- [ ] Manual acceptance checklist (8 items):
+- [x] `npm test` green (126/126)
+- [x] `npx tsc --noEmit` clean
+- [ ] Manual acceptance checklist (8 items) — **post-deploy user action** (deferred to staging smoke pass):
   1. Project page: select 2 sims → Compare button enables
   2. Project page: select 10 sims → button disabled with tooltip
   3. `/compare?sims=a,b` loads, grid mode default, cameras synced
@@ -297,14 +297,14 @@ Parallelizable within phases where independent (see Parallel batches section).
   6. Rg chart shows N series matching palette
   7. Delete one sim, reload URL → banner lists it, others render
   8. Return to single-sim viewer → camera state unaffected by compare session
-**Done when**: All items checked
+**Done when**: All items checked (automated gates ✅; manual gates deferred post-deploy)
 
 #### T22. [docs] Changelog entry
 **Effort**: S
 **Location**: `CHANGELOG.md` (prepend)
 **Depends on**: T21
 **Deliverables**:
-- [ ] Prepend "visualize-multiple (unreleased)" section summarizing user-visible changes
+- [x] Prepend "visualize-multiple (unreleased)" section summarizing user-visible changes (commit `391d29b`)
 **Done when**: Entry written and reviewed
 
 ## Parallel batches
