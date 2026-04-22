@@ -1,3 +1,31 @@
+## visualize-multiple (unreleased)
+
+### Added
+
+- **Compare multiple aggregates** — new `/projects/[id]/compare?sims=...` route
+- **Checkbox selection** on project page simulation list (2–9 sims) + sticky "Compare" button
+- **Grid mode** (default): responsive grid of 3D viewers (1×2 → 3×3) with synchronised cameras
+- **Overlay mode**: all aggregates merged into single scene with CoM alignment + distinct colors
+- **Synchronised cameras**: rotating one viewer rotates all (toggle to independent)
+- **Metrics comparison table**: Df / Kf / Rg (nm) / N particles / Algorithm per sim
+- **Multi-series Rg evolution chart**: log-log, one series per sim, missing data noted
+- **Deterministic color palette** (Tableau10) assigned by sorted sim ID
+- **Missing-sim banner** for 404/403 sims in shared URLs (renders survivors)
+- **Processing banner** for sims whose geometry is still being computed
+- `docs/visualize-multiple.md` user guide
+
+### Changed
+
+- `viewerStore.ts` — camera state scoped by key (`"single"` default + compare session scopes), preserving single-sim backwards compat via write-through mirror
+- `Particles.tsx` — new optional `uniformColor` prop (default preserves existing behavior)
+- `AgglomerateViewer.tsx` — new optional `colorOverride` + `cameraSource` props
+- `RgEvolutionChart.tsx` — accepts alternative `series` prop shape for multi-series rendering (single-series API unchanged)
+
+### Infrastructure
+
+- New `frontend/src/components/compare/` module (7 files + tests)
+- New `frontend/src/lib/compare-utils.ts` with palette, layout, URL parse helpers
+- 53 new frontend tests (73 → 126)
 # Changelog
 
 All notable changes to this project are documented in this file.
