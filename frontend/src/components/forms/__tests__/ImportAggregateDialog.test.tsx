@@ -57,6 +57,34 @@ function makeFile(name: string, content: string, sizeOverride?: number): File {
   return f;
 }
 
+/**
+ * Build a File from raw bytes (useful for encoding-specific fixtures).
+ * `new File([string])` encodes as UTF-8, which is wrong for Latin-1 tests.
+ *
+ * Accepts `ArrayBuffer` rather than `Uint8Array` to sidestep TS 5.7's stricter
+ * `BlobPart` typing (which rejects `Uint8Array<ArrayBufferLike>` since it
+ * could theoretically be a SharedArrayBuffer-backed view).
+ */
+function makeBinaryFile(name: string, bytes: ArrayBuffer): File {
+  return new File([bytes], name, { type: "text/plain" });
+}
+
+/**
+ * Encode a string using ISO-8859-1 (Latin-1). Mirrors what MATLAB's
+ * `writematrix` produces on Spanish Windows locales. Returns a fresh
+ * ArrayBuffer (not a view) so it can be passed to `new File(...)` without
+ * tripping TS's BlobPart typing.
+ */
+function encodeLatin1(text: string): ArrayBuffer {
+  const buf = new ArrayBuffer(text.length);
+  const view = new Uint8Array(buf);
+  for (let i = 0; i < text.length; i++) {
+    // Callers are responsible for using only characters in the Latin-1 block.
+    view[i] = text.charCodeAt(i) & 0xff;
+  }
+  return buf;
+}
+
 function renderOpen(onSuccess = vi.fn(), onClose = vi.fn()) {
   return render(
     <ImportAggregateDialog
@@ -255,5 +283,33 @@ describe("ImportAggregateDialog", () => {
     // No override was set → locale_override must not be sent.
     expect(payload.parameters.locale_override).toBeUndefined();
     expect(onSuccess).toHaveBeenCalledWith("sim-99");
+  });
+
+  it("reads Latin-1 CSV headers without U+FFFD replacement chars", async () => {
+    // MATLAB writematrix on Spanish Windows emits Latin-1 bytes for
+    // accented characters. The dialog must decode these correctly so the
+    // preview shows "Partícula" instead of "Part�cula" mojibake, matching
+    // what the backend parser (UTF-8-sig → Latin-1 fallback) will see.
+    const spanishCsv = [
+      "Partícula;Coordenada x;Coordenada y;Coordenada z;Radio",
+      "1;0,0;0,0;0,0;12,5",
+      "2;2,0;0,0;0,0;12,5",
+    ].join("\n");
+    const file = makeBinaryFile("spanish.csv", encodeLatin1(spanishCsv));
+
+    renderOpen();
+    const input = screen.getByLabelText(/CSV file/i) as HTMLInputElement;
+    await act(async () => {
+      fireEvent.change(input, { target: { files: [file] } });
+    });
+
+    // The preview table renders the header row as <th> cells. The Spanish
+    // "Partícula" (with í = U+00ED) must appear verbatim — no U+FFFD.
+    await waitFor(() => {
+      expect(screen.getByText(/Partícula/)).toBeTruthy();
+    });
+    expect(
+      screen.queryByText((content) => content.includes("\uFFFD")),
+    ).toBeNull();
   });
 });

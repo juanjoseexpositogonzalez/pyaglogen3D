@@ -490,8 +490,13 @@ export default function SimulationDetailPage({
               )}
             </div>
 
-            {/* Fractal Scaling Plot */}
-            {simulation.metrics.rg_evolution && simulation.metrics.rg_evolution.length > 0 && (
+            {/* Fractal Scaling Plot — requires rg_evolution AND computed Df/kf.
+                Imported agglomerates don't ship rg_evolution and may have null
+                Df when N < 50, so gate on all three being present. */}
+            {simulation.metrics.rg_evolution &&
+             simulation.metrics.rg_evolution.length > 0 &&
+             simulation.metrics.fractal_dimension !== null &&
+             simulation.metrics.prefactor !== undefined && (
               <div className="mb-8">
                 <FractalPlot
                   rgEvolution={simulation.metrics.rg_evolution}
@@ -605,7 +610,15 @@ export default function SimulationDetailPage({
                       <dt className="text-sm text-muted-foreground">
                         {key.replace(/_/g, ' ')}
                       </dt>
-                      <dd className="font-mono">{String(value)}</dd>
+                      <dd className="font-mono break-words">
+                        {/* import_metadata etc. are nested dicts; JSON-encode
+                            so they don't render as "[object Object]". */}
+                        {value === null || value === undefined
+                          ? '—'
+                          : typeof value === 'object'
+                            ? JSON.stringify(value)
+                            : String(value)}
+                      </dd>
                     </div>
                   ))}
                 </dl>

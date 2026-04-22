@@ -208,22 +208,30 @@ export interface OpticalResults {
 }
 
 export interface SimulationMetrics {
-  fractal_dimension: number
-  fractal_dimension_std: number
-  prefactor: number
+  // Df/kf can be null for imported agglomerates where computation was skipped
+  // (e.g. N < 50 particles → box-counting disabled — see backend
+  // `compute_import_metrics` in apps/simulations/tasks.py). The Rg-law path
+  // used by native algorithms always returns a number. `prefactor` is
+  // additionally absent from imported-metrics payloads (hence optional).
+  fractal_dimension: number | null
+  fractal_dimension_std: number | null
+  prefactor?: number
   radius_of_gyration: number
   porosity: number
   coordination: {
     mean: number
     std: number
   }
-  rg_evolution: number[]
+  // Absent from imported-metrics payloads; optional on the wire.
+  rg_evolution?: number[]
   // Inertia tensor analysis
   anisotropy: number
   asphericity: number
   acylindricity: number
   principal_moments: [number, number, number]
   principal_axes: [[number, number, number], [number, number, number], [number, number, number]]
+  // Optional diagnostic notes (e.g. why a metric wasn't computed).
+  notes?: Record<string, string>
   // Optical properties (optional, computed separately)
   optical?: OpticalResults
   // Box-counting analysis (optional)

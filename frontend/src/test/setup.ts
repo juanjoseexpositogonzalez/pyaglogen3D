@@ -62,6 +62,30 @@ Object.defineProperty(window, "sessionStorage", {
   writable: true,
 });
 
+// jsdom 23 does not implement Blob.prototype.arrayBuffer() / .text(), which
+// the import dialog uses to decode user-selected files with explicit encoding
+// fallback (UTF-8 strict → Latin-1). Modern browsers (Chrome 76+, Firefox 69+,
+// Safari 14+) support it natively, so this polyfill is test-only.
+// See https://github.com/jsdom/jsdom/issues/2555
+if (typeof Blob !== "undefined" && !("arrayBuffer" in Blob.prototype)) {
+  Object.defineProperty(Blob.prototype, "arrayBuffer", {
+    configurable: true,
+    writable: true,
+    value: function arrayBuffer(this: Blob): Promise<ArrayBuffer> {
+      return new Promise<ArrayBuffer>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const res = reader.result;
+          resolve(res instanceof ArrayBuffer ? res : new ArrayBuffer(0));
+        };
+        reader.onerror = () =>
+          reject(reader.error ?? new Error("FileReader failed"));
+        reader.readAsArrayBuffer(this);
+      });
+    },
+  });
+}
+
 // Register DOM cleanup after every test — testing-library@14 with vitest
 // does not auto-cleanup like it does with jest.
 afterEach(() => {

@@ -61,14 +61,28 @@ const DAT_REJECTION =
   "not per-particle coordinates. To import an aggregate, use CSV (.csv) or " +
   "MATLAB (.mat) with per-particle (x, y, z, radius) data.";
 
-function readFileAsText(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result ?? ""));
-    reader.onerror = () =>
-      reject(new Error(reader.error?.message ?? "Failed to read file"));
-    reader.readAsText(file);
-  });
+/**
+ * Read a file as text, trying UTF-8 strict first and falling back to
+ * Latin-1 (ISO-8859-1) if the bytes are not valid UTF-8.
+ *
+ * The backend parser in `backend/apps/simulations/utils.py::parse_csv_geometry`
+ * applies the same strategy (UTF-8-sig → Latin-1), so the preview the user
+ * sees must match what the server will decode. `FileReader.readAsText()`
+ * defaults to UTF-8 and silently emits U+FFFD replacement chars for any
+ * invalid byte — that's what produced mojibake in the preview of
+ * MATLAB `writematrix` Spanish exports (e.g. `Partícula` → `Part�cula`).
+ */
+async function readFileAsText(file: File): Promise<string> {
+  const buffer = await file.arrayBuffer();
+  try {
+    // `fatal: true` → throw on any invalid byte instead of substituting U+FFFD.
+    const decoder = new TextDecoder("utf-8", { fatal: true });
+    return decoder.decode(buffer);
+  } catch {
+    // ISO-8859-1 decoder never fails — every byte maps to a codepoint.
+    const decoder = new TextDecoder("iso-8859-1");
+    return decoder.decode(buffer);
+  }
 }
 
 function readFileAsBase64(file: File): Promise<string> {

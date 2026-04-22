@@ -10,10 +10,10 @@ import { Info, TrendingUp } from 'lucide-react'
 interface LimitingCasesCardProps {
   /** Number of primary particles in the simulation */
   npo: number
-  /** Actual Df from simulation/regression */
-  actualDf?: number
-  /** Actual kf from simulation/regression */
-  actualKf?: number
+  /** Actual Df from simulation/regression. `null` = metric not computed. */
+  actualDf?: number | null
+  /** Actual kf from simulation/regression. `null`/`undefined` = not computed. */
+  actualKf?: number | null
   /** Callback when visibility changes */
   onVisibilityChange?: (visible: boolean) => void
 }
@@ -159,9 +159,10 @@ export function LimitingCasesCard({
     }))
   }, [npo])
 
-  // Find closest limiting case to actual Df
+  // Find closest limiting case to actual Df. `null` = backend didn't compute Df
+  // (e.g. imported agglomerate with N < 50); treat identically to `undefined`.
   const closestCase = useMemo(() => {
-    if (actualDf === undefined) return null
+    if (actualDf === undefined || actualDf === null) return null
     let closest = limitingValues[0]
     let minDiff = Math.abs(actualDf - closest.df)
     for (const lc of limitingValues) {
@@ -210,8 +211,10 @@ export function LimitingCasesCard({
           ))}
         </div>
 
-        {/* Comparison with actual values */}
-        {actualDf !== undefined && actualKf !== undefined && (
+        {/* Comparison with actual values — skip when either metric is missing
+            (null from the backend or undefined prop). */}
+        {actualDf !== undefined && actualDf !== null &&
+         actualKf !== undefined && actualKf !== null && (
           <div className="bg-primary/5 border border-primary/20 rounded-lg p-3 space-y-2">
             <p className="text-sm font-medium">Your Simulation</p>
             <div className="flex gap-6">

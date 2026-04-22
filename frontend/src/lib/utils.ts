@@ -32,9 +32,23 @@ export function formatDistanceToNow(dateString: string): string {
 
 /**
  * Format a number with appropriate precision.
+ *
+ * Accepts `null`/`undefined`/non-finite values defensively and returns an
+ * em-dash placeholder. Callers used to pass `simulation.metrics.*` which can
+ * legitimately be `null` for imported agglomerates where a given metric was
+ * not computed (e.g. `fractal_dimension` when N < 50 particles — see
+ * `compute_import_metrics` in `backend/apps/simulations/tasks.py`). Without
+ * this guard, `null.toExponential()` / `undefined.toFixed()` throw a
+ * `TypeError` that surfaces in Next.js as an opaque client-side exception.
  */
-export function formatNumber(value: number, decimals = 2): string {
-  if (Math.abs(value) < 0.001) {
+export function formatNumber(
+  value: number | null | undefined,
+  decimals = 2,
+): string {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return '—'
+  }
+  if (Math.abs(value) < 0.001 && value !== 0) {
     return value.toExponential(decimals)
   }
   return value.toFixed(decimals)
