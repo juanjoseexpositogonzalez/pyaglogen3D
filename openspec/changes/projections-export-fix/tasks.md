@@ -20,17 +20,17 @@
 
 ## Phase 2: PyO3 Bindings
 
-- [ ] 2.1 [M] Expose in `aglogen_core/python/src/lib.rs`:
+- [x] 2.1 [M] Expose in `aglogen_core/python/src/lib.rs`:
   - `generate_direction_grid(n_az: usize, n_el: usize) -> Vec<(f64, f64)>` returning `(azimuth_deg, elevation_deg)`.
   - `generate_direction_fibonacci(n: usize) -> Vec<(f64, f64)>`.
-  - `project_directions(coords, radii, directions: Vec<(f64,f64)>, img_size) -> list[dict]` mirroring `project_batch` output shape.
+  - `project_directions(coords, radii, directions: Vec<(f64,f64)>) -> Vec<PyProjectionResult>` mirroring `project_batch` output shape (no `img_size`: rendering stays Python-side per design).
   - Leave `project_batch` binding unchanged.
   - Depends on: 1.2
   - Done when: `maturin develop` succeeds; `python -c "from aglogen_core import generate_direction_grid; print(generate_direction_grid(10,5))"` prints 32 tuples.
 
-- [ ] 2.2 [tests][S] Create `aglogen_core/python/tests/test_projection_directions.py` — round-trip smoke tests: count matches spec for grid & fibonacci; every tuple is `(float, float)`; azimuth ∈ [0,360), elevation ∈ [-90,90]; `project_directions` output count equals input direction count.
+- [x] 2.2 [tests][S] Create `backend/apps/simulations/tests/test_projections_pyo3_bindings.py` — round-trip smoke tests: count matches spec for grid & fibonacci; every tuple is `(float, float)`; azimuth ∈ [0,360), elevation ∈ [-90,90]; `project_directions` output count equals input direction count.
   - Depends on: 2.1
-  - Done when: `uv run pytest aglogen_core/python/tests/test_projection_directions.py` passes.
+  - Done when: `uv run pytest backend/apps/simulations/tests/test_projections_pyo3_bindings.py --no-migrations` passes.
 
 ## Phase 3: Backend Services, Endpoint, Celery
 

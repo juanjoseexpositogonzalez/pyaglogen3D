@@ -32,8 +32,12 @@ fn numpy_to_engine_array2_u8(np_array: &PyReadonlyArray2<u8>) -> Array2<u8> {
 }
 use aglogen_engine::optics::result::OpticalResult;
 use aglogen_engine::optics::tmatrix::compute_tmatrix;
+use aglogen_engine::projection::directions::{
+    generate_fibonacci as engine_generate_fibonacci, generate_grid as engine_generate_grid,
+    Direction,
+};
 use aglogen_engine::projection::{
-    project_batch_internal, project_to_2d_internal, ProjectionResult,
+    project_batch_internal, project_directions_internal, project_to_2d_internal, ProjectionResult,
 };
 use aglogen_engine::simulation::gcca::compute_structure_factor;
 use aglogen_engine::simulation::result::SimulationResult;
@@ -762,6 +766,86 @@ fn project_batch(
     Ok(results.into_iter().map(|r| r.into()).collect())
 }
 
+/// Generate a rectangular Az × El grid of viewing directions with exact
+/// pole dedup. Returns a list of `(azimuth_deg, elevation_deg)` tuples.
+///
+/// Output count is exactly `n_az * (n_el - 2) + 2` (see projection-export
+/// contract R1). Poles appear once each at the first and last positions.
+#[pyfunction]
+fn generate_direction_grid(n_az: usize, n_el: usize) -> PyResult<Vec<(f64, f64)>> {
+    if n_az == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("n_az must be >= 1"));
+    }
+    if n_el < 2 {
+        return Err(pyo3::exceptions::PyValueError::new_err("n_el must be >= 2"));
+    }
+    let dirs = engine_generate_grid(n_az, n_el);
+    Ok(dirs
+        .into_iter()
+        .map(|d| (d.azimuth_deg, d.elevation_deg))
+        .collect())
+}
+
+/// Generate `n` directions on the unit sphere via a golden-angle Fibonacci
+/// spiral lattice. Returns a list of `(azimuth_deg, elevation_deg)` tuples.
+///
+/// Output count is exactly `n` (see projection-export contract R2).
+#[pyfunction]
+fn generate_direction_fibonacci(n: usize) -> PyResult<Vec<(f64, f64)>> {
+    if n == 0 {
+        return Err(pyo3::exceptions::PyValueError::new_err("n must be >= 1"));
+    }
+    let dirs = engine_generate_fibonacci(n);
+    Ok(dirs
+        .into_iter()
+        .map(|d| (d.azimuth_deg, d.elevation_deg))
+        .collect())
+}
+
+/// Project an aggregate under an arbitrary list of `(azimuth, elevation)`
+/// directions, returning one [`PyProjectionResult`] per direction in input
+/// order. Mirrors the return shape of `project_batch`.
+#[pyfunction]
+fn project_directions(
+    py: Python<'_>,
+    coordinates: PyReadonlyArray2<f64>,
+    radii: PyReadonlyArray1<f64>,
+    directions: Vec<(f64, f64)>,
+) -> PyResult<Vec<PyProjectionResult>> {
+    let coords = coordinates.as_array();
+    let coords_shape = coords.shape();
+    if coords_shape.len() != 2 || coords_shape[1] != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "coordinates must have shape (N, 3), got {:?}",
+            coords_shape
+        )));
+    }
+    let n = coords_shape[0];
+    let radii_arr = radii.as_array();
+    if radii_arr.len() != n {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "radii length ({}) must match coordinates ({})",
+            radii_arr.len(),
+            n
+        )));
+    }
+
+    let coords_vec: Vec<[f64; 3]> = (0..n)
+        .map(|i| [coords[[i, 0]], coords[[i, 1]], coords[[i, 2]]])
+        .collect();
+    let radii_vec: Vec<f64> = radii_arr.iter().copied().collect();
+    let dirs: Vec<Direction> = directions
+        .into_iter()
+        .map(|(az, el)| Direction {
+            azimuth_deg: az,
+            elevation_deg: el,
+        })
+        .collect();
+
+    let results = py.allow_threads(|| project_directions_internal(&coords_vec, &radii_vec, &dirs));
+    Ok(results.into_iter().map(|r| r.into()).collect())
+}
+
 // ============================================================================
 // Optics functions
 // ============================================================================
@@ -1317,6 +1401,9 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Projection functions
     m.add_function(wrap_pyfunction!(project_to_2d, m)?)?;
     m.add_function(wrap_pyfunction!(project_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_direction_grid, m)?)?;
+    m.add_function(wrap_pyfunction!(generate_direction_fibonacci, m)?)?;
+    m.add_function(wrap_pyfunction!(project_directions, m)?)?;
 
     // Optical properties functions
     m.add_function(wrap_pyfunction!(run_tmatrix, m)?)?;
