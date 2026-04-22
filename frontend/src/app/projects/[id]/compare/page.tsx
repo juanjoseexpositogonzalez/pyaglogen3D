@@ -97,6 +97,55 @@ function shortId(id: string): string {
   return id.length > 8 ? `${id.slice(0, 8)}…` : id
 }
 
+/**
+ * Robust extraction of particle count N for the Compare metrics table.
+ *
+ * Tries, in order:
+ *   1. Top-level `simulation.n_particles` (some serializers expose it here).
+ *   2. `simulation.parameters.n_particles` (the canonical nested location).
+ *   3. `geometry.coordinates.length` (ground truth for completed sims).
+ *   4. `geometry.radii.length` (fallback if coordinates is shaped
+ *      differently for future algorithms).
+ *
+ * Each path uses a runtime `typeof` / `Array.isArray` / `hasOwnProperty`
+ * check instead of a TypeScript cast, because the parameter union is wide
+ * (DLA, CCA, BoxRFA, Imported, Limiting, ...) and `as { n_particles?: number }`
+ * is a blind assertion — it returns `undefined` when the key doesn't exist
+ * at runtime, silently hiding bugs in serializer coverage.
+ */
+function extractNParticles(sim: unknown, geom: unknown): number | null {
+  const readFiniteNumber = (obj: unknown, key: string): number | null => {
+    if (!obj || typeof obj !== 'object') return null
+    if (!Object.prototype.hasOwnProperty.call(obj, key)) return null
+    const v = (obj as Record<string, unknown>)[key]
+    return typeof v === 'number' && Number.isFinite(v) && v >= 0 ? v : null
+  }
+
+  // Path 1: direct top-level field on the simulation object
+  const topLevel = readFiniteNumber(sim, 'n_particles')
+  if (topLevel !== null) return topLevel
+
+  // Path 2: inside parameters (canonical location)
+  if (sim && typeof sim === 'object') {
+    const params = (sim as Record<string, unknown>).parameters
+    const fromParams = readFiniteNumber(params, 'n_particles')
+    if (fromParams !== null) return fromParams
+  }
+
+  // Path 3/4: derive from geometry — ground truth for completed sims
+  if (geom && typeof geom === 'object') {
+    const g = geom as Record<string, unknown>
+    if (Array.isArray(g.coordinates) && g.coordinates.length > 0) {
+      return g.coordinates.length
+    }
+    if (Array.isArray(g.radii) && g.radii.length > 0) {
+      return g.radii.length
+    }
+  }
+
+  return null
+}
+
 export default function CompareSimulationsPage() {
   const params = useParams<{ id: string }>()
   const searchParams = useSearchParams()
@@ -156,14 +205,26 @@ export default function CompareSimulationsPage() {
   // to null when `simulation.metrics` was null, causing the N column to
   // show '—' for imported/in-progress sims — which was the user-reported
   // bug on the Compare page after deploy.
+  //
+  // The `extractNParticles` helper below is defensive on purpose: two
+  // prior fixes (9e63756, afc4ecb) assumed `parameters.n_particles`
+  // would always be present for completed sims. In practice it isn't:
+  // - `BoxRfaParams.n_particles` is optional (derived from n_levels)
+  // - `ImportedParams.n_particles` is stamped by the server but older
+  //   records predating that stamp are still in the DB
+  // - Some algorithm variants may serialize it at the top level of the
+  //   Simulation instead of nested under `parameters`
+  // If N is still '—' after this fix, open devtools on the Compare page
+  // and log `result.simulation` + `result.geometry` to see the actual
+  // shape returned by `/api/simulations/:id/` — the real fix then is on
+  // the backend serializer, not here.
   const compareSims: CompareSimWithMetrics[] = useMemo(
     () =>
       loaded.map(({ id, result }) => {
-        const nParticles =
-          (result.simulation.parameters as { n_particles?: number })
-            ?.n_particles ??
-          result.geometry?.coordinates.length ??
-          null
+        const nParticles = extractNParticles(
+          result.simulation,
+          result.geometry,
+        )
 
         const hasAnalyticMetrics = result.simulation.metrics !== null
 
