@@ -61,6 +61,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { simulationsApi } from '@/lib/api'
 import {
   MAX_COMPARE_SIMS,
+  deriveSimName,
   getCompareColorPalette,
   parseCompareSimsParam,
 } from '@/lib/compare-utils'
@@ -85,16 +86,6 @@ async function fetchSimulationWithGeometry(
     }
   }
   return { simulation, geometry }
-}
-
-/**
- * Derive a human-readable display name for a simulation. The `Simulation`
- * type doesn't carry a `name` field today — we synthesize from algorithm
- * + short id. If/when the backend exposes a user-editable name, replace
- * this helper only.
- */
-function deriveSimName(sim: Simulation): string {
-  return `${sim.algorithm.toUpperCase()} · ${sim.id.slice(0, 8)}`
 }
 
 /**
@@ -157,32 +148,47 @@ export default function CompareSimulationsPage() {
   const colorMap = useMemo(() => getCompareColorPalette(ids), [ids])
 
   // Map loaded sims → CompareSim + metrics shape for Grid/Overlay/Table/Chart.
+  //
+  // Note: `n_particles` is computed independently of `metrics` because N
+  // is known from `parameters` / `geometry` even when Df/kf/Rg haven't
+  // been computed yet (e.g. freshly imported aggregates where metrics are
+  // still being calculated). Previously the whole metrics block was set
+  // to null when `simulation.metrics` was null, causing the N column to
+  // show '—' for imported/in-progress sims — which was the user-reported
+  // bug on the Compare page after deploy.
   const compareSims: CompareSimWithMetrics[] = useMemo(
     () =>
-      loaded.map(({ id, result }) => ({
-        id,
-        name: deriveSimName(result.simulation),
-        parameters: result.simulation.parameters as unknown as Record<
-          string,
-          unknown
-        >,
-        geometry: result.geometry,
-        algorithm: result.simulation.algorithm,
-        metrics: result.simulation.metrics
-          ? {
-              fractal_dimension: result.simulation.metrics.fractal_dimension,
-              prefactor: result.simulation.metrics.prefactor,
-              radius_of_gyration: result.simulation.metrics.radius_of_gyration,
-              // N is stored on simulation.parameters (not metrics); fall back to
-              // the actual particle count from geometry if parameters is missing it.
-              n_particles:
-                (result.simulation.parameters as { n_particles?: number })
-                  ?.n_particles ??
-                result.geometry?.coordinates.length ??
-                null,
-            }
-          : null,
-      })),
+      loaded.map(({ id, result }) => {
+        const nParticles =
+          (result.simulation.parameters as { n_particles?: number })
+            ?.n_particles ??
+          result.geometry?.coordinates.length ??
+          null
+
+        const hasAnalyticMetrics = result.simulation.metrics !== null
+
+        return {
+          id,
+          name: deriveSimName(result.simulation),
+          parameters: result.simulation.parameters as unknown as Record<
+            string,
+            unknown
+          >,
+          geometry: result.geometry,
+          algorithm: result.simulation.algorithm,
+          metrics:
+            hasAnalyticMetrics || nParticles !== null
+              ? {
+                  fractal_dimension:
+                    result.simulation.metrics?.fractal_dimension ?? null,
+                  prefactor: result.simulation.metrics?.prefactor ?? null,
+                  radius_of_gyration:
+                    result.simulation.metrics?.radius_of_gyration ?? null,
+                  n_particles: nParticles,
+                }
+              : null,
+        }
+      }),
     [loaded],
   )
 

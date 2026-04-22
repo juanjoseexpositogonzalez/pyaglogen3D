@@ -2,10 +2,49 @@ import { describe, it, expect } from 'vitest'
 import {
   COMPARE_PALETTE,
   MAX_COMPARE_SIMS,
+  deriveSimName,
   getCompareColorPalette,
   getCompareGridLayout,
   parseCompareSimsParam,
 } from '../compare-utils'
+
+describe('deriveSimName', () => {
+  it('returns the user-assigned name when present', () => {
+    expect(
+      deriveSimName({ id: 'abc12345def', algorithm: 'dla', name: 'My Agg' }),
+    ).toBe('My Agg')
+  })
+
+  it('trims whitespace around the name', () => {
+    expect(
+      deriveSimName({ id: 'abc12345def', algorithm: 'dla', name: '  Trimmed  ' }),
+    ).toBe('Trimmed')
+  })
+
+  it('falls back to ALGO + short id when name is missing', () => {
+    expect(deriveSimName({ id: 'abc12345def', algorithm: 'dla' })).toBe(
+      'DLA · abc12345',
+    )
+  })
+
+  it('falls back when name is empty string', () => {
+    expect(
+      deriveSimName({ id: 'abc12345def', algorithm: 'tunable_cc', name: '' }),
+    ).toBe('TUNABLE_CC · abc12345')
+  })
+
+  it('falls back when name is only whitespace', () => {
+    expect(
+      deriveSimName({ id: 'abc12345def', algorithm: 'dla', name: '   ' }),
+    ).toBe('DLA · abc12345')
+  })
+
+  it('falls back when name is null', () => {
+    expect(
+      deriveSimName({ id: 'abc12345def', algorithm: 'cca', name: null }),
+    ).toBe('CCA · abc12345')
+  })
+})
 
 describe('parseCompareSimsParam', () => {
   it('returns empty result for null', () => {

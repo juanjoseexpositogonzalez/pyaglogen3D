@@ -320,23 +320,41 @@ export default function ProjectDetailPage({
                     <CardContent className="p-4">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-4">
-                          {/* Compare selection checkbox — does NOT navigate (R1/S1.6). */}
-                          <Checkbox
-                            aria-label={`Select ${sim.algorithm} simulation for comparison`}
-                            checked={isSelected}
-                            disabled={capReached}
-                            title={capReached ? `Maximum ${MAX_COMPARE_SIMS} simulations at once` : undefined}
+                          {/*
+                            Compare selection checkbox — does NOT navigate (R1/S1.6).
+                            Wrap in a stopPropagation-only span so the Link's default
+                            navigation is blocked without `preventDefault`-ing the
+                            native checkbox toggle. Previous impl put `preventDefault`
+                            on the Checkbox's `onClick`, which cancelled the browser's
+                            native toggle and caused the tick to appear one click late
+                            (stale visual state fixed only by a sibling re-render).
+                          */}
+                          <span
                             onClick={(e) => {
-                              e.preventDefault()
                               e.stopPropagation()
                             }}
-                            onCheckedChange={() => toggleSelection(sim.id)}
-                          />
+                          >
+                            <Checkbox
+                              aria-label={`Select ${sim.algorithm} simulation for comparison`}
+                              checked={isSelected}
+                              disabled={capReached}
+                              title={capReached ? `Maximum ${MAX_COMPARE_SIMS} simulations at once` : undefined}
+                              onCheckedChange={() => toggleSelection(sim.id)}
+                            />
+                          </span>
                           <div>
                             <div className="flex items-center gap-2">
                               <span className="font-medium">
-                                {sim.algorithm.toUpperCase()}
+                                {/*
+                                  Prefer the user-assigned / backend-generated `name`;
+                                  fall back to the algorithm code only for legacy
+                                  records that predate the name field.
+                                */}
+                                {sim.name?.trim() || sim.algorithm.toUpperCase()}
                               </span>
+                              <Badge variant="outline" className="text-xs">
+                                {sim.algorithm.toUpperCase()}
+                              </Badge>
                               <StatusBadge status={sim.status} />
                             </div>
                             <p className="text-sm text-muted-foreground mt-1">

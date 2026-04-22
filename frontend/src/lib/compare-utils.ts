@@ -13,6 +13,34 @@
 export const MAX_COMPARE_SIMS = 9
 
 /**
+ * Shape-minimal sim for display-name derivation. Accepts any object that
+ * has `id` and `algorithm`, with an optional `name`. This avoids pulling
+ * the full `Simulation` type into every place that just needs a label.
+ */
+export interface NamableSim {
+  id: string
+  algorithm: string
+  name?: string | null
+}
+
+/**
+ * Derive a human-readable display name for a simulation.
+ *
+ * Order of precedence:
+ *   1. `sim.name` (trimmed) — user-assigned at create time, or
+ *      auto-generated server-side via `generate_simulation_name()`.
+ *   2. `"ALGO · <8-char id prefix>"` — fallback for legacy records
+ *      that predate the `name` field on the backend model.
+ *
+ * Kept framework-free so it can be unit-tested without a DOM.
+ */
+export function deriveSimName(sim: NamableSim): string {
+  const trimmed = sim.name?.trim()
+  if (trimmed) return trimmed
+  return `${sim.algorithm.toUpperCase()} · ${sim.id.slice(0, 8)}`
+}
+
+/**
  * Deterministic palette used for sim identity across the Compare page
  * (viewer border tint, overlay particle color, metrics table header dot,
  * Rg-evolution chart series color).

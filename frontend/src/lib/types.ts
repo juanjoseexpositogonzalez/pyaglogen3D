@@ -172,6 +172,12 @@ export interface SimulationSummary {
 export interface Simulation {
   id: string
   project: string
+  /**
+   * User-assigned display name. Optional on the wire because legacy records
+   * may not have it, but the backend auto-generates one on create when left
+   * blank (see `generate_simulation_name()` in the API serializer).
+   */
+  name?: string
   algorithm: SimulationAlgorithm
   status: SimulationStatus
   parameters: SimulationParams
