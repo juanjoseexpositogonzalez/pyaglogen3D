@@ -296,3 +296,101 @@ def test_csv_import_empty_body_rejected() -> None:
     response = _post_import(client, project, rows=[], csv_override=payload)
 
     assert response.status_code == 400, response.content
+
+
+# --- Regression: MATLAB-exported CSV + frontend payload shape ---------------
+#
+# The user-reported 400 came from a MATLAB ``writematrix`` export on a
+# Spanish Windows locale, submitted through ``ImportAggregateDialog.tsx``
+# which nests ``original_filename`` and ``format`` inside ``parameters``.
+# The two tests below lock both sides of the fix: the CSV content side
+# (Latin-1 + Spanish headers + ; delimiter + , decimal) AND the payload
+# shape side (fields inside ``parameters`` instead of at the top level).
+
+
+@pytest.mark.django_db
+def test_csv_import_matlab_spanish_latin1_http_success() -> None:
+    """End-to-end: the user-reported file shape produces 201, not 400.
+
+    Synthetic sanitized coordinates — not the user's real data — shaped
+    exactly like a MATLAB ``writematrix`` export on a Spanish Windows
+    locale: Latin-1 bytes, Spanish column labels with ``[nm]`` unit
+    annotations, ``;`` delimiter, ``,`` decimals, extra ``Partícula`` and
+    ``Aplastamiento`` columns that the parser must ignore.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    header = (
+        "Partícula;Coordenada x [nm];Coordenada y [nm];"
+        "Coordenada z [nm];Radio [nm];Aplastamiento\n"
+    )
+    rows = "\r\n".join(
+        [
+            "1;-10,50;-12,25;-5,75;12,5;1",
+            "2;-20,00;-10,00;-25,00;12,5;1",
+            "3;0,50;-8,00;10,00;12,5;1",
+            "4;5,00;15,00;30,00;12,5;1",
+            "5;-15,00;-10,00;-50,00;12,5;1",
+            "6;-8,00;2,00;-70,00;12,5;1",
+        ]
+    )
+    raw = (header + rows + "\r\n").encode("latin-1")
+    payload = base64.b64encode(raw).decode("ascii")
+
+    response = _post_import(
+        client,
+        project,
+        rows=[],
+        csv_override=payload,
+        original_filename="Aglo001.csv",
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    # 6 synthetic particles all with radius 12.5 nm → diameter 25 nm.
+    assert sim.parameters[PARAM_KEY_DIAMETER] == pytest.approx(25.0)
+    # The parser stamped the locale info into import_metadata so the UI
+    # can surface it.
+    meta = sim.parameters["import_metadata"]
+    assert meta["detected_encoding"] == "latin-1"
+    assert meta["detected_delimiter"] == ";"
+    assert meta["detected_decimal"] == ","
+
+
+@pytest.mark.django_db
+def test_csv_import_accepts_filename_and_format_inside_parameters() -> None:
+    """The current frontend nests ``original_filename`` + ``format`` inside
+    ``parameters``. The backend must read from either location — top level
+    (legacy scripts / curl) or ``parameters.*`` (the real UI).
+
+    This locks the payload-shape compat fix. The test sends the exact
+    shape produced by ``ImportAggregateDialog.tsx``: a ``parameters`` dict
+    carrying ``original_filename`` and ``format``, with ``csv_data`` and
+    ``algorithm`` at the top level.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 1.0) for i in range(5)]
+    payload_csv = _csv_payload(rows)
+    payload = {
+        "algorithm": "imported",
+        "parameters": {
+            "original_filename": "from-ui.csv",
+            "format": "csv",
+        },
+        "seed": 42,
+        "csv_data": payload_csv,
+    }
+
+    response = client.post(_create_url(project), payload, format="json")
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    # The filename from ``parameters.original_filename`` landed on the
+    # stamped simulation (not an empty string from the missing top-level).
+    assert sim.parameters["original_filename"] == "from-ui.csv"
+    assert sim.parameters["original_format"] == "csv"

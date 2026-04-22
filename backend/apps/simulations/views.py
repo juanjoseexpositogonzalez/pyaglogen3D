@@ -301,8 +301,20 @@ class SimulationViewSet(viewsets.ModelViewSet):
         DRF's default :meth:`create` unchanged.
         """
         if request.data.get("algorithm") == "imported":
-            original_filename = request.data.get("original_filename", "")
-            explicit_format = request.data.get("format")
+            # Accept ``original_filename`` and ``format`` at either the top
+            # level (legacy scripted clients, ``curl``, tests) or inside the
+            # ``parameters`` dict (current frontend — see
+            # frontend/src/components/forms/ImportAggregateDialog.tsx).
+            # Top-level wins when both are set so external callers that
+            # opt-in to the cleaner shape aren't overridden by stray
+            # values the UI might leave in ``parameters``.
+            params_payload = request.data.get("parameters") or {}
+            if not isinstance(params_payload, dict):
+                params_payload = {}
+            original_filename = request.data.get(
+                "original_filename"
+            ) or params_payload.get("original_filename", "")
+            explicit_format = request.data.get("format") or params_payload.get("format")
             fmt = _resolve_import_format(original_filename, explicit_format)
 
             if fmt == "dat":
@@ -331,7 +343,14 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # Handle imported algorithm differently
         if algorithm == "imported" and csv_data:
             extra_params = serializer.validated_data.get("parameters", {})
-            original_filename = self.request.data.get("original_filename", "")
+            # Mirror the fallback in create() — accept original_filename from
+            # either top level or parameters.* for backwards compat with
+            # external clients while supporting the current frontend shape.
+            original_filename = self.request.data.get("original_filename") or (
+                extra_params.get("original_filename", "")
+                if isinstance(extra_params, dict)
+                else ""
+            )
             fmt = getattr(self, "_import_fmt", "csv")
             geometry_array, params = self._process_import_payload(
                 csv_data,

@@ -128,11 +128,14 @@ class SimulationSerializer(serializers.ModelSerializer):
         Here we only ensure:
 
         1. The value is valid base64.
-        2. For CSV uploads, the value decodes to valid UTF-8. For MATLAB
-           ``.mat`` uploads the payload is binary and the UTF-8 check is
-           skipped — the parser owns all shape validation.
-        3. The encoded payload is under the backend size cap (defense in
+        2. The encoded payload is under the backend size cap (defense in
            depth against a client that bypasses the UI 10 MB guard).
+
+        Encoding validation for CSV uploads lives in
+        :func:`parse_csv_geometry` which accepts UTF-8, UTF-8-BOM, and
+        Latin-1 (MATLAB ``writematrix`` on a Spanish locale emits
+        ISO-8859-1). A strict UTF-8 gate here would bounce those files
+        with an opaque 400 before the parser ever sees them.
         """
         if not value:
             return value
@@ -141,28 +144,9 @@ class SimulationSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("CSV payload too large (max ~10 MB).")
 
         try:
-            csv_bytes = base64.b64decode(value, validate=True)
+            base64.b64decode(value, validate=True)
         except Exception as e:
             raise serializers.ValidationError(f"Invalid base64 encoding: {e}")
-
-        # Skip UTF-8 enforcement when the upload is binary (.mat). The view
-        # dispatches on filename/format BEFORE the parser runs; checking the
-        # extension here lets a binary payload slip past this validator
-        # without a second filename-sniffing helper. CSV uploads still pay
-        # the UTF-8 toll — that's the cheap fail-fast for garbled text.
-        fmt_hint = self.initial_data.get("format") if self.initial_data else None
-        filename = (
-            self.initial_data.get("original_filename", "") if self.initial_data else ""
-        )
-        is_binary_format = (fmt_hint or "").lower().lstrip(
-            "."
-        ) == "mat" or filename.lower().endswith(".mat")
-
-        if not is_binary_format:
-            try:
-                csv_bytes.decode("utf-8")
-            except UnicodeDecodeError as e:
-                raise serializers.ValidationError(f"CSV is not valid UTF-8: {e}")
 
         return value
 

@@ -235,3 +235,161 @@ def test_csv_missing_required_column_still_raises() -> None:
     raw = b"x,y,z\n1,2,3\n4,5,6\n"
     with pytest.raises(CSVParseError, match="Missing required columns"):
         parse_csv_geometry(raw)
+
+
+# --- Regression: MATLAB-style CSV (Latin-1 + Spanish headers + ; + ,) --------
+#
+# The user-reported 400 came from a MATLAB ``writematrix`` export on a
+# Spanish Windows locale. That file combined three hostile traits in a
+# single payload:
+#
+#   1. ISO-8859-1 (Latin-1) encoding — byte 0xED for ``í`` is invalid UTF-8
+#      and used to fail the serializer's strict ``csv_bytes.decode("utf-8")``
+#      gate before the parser ran.
+#   2. Spanish column labels ``Partícula, Coordenada x [nm], ..., Radio [nm]``
+#      instead of the canonical ``x,y,z,radius``.
+#   3. European locale — ``;`` delimiter and ``,`` decimal separator.
+#
+# The fixture below uses SANITIZED synthetic coordinates (not the user's
+# real data) that exercise the exact same decode / alias / locale paths.
+
+
+def _make_matlab_spanish_csv() -> bytes:
+    """Build a Latin-1 encoded CSV that mirrors the user-reported file.
+
+    Intentionally includes the non-ASCII ``í`` in the particle column and
+    the ``[nm]`` unit annotation on coordinates so the alias lookup has
+    to strip both the accent (via Latin-1 decode) and the unit suffix.
+    """
+    header = (
+        "Partícula;Coordenada x [nm];Coordenada y [nm];"
+        "Coordenada z [nm];Radio [nm];Aplastamiento\n"
+    )
+    # Synthetic coordinates — NOT the user's real data. All radii 12.5 nm
+    # so the mean-radius diameter stamp is deterministic.
+    rows = [
+        "1;-10,50;-12,25;-5,75;12,5;1",
+        "2;-20,00;-10,00;-25,00;12,5;1",
+        "3;0,50;-8,00;10,00;12,5;1",
+        "4;5,00;15,00;30,00;12,5;1",
+        "5;-15,00;-10,00;-50,00;12,5;1",
+        "6;-8,00;2,00;-70,00;12,5;1",
+    ]
+    text = header + "\r\n".join(rows) + "\r\n"
+    return text.encode("latin-1")
+
+
+def test_csv_matlab_spanish_latin1_import() -> None:
+    """Full fidelity: Latin-1 + Spanish headers + EU locale all at once.
+
+    Locks the fix for the reported ``Import CSV returns 400`` bug. Before
+    the fix this file raised at three distinct stages — UTF-8 decode in
+    the serializer, UTF-8 decode in the parser, and missing-column
+    validation against ``x/y/z/radius``. Each is covered by a dedicated
+    focused test below; this one is the end-to-end smoke.
+    """
+    raw = _make_matlab_spanish_csv()
+
+    geometry, n, r_min, r_max, metadata = parse_csv_geometry(raw)
+
+    assert n == 6
+    assert geometry.shape == (6, 4)
+    # All radii are 12.5 by construction.
+    assert r_min == pytest.approx(12.5)
+    assert r_max == pytest.approx(12.5)
+    # Decoded correctly from Latin-1 — the first x cell is -10.5.
+    assert geometry[0, 0] == pytest.approx(-10.5)
+    assert geometry[0, 1] == pytest.approx(-12.25)
+    # Encoding + locale were stamped for UI traceability.
+    assert metadata["detected_encoding"] == "latin-1"
+    assert metadata["detected_delimiter"] == ";"
+    assert metadata["detected_decimal"] == ","
+
+
+def test_csv_latin1_encoding_fallback() -> None:
+    """Payload with a non-UTF-8 byte decodes as Latin-1, not 400.
+
+    Regression for the serializer's old strict UTF-8 gate: MATLAB on a
+    Spanish Windows locale emits ISO-8859-1; that used to bounce with a
+    400 before the parser ever saw the file. Now the parser transparently
+    falls back to Latin-1 and stamps the encoding in metadata.
+    """
+    # Header uses canonical names so only encoding is exercised.
+    header = "x;y;z;radius\n"
+    # The value ``ñ`` in a comment line — Latin-1 byte 0xF1 — is not a
+    # valid UTF-8 continuation, so a strict UTF-8 decoder would throw.
+    body = "1,0;2,0;3,0;0,5\n4,0;5,0;6,0;0,5\n7,0;8,0;9,0;0,5\n"
+    raw = ("# source=españa\n" + header + body).encode("latin-1")
+
+    geometry, n, _, _, metadata = parse_csv_geometry(raw)
+
+    assert n == 3
+    assert metadata["detected_encoding"] == "latin-1"
+    assert geometry[0, 0] == pytest.approx(1.0)
+    # The Spanish string was preserved through Latin-1 decode.
+    assert metadata["source"] == "españa"
+
+
+def test_csv_utf8_bom_is_stripped() -> None:
+    """A UTF-8 BOM at file start is handled silently (``utf-8-sig``).
+
+    Excel's "Save As CSV UTF-8" emits a BOM; ignoring it was a separate
+    real-world failure mode before the encoding fallback landed.
+    """
+    bom = b"\xef\xbb\xbf"
+    body = b"x,y,z,radius\n1.0,2.0,3.0,0.5\n4.0,5.0,6.0,0.5\n7.0,8.0,9.0,0.5\n"
+
+    geometry, n, _, _, metadata = parse_csv_geometry(bom + body)
+
+    assert n == 3
+    assert metadata["detected_encoding"] == "utf-8"
+    # The BOM is NOT leaked into the first column name; header lookup works.
+    assert geometry[0, 0] == pytest.approx(1.0)
+
+
+def test_csv_spanish_headers_without_units() -> None:
+    """Spanish ``Coordenada x / Radio`` headers resolve via alias table."""
+    raw = (
+        "Coordenada x;Coordenada y;Coordenada z;Radio\n"
+        "1,0;2,0;3,0;0,5\n4,0;5,0;6,0;0,5\n7,0;8,0;9,0;0,5\n"
+    ).encode("utf-8")
+
+    geometry, n, _, _, _ = parse_csv_geometry(raw)
+
+    assert n == 3
+    assert geometry[0, 0] == pytest.approx(1.0)
+    assert geometry[0, 3] == pytest.approx(0.5)
+
+
+def test_csv_headers_with_unit_annotation_resolved() -> None:
+    """``X [nm]`` / ``Radius [nm]`` / ``Rayon (nm)`` all normalize correctly."""
+    raw = (
+        "X [nm],Y [nm],Z [nm],Rayon (nm)\n"
+        "1.0,2.0,3.0,0.5\n4.0,5.0,6.0,0.5\n7.0,8.0,9.0,0.5\n"
+    ).encode("utf-8")
+
+    geometry, n, _, _, _ = parse_csv_geometry(raw)
+
+    assert n == 3
+    assert geometry[0, 0] == pytest.approx(1.0)
+    assert geometry[0, 3] == pytest.approx(0.5)
+
+
+def test_csv_extra_columns_ignored() -> None:
+    """Unknown columns (``Partícula``, ``Aplastamiento``) don't break import.
+
+    MATLAB exports often carry an index column and application-specific
+    diagnostic columns. Those must be silently ignored — only the four
+    canonical columns are consumed.
+    """
+    raw = (
+        "Partícula,x,y,z,radius,Aplastamiento\n"
+        "1,1.0,2.0,3.0,0.5,1\n2,4.0,5.0,6.0,0.5,1\n3,7.0,8.0,9.0,0.5,1\n"
+    ).encode("utf-8")
+
+    geometry, n, _, _, _ = parse_csv_geometry(raw)
+
+    assert n == 3
+    # Columns were picked out by name, not by position.
+    assert geometry[0, 0] == pytest.approx(1.0)
+    assert geometry[0, 3] == pytest.approx(0.5)

@@ -294,6 +294,57 @@ _FLOAT_METADATA_KEYS: frozenset[str] = frozenset({"primary_particle_diameter_nm"
 # fires when fewer than this many data rows are available.
 _LOCALE_SNIFF_SAMPLE_SIZE: int = 5
 
+# Header aliases — maps normalized real-world column names to the canonical
+# ``x / y / z / radius`` keys the parser expects. MATLAB's ``writematrix``
+# in a Spanish locale emits ``Partícula, Coordenada x [nm], ..., Radio [nm],
+# Aplastamiento``; French MATLAB emits ``Rayon``; English-with-units emits
+# ``X [nm]`` / ``radius_nm``. Normalization is: lowercase, trim, strip a
+# trailing ``[...]`` unit suffix, replace whitespace runs with a single
+# space. If the normalized name appears in this map, it resolves to the
+# canonical key. Unknown columns are ignored (``aplastamiento``,
+# ``particle``, etc.) so a CSV with extra diagnostic columns still imports.
+_HEADER_ALIASES: dict[str, str] = {
+    # canonical
+    "x": "x",
+    "y": "y",
+    "z": "z",
+    "radius": "radius",
+    # English with units / underscores
+    "radius_nm": "radius",
+    # Spanish
+    "coordenada x": "x",
+    "coordenada y": "y",
+    "coordenada z": "z",
+    "radio": "radius",
+    # French
+    "rayon": "radius",
+    # German (Radius is the same word, covered by canonical)
+}
+
+# Trailing unit annotation like `` [nm]`` or ``(nm)``. Stripped before
+# lookup so ``Coordenada x [nm]`` and ``X (µm)`` both normalize to ``x``
+# and ``coordenada x`` respectively.
+_UNIT_SUFFIX_RE = re.compile(r"\s*[\[(][^\])]*[\])]\s*$")
+
+
+def _normalize_header(raw: str) -> str:
+    """Normalize a single CSV header cell for alias lookup.
+
+    Steps:
+
+    1. Lowercase
+    2. Strip outer whitespace
+    3. Strip a trailing ``[...]`` or ``(...)`` unit annotation
+    4. Collapse internal whitespace runs to a single space
+
+    No side effects, no exceptions — callers can feed anything.
+    """
+    s = (raw or "").strip().lower()
+    s = _UNIT_SUFFIX_RE.sub("", s).strip()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
+
 # Regex for extracting `# key=value` comment lines. Leading whitespace after
 # the `#` is tolerated — authors write `#unit=nm` and `# unit = nm` alike.
 _METADATA_LINE_PATTERN = re.compile(r"^#\s*(.*)$")
@@ -478,17 +529,34 @@ def parse_csv_geometry(
             are LOGGED, not raised (spec R1 scenario "Malformed metadata").
     """
     # --- Step 0: bytes → text --------------------------------------------
+    # Real-world CSVs arrive in multiple encodings: MATLAB's ``writematrix``
+    # on Windows emits Latin-1 (ISO-8859-1) with Spanish / French column
+    # labels, Excel emits UTF-8-BOM, and a good chunk of Django fixtures
+    # are plain UTF-8. We try UTF-8 first (strict — catches truncated
+    # multi-byte sequences early), then fall back to Latin-1 which is a
+    # strict superset of ASCII and never fails on a byte level. The
+    # detected encoding is stamped in ``metadata["detected_encoding"]``
+    # for UI traceability; any BOM from UTF-8-BOM or the Latin-1 path is
+    # stripped via ``utf-8-sig`` before decoding.
+    detected_encoding = "utf-8"
     if isinstance(raw, bytes):
         try:
-            csv_text = raw.decode("utf-8")
-        except UnicodeDecodeError as exc:
-            raise CSVParseError(f"CSV payload is not valid UTF-8: {exc}") from exc
+            csv_text = raw.decode("utf-8-sig")
+        except UnicodeDecodeError:
+            # Latin-1 is lossless for any byte sequence, so this cannot
+            # raise. Accents (``í``, ``é``, ``ñ``) map to their expected
+            # glyphs; control bytes round-trip unchanged. We log at info
+            # so ops can spot EU-origin uploads without drowning the log.
+            csv_text = raw.decode("latin-1")
+            detected_encoding = "latin-1"
+            logger.info("CSV payload decoded as Latin-1 fallback")
     else:
         csv_text = raw
 
     # --- Step 1: strip #metadata lines -----------------------------------
     body_lines, metadata = _split_metadata_comments(csv_text)
     metadata.setdefault("unit", "nm")
+    metadata["detected_encoding"] = detected_encoding
 
     # --- Step 2: detect or honor locale ----------------------------------
     # Rule (see _sniff_csv_locale): the sniffer always runs, but if the
@@ -528,19 +596,24 @@ def parse_csv_geometry(
     if reader.fieldnames is None:
         raise CSVParseError("CSV file appears to be empty")
 
-    fieldnames_lower = [f.strip().lower() for f in reader.fieldnames]
+    # Resolve canonical column names via the header alias table. This
+    # lets MATLAB-exported CSVs with Spanish or unit-annotated headers
+    # (e.g. ``Coordenada x [nm]``, ``Radio [nm]``, ``Rayon``) import
+    # without a manual header-rewrite step. Unknown columns are silently
+    # ignored.
     required_columns = {"x", "y", "z", "radius"}
-    missing = required_columns - set(fieldnames_lower)
+    column_map: dict[str, str] = {}
+    for fname in reader.fieldnames:
+        normalized = _normalize_header(fname)
+        canonical = _HEADER_ALIASES.get(normalized)
+        if canonical and canonical not in column_map:
+            column_map[canonical] = fname
+
+    missing = required_columns - set(column_map.keys())
     if missing:
         raise CSVParseError(
             f"Missing required columns: {missing}. Found: {reader.fieldnames}"
         )
-
-    column_map: dict[str, str] = {}
-    for fname in reader.fieldnames:
-        lower = fname.strip().lower()
-        if lower in required_columns:
-            column_map[lower] = fname
 
     rows: list[list[float]] = []
     for row_num, row in enumerate(reader, start=2):  # Start at 2 (1-based + header)
