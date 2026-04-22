@@ -1,8 +1,14 @@
 """Simulation URLs."""
+
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import ParametricStudyViewSet, SimulationViewSet
+from .views import (
+    ParametricStudyViewSet,
+    SimulationViewSet,
+    projections_download_view,
+    projections_status_view,
+)
 
 # Main router for direct simulation access (e.g., geometry download)
 router = DefaultRouter()
@@ -19,7 +25,12 @@ urlpatterns = [
     path(
         "projects/<uuid:project_pk>/simulations/<uuid:pk>/",
         SimulationViewSet.as_view(
-            {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"}
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
         ),
         name="project-simulations-detail",
     ),
@@ -47,7 +58,12 @@ urlpatterns = [
     path(
         "projects/<uuid:project_pk>/studies/<uuid:pk>/",
         ParametricStudyViewSet.as_view(
-            {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"}
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
         ),
         name="project-studies-detail",
     ),
@@ -96,5 +112,16 @@ urlpatterns = [
         "projects/<uuid:project_pk>/simulations/delete-all/",
         SimulationViewSet.as_view({"delete": "delete_all"}),
         name="project-simulations-delete-all",
+    ),
+    # Async projection job status + download (R6)
+    path(
+        "projections-status/<str:job_id>/",
+        projections_status_view,
+        name="projections-status",
+    ),
+    path(
+        "projections-status/<str:job_id>/download/",
+        projections_download_view,
+        name="projections-download",
     ),
 ]

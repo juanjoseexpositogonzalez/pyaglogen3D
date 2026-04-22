@@ -1986,3 +1986,127 @@ def run_dda_task(
             "simulation_id": simulation_id,
             "error": str(e),
         }
+
+
+# ============================================================================
+# Projection ZIP async builder (R6)
+# ============================================================================
+
+
+def _projections_storage_dir() -> str:
+    """Return (and lazily create) the directory where async projection ZIPs live.
+
+    No ``MEDIA_ROOT`` is configured in ``config/settings/base.py``, so we fall
+    back to a dedicated ``projections/`` directory under ``BASE_DIR``. Using a
+    separate subdirectory (not next to ``simulation.geometry`` — which lives
+    inside Postgres as a ``BinaryField``) avoids polluting any
+    future media storage with large ephemeral archives.
+    """
+    import os
+
+    from django.conf import settings
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    base = str(media_root) if media_root else str(settings.BASE_DIR)
+    storage_dir = os.path.join(base, "projections")
+    os.makedirs(storage_dir, exist_ok=True)
+    return storage_dir
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.build_projections_zip")
+def build_projections_zip_task(
+    self,
+    simulation_id: str,
+    mode: str,
+    n_requested: int,
+    directions: list,
+    parameters: dict,
+) -> dict:
+    """Build a projections ZIP asynchronously when N > 200 (R6).
+
+    Progress reporting: every 10 rendered projections we call
+    ``self.update_state(state="PROGRESS", meta={...})`` with a
+    ``{progress: float in [0,1], current: int, total: int}`` meta. The
+    project does NOT have an existing progress-bearing task — this is the
+    first one — so we set the shape here for future tasks to mirror.
+    The polling view (``projections_status_view``) maps this meta directly
+    into its contract response.
+
+    On completion, the ZIP is written to :func:`_projections_storage_dir`
+    as ``{task_id}.zip`` and the returned payload includes both
+    ``download_url`` (used by the frontend) and ``zip_path`` (used by the
+    download view to locate the file on disk).
+
+    ``plt.close(fig)`` cleanup is inside ``render_projection_png`` (and
+    therefore inside ``_render_projection_bytes``), so no explicit
+    try/finally is needed here — the matplotlib-leak risk (design.md
+    Component 5) is handled by the renderer layer.
+    """
+    import io
+    import os
+
+    from apps.simulations.services.projections import build_projection_zip
+    from apps.simulations.views import _render_projection_bytes
+
+    from .models import Simulation
+
+    try:
+        import aglogen_core
+
+        simulation = Simulation.objects.get(id=UUID(simulation_id))
+        if simulation.geometry is None:
+            raise ValueError("Simulation has no geometry data")
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = np.ascontiguousarray(geometry_array[:, :3])
+        radii = np.ascontiguousarray(geometry_array[:, 3])
+
+        # Normalize directions — Celery serializes as list-of-lists, but we
+        # want tuples for the Rust / service layers.
+        directions_py = [(float(a), float(e)) for (a, e) in directions]
+
+        projection_results = aglogen_core.project_directions(
+            coords, radii, directions_py
+        )
+
+        total = len(projection_results)
+        image_bytes_list: list[bytes] = []
+        for i, proj in enumerate(projection_results):
+            image_bytes_list.append(_render_projection_bytes(proj, "png"))
+            # Progress every 10 projections (and always on the last one).
+            if (i + 1) % 10 == 0 or (i + 1) == total:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "progress": float(i + 1) / float(total) if total else 1.0,
+                        "current": i + 1,
+                        "total": total,
+                    },
+                )
+
+        zip_bytes = build_projection_zip(
+            directions_py, image_bytes_list, mode, n_requested, parameters
+        )
+
+        storage_dir = _projections_storage_dir()
+        zip_path = os.path.join(storage_dir, f"{self.request.id}.zip")
+        with open(zip_path, "wb") as fp:
+            fp.write(zip_bytes)
+
+        download_url = f"/api/v1/projections-status/{self.request.id}/download/"
+        logger.info(
+            f"Projection ZIP built for simulation {simulation_id}: "
+            f"{total} projections, {len(zip_bytes)} bytes -> {zip_path}"
+        )
+        return {
+            "download_url": download_url,
+            "zip_path": zip_path,
+            "n_generated": total,
+            "mode": mode,
+        }
+    except Exception as exc:
+        logger.exception(
+            f"Projection ZIP build failed for simulation {simulation_id}: {exc}"
+        )
+        raise

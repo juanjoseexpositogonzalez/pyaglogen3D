@@ -32,6 +32,7 @@ from .services.projection import (
     render_projection_svg,
     create_projection_filename,
 )
+from .services.projections import build_projection_zip
 from .services.mat_parser import MatParseError, parse_mat_geometry
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
@@ -130,6 +131,77 @@ def _write_localized_row(writer: Any, row: list[Any], decimal: str) -> None:
     if decimal == ",":
         row = [_localize_numeric_cell(cell, decimal) for cell in row]
     writer.writerow(row)
+
+
+# --- Shared projection rendering --------------------------------------------
+
+
+def _render_projection_bytes(projection_result: Any, img_format: str = "png"):
+    """Render a single ``PyProjectionResult`` into PNG bytes or SVG string.
+
+    Shared by legacy (``projection_batch``), new sync mode, and the Celery
+    async task. Wrapping the matplotlib call here funnels every rendering
+    path through the same ``plt.close(fig)`` cleanup done inside
+    ``render_projection_png`` / ``render_projection_svg`` — avoiding the
+    figure-leak design risk called out in design.md Component 5.
+
+    ``projection_result`` is any object with ``.x``, ``.y``, ``.radii``,
+    and ``.bounds`` attributes (both the PyO3 ``PyProjectionResult`` and
+    test fakes qualify).
+
+    Returns ``bytes`` for PNG, ``str`` for SVG (both accepted by
+    ``zipfile.ZipFile.writestr``). Grid / Fibonacci modes always call with
+    ``img_format="png"`` — only legacy preserves SVG backcompat.
+    """
+    bounds = (
+        projection_result.bounds[0],
+        projection_result.bounds[1],
+        projection_result.bounds[2],
+        projection_result.bounds[3],
+    )
+    if img_format == "svg":
+        return render_projection_svg(
+            projection_result.x,
+            projection_result.y,
+            projection_result.radii,
+            bounds,
+        )
+    return render_projection_png(
+        projection_result.x,
+        projection_result.y,
+        projection_result.radii,
+        bounds,
+    )
+    if img_format == "svg":
+        return (
+            render_projection_svg(
+                projection_result.x,
+                projection_result.y,
+                projection_result.radii,
+                bounds,
+            ).encode("utf-8")
+            if isinstance(
+                render_projection_svg(
+                    projection_result.x,
+                    projection_result.y,
+                    projection_result.radii,
+                    bounds,
+                ),
+                str,
+            )
+            else render_projection_svg(
+                projection_result.x,
+                projection_result.y,
+                projection_result.radii,
+                bounds,
+            )
+        )
+    return render_projection_png(
+        projection_result.x,
+        projection_result.y,
+        projection_result.radii,
+        bounds,
+    )
 
 
 class SimulationViewSet(viewsets.ModelViewSet):
@@ -596,16 +668,18 @@ class SimulationViewSet(viewsets.ModelViewSet):
     def projection_batch(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Generate batch 2D projections as a ZIP file.
 
-        POST body:
-        {
-            "azimuth_start": 0,     // degrees (default: 0, range: 0-360)
-            "azimuth_end": 150,     // degrees (default: 150, range: 0-360)
-            "azimuth_step": 30,     // degrees (default: 30, must be > 0)
-            "elevation_start": 0,   // degrees (default: 0, range: -90 to 90)
-            "elevation_end": 150,   // degrees (default: 150, range: -90 to 90)
-            "elevation_step": 30,   // degrees (default: 30, must be > 0)
-            "format": "png"         // "png" or "svg" (default: "png")
-        }
+        Dispatches by ``mode``:
+        - ``mode`` omitted or ``"legacy"`` → existing legacy sweep (R3
+          backcompat — byte-for-byte identical to the pre-change endpoint).
+        - ``mode="grid"`` → requires ``n_az, n_el``; generates
+          ``n_az*(n_el-2)+2`` projections (R1).
+        - ``mode="fibonacci"`` → requires ``n``; generates exactly N
+          projections on a golden-angle lattice (R2).
+
+        Sync/async boundary (R6): ``N ≤ 200`` returns the ZIP synchronously
+        (HTTP 200, ``application/zip``). ``N > 200`` enqueues a Celery job
+        and returns HTTP 202 with ``{"job_id": ...}``; the client polls
+        ``/api/v1/projections-status/{job_id}/`` for status and download URL.
         """
         simulation = self.get_object()
 
@@ -615,6 +689,47 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
+        mode_raw = request.data.get("mode")
+        # Empty-string → legacy (same as omitted). Lowercase for tolerance.
+        mode = (
+            (mode_raw or "legacy").lower().strip()
+            if isinstance(mode_raw, str)
+            else "legacy"
+        )
+
+        if mode == "legacy":
+            return self._export_projections_legacy(request, simulation)
+        if mode == "grid":
+            return self._export_projections_modern(request, simulation, mode="grid")
+        if mode == "fibonacci":
+            return self._export_projections_modern(
+                request, simulation, mode="fibonacci"
+            )
+
+        return Response(
+            {
+                "detail": (
+                    f"Unknown mode {mode_raw!r}. "
+                    "Must be one of: 'grid', 'fibonacci', 'legacy'."
+                )
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # ------------------------------------------------------------------
+    # Legacy export path (pre-change behavior — R3 byte-for-byte backcompat)
+    # ------------------------------------------------------------------
+
+    def _export_projections_legacy(
+        self, request: Request, simulation: Simulation
+    ) -> HttpResponse:
+        """Unchanged legacy sweep path.
+
+        Preserved verbatim from the pre-mode endpoint so external consumers
+        that omit ``mode`` (or pass ``mode=legacy``) get identical ZIPs to
+        what they got before this change landed. Do NOT modify filenames,
+        add metadata.json, or change order here — see R3.
+        """
         # Parse and validate parameters (Issue #8, #9, #10 fixes)
         try:
             az_start = float(request.data.get("azimuth_start", 0.0))
@@ -683,22 +798,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             for proj in projections:
-                bounds = (
-                    proj.bounds[0],
-                    proj.bounds[1],
-                    proj.bounds[2],
-                    proj.bounds[3],
-                )
-
-                if img_format == "png":
-                    image_data = render_projection_png(
-                        proj.x, proj.y, proj.radii, bounds
-                    )
-                else:
-                    image_data = render_projection_svg(
-                        proj.x, proj.y, proj.radii, bounds
-                    )
-
+                image_data = _render_projection_bytes(proj, img_format)
                 filename = create_projection_filename(
                     str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
                 )
@@ -710,6 +810,138 @@ class SimulationViewSet(viewsets.ModelViewSet):
             f'attachment; filename="{simulation.id}_projections.zip"'
         )
         return response
+
+    # ------------------------------------------------------------------
+    # Grid / Fibonacci export path (new modes — R1, R2, R5, R6)
+    # ------------------------------------------------------------------
+
+    def _export_projections_modern(
+        self, request: Request, simulation: Simulation, *, mode: str
+    ) -> HttpResponse:
+        """Grid / Fibonacci export — either sync ZIP or async Celery dispatch."""
+        import aglogen_core
+
+        # --- Image size (optional knob, default 512) ---
+        try:
+            img_size = int(request.data.get("img_size", 512))
+        except (TypeError, ValueError):
+            return Response(
+                {"detail": "img_size must be an integer"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if img_size < 64 or img_size > 4096:
+            return Response(
+                {"detail": "img_size must be between 64 and 4096"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # --- Resolve directions per mode ---
+        if mode == "grid":
+            n_az = request.data.get("n_az")
+            n_el = request.data.get("n_el")
+            if n_az is None or n_el is None:
+                return Response(
+                    {"detail": "mode=grid requires 'n_az' and 'n_el'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                n_az = int(n_az)
+                n_el = int(n_el)
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "n_az and n_el must be integers"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if n_az < 1:
+                return Response(
+                    {"detail": "n_az must be >= 1"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if n_el < 2:
+                return Response(
+                    {"detail": "n_el must be >= 2 (both poles required)"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            directions = aglogen_core.generate_direction_grid(n_az, n_el)
+            n_requested = n_az * (n_el - 2) + 2
+            parameters = {"n_az": n_az, "n_el": n_el, "img_size": img_size}
+        else:  # fibonacci
+            n = request.data.get("n")
+            if n is None:
+                return Response(
+                    {"detail": "mode=fibonacci requires 'n'"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            try:
+                n = int(n)
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": "n must be an integer"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if n < 1:
+                return Response(
+                    {"detail": "n must be >= 1"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            if n > 10000:
+                return Response(
+                    {"detail": "n must be <= 10000"},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            directions = aglogen_core.generate_direction_fibonacci(n)
+            n_requested = n
+            parameters = {"n": n, "img_size": img_size}
+
+        # --- Sync/async dispatch (R6): inclusive 200 on sync side ---
+        if len(directions) <= 200:
+            zip_bytes = self._render_and_zip_sync(
+                simulation, directions, mode, n_requested, parameters
+            )
+            response = HttpResponse(zip_bytes, content_type="application/zip")
+            response["Content-Disposition"] = (
+                f'attachment; filename="{simulation.id}_projections.zip"'
+            )
+            return response
+
+        # Async path — enqueue Celery task
+        from .tasks import build_projections_zip_task
+
+        task = build_projections_zip_task.delay(
+            str(simulation.id),
+            mode,
+            n_requested,
+            list(directions),
+            parameters,
+        )
+        return Response(
+            {"job_id": task.id, "status": "queued"},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    def _render_and_zip_sync(
+        self,
+        simulation: Simulation,
+        directions: list,
+        mode: str,
+        n_requested: int,
+        parameters: dict,
+    ) -> bytes:
+        """Sync path: project, render PNGs, assemble ZIP in-request."""
+        import aglogen_core
+
+        coords, radii = self._load_geometry(simulation)
+        projection_results = aglogen_core.project_directions(coords, radii, directions)
+
+        image_bytes_list: list[bytes] = []
+        for proj in projection_results:
+            image_bytes_list.append(_render_projection_bytes(proj, "png"))
+
+        # directions may be a Rust-owned sequence — normalize to plain tuples
+        directions_py = [(float(a), float(e)) for (a, e) in directions]
+        return build_projection_zip(
+            directions_py, image_bytes_list, mode, n_requested, parameters
+        )
 
     def _load_geometry(self, simulation: Simulation) -> tuple[np.ndarray, np.ndarray]:
         """Load geometry from simulation and return coordinates and radii."""
@@ -1746,3 +1978,109 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "results": results,
             }
         )
+
+
+# ============================================================================
+# Projection async polling + download (R6)
+# ============================================================================
+
+from celery.result import AsyncResult  # noqa: E402
+from rest_framework.decorators import api_view, permission_classes  # noqa: E402
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def projections_status_view(request: Request, job_id: str) -> Response:
+    """GET /api/v1/projections-status/{job_id}/
+
+    Polling endpoint for async projection ZIP builds (R6). Maps Celery
+    ``AsyncResult`` state transitions onto the contract shape:
+
+    - ``processing`` — job is pending or mid-render. Includes ``progress``
+      (0.0..1.0), ``current`` (projections rendered), and ``total`` fields
+      so the UI can drive a progress bar.
+    - ``done`` — ZIP is ready. Includes ``download_url`` that points at
+      :func:`projections_download_view` for the same ``job_id``.
+    - ``failed`` — task raised. Includes ``error`` with the exception text.
+
+    Unknown / never-dispatched job IDs surface as ``processing`` (Celery's
+    default ``PENDING`` state) rather than 404 — matches Celery semantics
+    where "we don't know this ID" is indistinguishable from "just queued".
+    """
+    result = AsyncResult(job_id)
+    state = result.state
+
+    if state == "PENDING":
+        return Response(
+            {"status": "processing", "progress": 0.0, "current": 0, "total": 0}
+        )
+    if state == "PROGRESS":
+        meta = result.info if isinstance(result.info, dict) else {}
+        return Response(
+            {
+                "status": "processing",
+                "progress": float(meta.get("progress", 0.0)),
+                "current": int(meta.get("current", 0)),
+                "total": int(meta.get("total", 0)),
+            }
+        )
+    if state == "SUCCESS":
+        data = result.result if isinstance(result.result, dict) else {}
+        return Response(
+            {
+                "status": "done",
+                "download_url": data.get("download_url", ""),
+            }
+        )
+    if state == "FAILURE":
+        return Response(
+            {
+                "status": "failed",
+                "error": str(result.info)
+                if result.info is not None
+                else "Unknown error",
+            }
+        )
+    # Retry / revoked / other lesser-known states fall through here.
+    return Response({"status": str(state).lower(), "progress": 0.0})
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def projections_download_view(request: Request, job_id: str) -> HttpResponse:
+    """GET /api/v1/projections-status/{job_id}/download/
+
+    Streams the completed ZIP back to the client. Reads the ZIP path out
+    of the Celery task's success payload (same ``AsyncResult.result`` dict
+    surfaced by :func:`projections_status_view`) and serves the file with
+    ``application/zip``.
+    """
+    result = AsyncResult(job_id)
+    if result.state != "SUCCESS":
+        return Response(
+            {"detail": f"Job {job_id} is not complete (state={result.state})"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    data = result.result if isinstance(result.result, dict) else {}
+    zip_path = data.get("zip_path")
+    if not zip_path:
+        return Response(
+            {"detail": "Completed job has no stored ZIP path"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    import os
+
+    if not os.path.exists(zip_path):
+        return Response(
+            {"detail": "ZIP file missing on disk"},
+            status=status.HTTP_404_NOT_FOUND,
+        )
+
+    with open(zip_path, "rb") as fp:
+        zip_bytes = fp.read()
+
+    response = HttpResponse(zip_bytes, content_type="application/zip")
+    response["Content-Disposition"] = f'attachment; filename="projections_{job_id}.zip"'
+    return response
