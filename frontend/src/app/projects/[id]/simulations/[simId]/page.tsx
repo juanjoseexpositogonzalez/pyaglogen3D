@@ -14,7 +14,9 @@ import {
   ProjectionViewer,
   type ProjectionParams,
   type BatchParams,
+  type ExportProgress,
 } from '@/components/projection'
+import type { ExportProjectionsPayload } from '@/lib/api'
 import { NeighborGraph } from '@/components/topology'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
@@ -141,6 +143,51 @@ export default function SimulationDetailPage({
         err instanceof ApiError
           ? err.message
           : 'Failed to generate projections ZIP. Verify the selected angles and try again.'
+      )
+    } finally {
+      setIsBatchLoading(false)
+    }
+  }
+
+  // Mode-aware export handler for grid / fibonacci / legacy (post frente-4).
+  // Passes onProgress through so the dialog can render the polling bar.
+  const handleExportProjections = async (
+    payload: ExportProjectionsPayload,
+    onProgress?: (p: ExportProgress) => void,
+  ) => {
+    setIsBatchLoading(true)
+    setBatchDownloadError(null)
+    try {
+      const blob = await simulationsApi.exportProjections(
+        id,
+        simId,
+        payload,
+        {
+          onProgress: (progress, current, total) => {
+            onProgress?.({ progress, current, total })
+          },
+        },
+      )
+      const url = URL.createObjectURL(blob)
+      const link = document.createElement('a')
+      link.href = url
+      const suffix =
+        payload.mode === 'grid'
+          ? 'grid'
+          : payload.mode === 'fibonacci'
+            ? 'fibonacci'
+            : 'projections'
+      link.download = `${simId}_${suffix}.zip`
+      document.body.appendChild(link)
+      link.click()
+      document.body.removeChild(link)
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('Failed to export projections:', err)
+      setBatchDownloadError(
+        err instanceof ApiError
+          ? err.message
+          : 'Failed to generate projections ZIP. Verify the selected parameters and try again.',
       )
     } finally {
       setIsBatchLoading(false)
@@ -573,6 +620,7 @@ export default function SimulationDetailPage({
                   )}
                   <ProjectionControls
                     onPreview={handleProjectionPreview}
+                    onExport={handleExportProjections}
                     onDownloadBatch={handleBatchDownload}
                     isLoading={isProjectionLoading}
                     isBatchLoading={isBatchLoading}
