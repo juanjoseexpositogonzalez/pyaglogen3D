@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -8,6 +8,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Progress } from '@/components/ui/progress'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Download, Image, Loader2, Camera } from 'lucide-react'
 import { useViewerStore } from '@/stores/viewerStore'
 import type { ExportProjectionsPayload } from '@/lib/api'
@@ -131,6 +132,26 @@ export function ProjectionControls({
 
   const fibInvalid = nFib < 1 || nFib > 10000
 
+  // Client-side validation for legacy mode — mirrors the backend contract
+  // ([0,360] az, [-90,90] el, positive steps, end >= start). Surfaces the
+  // first violation as a human-readable message so users see it before the
+  // backend 400s. Null when inputs are valid.
+  const legacyValidationError = useMemo<string | null>(() => {
+    if (azStart < 0 || azStart > 360)
+      return 'Azimuth start must be between 0° and 360°'
+    if (azEnd < 0 || azEnd > 360)
+      return 'Azimuth end must be between 0° and 360°'
+    if (azStep <= 0) return 'Azimuth step must be positive'
+    if (elStart < -90 || elStart > 90)
+      return 'Elevation start must be between -90° and 90°'
+    if (elEnd < -90 || elEnd > 90)
+      return 'Elevation end must be between -90° and 90°'
+    if (elStep <= 0) return 'Elevation step must be positive'
+    if (azEnd < azStart) return 'Azimuth end must be ≥ azimuth start'
+    if (elEnd < elStart) return 'Elevation end must be ≥ elevation start'
+    return null
+  }, [azStart, azEnd, azStep, elStart, elEnd, elStep])
+
   const totalProjections =
     mode === 'grid'
       ? gridCount
@@ -145,7 +166,7 @@ export function ProjectionControls({
       ? !gridInvalid
       : mode === 'fibonacci'
         ? !fibInvalid
-        : legacyTotal > 0)
+        : legacyTotal > 0 && legacyValidationError === null)
 
   const handleExport = async () => {
     setProgress(null)
@@ -383,32 +404,59 @@ export function ProjectionControls({
             </div>
           )}
 
-          {/* Legacy inputs — preserved verbatim */}
+          {/* Legacy inputs — preserved verbatim (now with min/max guardrails) */}
           {mode === 'legacy' && (
             <>
+              <Alert variant="default" className="mb-3">
+                <AlertDescription className="text-xs">
+                  Legacy mode kept for backwards compatibility. For new
+                  exports, consider <strong>Grid</strong> (automatic pole
+                  deduplication) or <strong>Fibonacci</strong> (uniform
+                  spherical sampling).
+                </AlertDescription>
+              </Alert>
+
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">Az Start</Label>
+                  <Label htmlFor="legacy-az-start" className="text-xs">
+                    Az Start
+                  </Label>
                   <Input
+                    id="legacy-az-start"
                     type="number"
+                    min={0}
+                    max={360}
+                    step={1}
                     value={azStart}
                     onChange={(e) => setAzStart(Number(e.target.value))}
                     className="h-8"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Az End</Label>
+                  <Label htmlFor="legacy-az-end" className="text-xs">
+                    Az End
+                  </Label>
                   <Input
+                    id="legacy-az-end"
                     type="number"
+                    min={0}
+                    max={360}
+                    step={1}
                     value={azEnd}
                     onChange={(e) => setAzEnd(Number(e.target.value))}
                     className="h-8"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">Az Step</Label>
+                  <Label htmlFor="legacy-az-step" className="text-xs">
+                    Az Step
+                  </Label>
                   <Input
+                    id="legacy-az-step"
                     type="number"
+                    min={1}
+                    max={360}
+                    step={1}
                     value={azStep}
                     onChange={(e) => setAzStep(Number(e.target.value))}
                     className="h-8"
@@ -418,33 +466,60 @@ export function ProjectionControls({
 
               <div className="grid grid-cols-3 gap-2">
                 <div className="space-y-1">
-                  <Label className="text-xs">El Start</Label>
+                  <Label htmlFor="legacy-el-start" className="text-xs">
+                    El Start
+                  </Label>
                   <Input
+                    id="legacy-el-start"
                     type="number"
+                    min={-90}
+                    max={90}
+                    step={1}
                     value={elStart}
                     onChange={(e) => setElStart(Number(e.target.value))}
                     className="h-8"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">El End</Label>
+                  <Label htmlFor="legacy-el-end" className="text-xs">
+                    El End
+                  </Label>
                   <Input
+                    id="legacy-el-end"
                     type="number"
+                    min={-90}
+                    max={90}
+                    step={1}
                     value={elEnd}
                     onChange={(e) => setElEnd(Number(e.target.value))}
                     className="h-8"
                   />
                 </div>
                 <div className="space-y-1">
-                  <Label className="text-xs">El Step</Label>
+                  <Label htmlFor="legacy-el-step" className="text-xs">
+                    El Step
+                  </Label>
                   <Input
+                    id="legacy-el-step"
                     type="number"
+                    min={1}
+                    max={180}
+                    step={1}
                     value={elStep}
                     onChange={(e) => setElStep(Number(e.target.value))}
                     className="h-8"
                   />
                 </div>
               </div>
+
+              {legacyValidationError && (
+                <p
+                  className="text-sm text-destructive"
+                  data-testid="legacy-validation-error"
+                >
+                  {legacyValidationError}
+                </p>
+              )}
             </>
           )}
 

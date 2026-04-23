@@ -219,6 +219,36 @@ describe("ProjectionControls", () => {
     expect(screen.getByTestId("fib-n-error")).toBeTruthy();
   });
 
+  it("disables submit in legacy mode when elevation_end exceeds 90", () => {
+    renderControls();
+    selectMode("legacy");
+    const elEndInput = screen.getByLabelText(/^el end$/i) as HTMLInputElement;
+    fireEvent.change(elEndInput, { target: { value: "150" } });
+
+    expect(screen.getByTestId("legacy-validation-error").textContent).toMatch(
+      /elevation end must be between/i,
+    );
+    expect(
+      (screen.getByRole("button", { name: /download zip/i }) as HTMLButtonElement)
+        .disabled,
+    ).toBe(true);
+  });
+
+  it("shows Grid nudge in legacy mode", () => {
+    renderControls();
+    selectMode("legacy");
+    expect(
+      screen.getByText(/legacy mode kept for backwards compatibility/i),
+    ).toBeTruthy();
+  });
+
+  it("no Grid nudge in grid mode", () => {
+    renderControls();
+    expect(
+      screen.queryByText(/backwards compatibility/i),
+    ).toBeNull();
+  });
+
   it("falls back to onDownloadBatch in legacy mode when onExport is not provided", async () => {
     const onDownloadBatch = vi.fn();
     render(
