@@ -1,0 +1,295 @@
+"""FRAKTAL batch analysis services.
+
+Transport-agnostic helpers for:
+- Extracting images + metadata from uploaded ZIPs
+- Resolving calibration scale per spec R1/R2 precedence
+- Detecting sim_id from filename pattern
+- Computing batch statistics + histogram
+- Building comparison card data
+
+Spec: fraktal-batch-contract.md (R1, R2, R7, R8, R9, R11).
+"""
+
+from __future__ import annotations
+
+import io
+import json
+import re
+import uuid
+import zipfile
+
+import numpy as np
+from PIL import Image
+
+# ---------------------------------------------------------------------------
+# R11 — Sorensen educational note (fixed text).
+# ---------------------------------------------------------------------------
+
+SORENSEN_NOTE = (
+    "Note: 2D projection fractal dimension is systematically lower than "
+    "the 3D aggregate Df (Sorensen 1992). Typical gap: 0.1–0.3. "
+    "This is expected and does NOT indicate simulation error."
+)
+
+
+# ---------------------------------------------------------------------------
+# R1 / R2 — ZIP extraction + metadata parsing
+# ---------------------------------------------------------------------------
+
+_SIM_ID_FILENAME_RE = re.compile(
+    r"^(?P<uuid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})_",
+    re.IGNORECASE,
+)
+
+
+def extract_zip_images(
+    zip_bytes: bytes,
+) -> tuple[list[np.ndarray], dict | None, list[str]]:
+    """Open a ZIP, decode PNG images, parse ``metadata.json`` if present.
+
+    Returns:
+        Tuple of ``(images_as_grayscale_arrays, metadata_dict_or_None,
+        png_filenames_sorted)``.
+
+    Non-PNG entries are silently filtered out. PNG filenames are sorted so
+    downstream batch ordering is deterministic. ``metadata.json`` parse
+    errors are swallowed (metadata becomes ``None``) so that image
+    processing can still proceed.
+
+    Raises:
+        ValueError: If the bytes are not a valid ZIP or the ZIP contains
+            no PNG images.
+    """
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile as e:
+        raise ValueError(f"Invalid ZIP file: {e}") from e
+
+    names = zf.namelist()
+    png_names = sorted(n for n in names if n.lower().endswith(".png"))
+
+    metadata: dict | None = None
+    if "metadata.json" in names:
+        try:
+            metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            metadata = None  # malformed — continue with images only
+
+    if not png_names:
+        raise ValueError("ZIP contains no PNG images")
+
+    images: list[np.ndarray] = []
+    for name in png_names:
+        with zf.open(name) as f:
+            img = Image.open(f).convert("L")  # grayscale
+            images.append(np.array(img, dtype=np.uint8))
+
+    return images, metadata, png_names
+
+
+def extract_scale_from_metadata(metadata: dict | None) -> float | None:
+    """Return ``metadata.parameters.pixels_per_100nm`` (nested path per R1).
+
+    Returns ``None`` when:
+    - ``metadata`` is ``None`` or not a dict
+    - ``metadata.parameters`` is missing or not a dict
+    - ``parameters.pixels_per_100nm`` is missing, non-numeric, non-finite,
+      zero, or negative
+    """
+    if not isinstance(metadata, dict):
+        return None
+    params = metadata.get("parameters")
+    if not isinstance(params, dict):
+        return None
+    value = params.get("pixels_per_100nm")
+    # Reject booleans (bool is a subclass of int) and non-numeric types.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    if not np.isfinite(value) or value <= 0:
+        return None
+    return float(value)
+
+
+# ---------------------------------------------------------------------------
+# R9 — Filename → sim_id detection
+# ---------------------------------------------------------------------------
+
+
+def detect_sim_id_from_filename(zip_filename: str) -> uuid.UUID | None:
+    """Match pattern ``{uuid}_`` at the start of a filename (per R9).
+
+    Accepts any filename that starts with a full RFC 4122 UUID followed
+    by ``_``. Returns the parsed :class:`uuid.UUID`, or ``None`` when
+    the filename is empty or does not match.
+    """
+    if not zip_filename:
+        return None
+    m = _SIM_ID_FILENAME_RE.match(zip_filename)
+    if not m:
+        return None
+    try:
+        return uuid.UUID(m.group("uuid"))
+    except ValueError:
+        return None
+
+
+def build_comparison_data(
+    sim_id: uuid.UUID | None,
+    batch_mean_df: float | None,
+    batch_std_df: float | None,
+) -> dict | None:
+    """Build the comparison card payload (R9 + R11).
+
+    - ``sim_id is None`` → returns ``None`` (no comparison card rendered).
+    - Simulation not found → returns the card with ``sim_name`` / target
+      / box-counting values set to ``None``.
+    - Simulation found → fills ``sim_target_df`` from ``sim.parameters``
+      and ``sim_box_counting_df`` from ``sim.metrics``.
+
+    The Sorensen educational note (R11) is always included when a card
+    is returned.
+    """
+    if sim_id is None:
+        return None
+
+    # Imported lazily to keep this module Django-free when possible and to
+    # avoid circular imports from apps.simulations.
+    from apps.simulations.models import Simulation
+
+    try:
+        sim = Simulation.objects.get(id=sim_id)
+    except Simulation.DoesNotExist:
+        return {
+            "sim_id": str(sim_id),
+            "sim_name": None,
+            "sim_target_df": None,
+            "sim_box_counting_df": None,
+            "batch_mean_df": batch_mean_df,
+            "batch_std_df": batch_std_df,
+            "sorensen_note": SORENSEN_NOTE,
+        }
+
+    parameters = sim.parameters or {}
+    metrics = sim.metrics or {}
+    return {
+        "sim_id": str(sim_id),
+        "sim_name": sim.name or None,
+        "sim_target_df": parameters.get("target_df"),
+        "sim_box_counting_df": metrics.get("fractal_dimension"),
+        "batch_mean_df": batch_mean_df,
+        "batch_std_df": batch_std_df,
+        "sorensen_note": SORENSEN_NOTE,
+    }
+
+
+# ---------------------------------------------------------------------------
+# R7 — Batch statistics
+# ---------------------------------------------------------------------------
+
+
+def compute_batch_statistics(results: list[dict]) -> dict:
+    """Compute descriptive stats over per-image ``fractal_dimension`` values.
+
+    Tolerates ``None`` entries (failed images). Returned dict shape:
+
+        {
+          "n_images": int,
+          "n_successful": int,
+          "mean_df": float | None,
+          "std_df": float | None,
+          "median_df": float | None,
+          "q1_df": float | None,
+          "q3_df": float | None,
+          "min_df": float | None,
+          "max_df": float | None,
+        }
+
+    All statistics are ``None`` when no image succeeded. For ``n=1``, the
+    population standard deviation is ``0.0`` (not ``NaN``).
+    """
+    df_values = [
+        r.get("fractal_dimension")
+        for r in results
+        if r.get("fractal_dimension") is not None
+    ]
+    n_successful = len(df_values)
+
+    base: dict = {
+        "n_images": len(results),
+        "n_successful": n_successful,
+        "mean_df": None,
+        "std_df": None,
+        "median_df": None,
+        "q1_df": None,
+        "q3_df": None,
+        "min_df": None,
+        "max_df": None,
+    }
+
+    if n_successful == 0:
+        return base
+
+    arr = np.array(df_values, dtype=np.float64)
+    base["mean_df"] = float(np.mean(arr))
+    base["std_df"] = float(np.std(arr, ddof=0))  # population; 0.0 at N=1
+    base["median_df"] = float(np.median(arr))
+    base["q1_df"] = float(np.percentile(arr, 25))
+    base["q3_df"] = float(np.percentile(arr, 75))
+    base["min_df"] = float(np.min(arr))
+    base["max_df"] = float(np.max(arr))
+    return base
+
+
+# ---------------------------------------------------------------------------
+# R8 — Histogram (FD ≥ 10 / Sturges 5-9 / omit < 5)
+# ---------------------------------------------------------------------------
+
+
+def compute_histogram(df_values: list[float | None]) -> dict | None:
+    """Build histogram data per R8.
+
+    - ``n < 5`` → ``None`` (not enough data to render a meaningful histogram).
+    - ``5 ≤ n < 10`` → Sturges' rule, ``rule_used='sturges'``.
+    - ``n ≥ 10`` → Freedman–Diaconis rule, ``rule_used='freedman_diaconis'``.
+      Falls back to ``sqrt`` when IQR is zero (all values identical).
+
+    ``None`` and non-finite values are filtered out before counting.
+
+    Returns:
+        ``{"bin_edges": list[float], "counts": list[int], "rule_used": str}``
+        or ``None`` when there are fewer than 5 finite values.
+    """
+    vals = [v for v in df_values if v is not None and np.isfinite(v)]
+    n = len(vals)
+
+    if n < 5:
+        return None
+
+    arr = np.array(vals, dtype=np.float64)
+
+    if n < 10:
+        # Sturges: k = ceil(log2(n) + 1)
+        n_bins = max(1, int(np.ceil(np.log2(n) + 1)))
+        rule_used = "sturges"
+    else:
+        # Freedman–Diaconis: bin_width = 2 * IQR / n^(1/3)
+        iqr = float(np.percentile(arr, 75) - np.percentile(arr, 25))
+        if iqr <= 0:
+            # Degenerate (all values identical) → sqrt-rule fallback.
+            n_bins = max(1, int(np.ceil(np.sqrt(n))))
+            rule_used = "sqrt"
+        else:
+            bin_width = 2 * iqr / (n ** (1 / 3))
+            data_range = float(arr.max() - arr.min())
+            if data_range > 0:
+                n_bins = max(1, int(np.ceil(data_range / bin_width)))
+            else:
+                n_bins = 1
+            rule_used = "freedman_diaconis"
+
+    counts, bin_edges = np.histogram(arr, bins=n_bins)
+    return {
+        "bin_edges": bin_edges.tolist(),
+        "counts": counts.tolist(),
+        "rule_used": rule_used,
+    }
