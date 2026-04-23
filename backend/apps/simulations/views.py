@@ -136,7 +136,11 @@ def _write_localized_row(writer: Any, row: list[Any], decimal: str) -> None:
 # --- Shared projection rendering --------------------------------------------
 
 
-def _render_projection_bytes(projection_result: Any, img_format: str = "png"):
+def _render_projection_bytes(
+    projection_result: Any,
+    img_format: str = "png",
+    img_size: int | None = None,
+):
     """Render a single ``PyProjectionResult`` into PNG bytes or SVG string.
 
     Shared by legacy (``projection_batch``), new sync mode, and the Celery
@@ -152,6 +156,10 @@ def _render_projection_bytes(projection_result: Any, img_format: str = "png"):
     Returns ``bytes`` for PNG, ``str`` for SVG (both accepted by
     ``zipfile.ZipFile.writestr``). Grid / Fibonacci modes always call with
     ``img_format="png"`` — only legacy preserves SVG backcompat.
+
+    ``img_size`` (PNG only) forces an exact pixel dimension for the output.
+    SVG is vector and ignores it. Legacy callers pass ``None`` to preserve
+    the pre-change dpi=150 behavior byte-for-byte (R3).
     """
     bounds = (
         projection_result.bounds[0],
@@ -171,36 +179,7 @@ def _render_projection_bytes(projection_result: Any, img_format: str = "png"):
         projection_result.y,
         projection_result.radii,
         bounds,
-    )
-    if img_format == "svg":
-        return (
-            render_projection_svg(
-                projection_result.x,
-                projection_result.y,
-                projection_result.radii,
-                bounds,
-            ).encode("utf-8")
-            if isinstance(
-                render_projection_svg(
-                    projection_result.x,
-                    projection_result.y,
-                    projection_result.radii,
-                    bounds,
-                ),
-                str,
-            )
-            else render_projection_svg(
-                projection_result.x,
-                projection_result.y,
-                projection_result.radii,
-                bounds,
-            )
-        )
-    return render_projection_png(
-        projection_result.x,
-        projection_result.y,
-        projection_result.radii,
-        bounds,
+        img_size=img_size,
     )
 
 
@@ -729,6 +708,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
         that omit ``mode`` (or pass ``mode=legacy``) get identical ZIPs to
         what they got before this change landed. Do NOT modify filenames,
         add metadata.json, or change order here — see R3.
+
+        Note on error envelope: the existing 400s below use ``{"error": ...}``
+        (not ``{"detail": ...}``). The broad-exception catch at the bottom
+        MUST preserve that envelope shape for R3 byte-for-byte backcompat —
+        downstream 500s are converted into 400s using the same ``"error"``
+        key, not DRF's default ``"detail"``.
         """
         # Parse and validate parameters (Issue #8, #9, #10 fixes)
         try:
@@ -777,39 +762,53 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Load geometry
-        coords, radii = self._load_geometry(simulation)
+        # Post-validation work (geometry load + Rust project_batch + ZIP
+        # assembly) wrapped so any downstream failure surfaces as 400 with
+        # the legacy ``{"error": ...}`` envelope (R3 byte-for-byte
+        # backcompat). Without this, an unexpected exception would leak as
+        # a 500 with no context in the response body.
+        try:
+            # Load geometry
+            coords, radii = self._load_geometry(simulation)
 
-        # Generate batch projections using Rust
-        import aglogen_core
+            # Generate batch projections using Rust
+            import aglogen_core
 
-        projections = aglogen_core.project_batch(
-            coords,
-            radii,
-            azimuth_start=az_start,
-            azimuth_end=az_end,
-            azimuth_step=az_step,
-            elevation_start=el_start,
-            elevation_end=el_end,
-            elevation_step=el_step,
-        )
+            projections = aglogen_core.project_batch(
+                coords,
+                radii,
+                azimuth_start=az_start,
+                azimuth_end=az_end,
+                azimuth_step=az_step,
+                elevation_start=el_start,
+                elevation_end=el_end,
+                elevation_step=el_step,
+            )
 
-        # Create ZIP file with all projections
-        zip_buffer = io.BytesIO()
-        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            for proj in projections:
-                image_data = _render_projection_bytes(proj, img_format)
-                filename = create_projection_filename(
-                    str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
-                )
-                zf.writestr(filename, image_data)
+            # Create ZIP file with all projections
+            zip_buffer = io.BytesIO()
+            with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+                for proj in projections:
+                    image_data = _render_projection_bytes(proj, img_format)
+                    filename = create_projection_filename(
+                        str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
+                    )
+                    zf.writestr(filename, image_data)
 
-        zip_buffer.seek(0)
-        response = HttpResponse(zip_buffer.read(), content_type="application/zip")
-        response["Content-Disposition"] = (
-            f'attachment; filename="{simulation.id}_projections.zip"'
-        )
-        return response
+            zip_buffer.seek(0)
+            response = HttpResponse(zip_buffer.read(), content_type="application/zip")
+            response["Content-Disposition"] = (
+                f'attachment; filename="{simulation.id}_projections.zip"'
+            )
+            return response
+        except Exception as exc:
+            logger.exception(
+                "Legacy projection export failed for simulation %s", simulation.id
+            )
+            return Response(
+                {"error": f"Legacy projection export failed: {exc!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     # ------------------------------------------------------------------
     # Grid / Fibonacci export path (new modes — R1, R2, R5, R6)
@@ -894,30 +893,46 @@ class SimulationViewSet(viewsets.ModelViewSet):
             parameters = {"n": n, "img_size": img_size}
 
         # --- Sync/async dispatch (R6): inclusive 200 on sync side ---
-        if len(directions) <= 200:
-            zip_bytes = self._render_and_zip_sync(
-                simulation, directions, mode, n_requested, parameters
-            )
-            response = HttpResponse(zip_bytes, content_type="application/zip")
-            response["Content-Disposition"] = (
-                f'attachment; filename="{simulation.id}_projections.zip"'
-            )
-            return response
+        # Wrap the render/queue path (post-validation) in a broad handler so
+        # any downstream failure (Rust project_directions, matplotlib, ZIP
+        # assembly, Celery broker) surfaces as a 400 with the exception
+        # message instead of a 500 that loses context. Validation-stage
+        # errors above stay as specific 400s.
+        try:
+            if len(directions) <= 200:
+                zip_bytes = self._render_and_zip_sync(
+                    simulation, directions, mode, n_requested, parameters
+                )
+                response = HttpResponse(zip_bytes, content_type="application/zip")
+                response["Content-Disposition"] = (
+                    f'attachment; filename="{simulation.id}_projections.zip"'
+                )
+                return response
 
-        # Async path — enqueue Celery task
-        from .tasks import build_projections_zip_task
+            # Async path — enqueue Celery task
+            from .tasks import build_projections_zip_task
 
-        task = build_projections_zip_task.delay(
-            str(simulation.id),
-            mode,
-            n_requested,
-            list(directions),
-            parameters,
-        )
-        return Response(
-            {"job_id": task.id, "status": "queued"},
-            status=status.HTTP_202_ACCEPTED,
-        )
+            task = build_projections_zip_task.delay(
+                str(simulation.id),
+                mode,
+                n_requested,
+                list(directions),
+                parameters,
+            )
+            return Response(
+                {"job_id": task.id, "status": "queued"},
+                status=status.HTTP_202_ACCEPTED,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Projection export failed for simulation %s (mode=%s)",
+                simulation.id,
+                mode,
+            )
+            return Response(
+                {"detail": f"Projection export failed: {exc!s}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
     def _render_and_zip_sync(
         self,
@@ -933,9 +948,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
         coords, radii = self._load_geometry(simulation)
         projection_results = aglogen_core.project_directions(coords, radii, directions)
 
+        img_size = parameters.get("img_size")
         image_bytes_list: list[bytes] = []
         for proj in projection_results:
-            image_bytes_list.append(_render_projection_bytes(proj, "png"))
+            image_bytes_list.append(
+                _render_projection_bytes(proj, "png", img_size=img_size)
+            )
 
         # directions may be a Rust-owned sequence — normalize to plain tuples
         directions_py = [(float(a), float(e)) for (a, e) in directions]

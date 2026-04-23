@@ -363,3 +363,90 @@ class TestModeValidation:
         """Scenario 8.7."""
         response = self._post({"mode": "fibonacci", "n": 0})
         assert response.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# FIX A: modern-path render errors surface as 400 with a descriptive detail
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestModernPathErrorSurfacing:
+    def test_projection_export_wraps_render_exceptions_as_400(self) -> None:
+        """A failure in ``aglogen_core.project_directions`` must surface as
+        HTTP 400 with a ``detail`` field containing the exception message —
+        not a 500 that loses all context. This closes the gap where a
+        downstream render failure previously leaked as an uninformative
+        server error.
+        """
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        with patch(
+            "aglogen_core.project_directions",
+            side_effect=RuntimeError("boom: projection kernel exploded"),
+        ):
+            response = client.post(
+                _batch_url(project, sim),
+                {"mode": "grid", "n_az": 4, "n_el": 3, "img_size": 128},
+                format="json",
+            )
+
+        assert response.status_code == 400, response.content
+        body = response.json()
+        assert "detail" in body
+        assert "boom: projection kernel exploded" in body["detail"]
+
+
+# ---------------------------------------------------------------------------
+# FIX B: img_size actually controls the output pixel dimensions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestImgSizeDimensions:
+    def test_img_size_produces_correct_pixel_dimensions(self) -> None:
+        """``img_size`` must produce a PNG with those exact pixel dimensions.
+
+        Previously the renderer hardcoded dpi=150 without a figsize so
+        ``img_size=128`` and ``img_size=4096`` emitted identical PNGs.
+        """
+        from PIL import Image
+
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        def _extract_first_png_dims(zip_body: bytes) -> tuple[int, int]:
+            with zipfile.ZipFile(io.BytesIO(zip_body)) as zf:
+                png_names = sorted(n for n in zf.namelist() if n.endswith(".png"))
+                assert png_names, "expected at least one PNG in the ZIP"
+                img = Image.open(io.BytesIO(zf.read(png_names[0])))
+                return img.size  # (width, height)
+
+        # Small size: 128×128
+        response_small = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 2, "n_el": 3, "img_size": 128},
+            format="json",
+        )
+        assert response_small.status_code == 200, response_small.content
+        w_small, h_small = _extract_first_png_dims(response_small.content)
+        assert (w_small, h_small) == (128, 128), (
+            f"expected 128x128 for img_size=128, got {w_small}x{h_small}"
+        )
+
+        # Larger size: 512×512
+        response_large = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 2, "n_el": 3, "img_size": 512},
+            format="json",
+        )
+        assert response_large.status_code == 200, response_large.content
+        w_large, h_large = _extract_first_png_dims(response_large.content)
+        assert (w_large, h_large) == (512, 512), (
+            f"expected 512x512 for img_size=512, got {w_large}x{h_large}"
+        )

@@ -2071,9 +2071,12 @@ def build_projections_zip_task(
         )
 
         total = len(projection_results)
+        img_size = parameters.get("img_size") if parameters else None
         image_bytes_list: list[bytes] = []
         for i, proj in enumerate(projection_results):
-            image_bytes_list.append(_render_projection_bytes(proj, "png"))
+            image_bytes_list.append(
+                _render_projection_bytes(proj, "png", img_size=img_size)
+            )
             # Progress every 10 projections (and always on the last one).
             if (i + 1) % 10 == 0 or (i + 1) == total:
                 self.update_state(

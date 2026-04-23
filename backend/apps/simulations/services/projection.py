@@ -2,11 +2,13 @@
 
 Renders 2D projections of agglomerates as PNG or SVG images using matplotlib.
 """
+
 import io
 from typing import Literal
 
 import matplotlib
-matplotlib.use('Agg')  # Use non-interactive backend
+
+matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
@@ -22,6 +24,7 @@ def render_projection_png(
     facecolor: str = "red",
     edgecolor: str = "darkred",
     background: str = "white",
+    img_size: int | None = None,
 ) -> bytes:
     """Render 2D projection as PNG image.
 
@@ -30,21 +33,52 @@ def render_projection_png(
         y: Y coordinates of particle centers
         radii: Particle radii
         bounds: Bounding box (min_x, max_x, min_y, max_y)
-        dpi: Image resolution
+        dpi: Image resolution (ignored when ``img_size`` is provided)
         figsize: Figure size in inches (width, height). Auto-calculated if None.
+            Ignored when ``img_size`` is provided.
         facecolor: Fill color for particles
         edgecolor: Edge color for particles
         background: Background color
+        img_size: Target output size in pixels (square). When provided,
+            overrides ``dpi`` and ``figsize`` so the PNG is rendered at
+            ``img_size × img_size`` pixels. Implementation: dpi=100,
+            figsize=(img_size/100, img_size/100), and bbox tightening is
+            disabled so final dimensions are predictable. When ``None``,
+            legacy behavior is preserved (default dpi=150, auto figsize,
+            ``bbox_inches='tight'``).
 
     Returns:
         PNG image as bytes
     """
+    if img_size is not None:
+        # Explicit-pixel mode: force dpi=100 and figsize so the output is
+        # exactly img_size × img_size. ``bbox_inches='tight'`` would crop
+        # the figure based on content and make the final dimensions
+        # unpredictable — disable it here.
+        effective_dpi = 100
+        effective_figsize = (img_size / 100.0, img_size / 100.0)
+        fig, _ax = _create_projection_figure(
+            x,
+            y,
+            radii,
+            bounds,
+            effective_figsize,
+            facecolor,
+            edgecolor,
+            background,
+        )
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", dpi=effective_dpi, pad_inches=0)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.read()
+
     fig, ax = _create_projection_figure(
         x, y, radii, bounds, figsize, facecolor, edgecolor, background
     )
 
     buf = io.BytesIO()
-    fig.savefig(buf, format='png', dpi=dpi, bbox_inches='tight', pad_inches=0.1)
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -80,7 +114,7 @@ def render_projection_svg(
     )
 
     buf = io.StringIO()
-    fig.savefig(buf, format='svg', bbox_inches='tight', pad_inches=0.1)
+    fig.savefig(buf, format="svg", bbox_inches="tight", pad_inches=0.1)
     plt.close(fig)
     buf.seek(0)
     return buf.read()
@@ -121,9 +155,15 @@ def _create_projection_figure(
         # Auto-calculate figure size maintaining aspect ratio
         base_size = 8.0  # inches
         if width >= height:
-            figsize = (base_size, base_size * height / width if width > 0 else base_size)
+            figsize = (
+                base_size,
+                base_size * height / width if width > 0 else base_size,
+            )
         else:
-            figsize = (base_size * width / height if height > 0 else base_size, base_size)
+            figsize = (
+                base_size * width / height if height > 0 else base_size,
+                base_size,
+            )
 
     fig, ax = plt.subplots(figsize=figsize)
     fig.patch.set_facecolor(background)
@@ -148,8 +188,8 @@ def _create_projection_figure(
     ax.set_ylim(min_y - padding, max_y + padding)
 
     # Equal aspect ratio and clean appearance
-    ax.set_aspect('equal')
-    ax.axis('off')
+    ax.set_aspect("equal")
+    ax.axis("off")
 
     return fig, ax
 
