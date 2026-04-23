@@ -12,6 +12,9 @@ use aglogen_engine::fractal::box_counting::box_counting_internal;
 use aglogen_engine::fractal::box_counting_3d::{
     box_counting_3d_morton, generate_sphere_points, BoxCountingResult3D,
 };
+use aglogen_engine::fractal::fraktal::batch::{
+    analyze_batch as engine_analyze_batch, AutocalibrateSource, BatchAlgorithm, BatchInput,
+};
 use aglogen_engine::fractal::fraktal::result::{FraktalResult, FraktalStatus};
 use aglogen_engine::fractal::fraktal::{
     analyze_granulated_2012, analyze_voxel_2018, Granulated2012Params, Voxel2018Params,
@@ -1368,6 +1371,93 @@ fn structure_factor(
     Ok((q_values, s_values))
 }
 
+// ============================================================================
+// FRAKTAL batch analysis binding
+// ============================================================================
+
+/// Run FRAKTAL analysis on a batch of pre-decoded grayscale images.
+///
+/// `images` is a list of 2-D uint8 numpy arrays (H×W, grayscale — the
+/// caller is responsible for decoding PNG/TIFF bytes with Pillow before
+/// calling this). `pixels_per_100nm` is the scale shared by every image.
+///
+/// When `autocalibrate_dpo` is True, the one-shot policy from R3 applies:
+/// dpo is estimated on `image[0]`; on failure it is retried on
+/// `image[N/2]`; on a second failure this function raises `ValueError`.
+/// When False, `dpo_hint` is used as the dpo for every image.
+///
+/// Returns a dict with keys:
+///   - `results`: list of per-image dicts `{index, fractal_dimension,
+///     prefactor, r_squared, n_particles_counted, dpo_used, error}`
+///   - `dpo_used`: float — the dpo value actually used
+///   - `autocalibrate_source`: one of `"manual" | "image0" |
+///     "image_n_half"`
+///   - `autocalibrate_image_index`: int | None — which image provided
+///     the dpo (None when `autocalibrate_source == "manual"`)
+#[pyfunction]
+#[pyo3(signature = (images, pixels_per_100nm, autocalibrate_dpo, dpo_hint, algorithm))]
+fn analyze_fraktal_batch<'py>(
+    py: Python<'py>,
+    images: Vec<PyReadonlyArray2<'py, u8>>,
+    pixels_per_100nm: f64,
+    autocalibrate_dpo: bool,
+    dpo_hint: f64,
+    algorithm: &str,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let algo = match algorithm.to_lowercase().as_str() {
+        "granulated_2012" | "granulated" => BatchAlgorithm::Granulated2012,
+        "voxel_2018" | "voxel" => BatchAlgorithm::Voxel2018,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown algorithm: {}. Use 'granulated_2012' or 'voxel_2018'.",
+                other
+            )))
+        }
+    };
+
+    // Copy each numpy array into an owned Array2<u8> so the engine can
+    // operate without borrowing from Python (required to drop the GIL).
+    let engine_images: Vec<Array2<u8>> = images.iter().map(numpy_to_engine_array2_u8).collect();
+
+    let input = BatchInput {
+        images: engine_images,
+        pixels_per_100nm,
+        autocalibrate_dpo,
+        dpo_hint,
+        algorithm: algo,
+    };
+
+    let output = py
+        .allow_threads(|| engine_analyze_batch(input))
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let n = output.results.len();
+    let dict = pyo3::types::PyDict::new(py);
+
+    let results_list = pyo3::types::PyList::empty(py);
+    for r in output.results.iter() {
+        let item = pyo3::types::PyDict::new(py);
+        item.set_item("index", r.index)?;
+        item.set_item("fractal_dimension", r.fractal_dimension)?;
+        item.set_item("prefactor", r.prefactor)?;
+        item.set_item("r_squared", r.r_squared)?;
+        item.set_item("n_particles_counted", r.n_particles_counted)?;
+        item.set_item("dpo_used", r.dpo_used)?;
+        item.set_item("error", r.error.clone())?;
+        results_list.append(item)?;
+    }
+    dict.set_item("results", results_list)?;
+    dict.set_item("dpo_used", output.dpo_used)?;
+    dict.set_item("autocalibrate_source", output.autocalibrate_source.as_str())?;
+    let image_idx: Option<usize> = match output.autocalibrate_source {
+        AutocalibrateSource::Manual => None,
+        _ => output.autocalibrate_source.image_index(n),
+    };
+    dict.set_item("autocalibrate_image_index", image_idx)?;
+
+    Ok(dict)
+}
+
 #[pyfunction]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -1397,6 +1487,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(box_counting_agglomerate, m)?)?;
     m.add_function(wrap_pyfunction!(fraktal_granulated_2012, m)?)?;
     m.add_function(wrap_pyfunction!(fraktal_voxel_2018, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_fraktal_batch, m)?)?;
 
     // Projection functions
     m.add_function(wrap_pyfunction!(project_to_2d, m)?)?;
