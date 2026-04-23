@@ -5,10 +5,17 @@ Covers spec R4 (filenames) and R5 (metadata.json shape + ZIP contents).
 
 import io
 import json
+import uuid
 import zipfile
 
+import numpy as np
 import pytest
+from django.urls import reverse
+from rest_framework.test import APIClient
 
+from apps.accounts.models import User
+from apps.projects.models import Project
+from apps.simulations.models import Simulation, SimulationStatus
 from apps.simulations.services.projections import (
     build_metadata_json,
     build_projection_filename,
@@ -173,3 +180,268 @@ class TestBuildProjectionZip:
             meta = json.loads(zf.read("metadata.json").decode("utf-8"))
             meta_filenames = {d["filename"] for d in meta["directions"]}
             assert png_names == meta_filenames
+
+
+# ---------------------------------------------------------------------------
+# Fixture helpers for integration tests (pixels_per_100nm in real metadata)
+# ---------------------------------------------------------------------------
+
+
+def _make_user() -> User:
+    return User.objects.create_user(
+        email=f"scale-{uuid.uuid4()}@example.com",
+        password="irrelevant",
+    )
+
+
+def _make_project(owner: User) -> Project:
+    return Project.objects.create(name="Scale Metadata Test", owner=owner)
+
+
+def _authed_client(user: User) -> APIClient:
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _make_completed_simulation(
+    project: Project,
+    *,
+    parameters: dict | None = None,
+) -> Simulation:
+    """Seed a Simulation with 8 radius-1 spheres on a cube spanning 0..2."""
+    coords = np.array(
+        [
+            [0.0, 0.0, 0.0],
+            [2.0, 0.0, 0.0],
+            [0.0, 2.0, 0.0],
+            [2.0, 2.0, 0.0],
+            [0.0, 0.0, 2.0],
+            [2.0, 0.0, 2.0],
+            [0.0, 2.0, 2.0],
+            [2.0, 2.0, 2.0],
+        ],
+        dtype=np.float64,
+    )
+    radii = np.ones((coords.shape[0], 1), dtype=np.float64)
+    geometry = np.hstack([coords, radii])
+    buf = io.BytesIO()
+    np.save(buf, geometry)
+    return Simulation.objects.create(
+        project=project,
+        algorithm="cca",
+        parameters=parameters if parameters is not None else {"n_particles": 8},
+        seed=42,
+        status=SimulationStatus.COMPLETED,
+        geometry=buf.getvalue(),
+        metrics={"radius_of_gyration": 1.0},
+    )
+
+
+def _batch_url(project: Project, sim: Simulation) -> str:
+    return reverse(
+        "project-simulations-projection-batch",
+        kwargs={"project_pk": project.id, "pk": sim.id},
+    )
+
+
+# ---------------------------------------------------------------------------
+# Scale metadata (pixels_per_100nm) — FRAKTAL automation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestPixelsPer100nmMetadata:
+    """Root-level ``pixels_per_100nm`` in metadata.json for grid/fibonacci.
+
+    Formula (see views._stamp_scale_metadata):
+      max_extent_engine = max(bbox side) + 2*max(radii)
+      span_engine       = max_extent_engine * 1.04     # 2% padding per side
+      span_nm           = span_engine * scale_factor_nm
+      pixels_per_100nm  = 100 * img_size / span_nm
+
+    Fixture: cube span 0..2 on each axis, radius=1 per sphere →
+      max_extent_engine = 2 + 2*1 = 4
+      span_engine       = 4 * 1.04 = 4.16
+    With default diameter=50nm (legacy fallback, scale_factor_nm=25.0):
+      span_nm           = 4.16 * 25 = 104
+      pixels_per_100nm  ≈ 100 * 512 / 104 ≈ 492.31
+    """
+
+    EXPECTED_DEFAULT_SCALE = 100.0 * 512.0 / (4.16 * 25.0)  # ~492.31
+
+    def test_metadata_includes_pixels_per_100nm_for_grid(self) -> None:
+        """Grid mode exports must include pixels_per_100nm in metadata."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        response = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 5, "n_el": 3, "img_size": 512},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+
+        params = meta["parameters"]
+        assert "pixels_per_100nm" in params
+        assert "scale_factor_nm" in params
+        assert params["scale_factor_nm"] == pytest.approx(25.0, rel=1e-6)
+        assert params["pixels_per_100nm"] == pytest.approx(
+            self.EXPECTED_DEFAULT_SCALE, rel=0.05
+        )
+
+    def test_metadata_includes_pixels_per_100nm_for_fibonacci(self) -> None:
+        """Fibonacci mode exports must include pixels_per_100nm in metadata."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        response = client.post(
+            _batch_url(project, sim),
+            {"mode": "fibonacci", "n": 10, "img_size": 512},
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+
+        assert meta["parameters"]["pixels_per_100nm"] == pytest.approx(
+            self.EXPECTED_DEFAULT_SCALE, rel=0.05
+        )
+
+    def test_pixels_per_100nm_constant_across_modes(self) -> None:
+        """Value is root-level: same aggregate + same img_size → same scale.
+
+        The scale is a property of the aggregate's 3D bounding box, not
+        the direction, so grid and fibonacci exports of the same sim at
+        the same img_size yield the same value.
+        """
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        resp_grid = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 4, "n_el": 3, "img_size": 512},
+            format="json",
+        )
+        resp_fib = client.post(
+            _batch_url(project, sim),
+            {"mode": "fibonacci", "n": 20, "img_size": 512},
+            format="json",
+        )
+        assert resp_grid.status_code == 200
+        assert resp_fib.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(resp_grid.content)) as zf:
+            meta_grid = json.loads(zf.read("metadata.json").decode("utf-8"))
+        with zipfile.ZipFile(io.BytesIO(resp_fib.content)) as zf:
+            meta_fib = json.loads(zf.read("metadata.json").decode("utf-8"))
+
+        assert meta_grid["parameters"]["pixels_per_100nm"] == pytest.approx(
+            meta_fib["parameters"]["pixels_per_100nm"], rel=1e-9
+        )
+
+    def test_pixels_per_100nm_honors_primary_particle_diameter(self) -> None:
+        """Explicit v2 diameter flows through ``get_scale_factor_nm``.
+
+        Doubling the diameter halves pixels_per_100nm (same pixels cover
+        2× the physical span).
+        """
+        user = _make_user()
+        project = _make_project(user)
+        # v2 schema with explicit diameter = 100 nm → scale_factor_nm = 50
+        sim = _make_completed_simulation(
+            project,
+            parameters={
+                "n_particles": 8,
+                "primary_particle_diameter_nm": 100.0,
+                "parameters_schema_version": "v2",
+            },
+        )
+        client = _authed_client(user)
+
+        response = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 3, "n_el": 2, "img_size": 512},
+            format="json",
+        )
+        assert response.status_code == 200, response.content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+
+        # span_nm = 4.16 * 50 = 208 → pixels_per_100nm ≈ 246.15
+        expected = 100.0 * 512.0 / (4.16 * 50.0)
+        assert meta["parameters"]["scale_factor_nm"] == pytest.approx(50.0, rel=1e-6)
+        assert meta["parameters"]["pixels_per_100nm"] == pytest.approx(
+            expected, rel=0.05
+        )
+
+    def test_pixels_per_100nm_scales_with_img_size(self) -> None:
+        """Doubling img_size doubles pixels_per_100nm (same physical span)."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        resp_512 = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 3, "n_el": 2, "img_size": 512},
+            format="json",
+        )
+        resp_1024 = client.post(
+            _batch_url(project, sim),
+            {"mode": "grid", "n_az": 3, "n_el": 2, "img_size": 1024},
+            format="json",
+        )
+        assert resp_512.status_code == 200
+        assert resp_1024.status_code == 200
+
+        with zipfile.ZipFile(io.BytesIO(resp_512.content)) as zf:
+            v_512 = json.loads(zf.read("metadata.json"))["parameters"][
+                "pixels_per_100nm"
+            ]
+        with zipfile.ZipFile(io.BytesIO(resp_1024.content)) as zf:
+            v_1024 = json.loads(zf.read("metadata.json"))["parameters"][
+                "pixels_per_100nm"
+            ]
+
+        assert v_1024 == pytest.approx(v_512 * 2.0, rel=1e-6)
+
+    def test_legacy_mode_does_not_add_pixels_per_100nm(self) -> None:
+        """R3 byte-for-byte backcompat: legacy path is untouched.
+
+        The legacy sweep writes its own ZIP without a metadata.json, so
+        there is no place for ``pixels_per_100nm`` to leak into. This
+        test asserts the legacy path still produces a ZIP with only
+        per-projection PNGs (no metadata.json).
+        """
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_completed_simulation(project)
+        client = _authed_client(user)
+
+        response = client.post(
+            _batch_url(project, sim),
+            {
+                "azimuth_start": 0.0,
+                "azimuth_end": 60.0,
+                "azimuth_step": 30.0,
+                "elevation_start": 0.0,
+                "elevation_end": 30.0,
+                "elevation_step": 30.0,
+            },
+            format="json",
+        )
+
+        assert response.status_code == 200, response.content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            assert "metadata.json" not in zf.namelist()

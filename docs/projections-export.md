@@ -67,12 +67,44 @@ ZIP archive containing:
     "mode": "grid" | "fibonacci" | "legacy",
     "n_requested": 32,
     "n_generated": 32,
-    "parameters": { "img_size": 512, "n_az": 10, "n_el": 5 },
+    "parameters": {
+      "img_size": 512,
+      "n_az": 10,
+      "n_el": 5,
+      "pixels_per_100nm": 492.31,
+      "scale_factor_nm": 25.0
+    },
     "directions": [
       {"index": 0, "filename": "proj_000_Az000_El-090.png", "azimuth": 0.0, "elevation": -90.0}
     ]
   }
   ```
+
+### Pixel-to-physical scale
+
+Grid and Fibonacci modes include `pixels_per_100nm` and `scale_factor_nm`
+inside `metadata.json`'s `parameters` block. These let box-counting tools
+(e.g. FRAKTAL) compute fractal dimensions in physical units automatically
+without prompting the user:
+
+```python
+import json, zipfile
+with zipfile.ZipFile("projections.zip") as zf:
+    meta = json.loads(zf.read("metadata.json"))
+
+scale = meta["parameters"]["pixels_per_100nm"]  # e.g. 492.31
+# 100 pixels ≈ 100/scale nm ≈ 0.20 nm/pixel
+```
+
+The value is a single representative scale per export, derived from the
+aggregate's 3D bounding box plus particle radius on each edge and the 2%
+padding the renderer applies. It is constant for a given aggregate
+(independent of viewing direction) and slightly conservative for
+individual 2D views — box sizes mapped into nm with this factor are
+therefore guaranteed not to under-count.
+
+Legacy mode does **not** include `pixels_per_100nm` or a `metadata.json`
+at all (R3 backwards compatibility).
 
 ## Sync vs async
 

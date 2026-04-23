@@ -183,6 +183,60 @@ def _render_projection_bytes(
     )
 
 
+def _stamp_scale_metadata(
+    parameters: dict,
+    simulation: Simulation,
+    coords: np.ndarray,
+    radii: np.ndarray,
+    img_size: int,
+) -> None:
+    """Mutate ``parameters`` in-place to add pixel-to-physical scale fields.
+
+    Adds two keys consumed by downstream box-counting tools (e.g. FRAKTAL):
+
+    - ``pixels_per_100nm`` (float | None): how many pixels correspond to
+      100 nm in the rendered PNGs. ``None`` when the aggregate is empty
+      or the engine→nm conversion is degenerate.
+    - ``scale_factor_nm`` (float): ``primary_particle_diameter_nm / 2``,
+      the engine→nm multiplier used for Rg display across the app.
+
+    Scale is constant per aggregate (NOT per direction) because we use
+    the 3D bounding-box extent + particle-radius margin as the reference
+    span. This over-estimates the span for direction-dependent 2D
+    bounding boxes, so the reported ``pixels_per_100nm`` is a
+    conservative lower bound on the true scale for any given view — safe
+    for box-counting (box sizes mapped into nm will be slightly coarser
+    than reality, never finer). The alternative (per-direction scale) is
+    rejected by spec: the user wants ONE scale at the ZIP root.
+
+    Must be called BEFORE Celery dispatch so the async path honors the
+    stamped value without re-deriving it.
+    """
+    scale_factor_nm = get_scale_factor_nm(simulation.parameters)
+    parameters["scale_factor_nm"] = float(scale_factor_nm)
+
+    pixels_per_100nm: float | None
+    if len(coords) > 0:
+        # Axis-aligned 3D bounding box span + particle-radius margin on
+        # each side. The renderer pads 2D extents by 2% per side, so
+        # multiply by 1.04 to match the displayed canvas span.
+        max_extent_engine = float(
+            max(
+                coords[:, 0].max() - coords[:, 0].min(),
+                coords[:, 1].max() - coords[:, 1].min(),
+                coords[:, 2].max() - coords[:, 2].min(),
+            )
+            + 2.0 * float(np.max(radii))
+        )
+        span_engine = max_extent_engine * 1.04
+        span_nm = span_engine * scale_factor_nm
+        pixels_per_100nm = 100.0 * float(img_size) / span_nm if span_nm > 0 else None
+    else:
+        pixels_per_100nm = None
+
+    parameters["pixels_per_100nm"] = pixels_per_100nm
+
+
 class SimulationViewSet(viewsets.ModelViewSet):
     """ViewSet for Simulation CRUD operations."""
 
@@ -899,9 +953,24 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # message instead of a 500 that loses context. Validation-stage
         # errors above stay as specific 400s.
         try:
+            # Load geometry ONCE here so we can (a) stamp scale metadata
+            # into ``parameters`` before dispatching sync or async, and
+            # (b) hand coords/radii to the sync renderer without a second
+            # load. FRAKTAL and other box-counting tools consume
+            # ``pixels_per_100nm`` from metadata.json to auto-scale box
+            # sizes into physical units.
+            coords, radii = self._load_geometry(simulation)
+            _stamp_scale_metadata(parameters, simulation, coords, radii, img_size)
+
             if len(directions) <= 200:
                 zip_bytes = self._render_and_zip_sync(
-                    simulation, directions, mode, n_requested, parameters
+                    simulation,
+                    directions,
+                    mode,
+                    n_requested,
+                    parameters,
+                    coords=coords,
+                    radii=radii,
                 )
                 response = HttpResponse(zip_bytes, content_type="application/zip")
                 response["Content-Disposition"] = (
@@ -941,11 +1010,20 @@ class SimulationViewSet(viewsets.ModelViewSet):
         mode: str,
         n_requested: int,
         parameters: dict,
+        *,
+        coords: np.ndarray | None = None,
+        radii: np.ndarray | None = None,
     ) -> bytes:
-        """Sync path: project, render PNGs, assemble ZIP in-request."""
+        """Sync path: project, render PNGs, assemble ZIP in-request.
+
+        ``coords`` / ``radii`` may be passed in by the caller to avoid
+        re-loading the simulation geometry (the caller already needs it
+        to stamp scale metadata into ``parameters``).
+        """
         import aglogen_core
 
-        coords, radii = self._load_geometry(simulation)
+        if coords is None or radii is None:
+            coords, radii = self._load_geometry(simulation)
         projection_results = aglogen_core.project_directions(coords, radii, directions)
 
         img_size = parameters.get("img_size")
