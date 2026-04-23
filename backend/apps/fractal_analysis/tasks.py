@@ -1,4 +1,5 @@
 """Fractal Analysis Celery tasks."""
+
 import io
 import logging
 from uuid import UUID
@@ -179,13 +180,15 @@ def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
         ]
 
         best_result = None
-        best_alignment = float('inf')
+        best_alignment = float("inf")
         best_dpo = initial_dpo
         all_attempts = []
         found_good_match = False
 
         for idx, test_dpo in enumerate(dpo_values):
-            logger.info(f"Auto-cal attempt {idx + 1}/{len(dpo_values)}: dpo={test_dpo:.1f}")
+            logger.info(
+                f"Auto-cal attempt {idx + 1}/{len(dpo_values)}: dpo={test_dpo:.1f}"
+            )
             try:
                 if analysis.model == "granulated_2012":
                     result = aglogen_core.fraktal_granulated_2012(
@@ -214,18 +217,22 @@ def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
                 if result.npo_visual > 0 and result.npo > 0:
                     alignment = abs(result.npo - result.npo_visual) / result.npo_visual
                 else:
-                    alignment = float('inf')
+                    alignment = float("inf")
 
                 # npo_aligned if ratio between 0.5 and 2.0
-                npo_ratio = result.npo / result.npo_visual if result.npo_visual > 0 else 0
+                npo_ratio = (
+                    result.npo / result.npo_visual if result.npo_visual > 0 else 0
+                )
                 npo_aligned = 0.5 <= npo_ratio <= 2.0
 
-                all_attempts.append({
-                    "dpo": round(test_dpo, 1),
-                    "npo": result.npo,
-                    "npo_ratio": round(npo_ratio, 2),
-                    "npo_aligned": npo_aligned,
-                })
+                all_attempts.append(
+                    {
+                        "dpo": round(test_dpo, 1),
+                        "npo": result.npo,
+                        "npo_ratio": round(npo_ratio, 2),
+                        "npo_aligned": npo_aligned,
+                    }
+                )
 
                 logger.info(
                     f"Auto-cal dpo={test_dpo:.1f}: npo={result.npo}, "
@@ -239,23 +246,30 @@ def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
 
                     # Early exit if we found a good match (within 20%)
                     if alignment < 0.2:
-                        logger.info(f"Found good match at dpo={test_dpo:.1f}, stopping early")
+                        logger.info(
+                            f"Found good match at dpo={test_dpo:.1f}, stopping early"
+                        )
                         found_good_match = True
                         break
 
             except Exception as e:
                 logger.warning(f"Auto-cal attempt dpo={test_dpo} failed: {e}")
-                all_attempts.append({
-                    "dpo": test_dpo,
-                    "error": str(e),
-                })
+                all_attempts.append(
+                    {
+                        "dpo": test_dpo,
+                        "error": str(e),
+                    }
+                )
 
         # If no successful result, use the best failed one or last attempt
         if best_result is None:
             # Find the attempt closest to npo_visual even if not successful
             for attempt in all_attempts:
                 if "npo" in attempt and attempt.get("npo_visual", 0) > 0:
-                    alignment = abs(attempt["npo"] - attempt["npo_visual"]) / attempt["npo_visual"]
+                    alignment = (
+                        abs(attempt["npo"] - attempt["npo_visual"])
+                        / attempt["npo_visual"]
+                    )
                     if alignment < best_alignment:
                         best_alignment = alignment
                         best_dpo = attempt["dpo"]
@@ -523,3 +537,128 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
             "analysis_id": analysis_id,
             "error": str(e),
         }
+
+
+# ============================================================================
+# FRAKTAL batch async builder (N > 30)
+# ============================================================================
+
+
+@shared_task(bind=True, name="apps.fractal_analysis.tasks.analyze_fraktal_batch")
+def analyze_fraktal_batch_task(
+    self,
+    images_npy_b64: list,
+    image_shapes: list,
+    filenames: list,
+    metadata: dict | None,
+    pixels_per_100nm: float,
+    autocalibrate_dpo: bool,
+    dpo_hint: float,
+    algorithm: str,
+    sim_id: str | None,
+    calibration_source: str,
+) -> dict:
+    """Async batch FRAKTAL analysis when N > 30.
+
+    Progress stages reported via ``self.update_state``:
+
+    - ``autocalibrate`` — before the Rust call (0%).
+    - ``analyzing`` — while the Rust batch orchestrator runs. The call is
+      batch-shaped (one-shot Rust loop) so per-image granularity isn't
+      available here; the stage flips to ``analyzing`` at 0% and stays
+      there until the Rust call returns. Future improvement: loop
+      image-by-image in Python via the single-image bindings for finer
+      progress, at a cost of re-running autocalibration policy in Python.
+    - ``aggregating`` — after Rust returns (80%), while we build stats,
+      histogram, and comparison card.
+
+    The result JSON is persisted to
+    ``{MEDIA_ROOT|BASE_DIR}/fraktal_batches/{task_id}.json`` and the
+    return value points the polling view at
+    :func:`apps.fractal_analysis.views.fraktal_results_view`.
+    """
+    import base64
+    import json
+    import os
+    import uuid as uuid_mod
+
+    # Lazy import — keeps this task importable without Rust extension at
+    # collection time (e.g., during test discovery under stub builds).
+    import aglogen_core
+    import numpy as np
+
+    from apps.fractal_analysis.views import (
+        _build_batch_response,
+        _fraktal_batches_storage_dir,
+    )
+
+    total = len(images_npy_b64)
+
+    self.update_state(
+        state="PROGRESS",
+        meta={
+            "progress": 0.0,
+            "current": 0,
+            "total": total,
+            "stage": "autocalibrate",
+        },
+    )
+
+    images = [
+        np.frombuffer(base64.b64decode(b64), dtype=np.uint8).reshape(shape)
+        for b64, shape in zip(images_npy_b64, image_shapes, strict=True)
+    ]
+
+    self.update_state(
+        state="PROGRESS",
+        meta={
+            "progress": 0.0,
+            "current": 0,
+            "total": total,
+            "stage": "analyzing",
+        },
+    )
+
+    rust_result = aglogen_core.analyze_fraktal_batch(
+        images,
+        pixels_per_100nm,
+        autocalibrate_dpo,
+        dpo_hint,
+        algorithm,
+    )
+
+    self.update_state(
+        state="PROGRESS",
+        meta={
+            "progress": 0.8,
+            "current": total,
+            "total": total,
+            "stage": "aggregating",
+        },
+    )
+
+    sim_uuid = uuid_mod.UUID(sim_id) if sim_id else None
+    payload = _build_batch_response(
+        rust_result,
+        filenames,
+        metadata,
+        sim_uuid,
+        pixels_per_100nm,
+        calibration_source,
+    )
+
+    storage_dir = _fraktal_batches_storage_dir()
+    results_path = os.path.join(storage_dir, f"{self.request.id}.json")
+    with open(results_path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp)
+
+    logger.info(
+        f"FRAKTAL batch task {self.request.id} completed: {total} images, "
+        f"algorithm={algorithm}, calibration={calibration_source}"
+    )
+
+    return {
+        "results_url": f"/api/v1/fraktal-status/{self.request.id}/results/",
+        "results_path": results_path,
+        "n_images": total,
+    }

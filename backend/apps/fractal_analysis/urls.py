@@ -1,8 +1,15 @@
 """Fractal Analysis URLs."""
+
 from django.urls import include, path
 from rest_framework.routers import DefaultRouter
 
-from .views import ComparisonSetViewSet, FraktalAnalysisViewSet, ImageAnalysisViewSet
+from .views import (
+    ComparisonSetViewSet,
+    FraktalAnalysisViewSet,
+    ImageAnalysisViewSet,
+    fraktal_results_view,
+    fraktal_status_view,
+)
 
 # Main router for direct access
 router = DefaultRouter()
@@ -25,7 +32,12 @@ urlpatterns = [
     path(
         "projects/<uuid:project_pk>/analyses/<uuid:pk>/",
         ImageAnalysisViewSet.as_view(
-            {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"}
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
         ),
         name="project-analyses-detail",
     ),
@@ -47,7 +59,12 @@ urlpatterns = [
     path(
         "projects/<uuid:project_pk>/comparisons/<uuid:pk>/",
         ComparisonSetViewSet.as_view(
-            {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"}
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
         ),
         name="project-comparisons-detail",
     ),
@@ -60,7 +77,12 @@ urlpatterns = [
     path(
         "projects/<uuid:project_pk>/fraktal/<uuid:pk>/",
         FraktalAnalysisViewSet.as_view(
-            {"get": "retrieve", "put": "update", "patch": "partial_update", "delete": "destroy"}
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
         ),
         name="project-fraktal-detail",
     ),
@@ -78,5 +100,17 @@ urlpatterns = [
         "projects/<uuid:project_pk>/fraktal/delete-all/",
         FraktalAnalysisViewSet.as_view({"delete": "delete_all"}),
         name="project-fraktal-delete-all",
+    ),
+    # Async FRAKTAL batch job status + results download (mirrors
+    # projections-status pattern).
+    path(
+        "fraktal-status/<str:job_id>/",
+        fraktal_status_view,
+        name="fraktal-status",
+    ),
+    path(
+        "fraktal-status/<str:job_id>/results/",
+        fraktal_results_view,
+        name="fraktal-results",
     ),
 ]
