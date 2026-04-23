@@ -651,6 +651,176 @@ export const comparisonApi = {
 }
 
 // FRAKTAL Analysis API
+// -----------------------------------------------------------------------------
+// FRAKTAL batch analysis — types + polling helper
+// (mirrors the ``simulationsApi.exportProjections`` 200/202 + polling pattern)
+// -----------------------------------------------------------------------------
+
+export type FraktalBatchAlgorithm = 'granulated_2012' | 'voxel_2018'
+
+export interface FraktalBatchRequest {
+  file: File
+  pixels_per_100nm?: number
+  autocalibrate_dpo?: boolean
+  dpo_hint?: number
+  algorithm?: FraktalBatchAlgorithm
+  sim_id?: string
+}
+
+export interface FraktalBatchImageResult {
+  index: number
+  filename: string | null
+  azimuth: number | null
+  elevation: number | null
+  fractal_dimension: number | null
+  prefactor: number | null
+  r_squared: number | null
+  n_particles_counted: number | null
+  error: string | null
+}
+
+export interface FraktalBatchStats {
+  n_images: number
+  n_successful: number
+  mean_df: number | null
+  std_df: number | null
+  median_df: number | null
+  q1_df: number | null
+  q3_df: number | null
+  min_df: number | null
+  max_df: number | null
+}
+
+export interface FraktalBatchHistogram {
+  bin_edges: number[]
+  counts: number[]
+  rule_used: 'freedman_diaconis' | 'sturges' | 'sqrt'
+}
+
+export interface FraktalBatchComparison {
+  sim_id: string | null
+  sim_name: string | null
+  sim_target_df: number | null
+  sim_box_counting_df: number | null
+  batch_mean_df: number | null
+  batch_std_df: number | null
+  sorensen_note: string
+}
+
+export interface FraktalBatchCalibration {
+  source: 'manual' | 'metadata' | 'autocalibrate'
+  pixels_per_100nm: number
+  dpo_used: number
+  autocalibrate_image: number | null
+}
+
+export interface FraktalBatchResult {
+  images: FraktalBatchImageResult[]
+  stats: FraktalBatchStats
+  histogram: FraktalBatchHistogram | null
+  comparison: FraktalBatchComparison | null
+  calibration: FraktalBatchCalibration
+}
+
+export interface FraktalBatchProgress {
+  progress: number // 0..1
+  current: number
+  total: number
+  stage: 'autocalibrate' | 'analyzing' | 'aggregating'
+}
+
+export interface FraktalBatchOptions {
+  onProgress?: (progress: FraktalBatchProgress) => void
+  /** Poll interval for the async path, in ms. Default: 1000 (1 Hz). */
+  pollIntervalMs?: number
+  /** Total wait budget before giving up, in ms. Default: 30 * 60 * 1000. */
+  maxWaitMs?: number
+}
+
+interface FraktalBatchStatusProcessing {
+  status: 'processing'
+  progress?: number
+  current?: number
+  total?: number
+  stage?: FraktalBatchProgress['stage']
+}
+
+interface FraktalBatchStatusDone {
+  status: 'done'
+  results_url?: string
+}
+
+interface FraktalBatchStatusFailed {
+  status: 'failed'
+  error?: string
+}
+
+type FraktalBatchStatusResponse =
+  | FraktalBatchStatusProcessing
+  | FraktalBatchStatusDone
+  | FraktalBatchStatusFailed
+
+async function pollFraktalBatchUntilDone(
+  jobId: string,
+  onProgress?: (progress: FraktalBatchProgress) => void,
+  pollIntervalMs = 1000,
+  maxWaitMs = 30 * 60 * 1000
+): Promise<FraktalBatchResult> {
+  const startedAt = Date.now()
+  const statusUrl = `${API_BASE}/fraktal-status/${jobId}/`
+  const resultsUrl = `${API_BASE}/fraktal-status/${jobId}/results/`
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const statusRes = await authFetch(statusUrl)
+    if (!statusRes.ok) {
+      throw new ApiError(
+        `Fraktal batch status check failed (HTTP ${statusRes.status})`,
+        statusRes.status
+      )
+    }
+
+    const body = (await statusRes.json().catch(() => ({}))) as
+      | FraktalBatchStatusResponse
+      | Record<string, never>
+
+    if (body && 'status' in body && body.status === 'done') {
+      const dl = await authFetch(resultsUrl)
+      if (!dl.ok) {
+        throw new ApiError(
+          `Fraktal batch results download failed (HTTP ${dl.status})`,
+          dl.status
+        )
+      }
+      return (await dl.json()) as FraktalBatchResult
+    }
+
+    if (body && 'status' in body && body.status === 'failed') {
+      throw new ApiError(body.error || 'Fraktal batch analysis failed', 500)
+    }
+
+    if (
+      body &&
+      'status' in body &&
+      body.status === 'processing' &&
+      onProgress
+    ) {
+      onProgress({
+        progress: typeof body.progress === 'number' ? body.progress : 0,
+        current: typeof body.current === 'number' ? body.current : 0,
+        total: typeof body.total === 'number' ? body.total : 0,
+        stage: body.stage ?? 'analyzing',
+      })
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  throw new ApiError(
+    'Fraktal batch analysis timed out (> 30 minutes without completion)',
+    408
+  )
+}
+
 export const fraktalApi = {
   /**
    * List all FRAKTAL analyses for a project.
@@ -711,6 +881,85 @@ export const fraktalApi = {
       throw new ApiError('Failed to download original image', res.status)
     }
     return res.blob()
+  },
+
+  /**
+   * Run FRAKTAL batch analysis on a ZIP of projection images.
+   *
+   * Sync path (N ≤ 30): backend responds ``200`` with the full result payload
+   * inline and this resolves with the parsed ``FraktalBatchResult`` directly.
+   *
+   * Async path (N > 30): backend responds ``202`` + JSON ``{job_id}``;
+   * poll ``/fraktal-status/{job_id}/`` every second until the job is
+   * ``done`` (then fetch ``/fraktal-status/{job_id}/results/``) or
+   * ``failed`` (then reject).
+   *
+   * ``onProgress`` is invoked on every poll tick while the job is still
+   * running so the UI can drive a progress bar. It is never called on the
+   * sync path.
+   */
+  analyzeBatch: async (
+    request: FraktalBatchRequest,
+    options?: FraktalBatchOptions
+  ): Promise<FraktalBatchResult> => {
+    const formData = new FormData()
+    formData.append('file', request.file)
+    if (request.pixels_per_100nm !== undefined) {
+      formData.append('pixels_per_100nm', String(request.pixels_per_100nm))
+    }
+    if (request.autocalibrate_dpo !== undefined) {
+      formData.append('autocalibrate_dpo', String(request.autocalibrate_dpo))
+    }
+    if (request.dpo_hint !== undefined) {
+      formData.append('dpo_hint', String(request.dpo_hint))
+    }
+    if (request.algorithm) {
+      formData.append('algorithm', request.algorithm)
+    }
+    if (request.sim_id) {
+      formData.append('sim_id', request.sim_id)
+    }
+
+    const res = await authFetch(`${API_BASE}/fraktal/analyze-batch/`, {
+      method: 'POST',
+      body: formData,
+    })
+
+    // Sync path — backend already produced the full result payload.
+    if (res.status === 200) {
+      return (await res.json()) as FraktalBatchResult
+    }
+
+    // Async path — poll the status endpoint until the Celery job settles.
+    if (res.status === 202) {
+      const data = (await res.json().catch(() => ({}))) as { job_id?: string }
+      if (!data.job_id) {
+        throw new ApiError(
+          'Async fraktal batch job accepted but no job_id returned',
+          502
+        )
+      }
+      return pollFraktalBatchUntilDone(
+        data.job_id,
+        options?.onProgress,
+        options?.pollIntervalMs,
+        options?.maxWaitMs
+      )
+    }
+
+    // Any other status is an error — surface the JSON detail/message if
+    // present, otherwise fall back to the raw text.
+    const contentType = res.headers.get('Content-Type') || ''
+    if (contentType.includes('application/json')) {
+      const error = await res.json().catch(() => ({}))
+      throw new ApiError(
+        error.message || error.detail || 'Batch analysis failed',
+        res.status,
+        error.details
+      )
+    }
+    const text = await res.text().catch(() => '')
+    throw new ApiError(text || 'Batch analysis failed', res.status)
   },
 }
 
