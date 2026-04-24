@@ -1,3 +1,34 @@
+## fraktal-batch-analysis (unreleased)
+
+### Added
+
+- **Batch FRAKTAL analysis** — upload a projection ZIP, analyze all images at once.
+- **Auto-calibration** from `metadata.parameters.pixels_per_100nm` when the ZIP comes from the pyaglogen3D projection export. Automatic fallback to manual scale for legacy/external uploads.
+- **One-shot dpo** autocalibrate: analyze image[0] once, reuse for all N images (with image[N/2] retry on failure). Saves 4× Rust calls.
+- **Async execution** for N > 30 images via Celery, with per-stage progress reporting (autocalibrate → analyzing → aggregating).
+- **Results UI**: batch summary card, sortable per-image table, Df histogram (Freedman-Diaconis ≥10, Sturges 5–9, hidden <5), Sorensen comparison card linking FRAKTAL batch mean Df + simulation target_df + simulation 3D box-counting Df.
+- **Comparison card** auto-links ZIP filename (`{uuid}_projections.zip`) to the source Simulation; manual `sim_id` override supported.
+- New endpoints:
+  - `POST /api/v1/fraktal/analyze-batch/` (multipart ZIP)
+  - `GET /api/v1/fraktal-status/{job_id}/` (polling)
+  - `GET /api/v1/fraktal-status/{job_id}/results/` (download)
+- New Rust module `aglogen_core::fractal::fraktal::batch` with `analyze_batch` orchestrator.
+- New Python binding `aglogen_core.analyze_fraktal_batch`.
+- New component `FraktalBatchUpload` with client-side metadata detection via JSZip.
+- New component `FraktalBatchResultsView` with Plotly histogram.
+- New component `FraktalComparisonCard` with fixed Sorensen 1992 note.
+- New routes: `/projects/{id}/fraktal/batch` and `/projects/{id}/fraktal/batch/{jobId}`.
+- CTA link on the single-image FRAKTAL page.
+- User guide at `docs/fraktal-batch.md`.
+
+### Unchanged
+
+- Legacy single-image FRAKTAL endpoint and UI — byte-for-byte backwards compatible.
+
+### Dependencies
+
+- Frontend: `jszip ^3.10.1` (client-side metadata pre-parse).
+
 ## projections-export-fix (unreleased)
 
 ### Added
