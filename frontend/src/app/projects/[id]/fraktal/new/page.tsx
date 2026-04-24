@@ -8,9 +8,10 @@ import { useCreateFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
 import { Header } from '@/components/layout/Header'
 import { FraktalAnalysisForm } from '@/components/fraktal/FraktalAnalysisForm'
 import { Card, CardContent } from '@/components/ui/card'
+import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, FileArchive } from 'lucide-react'
 import type { CreateFraktalInput } from '@/lib/types'
 
 export default function NewFraktalAnalysisPage({
@@ -94,6 +95,21 @@ export default function NewFraktalAnalysisPage({
             Upload an image or generate a projection from a simulation.
           </p>
         </div>
+
+        {/* Batch analysis CTA (T4.6) */}
+        <Alert className="mb-6">
+          <FileArchive className="h-4 w-4" />
+          <AlertDescription>
+            Have a ZIP of projections from a simulation?{' '}
+            <Link
+              href={`/projects/${id}/fraktal/batch`}
+              className="underline font-medium"
+            >
+              Try batch analysis
+            </Link>{' '}
+            for automatic calibration and distribution statistics.
+          </AlertDescription>
+        </Alert>
 
         {/* Form */}
         <FraktalAnalysisForm
