@@ -173,10 +173,10 @@ This spec describes **observable behavior** — what a caller sees in responses,
 - **Expected metadata**: `mode="fibonacci"`, `n_requested=50`, `n_generated=50`, `parameters={n: 50}`, `directions` has 50 entries.
 - **Observable**: `len(directions) == 50`; ZIP has 50 PNGs + 1 `metadata.json`.
 
-#### Scenario 5.3 — Legacy metadata permissibly flexible
+#### Scenario 5.3 — Legacy metadata present with scale stamp
 - **Input**: legacy mode request
-- **Expected**: `metadata.json` is present with `mode="legacy"` and at minimum a `parameters` block capturing the legacy sweep inputs; the `directions` array is optional in legacy mode (to stay byte-compatible with older consumers that never saw metadata).
-- **Observable**: presence of `metadata.json` does not break any legacy-only parser that ignores unknown files in the ZIP.
+- **Expected**: `metadata.json` is present with `mode="legacy"`, a `parameters` block capturing the legacy sweep inputs (`azimuth_start`, `azimuth_end`, `azimuth_step`, `elevation_start`, `elevation_end`, `elevation_step`, `format`), and — when the render format is PNG — an additional `pixels_per_100nm` field so FRAKTAL batch analysis can auto-calibrate against legacy ZIPs. The `directions` array is populated with the same legacy filenames written to the ZIP (PNG filenames follow the legacy `{sim_id_short}_Az###_El###.png` shape — NOT the `proj_###_…` shape used by grid/fibonacci, preserving R3's PNG-layer byte compatibility).
+- **Observable**: presence of `metadata.json` does not break any legacy-only parser that iterates PNGs and ignores unknown files in the ZIP. Parsers that DO consume `metadata.json` can correlate `directions[i].filename` to the legacy PNG entries.
 
 #### Scenario 5.4 — No orphan images
 - **Input**: any grid or fibonacci request
@@ -293,6 +293,6 @@ Note: the axis convention is `y`-up; the spec canonicalizes poles to `azimuth = 
 
 ## Notes for implementers (informative, not normative)
 
-- R3 implies that any new `metadata.json` emitted in legacy mode must remain additive: pre-existing consumers typically iterate PNG entries and ignore unknown files, so adding `metadata.json` does not break them, but changing legacy filename shapes **would** and is forbidden.
+- R3 implies that any new `metadata.json` emitted in legacy mode must remain additive: pre-existing consumers typically iterate PNG entries and ignore unknown files, so adding `metadata.json` does not break them, but changing legacy filename shapes **would** and is forbidden. As of 2026-04-24 the legacy mode ZIP DOES carry `metadata.json` (with `parameters.pixels_per_100nm` when rendered as PNG) for FRAKTAL batch-analysis parity.
 - R6's boundary is inclusive on the sync side (`n ≤ 200` is sync, `n > 200` is async). The threshold value `200` is a contract constant; implementations MAY expose it as config but callers MUST NOT rely on a different threshold.
 - R4's `idx` is scoped per-ZIP, starts at `000`, and increments by 1 per projection in generation order.

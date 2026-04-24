@@ -13,6 +13,52 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+def _rasterize_projection_to_grayscale(
+    proj_result,
+    img_size: int = 512,
+) -> np.ndarray:
+    """Rasterize a ``project_to_2d`` result into a grayscale (H, W) uint8 array.
+
+    The Rust ``project_to_2d`` binding only returns the geometric projection
+    (``x``, ``y``, ``radii``, ``bounds``) — it does NOT rasterize to an image.
+    This helper uses the existing matplotlib-based renderer (the same path
+    used by projection ZIP exports) to produce PNG bytes, then decodes them
+    back into a grayscale numpy array that matches the shape/dtype the
+    FRAKTAL analyzers (``fraktal_granulated_2012`` / ``fraktal_voxel_2018``)
+    expect — identical to what the batch FRAKTAL path feeds them after
+    PIL decoding of user-uploaded PNGs.
+
+    Args:
+        proj_result: object with ``.x``, ``.y``, ``.radii``, ``.bounds``
+            attributes (the PyO3 ``PyProjectionResult`` qualifies).
+        img_size: square output size in pixels (default 512).
+
+    Returns:
+        Grayscale image as a 2D ``numpy.ndarray`` of shape
+        ``(img_size, img_size)`` and dtype ``uint8``.
+    """
+    # Lazy import to avoid a hard dependency on the simulations app at
+    # module import time — matters for unit tests that exercise this
+    # helper in isolation.
+    from apps.simulations.services.projection import render_projection_png
+
+    bounds = (
+        float(proj_result.bounds[0]),
+        float(proj_result.bounds[1]),
+        float(proj_result.bounds[2]),
+        float(proj_result.bounds[3]),
+    )
+    png_bytes = render_projection_png(
+        x=list(proj_result.x),
+        y=list(proj_result.y),
+        radii=list(proj_result.radii),
+        bounds=bounds,
+        img_size=img_size,
+    )
+    img = Image.open(io.BytesIO(png_bytes)).convert("L")
+    return np.array(img, dtype=np.uint8)
+
+
 @shared_task(bind=True, max_retries=1)
 def run_fractal_analysis_task(self, analysis_id: str) -> dict:
     """Execute fractal analysis using Rust engine."""
@@ -155,10 +201,14 @@ def run_fraktal_auto_calibrate_task(self, analysis_id: str) -> dict:
                 radii=radii,
                 azimuth=proj_params.get("azimuth", 0.0),
                 elevation=proj_params.get("elevation", 0.0),
-                resolution=proj_params.get("resolution", 512),
-                format="raw",
             )
-            img_array = np.array(projection_result.image, dtype=np.uint8)
+            # Rust only returns geometry; rasterize to grayscale here so
+            # the downstream analyzer receives the same image shape the
+            # batch path produces from PIL-decoded PNGs.
+            img_array = _rasterize_projection_to_grayscale(
+                projection_result,
+                img_size=int(proj_params.get("resolution", 512)),
+            )
             image = Image.fromarray(img_array, mode="L")
 
         if image.mode != "L":
@@ -410,20 +460,23 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
             proj_params = analysis.projection_params or {}
             azimuth = proj_params.get("azimuth", 0.0)
             elevation = proj_params.get("elevation", 0.0)
-            resolution = proj_params.get("resolution", 512)
+            resolution = int(proj_params.get("resolution", 512))
 
-            # Generate 2D projection using Rust
+            # Generate 2D projection using Rust (geometry only).
             projection_result = aglogen_core.project_to_2d(
                 coordinates=coordinates,
                 radii=radii,
                 azimuth=azimuth,
                 elevation=elevation,
-                resolution=resolution,
-                format="raw",
             )
 
-            # Convert projection to grayscale image
-            img_array = np.array(projection_result.image, dtype=np.uint8)
+            # Rasterize the projection to a grayscale array — this is
+            # the input shape the FRAKTAL analyzers expect (identical to
+            # what the batch path provides after PIL decoding).
+            img_array = _rasterize_projection_to_grayscale(
+                projection_result,
+                img_size=resolution,
+            )
             image = Image.fromarray(img_array, mode="L")
 
         # Step 2: Convert to grayscale numpy array

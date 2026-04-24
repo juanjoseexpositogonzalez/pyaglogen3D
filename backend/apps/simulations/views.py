@@ -839,6 +839,15 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 elevation_step=el_step,
             )
 
+            # Collect legacy filename + direction pairs so the metadata.json
+            # emitted at the end of the ZIP references them verbatim (R4
+            # preserved — legacy filename shape unchanged). build_metadata_json
+            # emits its own canonical filenames via build_projection_filename,
+            # so we override them after the fact for the legacy branch.
+            legacy_filenames: list[str] = []
+            legacy_directions: list[tuple[float, float]] = []
+            first_png_size: tuple[int, int] | None = None
+
             # Create ZIP file with all projections
             zip_buffer = io.BytesIO()
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -848,6 +857,71 @@ class SimulationViewSet(viewsets.ModelViewSet):
                         str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
                     )
                     zf.writestr(filename, image_data)
+                    legacy_filenames.append(filename)
+                    legacy_directions.append(
+                        (float(proj.azimuth), float(proj.elevation))
+                    )
+
+                    # Measure the first PNG so we can stamp a meaningful
+                    # pixels_per_100nm. Legacy PNGs are rendered with
+                    # bbox_inches='tight' (no fixed img_size knob), so we
+                    # have to measure the actual output rather than assume
+                    # a square canvas. SVG has no pixel dimensions — we
+                    # skip the probe and leave pixels_per_100nm unset.
+                    if first_png_size is None and img_format == "png":
+                        try:
+                            from PIL import Image as _PILImage
+
+                            with _PILImage.open(io.BytesIO(image_data)) as _probe:
+                                first_png_size = _probe.size  # (w, h)
+                        except Exception:  # noqa: BLE001 — metadata is best-effort
+                            first_png_size = None
+
+                # Additive per R3 evolution: legacy ZIPs now also carry a
+                # metadata.json so FRAKTAL batch analysis can auto-calibrate
+                # against them (parity with grid/fibonacci modes). The PNG
+                # layer is byte-for-byte unchanged — only this extra file
+                # is added.
+                from .services.projections import build_metadata_json
+
+                parameters: dict[str, Any] = {
+                    "azimuth_start": az_start,
+                    "azimuth_end": az_end,
+                    "azimuth_step": az_step,
+                    "elevation_start": el_start,
+                    "elevation_end": el_end,
+                    "elevation_step": el_step,
+                    "format": img_format,
+                }
+
+                # Stamp pixels_per_100nm + scale_factor_nm using the same
+                # helper used by grid/fibonacci, so FRAKTAL sees the same
+                # parameter names in all modes. Only stamp pixel scale
+                # when we actually measured a PNG size (SVG path skips it).
+                if first_png_size is not None:
+                    # Use the smaller dimension as the reference "img_size"
+                    # since the legacy renderer preserves aspect ratio.
+                    legacy_img_size = int(min(first_png_size))
+                    _stamp_scale_metadata(
+                        parameters, simulation, coords, radii, legacy_img_size
+                    )
+
+                metadata = build_metadata_json(
+                    mode="legacy",
+                    n_requested=len(legacy_directions),
+                    directions=legacy_directions,
+                    parameters=parameters,
+                )
+                # Override the canonical ``proj_###_Az###_El±###`` filenames
+                # inside ``directions[]`` with the legacy filenames we
+                # actually wrote to the ZIP, so consumers can correlate
+                # metadata entries to PNG files without guesswork.
+                for entry, legacy_name in zip(metadata["directions"], legacy_filenames):
+                    entry["filename"] = legacy_name
+
+                import json as _json
+
+                zf.writestr("metadata.json", _json.dumps(metadata, indent=2))
 
             zip_buffer.seek(0)
             response = HttpResponse(zip_buffer.read(), content_type="application/zip")

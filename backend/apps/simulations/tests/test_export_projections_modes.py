@@ -130,9 +130,12 @@ class TestLegacyBackcompat:
         assert response["Content-Type"] == "application/zip"
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
             names = zf.namelist()
-            # Legacy filenames have no "proj_" prefix and no "metadata.json"
-            assert "metadata.json" not in names
-            assert all(not n.startswith("proj_") for n in names)
+            # R3 evolution: legacy ZIPs now also include metadata.json
+            # (additive file; PNG filenames unchanged). Legacy PNG names
+            # keep the pre-existing shape — no "proj_" prefix.
+            assert "metadata.json" in names
+            png_names = [n for n in names if n != "metadata.json"]
+            assert all(not n.startswith("proj_") for n in png_names)
 
     def test_explicit_mode_legacy(self) -> None:
         """Scenario 3.2: ``mode="legacy"`` behaves the same as omission."""
@@ -156,7 +159,51 @@ class TestLegacyBackcompat:
         )
         assert response.status_code == 200
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            assert "metadata.json" not in zf.namelist()
+            # R3 evolution: legacy mode now also emits metadata.json
+            # (additive — PNGs are byte-for-byte unchanged).
+            assert "metadata.json" in zf.namelist()
+
+    def test_legacy_metadata_json_has_pixels_per_100nm(self) -> None:
+        """Legacy metadata.json exposes ``pixels_per_100nm`` for FRAKTAL.
+
+        R3 evolution: legacy ZIPs now include a metadata.json carrying the
+        same scale stamp as grid/fibonacci so downstream FRAKTAL batch
+        analysis can auto-calibrate regardless of the mode that produced
+        the ZIP.
+        """
+        user = _make_user()
+        project = _make_project(user)
+        # Use default diameter in parameters so get_scale_factor_nm returns
+        # a positive scale — otherwise pixels_per_100nm is None.
+        sim = _make_completed_simulation(project)
+        sim.parameters = {"n_particles": 8, "primary_particle_diameter_nm": 20.0}
+        sim.save(update_fields=["parameters"])
+        client = _authed_client(user)
+
+        response = client.post(
+            _batch_url(project, sim),
+            {
+                "mode": "legacy",
+                "azimuth_start": 0.0,
+                "azimuth_end": 30.0,
+                "azimuth_step": 30.0,
+                "elevation_start": 0.0,
+                "elevation_end": 30.0,
+                "elevation_step": 30.0,
+                "format": "png",
+            },
+            format="json",
+        )
+        assert response.status_code == 200, response.content
+        with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
+            meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+            assert meta["mode"] == "legacy"
+            params = meta["parameters"]
+            assert "pixels_per_100nm" in params
+            # Only assert positivity when the scale could be computed;
+            # ``None`` is still a valid value for edge cases.
+            if params["pixels_per_100nm"] is not None:
+                assert params["pixels_per_100nm"] > 0
 
 
 # ---------------------------------------------------------------------------

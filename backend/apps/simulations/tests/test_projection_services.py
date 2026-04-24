@@ -416,13 +416,13 @@ class TestPixelsPer100nmMetadata:
 
         assert v_1024 == pytest.approx(v_512 * 2.0, rel=1e-6)
 
-    def test_legacy_mode_does_not_add_pixels_per_100nm(self) -> None:
-        """R3 byte-for-byte backcompat: legacy path is untouched.
+    def test_legacy_mode_includes_pixels_per_100nm(self) -> None:
+        """R3 evolution (2026-04-24): legacy ZIP now carries metadata.json.
 
-        The legacy sweep writes its own ZIP without a metadata.json, so
-        there is no place for ``pixels_per_100nm`` to leak into. This
-        test asserts the legacy path still produces a ZIP with only
-        per-projection PNGs (no metadata.json).
+        Before: the legacy sweep wrote a ZIP with no metadata.json.
+        After: legacy ZIPs include metadata.json with ``pixels_per_100nm``
+        so FRAKTAL batch analysis has parity across all modes. PNG
+        filenames and bytes are still preserved (R3 PNG-layer backcompat).
         """
         user = _make_user()
         project = _make_project(user)
@@ -444,4 +444,10 @@ class TestPixelsPer100nmMetadata:
 
         assert response.status_code == 200, response.content
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            assert "metadata.json" not in zf.namelist()
+            assert "metadata.json" in zf.namelist()
+            meta = json.loads(zf.read("metadata.json").decode("utf-8"))
+            assert meta["mode"] == "legacy"
+            # ``pixels_per_100nm`` is present in the parameters block.
+            # The value may be ``None`` when scale can't be derived, but
+            # the key must exist.
+            assert "pixels_per_100nm" in meta["parameters"]

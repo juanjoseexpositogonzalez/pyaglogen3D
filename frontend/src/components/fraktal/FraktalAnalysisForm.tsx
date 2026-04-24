@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
+import { FileImage } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -33,6 +34,16 @@ const sourceOptions: { value: FraktalSourceType; label: string }[] = [
 const modelDescriptions: Record<FraktalModel, string> = {
   granulated_2012: 'For soot/agglomerates with spherical primary particles. Accounts for particle overlap and coordination index. Requires primary particle diameter (dpo).',
   voxel_2018: 'Simplified voxel-based analysis without particle overlap considerations. Faster computation, useful for general fractal analysis.',
+}
+
+// Browsers can natively render PNG and JPEG via <img>. TIFF and BMP are
+// listed as accepted uploads (the Rust analyzer handles them) but most
+// browsers cannot decode them — showing <img src=...> would just render
+// a broken-image icon. For those formats we show a placeholder instead.
+const BROWSER_RENDERABLE_MIME = new Set(['image/png', 'image/jpeg', 'image/jpg'])
+
+function isBrowserRenderable(file: File): boolean {
+  return BROWSER_RENDERABLE_MIME.has(file.type)
 }
 
 interface FormParams {
@@ -107,10 +118,19 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) {
+      // Revoke any previous object URL before creating a new one.
+      if (imagePreview) {
+        URL.revokeObjectURL(imagePreview)
+      }
       setImageFile(file)
-      // Create preview using URL.createObjectURL for better performance
-      const objectUrl = URL.createObjectURL(file)
-      setImagePreview(objectUrl)
+      // Only create a preview URL for formats the browser can actually
+      // render. For TIFF/BMP we skip the URL entirely and render a
+      // placeholder instead (see preview block below).
+      if (isBrowserRenderable(file)) {
+        setImagePreview(URL.createObjectURL(file))
+      } else {
+        setImagePreview(null)
+      }
     }
   }
 
@@ -237,14 +257,30 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
                   {imageFile ? imageFile.name : 'Select Image File'}
                 </Button>
               </div>
-              {imagePreview && (
-                <div className="relative aspect-square w-full max-w-xs mx-auto border rounded-lg overflow-hidden">
-                  <img
-                    src={imagePreview}
-                    alt="Preview"
-                    className="object-contain w-full h-full"
-                  />
-                </div>
+              {imageFile && (
+                imagePreview ? (
+                  <div className="relative aspect-square w-full max-w-xs mx-auto border rounded-lg overflow-hidden">
+                    <img
+                      src={imagePreview}
+                      alt="Preview"
+                      className="object-contain w-full h-full"
+                    />
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center p-8 max-w-xs mx-auto border-2 border-dashed rounded-md bg-muted/30">
+                    <FileImage className="h-12 w-12 text-muted-foreground mb-2" />
+                    <p className="text-sm text-muted-foreground font-medium truncate max-w-full">
+                      {imageFile.name}
+                    </p>
+                    <p className="text-xs text-muted-foreground mt-1">
+                      Preview not available for{' '}
+                      {imageFile.type.split('/')[1]?.toUpperCase() || 'this format'}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      ({(imageFile.size / 1024).toFixed(1)} KB)
+                    </p>
+                  </div>
+                )
               )}
               <p className="text-xs text-muted-foreground">
                 Supported formats: PNG, JPEG, TIFF, BMP. Grayscale images work best.

@@ -1,3 +1,15 @@
+## 2026-04-24 — Hotfix: FRAKTAL + Legacy ZIP metadata
+
+### Fixed
+
+- **FRAKTAL single-image from simulation**: the task path previously raised `TypeError: project_to_2d() got an unexpected keyword argument 'resolution'` because the call site passed `resolution=...` / `format="raw"` kwargs that the Rust binding doesn't accept, then tried to read a non-existent `.image` attribute. The path now calls `project_to_2d` with supported kwargs only and rasterizes the geometric projection to a grayscale `uint8` array via a new `_rasterize_projection_to_grayscale` helper — identical shape to what the batch FRAKTAL path feeds the analyzer after PIL decoding.
+- **TIFF/BMP preview in FraktalAnalysisForm**: browsers can't natively decode TIFF or BMP, so the old `<img src={blobURL}>` just rendered a broken-image icon. The form now detects the MIME type and shows an informative placeholder (filename, format, size) for non-renderable formats while still accepting them for analysis.
+
+### Changed (additive, backwards-compatible)
+
+- **Projection ZIP exports in legacy mode** now include a `metadata.json` file with `parameters.pixels_per_100nm`, bringing legacy mode to parity with `grid`/`fibonacci` modes for FRAKTAL batch auto-calibration. Existing consumers that iterate PNG files are unaffected — PNG filenames and bytes are preserved (R3).
+- **R3 spec clause** softened: `metadata.json` MAY be present in legacy ZIPs as an additive file. Pre-existing parsers that ignore unknown ZIP entries continue to work.
+
 ## fraktal-batch-analysis (unreleased)
 
 ### Added
