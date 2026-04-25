@@ -1,4 +1,5 @@
 """Base Django settings for pyAgloGen3D."""
+
 import os
 from pathlib import Path
 
@@ -10,10 +11,12 @@ SECRET_KEY = config("SECRET_KEY", default="insecure-dev-key")
 DEBUG = config("DEBUG", default=False, cast=bool)
 ALLOWED_HOSTS: list[str] = []
 
+
 # Helper to parse DATABASE_URL (Fly.io, Heroku, etc.)
 def parse_database_url(url: str) -> dict:
     """Parse DATABASE_URL into Django database config."""
     import re
+
     pattern = r"postgres(?:ql)?://(?P<user>[^:]+):(?P<password>[^@]+)@(?P<host>[^:/]+)(?::(?P<port>\d+))?/(?P<name>[^?]+)"
     match = re.match(pattern, url)
     if match:
@@ -26,6 +29,7 @@ def parse_database_url(url: str) -> dict:
             "PORT": match.group("port") or "5432",
         }
     raise ValueError(f"Invalid DATABASE_URL format: {url}")
+
 
 # Application definition
 DJANGO_APPS = [
@@ -115,7 +119,9 @@ else:
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
-    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"},
+    {
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator"
+    },
     {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator"},
     {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator"},
     {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator"},
@@ -131,6 +137,14 @@ USE_TZ = True
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
 STATICFILES_STORAGE = "whitenoise.storage.CompressedManifestStaticFilesStorage"
+
+# Media root — used by Celery async tasks (projections export, FRAKTAL batch
+# results) to persist transient artifacts. In Docker, this MUST be a volume
+# shared between the backend (web) and worker containers; otherwise the
+# worker writes to its own filesystem and the web returns 404 when streaming
+# /results/. See docker-compose.prod.yml volumes.media_data.
+MEDIA_URL = "media/"
+MEDIA_ROOT = config("MEDIA_ROOT", default=str(BASE_DIR / "media"))
 
 # Default primary key field type
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -207,7 +221,9 @@ SOCIALACCOUNT_AUTO_SIGNUP = True
 SOCIALACCOUNT_EMAIL_REQUIRED = True
 SOCIALACCOUNT_QUERY_EMAIL = True
 SOCIALACCOUNT_EMAIL_VERIFICATION = "none"  # OAuth emails are already verified
-SOCIALACCOUNT_LOGIN_ON_GET = True  # Skip intermediate page, redirect directly to provider
+SOCIALACCOUNT_LOGIN_ON_GET = (
+    True  # Skip intermediate page, redirect directly to provider
+)
 
 # Custom adapters for email-only authentication
 ACCOUNT_ADAPTER = "apps.accounts.adapters.AccountAdapter"
@@ -257,4 +273,6 @@ RAG_CHUNK_SIZE = config("RAG_CHUNK_SIZE", default=2000, cast=int)
 RAG_CHUNK_OVERLAP = config("RAG_CHUNK_OVERLAP", default=200, cast=int)
 RAG_MAX_SEARCH_RESULTS = config("RAG_MAX_SEARCH_RESULTS", default=5, cast=int)
 RAG_MIN_SIMILARITY_SCORE = config("RAG_MIN_SIMILARITY_SCORE", default=0.5, cast=float)
-RAG_AUTO_INDEX_ON_COMPLETION = config("RAG_AUTO_INDEX_ON_COMPLETION", default=True, cast=bool)
+RAG_AUTO_INDEX_ON_COMPLETION = config(
+    "RAG_AUTO_INDEX_ON_COMPLETION", default=True, cast=bool
+)

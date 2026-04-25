@@ -73,6 +73,14 @@ services:
              --access-logfile -
              --error-logfile -
              config.wsgi:application"
+    # Shared media volume — Celery worker writes async task results
+    # (projections ZIPs, fraktal batch JSON) here, web container streams
+    # them back. Without this the worker writes to its own ephemeral
+    # filesystem and the web container returns 404 when polling /results/.
+    volumes:
+      - media_data:/app/media
+    environment:
+      - MEDIA_ROOT=/app/media
     depends_on:
       db:
         condition: service_healthy
@@ -94,6 +102,13 @@ services:
     env_file:
       - backend/.env
     command: celery -A config worker -l info --concurrency=2
+    # MUST share the same media volume as the backend container so
+    # async task outputs (projections ZIPs, fraktal batch JSON) are
+    # visible to the web tier when streaming /results/ endpoints.
+    volumes:
+      - media_data:/app/media
+    environment:
+      - MEDIA_ROOT=/app/media
     depends_on:
       db:
         condition: service_healthy
@@ -154,3 +169,6 @@ networks:
 volumes:
   postgres_data:
   redis_data:
+  # Shared between backend (web) and worker for async task outputs.
+  # Maps to MEDIA_ROOT=/app/media inside the containers.
+  media_data:
