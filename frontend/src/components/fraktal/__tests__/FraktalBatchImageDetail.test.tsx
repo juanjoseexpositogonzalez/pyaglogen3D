@@ -15,15 +15,16 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { FraktalBatchImageDetail as ImageDetailType } from '@/lib/api'
 
 // Hoist mocks so vi.mock factories can reference them
-const { mockPush, mockGetBatchImage, mockGetBatchImagePngUrl } = vi.hoisted(
+const { mockPush, mockGetBatchImage, mockGetBatchImagePngUrl, mockReanalyzeBatchImage } = vi.hoisted(
   () => ({
     mockPush: vi.fn(),
     mockGetBatchImage: vi.fn(),
     mockGetBatchImagePngUrl: vi.fn(),
+    mockReanalyzeBatchImage: vi.fn(),
   })
 )
 
@@ -54,6 +55,7 @@ vi.mock('@/lib/api', async () => {
       ...(actual.fraktalApi ?? {}),
       getBatchImage: mockGetBatchImage,
       getBatchImagePngUrl: mockGetBatchImagePngUrl,
+      reanalyzeBatchImage: mockReanalyzeBatchImage,
     },
   }
 })
@@ -279,14 +281,41 @@ describe('<FraktalBatchImageDetail />', () => {
     })
   })
 
-  // --- T5.3: Re-analyze button placeholder ---
-  describe('re-analyze button', () => {
-    it('renders a re-analyze button (placeholder for Phase 6 wiring)', async () => {
+  // --- T6.5: Re-analyze button wiring ---
+  describe('re-analyze button (T6.5)', () => {
+    it('renders an enabled re-analyze button', async () => {
       mockGetBatchImage.mockResolvedValue(makeImageDetail())
       renderComponent()
 
       const btn = await screen.findByRole('button', { name: /re-analyze/i })
       expect(btn).toBeTruthy()
+      expect(btn.hasAttribute('disabled')).toBe(false)
+    })
+
+    it('calls reanalyzeBatchImage and navigates to the new analysis on click', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      mockReanalyzeBatchImage.mockResolvedValue({
+        analysis_id: 'new-analysis-999',
+      })
+      renderComponent()
+
+      const btn = await screen.findByRole('button', { name: /re-analyze/i })
+      fireEvent.click(btn)
+
+      await waitFor(() => {
+        expect(mockReanalyzeBatchImage).toHaveBeenCalledWith(
+          PROJECT_ID,
+          BATCH_ID,
+          2 // index
+        )
+      })
+
+      // Should navigate to the new analysis detail page
+      await waitFor(() => {
+        expect(mockPush).toHaveBeenCalledWith(
+          `/projects/${PROJECT_ID}/fraktal/new-analysis-999`
+        )
+      })
     })
   })
 

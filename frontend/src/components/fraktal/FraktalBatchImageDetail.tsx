@@ -21,6 +21,7 @@ import {
   ArrowLeft,
   ChevronLeft,
   ChevronRight,
+  Download,
   RefreshCw,
 } from 'lucide-react'
 
@@ -39,6 +40,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const [data, setData] = useState<ImageDetailData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [reanalyzing, setReanalyzing] = useState(false)
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +67,22 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
       cancelled = true
     }
   }, [projectId, batchId, index])
+
+  const handleReanalyze = useCallback(async () => {
+    setReanalyzing(true)
+    try {
+      const { analysis_id } = await fraktalApi.reanalyzeBatchImage(
+        projectId,
+        batchId,
+        index
+      )
+      router.push(`/projects/${projectId}/fraktal/${analysis_id}`)
+    } catch (err) {
+      console.error('Re-analyze failed:', err)
+    } finally {
+      setReanalyzing(false)
+    }
+  }, [projectId, batchId, index, router])
 
   // Keyboard shortcuts for prev/next
   const handleKeyDown = useCallback(
@@ -148,10 +166,26 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
           </h1>
 
           <div className="flex gap-2">
-            {/* Re-analyze button (placeholder — wiring in Phase 6) */}
-            <Button variant="outline" disabled aria-label="Re-analyze">
+            {/* T6.6: Download PNG */}
+            <a
+              href={pngUrl}
+              download={`batch-${batchId}-image-${data.index}.png`}
+              aria-label="Download PNG"
+            >
+              <Button variant="outline" type="button">
+                <Download className="h-4 w-4 mr-2" />
+                Download PNG
+              </Button>
+            </a>
+            {/* T6.5: Re-analyze button */}
+            <Button
+              variant="outline"
+              onClick={handleReanalyze}
+              disabled={reanalyzing}
+              aria-label="Re-analyze"
+            >
               <RefreshCw className="h-4 w-4 mr-2" />
-              Re-analyze
+              {reanalyzing ? 'Re-analyzing...' : 'Re-analyze'}
             </Button>
           </div>
         </div>
