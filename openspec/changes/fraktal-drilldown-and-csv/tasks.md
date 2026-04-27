@@ -42,12 +42,12 @@
 
 ## Phase 5 — Frontend API + Drill-down Route
 
-- [ ] T5.1 — Extend `lib/api/fraktalApi.ts` with 7 new methods: getBatch, getBatchImage, getBatchImagePng, reanalyzeBatchImage, deleteBatch, getBatchCsv, getSingleCsv
-- [ ] T5.2 — Create drill-down route page `app/projects/[id]/fraktal/batch/[batchId]/image/[index]/page.tsx`
-- [ ] T5.3 — Create `FraktalBatchImageDetail.tsx` component (renders PNG via data URL, displays metrics JSON, error_text, dpo_used, calibration info)
-- [ ] T5.4 — Add prev/next navigation links in FraktalBatchImageDetail (batch image list queries adjacent indexes)
-- [ ] T5.5 — Add loading/error states in drill-down component
-- [ ] T5.6 — Run frontend vitest for API methods in `lib/api/fraktalApi.test.ts`
+- [x] T5.1 — Extend `lib/api/fraktalApi.ts` with 7 new methods: getBatch, getBatchImage, getBatchImagePng, reanalyzeBatchImage, deleteBatch, getBatchCsv, getSingleCsv
+- [x] T5.2 — Create drill-down route page `app/projects/[id]/fraktal/batch/[batchId]/image/[index]/page.tsx`
+- [x] T5.3 — Create `FraktalBatchImageDetail.tsx` component (renders PNG via data URL, displays metrics JSON, error_text, dpo_used, calibration info)
+- [x] T5.4 — Add prev/next navigation links in FraktalBatchImageDetail (batch image list queries adjacent indexes)
+- [x] T5.5 — Add loading/error states in drill-down component
+- [x] T5.6 — Run frontend vitest for API methods in `lib/api/fraktalApi.test.ts`
 
 ## Phase 6 — Frontend Buttons
 
