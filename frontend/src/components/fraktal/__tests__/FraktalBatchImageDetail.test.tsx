@@ -319,6 +319,18 @@ describe('<FraktalBatchImageDetail />', () => {
     })
   })
 
+  // --- T6.6: Download PNG ---
+  describe('download PNG (T6.6)', () => {
+    it('renders a Download PNG link pointing to the PNG endpoint', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+
+      const link = await screen.findByRole('link', { name: /download png/i })
+      expect(link).toBeTruthy()
+      expect(link.getAttribute('href')).toContain('/images/2/png/')
+    })
+  })
+
   // --- T5.3: Back link ---
   describe('back link', () => {
     it('renders a back link to the batch results page', async () => {
