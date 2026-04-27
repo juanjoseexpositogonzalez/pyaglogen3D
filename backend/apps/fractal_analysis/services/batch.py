@@ -293,3 +293,89 @@ def compute_histogram(df_values: list[float | None]) -> dict | None:
         "counts": counts.tolist(),
         "rule_used": rule_used,
     }
+
+
+# ---------------------------------------------------------------------------
+# Persist helper — shared by sync + async batch paths
+# ---------------------------------------------------------------------------
+
+
+def persist_batch_results(
+    batch: "FraktalBatch",
+    image_results: list[dict],
+    png_list: list[bytes],
+    dpo_used: float,
+) -> None:
+    """Write per-image rows and update batch summary fields.
+
+    Creates one ``FraktalBatchImage`` per entry in *image_results*, stores
+    the corresponding PNG bytes from *png_list*, and updates the aggregate
+    statistics on the parent ``FraktalBatch``.
+
+    Both the sync path (≤30 images) and the Celery task call this after
+    the Rust analyzer returns.
+
+    Args:
+        batch: The ``FraktalBatch`` instance (already saved with core metadata).
+        image_results: Per-image dicts from ``_build_batch_response``.
+        png_list: Parallel list of raw PNG bytes (same length as *image_results*).
+        dpo_used: The ``dpo`` value used for analysis (stored on each image row).
+    """
+    from apps.fractal_analysis.models import FraktalBatchImage
+
+    rows = []
+    for i, result in enumerate(image_results):
+        png_bytes = png_list[i] if i < len(png_list) else b""
+        rows.append(
+            FraktalBatchImage(
+                batch=batch,
+                index=result.get("index", i),
+                filename=result.get("filename") or "",
+                azimuth=result.get("azimuth"),
+                elevation=result.get("elevation"),
+                fractal_dimension=result.get("fractal_dimension"),
+                prefactor=result.get("prefactor"),
+                r_squared=result.get("r_squared"),
+                n_particles_counted=result.get("n_particles_counted"),
+                dpo_used=dpo_used,
+                error=result.get("error") or "",
+                image_png=png_bytes,
+            )
+        )
+    FraktalBatchImage.objects.bulk_create(rows)
+
+    # Update batch summary from successful results.
+    df_values = [
+        r["fractal_dimension"]
+        for r in image_results
+        if r.get("fractal_dimension") is not None
+    ]
+    n_successful = len(df_values)
+    batch.n_images = len(image_results)
+    batch.n_successful = n_successful
+
+    if n_successful > 0:
+        arr = np.array(df_values, dtype=np.float64)
+        batch.mean_df = float(np.mean(arr))
+        batch.std_df = float(np.std(arr, ddof=0))
+        batch.median_df = float(np.median(arr))
+        batch.min_df = float(np.min(arr))
+        batch.max_df = float(np.max(arr))
+    else:
+        batch.mean_df = None
+        batch.std_df = None
+        batch.median_df = None
+        batch.min_df = None
+        batch.max_df = None
+
+    batch.save(
+        update_fields=[
+            "n_images",
+            "n_successful",
+            "mean_df",
+            "std_df",
+            "median_df",
+            "min_df",
+            "max_df",
+        ]
+    )
