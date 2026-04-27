@@ -468,3 +468,72 @@ class TestAsyncTaskPersistsToDB:
 
         assert "batch_id" in result
         assert result["n_images"] == 2
+
+
+# ---------------------------------------------------------------------------
+# Polling endpoint — batch_id in SUCCESS payload (T3.4 / T3.5)
+# ---------------------------------------------------------------------------
+
+from django.urls import reverse
+
+
+class _FakeAsyncResult:
+    def __init__(self, state: str, info=None, result=None):
+        self.state = state
+        self.info = info
+        self.result = result
+
+
+@pytest.mark.django_db
+class TestPollingBatchIdField:
+    """Contract test: polling SUCCESS includes batch_id per spec delta."""
+
+    def test_success_includes_batch_id(self) -> None:
+        user = _make_user()
+        client = _authed_client(user)
+        batch_uuid = str(uuid.uuid4())
+        fake = _FakeAsyncResult(
+            state="SUCCESS",
+            result={"batch_id": batch_uuid, "n_images": 5},
+        )
+        with patch(
+            "apps.fractal_analysis.views.AsyncResult",
+            return_value=fake,
+            create=True,
+        ):
+            url = reverse("fraktal-status", kwargs={"job_id": "job-ok"})
+            resp = client.get(url)
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["status"] == "done"
+        assert body["batch_id"] == batch_uuid
+
+    def test_failure_has_no_batch_id(self) -> None:
+        user = _make_user()
+        client = _authed_client(user)
+        fake = _FakeAsyncResult(state="FAILURE", info=RuntimeError("boom"))
+        with patch(
+            "apps.fractal_analysis.views.AsyncResult",
+            return_value=fake,
+            create=True,
+        ):
+            url = reverse("fraktal-status", kwargs={"job_id": "job-fail"})
+            resp = client.get(url)
+        body = resp.json()
+        assert body["status"] == "failed"
+        assert "batch_id" not in body
+
+    def test_processing_has_no_batch_id(self) -> None:
+        user = _make_user()
+        client = _authed_client(user)
+        fake = _FakeAsyncResult(state="PENDING")
+        with patch(
+            "apps.fractal_analysis.views.AsyncResult",
+            return_value=fake,
+            create=True,
+        ):
+            url = reverse("fraktal-status", kwargs={"job_id": "job-pending"})
+            resp = client.get(url)
+        body = resp.json()
+        assert body["status"] == "processing"
+        assert "batch_id" not in body

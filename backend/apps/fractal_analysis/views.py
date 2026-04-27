@@ -641,12 +641,15 @@ def fraktal_status_view(request: Request, job_id: str) -> Response:
         )
     if state == "SUCCESS":
         data = result.result if isinstance(result.result, dict) else {}
-        return Response(
-            {
-                "status": "done",
-                "results_url": data.get("results_url", ""),
-            }
-        )
+        resp_data: dict = {
+            "status": "done",
+        }
+        if data.get("batch_id"):
+            resp_data["batch_id"] = data["batch_id"]
+        # Legacy field — kept for backwards compat with older tasks.
+        if data.get("results_url"):
+            resp_data["results_url"] = data["results_url"]
+        return Response(resp_data)
     if state == "FAILURE":
         return Response(
             {
