@@ -1,7 +1,7 @@
 """Unit tests for FraktalBatch + FraktalBatchImage models.
 
 Covers: creation, cascade delete, default values, str repr, BinaryField
-storage, unique_together constraint.
+storage, unique_together constraint, admin registration.
 """
 
 from __future__ import annotations
@@ -9,6 +9,7 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from django.contrib import admin
 from django.db import IntegrityError
 
 from apps.accounts.models import User
@@ -288,3 +289,41 @@ class TestCascadeDelete:
         project.delete()
         assert FraktalBatch.objects.count() == 0
         assert FraktalBatchImage.objects.count() == 0
+
+
+# ---------------------------------------------------------------------------
+# Admin registration tests
+# ---------------------------------------------------------------------------
+
+
+class TestAdminRegistration:
+    """Test Django admin registration for batch models."""
+
+    def test_fraktal_batch_registered_in_admin(self):
+        assert FraktalBatch in admin.site._registry
+
+    def test_fraktal_batch_image_registered_in_admin(self):
+        assert FraktalBatchImage in admin.site._registry
+
+    def test_fraktal_batch_admin_list_display(self):
+        model_admin = admin.site._registry[FraktalBatch]
+        assert "id" in model_admin.list_display
+        assert "project" in model_admin.list_display
+        assert "algorithm" in model_admin.list_display
+        assert "n_images" in model_admin.list_display
+        assert "created_at" in model_admin.list_display
+
+    def test_fraktal_batch_admin_search_fields(self):
+        model_admin = admin.site._registry[FraktalBatch]
+        assert "project__name" in model_admin.search_fields
+
+    def test_fraktal_batch_image_admin_list_display(self):
+        model_admin = admin.site._registry[FraktalBatchImage]
+        assert "filename" in model_admin.list_display
+        assert "index" in model_admin.list_display
+        assert "batch" in model_admin.list_display
+
+    def test_fraktal_batch_image_admin_readonly_png(self):
+        """image_png should be readonly in admin (binary, non-editable)."""
+        model_admin = admin.site._registry[FraktalBatchImage]
+        assert "image_png" in model_admin.readonly_fields
