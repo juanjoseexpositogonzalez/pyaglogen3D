@@ -77,60 +77,12 @@ def _resolve_import_format(original_filename: str, explicit_format: str | None) 
 logger = logging.getLogger(__name__)
 
 
-# --- CSV export locale helpers ----------------------------------------------
+# --- CSV export locale helpers (hoisted to apps.core.services.csv_locale) ----
 
-# Matches a "pure numeric cell" — optional sign, digits, optional single
-# decimal point, optional exponent. We only rewrite `.` → `,` on cells that
-# match this, so non-numeric strings (IDs, names, unit labels) stay intact.
-import re as _re
-
-_NUMERIC_CELL_RE = _re.compile(r"^[+-]?\d+(\.\d+)?([eE][+-]?\d+)?$")
-
-
-def _get_user_csv_locale(request: Request) -> tuple[str, str]:
-    """Return ``(decimal, delimiter)`` for the authenticated user.
-
-    Falls back to ``(".", ",")`` when the user is unauthenticated or when
-    the profile fields are missing (e.g. during tests that bypass the
-    migration). Anonymous exports have always produced US-format CSV.
-    """
-    user = getattr(request, "user", None)
-    decimal = getattr(user, "csv_decimal_separator", ".") or "."
-    delimiter = getattr(user, "csv_column_delimiter", ",") or ","
-    # Defensive: both attrs are CharField(max_length=1), but reject anything
-    # we couldn't handle (e.g. a corrupted DB value) by falling back to US.
-    if decimal not in (".", ","):
-        decimal = "."
-    if delimiter not in (",", ";", "\t"):
-        delimiter = ","
-    return decimal, delimiter
-
-
-def _localize_numeric_cell(cell: Any, decimal: str) -> Any:
-    """Rewrite a numeric cell's decimal separator for EU-locale output.
-
-    Only pure numeric string cells are touched. Non-string values are
-    returned as-is (csv.writer converts them via ``str()`` on write, and
-    those conversions use ``.`` by default — we never emit them through
-    ``_localize_numeric_cell`` for EU output because the caller pre-formats
-    floats with f-strings first, see T15/T16).
-    """
-    if decimal != ",":
-        return cell
-    if isinstance(cell, str) and _NUMERIC_CELL_RE.match(cell):
-        return cell.replace(".", ",")
-    return cell
-
-
-def _write_localized_row(writer: Any, row: list[Any], decimal: str) -> None:
-    """Write a CSV row with decimal-separator localization applied.
-
-    ``writer`` MUST already have been constructed with the user's column
-    delimiter, so no delimiter handling happens here.
-    """
-    if decimal == ",":
-        row = [_localize_numeric_cell(cell, decimal) for cell in row]
-    writer.writerow(row)
+from apps.core.services.csv_locale import (
+    get_user_csv_locale as _get_user_csv_locale,
+    write_localized_row as _write_localized_row,
+)
 
 
 # --- Shared projection rendering --------------------------------------------
