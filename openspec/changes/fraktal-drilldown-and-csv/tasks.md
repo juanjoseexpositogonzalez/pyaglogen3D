@@ -10,12 +10,12 @@
 
 ## Phase 2 — CSV Locale Hoist
 
-- [ ] T2.1 — Create `apps/core/services/__init__.py` (empty, marks package)
-- [ ] T2.2 — Hoist `_get_user_csv_locale` from `apps/simulations/views.py` line ~80 to `apps/core/services/csv_locale.py` as `get_user_csv_locale(user_or_none)`
-- [ ] T2.3 — Hoist `_write_localized_row` from `apps/simulations/views.py` to `apps/core/services/csv_locale.py` as `write_localized_row(row, locale)`
-- [ ] T2.4 — Add backward-compatible aliases in `apps/simulations/views.py` (import from core.services.csv_locale)
-- [ ] T2.5 — Run simulations CSV export and capture hex digest snapshot to `tests/snapshots/simulations_csv.before.txt`
-- [ ] T2.6 — Verify simulations CSV output unchanged after hoist (compare hex digest)
+- [x] T2.1 — Create `apps/core/services/__init__.py` (empty, marks package)
+- [x] T2.2 — Hoist `_get_user_csv_locale` from `apps/simulations/views.py` line ~80 to `apps/core/services/csv_locale.py` as `get_user_csv_locale(user_or_none)`
+- [x] T2.3 — Hoist `_write_localized_row` from `apps/simulations/views.py` to `apps/core/services/csv_locale.py` as `write_localized_row(row, locale)`
+- [x] T2.4 — Add backward-compatible aliases in `apps/simulations/views.py` (import from core.services.csv_locale)
+- [x] T2.5 — Run simulations CSV export and capture hex digest snapshot to `tests/snapshots/simulations_csv.before.txt`
+- [x] T2.6 — Verify simulations CSV output unchanged after hoist (compare hex digest)
 
 ## Phase 3 — Backend Batch Task Adapt
 
