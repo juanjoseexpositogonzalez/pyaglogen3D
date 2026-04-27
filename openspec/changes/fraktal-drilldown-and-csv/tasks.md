@@ -19,13 +19,13 @@
 
 ## Phase 3 — Backend Batch Task Adapt
 
-- [ ] T3.1 — Rewrite `analyze_fraktal_batch_task` in `apps/fractal_analysis/tasks.py` to create FraktalBatch DB row on start
-- [ ] T3.2 — Add `_persist_batch_result(batch, images)` helper in `apps/fractal_analysis/tasks.py` (writes PNG bytes to FraktalBatchImage records)
-- [ ] T3.3 — Adapt sync path in `apps/fractal_analysis/views.py::analyze_batch` to write DB instead of JSON-on-disk
-- [ ] T3.4 — Add `batch_id` field to polling SUCCESS payload per R-DELTA (apps/fractal_analysis/serializers.py)
-- [ ] T3.5 — Update `BatchStatusSerializer` to include batch_id on status=done
-- [ ] T3.6 — Run migration to drop legacy JSON result dir `var/batch_results/` (after verify DB path works)
-- [ ] T3.7 — Test sync + async batch paths write to DB in `apps/fractal_analysis/tests/test_batch_tasks.py`
+- [x] T3.1 — Rewrite `analyze_fraktal_batch_task` in `apps/fractal_analysis/tasks.py` to create FraktalBatch DB row on start
+- [x] T3.2 — Add `persist_batch_results(batch, images)` helper in `apps/fractal_analysis/services/batch.py` (writes PNG bytes to FraktalBatchImage records)
+- [x] T3.3 — Adapt sync path in `apps/fractal_analysis/views.py::analyze_batch` to write DB instead of JSON-on-disk
+- [x] T3.4 — Add `batch_id` field to polling SUCCESS payload per R-DELTA
+- [x] T3.5 — Update polling view to include batch_id on status=done
+- [x] T3.6 — Document legacy JSON dir deprecation in CHANGELOG (manual cleanup, no destructive migration)
+- [x] T3.7 — Test sync + async batch paths write to DB in `apps/fractal_analysis/tests/test_batch_persist.py`
 
 ## Phase 4 — Backend New Endpoints
 
