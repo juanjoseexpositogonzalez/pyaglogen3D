@@ -1,6 +1,8 @@
 """Fractal Analysis models."""
+
 import uuid
 
+from django.conf import settings
 from django.db import models
 
 
@@ -43,9 +45,7 @@ class ImageAnalysis(models.Model):
         related_name="analyses",
     )
     # Images stored as binary data
-    original_image = models.BinaryField(
-        help_text="Original uploaded image"
-    )
+    original_image = models.BinaryField(help_text="Original uploaded image")
     original_filename = models.CharField(max_length=255)
     original_content_type = models.CharField(max_length=50)
     processed_image = models.BinaryField(
@@ -264,3 +264,93 @@ class ComparisonSet(models.Model):
 
     def __str__(self) -> str:
         return self.name
+
+
+class FraktalBatch(models.Model):
+    """Batch fractal analysis — groups N images analyzed together.
+
+    Stores aggregate statistics and links to the individual per-image results.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="fraktal_batches",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fraktal_batches",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Analysis parameters
+    algorithm = models.CharField(max_length=32)
+    calibration_source = models.CharField(max_length=16)
+    pixels_per_100nm = models.FloatField()
+    dpo_used = models.FloatField()
+    autocalibrate_source = models.CharField(max_length=16, null=True, blank=True)
+    autocalibrate_image_index = models.IntegerField(null=True, blank=True)
+
+    # Optional link to simulation that generated the projections
+    sim_id = models.UUIDField(null=True, blank=True)
+
+    # Summary statistics
+    n_images = models.IntegerField(default=0)
+    n_successful = models.IntegerField(default=0)
+    mean_df = models.FloatField(null=True, blank=True)
+    std_df = models.FloatField(null=True, blank=True)
+    median_df = models.FloatField(null=True, blank=True)
+    min_df = models.FloatField(null=True, blank=True)
+    max_df = models.FloatField(null=True, blank=True)
+
+    original_zip_filename = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "fraktal_batches"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["project", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"FraktalBatch({self.algorithm}, n={self.n_images}, {self.id})"
+
+
+class FraktalBatchImage(models.Model):
+    """Individual image result within a FraktalBatch.
+
+    Stores the rasterized PNG and per-image fractal metrics.
+    """
+
+    batch = models.ForeignKey(
+        FraktalBatch,
+        on_delete=models.CASCADE,
+        related_name="images",
+    )
+    index = models.IntegerField()
+    filename = models.CharField(max_length=255)
+
+    # Projection orientation (from metadata)
+    azimuth = models.FloatField(null=True, blank=True)
+    elevation = models.FloatField(null=True, blank=True)
+
+    # Fractal metrics
+    fractal_dimension = models.FloatField(null=True, blank=True)
+    prefactor = models.FloatField(null=True, blank=True)
+    r_squared = models.FloatField(null=True, blank=True)
+    n_particles_counted = models.IntegerField(null=True, blank=True)
+    dpo_used = models.FloatField()
+    error = models.TextField(blank=True)
+
+    # PNG raster bytes (~50-100KB typical)
+    image_png = models.BinaryField()
+
+    class Meta:
+        db_table = "fraktal_batch_images"
+        unique_together = [("batch", "index")]
+        ordering = ["index"]
+
+    def __str__(self) -> str:
+        return f"BatchImage({self.filename}, idx={self.index})"
