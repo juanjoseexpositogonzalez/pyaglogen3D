@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Download } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -120,6 +121,20 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
     }
   }, [results, source_type, projectId, analysis, model, onComparisonCreated])
 
+  const handleDownloadCsv = useCallback(async () => {
+    try {
+      const blob = await fraktalApi.downloadSingleCsv(projectId, analysis.id)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `fraktal-${analysis.id}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('CSV download failed:', err)
+    }
+  }, [projectId, analysis.id])
+
   const formatNumber = (value: number | null | undefined, decimals = 4): string => {
     if (value === null || value === undefined) return 'N/A'
     return value.toFixed(decimals)
@@ -150,6 +165,17 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
           <div className="flex items-center justify-between">
             <CardTitle>FRAKTAL Analysis Results</CardTitle>
             <div className="flex items-center gap-2">
+              {status === 'completed' && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleDownloadCsv}
+                  aria-label="Download CSV"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  Download CSV
+                </Button>
+              )}
               <Badge variant="outline">{modelLabels[model]}</Badge>
               <Badge variant="secondary">{sourceLabels[source_type]}</Badge>
               <StatusBadge status={status} />
