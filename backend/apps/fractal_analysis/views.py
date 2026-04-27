@@ -688,3 +688,268 @@ def fraktal_results_view(request: Request, job_id: str) -> HttpResponse:
     response = HttpResponse(payload, content_type="application/json")
     response["Content-Disposition"] = f'inline; filename="fraktal_batch_{job_id}.json"'
     return response
+
+
+# ============================================================================
+# Phase 4 — Batch drill-down, PNG, re-analyze, delete, CSV endpoints
+# ============================================================================
+
+
+from .models import FraktalBatch, FraktalBatchImage  # noqa: E402
+
+
+@api_view(["GET", "DELETE"])
+@permission_classes([IsAuthenticated])
+def batch_detail_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID
+) -> Response:
+    """GET or DELETE /api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/
+
+    GET: full batch detail with image rows, stats, etc.
+    DELETE: cascade delete batch + images; re-analyses survive.
+    Cross-project access returns 404 (no existence leak).
+    """
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    if request.method == "DELETE":
+        batch.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+    images = batch.images.all().order_by("index")
+    images_data = [
+        {
+            "index": img.index,
+            "filename": img.filename,
+            "azimuth": img.azimuth,
+            "elevation": img.elevation,
+            "fractal_dimension": img.fractal_dimension,
+            "prefactor": img.prefactor,
+            "r_squared": img.r_squared,
+            "n_particles_counted": img.n_particles_counted,
+            "error": img.error or None,
+            "dpo_used": img.dpo_used,
+        }
+        for img in images
+    ]
+
+    stats = {
+        "n_images": batch.n_images,
+        "n_successful": batch.n_successful,
+        "mean_df": batch.mean_df,
+        "std_df": batch.std_df,
+        "median_df": batch.median_df,
+        "min_df": batch.min_df,
+        "max_df": batch.max_df,
+    }
+
+    comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)
+
+    calibration = {
+        "source": batch.calibration_source,
+        "pixels_per_100nm": batch.pixels_per_100nm,
+        "dpo_used": batch.dpo_used,
+        "autocalibrate_image": batch.autocalibrate_image_index,
+    }
+
+    return Response(
+        {
+            "batch_id": str(batch.id),
+            "project_id": str(batch.project_id),
+            "algorithm": batch.algorithm,
+            "created_at": str(batch.created_at),
+            "images": images_data,
+            "stats": stats,
+            "comparison": comparison,
+            "calibration": calibration,
+            "original_zip_filename": batch.original_zip_filename,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def batch_image_detail_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID, index: int
+) -> Response:
+    """GET .../images/{index}/ — drill-down image detail with prev/next."""
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        img = FraktalBatchImage.objects.get(batch=batch, index=index)
+    except FraktalBatchImage.DoesNotExist:
+        return Response(
+            {"detail": "Image index out of range."}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    total = batch.images.count()
+    prev_index = index - 1 if index > 0 else None
+    next_index = index + 1 if index < total - 1 else None
+
+    # Resolve sim comparison if available
+    sim_target_df = None
+    sim_box_counting_df = None
+    sorensen_note = ""
+    if batch.sim_id:
+        from apps.simulations.models import Simulation
+
+        try:
+            sim = Simulation.objects.get(id=batch.sim_id)
+            sim_params = sim.parameters or {}
+            sim_metrics = sim.metrics or {}
+            sim_target_df = sim_params.get("target_df")
+            sim_box_counting_df = sim_metrics.get("fractal_dimension")
+        except Simulation.DoesNotExist:
+            pass
+        from .services.batch import SORENSEN_NOTE
+
+        sorensen_note = SORENSEN_NOTE
+
+    return Response(
+        {
+            "batch_id": str(batch.id),
+            "index": img.index,
+            "filename": img.filename,
+            "azimuth": img.azimuth,
+            "elevation": img.elevation,
+            "fractal_dimension": img.fractal_dimension,
+            "prefactor": img.prefactor,
+            "r_squared": img.r_squared,
+            "n_particles_counted": img.n_particles_counted,
+            "error": img.error or None,
+            "dpo_used": img.dpo_used,
+            "prev_index": prev_index,
+            "next_index": next_index,
+            "total_count": total,
+            "png_url": f"/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/images/{index}/png/",
+            "sim_target_df": sim_target_df,
+            "sim_box_counting_df": sim_box_counting_df,
+            "sorensen_note": sorensen_note,
+        }
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def batch_image_png_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID, index: int
+) -> HttpResponse:
+    """GET .../images/{index}/png/ — raw PNG bytes."""
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        img = FraktalBatchImage.objects.get(batch=batch, index=index)
+    except FraktalBatchImage.DoesNotExist:
+        return Response(
+            {"detail": "Image index out of range."}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    png_bytes = bytes(img.image_png)
+    if not png_bytes:
+        return Response(
+            {"detail": "Image has no PNG data (rasterization failed)."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    response = HttpResponse(png_bytes, content_type="image/png")
+    response["Cache-Control"] = "public, max-age=31536000, immutable"
+    return response
+
+
+@api_view(["POST"])
+@permission_classes([IsAuthenticated])
+def batch_image_reanalyze_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID, index: int
+) -> Response:
+    """POST .../images/{index}/reanalyze/ — creates FraktalAnalysis from batch PNG."""
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    try:
+        img = FraktalBatchImage.objects.get(batch=batch, index=index)
+    except FraktalBatchImage.DoesNotExist:
+        return Response(
+            {"detail": "Image index out of range."}, status=status.HTTP_404_NOT_FOUND
+        )
+
+    png_bytes = bytes(img.image_png)
+    if not png_bytes:
+        return Response(
+            {"detail": "Cannot re-analyze: image has no PNG data."},
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    # Create a persistent FraktalAnalysis row with inherited dpo from batch
+    analysis = FraktalAnalysis.objects.create(
+        project_id=project_pk,
+        model=batch.algorithm,
+        npix=batch.pixels_per_100nm,
+        dpo=batch.dpo_used,
+        original_image=png_bytes,
+        original_filename=img.filename,
+        original_content_type="image/png",
+        auto_calibrate=False,  # Q3 LOCKED: no fresh autocalibrate
+    )
+
+    return Response(
+        {"id": str(analysis.id), "status": analysis.status},
+        status=status.HTTP_201_CREATED,
+    )
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def batch_csv_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID
+) -> HttpResponse:
+    """GET .../batches/{batchId}/csv/ — batch CSV export with locale."""
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    from apps.core.services.csv_locale import get_user_csv_locale
+    from .services.csv_export import build_batch_csv
+
+    decimal, delimiter = get_user_csv_locale(request)
+    csv_body = build_batch_csv(batch, decimal, delimiter)
+
+    response = HttpResponse(csv_body, content_type="text/csv; charset=utf-8")
+    filename = f"fraktal_batch_{batch.id}.csv"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response
+
+
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def single_image_csv_view(
+    request: Request, project_pk: uuid.UUID, analysis_id: uuid.UUID
+) -> HttpResponse:
+    """GET .../fraktal/{analysisId}/csv/ — single FraktalAnalysis CSV."""
+    try:
+        analysis = FraktalAnalysis.objects.select_related("simulation").get(
+            id=analysis_id, project_id=project_pk
+        )
+    except FraktalAnalysis.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    from apps.core.services.csv_locale import get_user_csv_locale
+    from .services.csv_export import build_single_image_csv
+
+    decimal, delimiter = get_user_csv_locale(request)
+    csv_body = build_single_image_csv(analysis, decimal, delimiter)
+
+    response = HttpResponse(csv_body, content_type="text/csv; charset=utf-8")
+    filename = f"fraktal_{analysis.id}.csv"
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
+    return response

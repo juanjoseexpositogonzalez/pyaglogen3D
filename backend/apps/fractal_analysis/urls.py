@@ -7,8 +7,14 @@ from .views import (
     ComparisonSetViewSet,
     FraktalAnalysisViewSet,
     ImageAnalysisViewSet,
+    batch_csv_view,
+    batch_detail_view,
+    batch_image_detail_view,
+    batch_image_png_view,
+    batch_image_reanalyze_view,
     fraktal_results_view,
     fraktal_status_view,
+    single_image_csv_view,
 )
 
 # Main router for direct access
@@ -117,5 +123,36 @@ urlpatterns = [
         "fraktal-status/<str:job_id>/results/",
         fraktal_results_view,
         name="fraktal-results",
+    ),
+    # Phase 4 — Batch drill-down, PNG, re-analyze, delete, CSV endpoints
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/",
+        batch_detail_view,  # handles GET + DELETE
+        name="project-fraktal-batch-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/",
+        batch_image_detail_view,
+        name="project-fraktal-batch-image-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/png/",
+        batch_image_png_view,
+        name="project-fraktal-batch-image-png",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/reanalyze/",
+        batch_image_reanalyze_view,
+        name="project-fraktal-batch-image-reanalyze",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/csv/",
+        batch_csv_view,
+        name="project-fraktal-batch-csv",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/<uuid:analysis_id>/csv/",
+        single_image_csv_view,
+        name="project-fraktal-single-csv",
     ),
 ]
