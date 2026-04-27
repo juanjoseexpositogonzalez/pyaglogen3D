@@ -12,16 +12,33 @@
 
 ## fraktal-drilldown-and-csv (unreleased)
 
-### Changed (breaking for deployment)
-
-- **FRAKTAL batch results now DB-backed**: `FraktalBatch` + `FraktalBatchImage` models replace JSON-on-disk (`fraktal_batches/*.json`). Old batch JSON files are no longer written by the Celery task. Any in-flight async jobs completed under the old task will continue to be readable via the legacy `fraktal-results` endpoint, but new batches use DB persistence exclusively.
-- **Legacy cleanup**: The `fraktal_batches/` directory under `MEDIA_ROOT` (or `BASE_DIR`) can be safely deleted after all in-flight jobs drain. No auto-migration removes it — manual cleanup is recommended after verifying the deploy.
-
 ### Added
 
+- **Drill-down route**: `/projects/{id}/fraktal/batch/{batchId}/image/{index}` — per-image detail with PNG preview, metrics cards, prev/next navigation (← → keyboard shortcuts).
+- **Per-image PNG endpoint**: `GET /api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/png/` — streams DB-persisted PNG bytes. `Cache-Control: public, max-age=31536000, immutable`.
+- **Re-analyze endpoint**: `POST .../images/{index}/reanalyze/` — creates a persistent `FraktalAnalysis` row from cached PNG + inherited batch dpo (no fresh autocalibrate). Multiple re-analyses create independent rows.
+- **Delete batch endpoint**: `DELETE /api/v1/projects/{pk}/fraktal/batches/{batchId}/` — cascade deletes batch + images; any re-analyzed `FraktalAnalysis` rows survive.
+- **CSV export (single-image)**: `GET /api/v1/projects/{pk}/fraktal/{analysisId}/csv/` — header + 1 data row, locale-aware (decimal/delimiter from user prefs).
+- **CSV export (batch)**: `GET .../batches/{batchId}/csv/` — header + N image rows + blank line + SUMMARY row with mean/std/median/min/max + sim comparison columns. Locale-aware.
 - `batch_id` (uuid) added to polling SUCCESS payload (`GET /api/v1/fraktal-status/{job_id}/`).
 - `batch_id` added to sync batch 200 response.
 - Project-scoped batch endpoint: `POST /api/v1/projects/{pk}/fraktal/analyze-batch/`.
+- User guide at `docs/fraktal-drilldown-csv.md`.
+
+### Changed
+
+- **FRAKTAL batch results now DB-backed**: `FraktalBatch` + `FraktalBatchImage` models replace JSON-on-disk (`fraktal_batches/*.json`). Old batch JSON files are no longer written by the Celery task. New batches use DB persistence exclusively.
+- **`analyzeBatch` migrated to project-scoped URL**: `POST /api/v1/projects/{pk}/fraktal/analyze-batch/` (old global URL still works but is deprecated).
+- **Polling response gains `batch_id`**: on `status: "done"`, the payload includes `batch_id` (uuid) and `results_url` pointing at the DB-backed batch detail endpoint.
+- **csv_locale helpers hoisted to `apps/core/services/`**: `get_user_csv_locale` and `write_localized_row` moved from `apps/simulations/views.py` to `apps/core/services/csv_locale.py`. Backward-compatible aliases remain.
+
+### Deprecated
+
+- **`var/batch_results/` JSON-on-disk directory**: no longer written. Manual cleanup recommended after confirming no in-flight jobs reference old files.
+
+### Migration notes
+
+- Run `python manage.py migrate fractal_analysis` after deploy to create `FraktalBatch` and `FraktalBatchImage` tables.
 
 ## fraktal-batch-analysis (unreleased)
 
