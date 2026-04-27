@@ -735,6 +735,28 @@ export interface FraktalBatchOptions {
   pollIntervalMs?: number
   /** Total wait budget before giving up, in ms. Default: 30 * 60 * 1000. */
   maxWaitMs?: number
+  /** Project ID for the project-scoped batch endpoint. */
+  projectId?: string
+}
+
+/** Shape returned by GET /batches/{id}/images/{index}/ (drill-down detail). */
+export interface FraktalBatchImageDetail {
+  batch_id: string
+  index: number
+  filename: string
+  azimuth: number | null
+  elevation: number | null
+  fractal_dimension: number | null
+  prefactor: number | null
+  r_squared: number | null
+  n_particles_counted: number | null
+  error: string | null
+  dpo_used: number
+  prev_index: number | null
+  next_index: number | null
+  sim_target_df: number | null
+  sim_box_counting_df: number | null
+  sorensen_note: string
 }
 
 interface FraktalBatchStatusProcessing {
@@ -920,7 +942,11 @@ export const fraktalApi = {
       formData.append('sim_id', request.sim_id)
     }
 
-    const res = await authFetch(`${API_BASE}/fraktal/analyze-batch/`, {
+    const batchUrl = options?.projectId
+      ? `${API_BASE}/projects/${options.projectId}/fraktal/analyze-batch/`
+      : `${API_BASE}/fraktal/analyze-batch/`
+
+    const res = await authFetch(batchUrl, {
       method: 'POST',
       body: formData,
     })
@@ -960,6 +986,92 @@ export const fraktalApi = {
     }
     const text = await res.text().catch(() => '')
     throw new ApiError(text || 'Batch analysis failed', res.status)
+  },
+
+  // ---------------------------------------------------------------------------
+  // Drill-down + CSV methods (Phase 5: fraktal-drilldown-and-csv)
+  // ---------------------------------------------------------------------------
+
+  /**
+   * Get batch detail (images list, stats, histogram, comparison, calibration).
+   */
+  getBatch: (projectId: string, batchId: string) =>
+    request<FraktalBatchResult>(
+      `/projects/${projectId}/fraktal/batches/${batchId}/`
+    ),
+
+  /**
+   * Get a single image from a batch (drill-down detail with prev/next).
+   */
+  getBatchImage: (projectId: string, batchId: string, index: number) =>
+    request<FraktalBatchImageDetail>(
+      `/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/`
+    ),
+
+  /**
+   * Build the URL for the PNG image endpoint (for use in ``<img src>``).
+   * Does NOT fetch — returns the URL string so the browser handles caching.
+   */
+  getBatchImagePngUrl: (
+    projectId: string,
+    batchId: string,
+    index: number
+  ): string =>
+    `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`,
+
+  /**
+   * Re-analyze a batch image: POST creates a new FraktalAnalysis from the
+   * cached PNG + inherited dpo.
+   */
+  reanalyzeBatchImage: (
+    projectId: string,
+    batchId: string,
+    index: number
+  ) =>
+    request<{ analysis_id: string }>(
+      `/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/reanalyze/`,
+      { method: 'POST' }
+    ),
+
+  /**
+   * Delete a batch and all its images (cascade).
+   */
+  deleteBatch: (projectId: string, batchId: string) =>
+    request<void>(
+      `/projects/${projectId}/fraktal/batches/${batchId}/`,
+      { method: 'DELETE' }
+    ),
+
+  /**
+   * Download batch CSV (blob). Triggers browser download via Blob + anchor.
+   */
+  downloadBatchCsv: async (
+    projectId: string,
+    batchId: string
+  ): Promise<Blob> => {
+    const res = await authFetch(
+      `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/csv/`
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to download batch CSV', res.status)
+    }
+    return res.blob()
+  },
+
+  /**
+   * Download single-image CSV (blob). Triggers browser download via Blob + anchor.
+   */
+  downloadSingleCsv: async (
+    projectId: string,
+    analysisId: string
+  ): Promise<Blob> => {
+    const res = await authFetch(
+      `${API_BASE}/projects/${projectId}/fraktal/${analysisId}/csv/`
+    )
+    if (!res.ok) {
+      throw new ApiError('Failed to download single CSV', res.status)
+    }
+    return res.blob()
   },
 }
 
