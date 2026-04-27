@@ -17,6 +17,11 @@ import JSZip from 'jszip'
 
 import { FraktalBatchUpload } from '../FraktalBatchUpload'
 
+// Hoist the mock fn so test cases can inspect calls
+const { mockAnalyzeBatch } = vi.hoisted(() => ({
+  mockAnalyzeBatch: vi.fn(),
+}))
+
 vi.mock('@/lib/api', async () => {
   const actual =
     await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
@@ -24,7 +29,7 @@ vi.mock('@/lib/api', async () => {
     ...actual,
     fraktalApi: {
       ...(actual.fraktalApi ?? {}),
-      analyzeBatch: vi.fn(),
+      analyzeBatch: mockAnalyzeBatch,
     },
   }
 })
@@ -117,5 +122,93 @@ describe('<FraktalBatchUpload />', () => {
       const match = alerts.find((el) => /too large/i.test(el.textContent ?? ''))
       expect(match).toBeTruthy()
     })
+  })
+
+  // T6.1 — Wire projectId: analyzeBatch must receive projectId so the
+  // project-scoped URL (/api/v1/projects/{id}/fraktal/analyze-batch/) is used
+  // instead of the legacy global endpoint.
+  it('passes projectId to analyzeBatch when provided', async () => {
+    const zip = new JSZip()
+    zip.file('proj_000.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+    zip.file(
+      'metadata.json',
+      JSON.stringify({
+        mode: 'grid',
+        parameters: { pixels_per_100nm: 500.0 },
+      })
+    )
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], 'test.zip', { type: 'application/zip' })
+
+    // analyzeBatch should resolve so handleSubmit completes cleanly
+    mockAnalyzeBatch.mockResolvedValue({
+      images: [],
+      stats: { n_images: 0, n_successful: 0, mean_df: null, std_df: null, median_df: null, q1_df: null, q3_df: null, min_df: null, max_df: null },
+      histogram: null,
+      comparison: null,
+      calibration: { source: 'metadata', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
+    })
+
+    render(<FraktalBatchUpload projectId="proj-42" onSuccess={vi.fn()} />)
+    const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    // Wait for auto-calibration detection and submit enable
+    await waitFor(() => {
+      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+    })
+
+    const btn = screen.getByRole('button', { name: /Analyze batch/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(mockAnalyzeBatch).toHaveBeenCalledTimes(1)
+    })
+
+    // Verify the second argument (options) contains projectId
+    const [, options] = mockAnalyzeBatch.mock.calls[0]
+    expect(options).toBeDefined()
+    expect(options.projectId).toBe('proj-42')
+  })
+
+  it('uses legacy endpoint (no projectId) when projectId prop is omitted', async () => {
+    const zip = new JSZip()
+    zip.file('proj_000.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+    zip.file(
+      'metadata.json',
+      JSON.stringify({
+        mode: 'grid',
+        parameters: { pixels_per_100nm: 500.0 },
+      })
+    )
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], 'test.zip', { type: 'application/zip' })
+
+    mockAnalyzeBatch.mockResolvedValue({
+      images: [],
+      stats: { n_images: 0, n_successful: 0, mean_df: null, std_df: null, median_df: null, q1_df: null, q3_df: null, min_df: null, max_df: null },
+      histogram: null,
+      comparison: null,
+      calibration: { source: 'metadata', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
+    })
+
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+    })
+
+    const btn = screen.getByRole('button', { name: /Analyze batch/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(mockAnalyzeBatch).toHaveBeenCalledTimes(1)
+    })
+
+    // When no projectId is provided, options.projectId should be undefined
+    const [, options] = mockAnalyzeBatch.mock.calls[0]
+    expect(options.projectId).toBeUndefined()
   })
 })

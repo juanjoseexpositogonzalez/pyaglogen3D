@@ -51,7 +51,7 @@ export default function FraktalBatchPage({
         </div>
 
         {!result ? (
-          <FraktalBatchUpload onSuccess={setResult} />
+          <FraktalBatchUpload projectId={id} onSuccess={setResult} />
         ) : (
           <div className="space-y-4">
             <Button

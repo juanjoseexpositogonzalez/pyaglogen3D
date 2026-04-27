@@ -28,6 +28,8 @@ import {
 interface FraktalBatchUploadProps {
   onSuccess: (result: FraktalBatchResult) => void
   onError?: (error: string) => void
+  /** Project ID for the project-scoped batch endpoint. */
+  projectId?: string
 }
 
 interface DetectedMetadata {
@@ -45,6 +47,7 @@ const algorithmOptions: { value: FraktalBatchAlgorithm; label: string }[] = [
 export function FraktalBatchUpload({
   onSuccess,
   onError,
+  projectId,
 }: FraktalBatchUploadProps) {
   const [file, setFile] = useState<File | null>(null)
   const [metadataDetected, setMetadataDetected] =
@@ -143,6 +146,7 @@ export function FraktalBatchUpload({
     try {
       const result = await fraktalApi.analyzeBatch(request, {
         onProgress: setProgress,
+        projectId,
       })
       onSuccess(result)
     } catch (err) {
