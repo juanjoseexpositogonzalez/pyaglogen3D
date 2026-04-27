@@ -1,10 +1,12 @@
-"""Tests for persist_batch_results helper — Phase 3.
+"""Tests for persist_batch_results helper and batch DB integration — Phase 3.
 
 Covers:
-- Creating FraktalBatchImage rows with correct data
-- Updating FraktalBatch summary fields from per-image metrics
-- Handling partial failures (some images have error, no Df)
-- PNG bytes round-trip storage
+- Creating FraktalBatchImage rows with correct data (unit)
+- Updating FraktalBatch summary fields from per-image metrics (unit)
+- Handling partial failures (some images have error, no Df) (unit)
+- PNG bytes round-trip storage (unit)
+- Sync path creates FraktalBatch + FraktalBatchImage in DB (integration)
+- Sync path returns batch_id in response (integration)
 """
 
 from __future__ import annotations
@@ -203,3 +205,171 @@ class TestPersistBatchResults:
         assert "failed" in failed_img.error.lower()
         # PNG is still stored even for failed images
         assert len(bytes(failed_img.image_png)) > 0
+
+
+# ---------------------------------------------------------------------------
+# Integration: sync batch path → DB persistence
+# ---------------------------------------------------------------------------
+
+import json
+import zipfile
+from unittest.mock import patch
+
+from django.core.files.uploadedfile import SimpleUploadedFile
+from rest_framework.test import APIClient
+
+
+def _project_batch_url(project_id) -> str:
+    return f"/api/v1/projects/{project_id}/fraktal/analyze-batch/"
+
+
+def _authed_client(user: User) -> APIClient:
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+def _make_zip_with_metadata(n: int = 3, pixels_per_100nm: float = 500.0) -> bytes:
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        directions = []
+        for i in range(n):
+            name = f"proj_{i:03d}_Az{i * 10:03d}_El+000.png"
+            zf.writestr(name, _make_png())
+            directions.append(
+                {
+                    "filename": name,
+                    "azimuth": float(i * 10),
+                    "elevation": 0.0,
+                    "index": i,
+                }
+            )
+        zf.writestr(
+            "metadata.json",
+            json.dumps(
+                {
+                    "mode": "grid",
+                    "n_requested": n,
+                    "n_generated": n,
+                    "parameters": {"pixels_per_100nm": pixels_per_100nm},
+                    "directions": directions,
+                }
+            ),
+        )
+    return buf.getvalue()
+
+
+def _fake_rust_result(n: int, dpo_used: float = 25.0) -> dict:
+    return {
+        "results": [
+            {
+                "index": i,
+                "fractal_dimension": 1.70 + 0.01 * i,
+                "prefactor": 1.5,
+                "r_squared": None,
+                "n_particles_counted": 42,
+                "dpo_used": dpo_used,
+                "error": None,
+            }
+            for i in range(n)
+        ],
+        "dpo_used": dpo_used,
+        "autocalibrate_source": "manual",
+        "autocalibrate_image_index": None,
+    }
+
+
+@pytest.mark.django_db
+class TestSyncPathPersistsToDB:
+    """Integration: sync analyze_batch now creates FraktalBatch + images in DB."""
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_sync_batch_creates_fraktal_batch_row(self, mock_rust) -> None:
+        mock_rust.return_value = _fake_rust_result(3)
+        user = _make_user()
+        project = _make_project(user)
+        client = _authed_client(user)
+
+        zip_bytes = _make_zip_with_metadata(n=3, pixels_per_100nm=500.0)
+        resp = client.post(
+            _project_batch_url(project.id),
+            {
+                "file": SimpleUploadedFile(
+                    "test.zip", zip_bytes, content_type="application/zip"
+                ),
+                "dpo_hint": "25.0",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+        data = resp.json()
+
+        # batch_id must be present in response
+        assert "batch_id" in data, f"Missing batch_id in response: {data.keys()}"
+        batch_id = data["batch_id"]
+
+        # DB row must exist
+        batch = FraktalBatch.objects.get(id=batch_id)
+        assert batch.n_images == 3
+        assert batch.n_successful == 3
+        assert batch.algorithm == "granulated_2012"
+        assert batch.calibration_source == "metadata"
+        assert batch.pixels_per_100nm == 500.0
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_sync_batch_creates_image_rows(self, mock_rust) -> None:
+        mock_rust.return_value = _fake_rust_result(3)
+        user = _make_user()
+        project = _make_project(user)
+        client = _authed_client(user)
+
+        zip_bytes = _make_zip_with_metadata(n=3, pixels_per_100nm=500.0)
+        resp = client.post(
+            _project_batch_url(project.id),
+            {
+                "file": SimpleUploadedFile(
+                    "test.zip", zip_bytes, content_type="application/zip"
+                ),
+                "dpo_hint": "25.0",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200
+        batch_id = resp.json()["batch_id"]
+        batch = FraktalBatch.objects.get(id=batch_id)
+
+        # Image rows must be in DB
+        images = FraktalBatchImage.objects.filter(batch=batch).order_by("index")
+        assert images.count() == 3
+        assert images[0].fractal_dimension == pytest.approx(1.70)
+        # PNG bytes are stored
+        assert len(bytes(images[0].image_png)) > 0
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_sync_batch_response_still_has_legacy_shape(self, mock_rust) -> None:
+        """Backwards-compat: response still contains images, stats, etc."""
+        mock_rust.return_value = _fake_rust_result(3)
+        user = _make_user()
+        project = _make_project(user)
+        client = _authed_client(user)
+
+        zip_bytes = _make_zip_with_metadata(n=3, pixels_per_100nm=500.0)
+        resp = client.post(
+            _project_batch_url(project.id),
+            {
+                "file": SimpleUploadedFile(
+                    "test.zip", zip_bytes, content_type="application/zip"
+                ),
+                "dpo_hint": "25.0",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        # Legacy shape preserved
+        assert "images" in data
+        assert "stats" in data
+        assert "calibration" in data
+        assert len(data["images"]) == 3
+        # batch_id also present
+        assert "batch_id" in data

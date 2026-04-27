@@ -101,6 +101,11 @@ urlpatterns = [
         FraktalAnalysisViewSet.as_view({"delete": "delete_all"}),
         name="project-fraktal-delete-all",
     ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/analyze-batch/",
+        FraktalAnalysisViewSet.as_view({"post": "analyze_batch"}),
+        name="project-fraktal-analyze-batch",
+    ),
     # Async FRAKTAL batch job status + results download (mirrors
     # projections-status pattern).
     path(

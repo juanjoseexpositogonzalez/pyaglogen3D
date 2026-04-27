@@ -265,6 +265,17 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         else:
             sim_id = detect_sim_id_from_filename(uploaded.name or "")
 
+        # Resolve project for DB persistence (available on nested URLs).
+        project_pk = self.kwargs.get("project_pk")
+        project = None
+        if project_pk:
+            from apps.projects.models import Project
+
+            try:
+                project = Project.objects.get(id=project_pk)
+            except Project.DoesNotExist:
+                pass
+
         n = len(images)
         if n <= 30:
             try:
@@ -278,6 +289,9 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     metadata,
                     sim_id,
                     calibration_source,
+                    project=project,
+                    user=request.user if request.user.is_authenticated else None,
+                    zip_filename=uploaded.name or "",
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001 — surface as 400 per R3
@@ -323,6 +337,9 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     metadata,
                     sim_id,
                     calibration_source,
+                    project=project,
+                    user=request.user if request.user.is_authenticated else None,
+                    zip_filename=uploaded.name or "",
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001
@@ -485,6 +502,20 @@ def _build_batch_response(
     }
 
 
+def _images_to_png_bytes(images: list) -> list[bytes]:
+    """Re-encode grayscale numpy arrays to PNG bytes for DB storage."""
+    import io as _io
+
+    from PIL import Image as _Image
+
+    result = []
+    for img_array in images:
+        buf = _io.BytesIO()
+        _Image.fromarray(img_array, mode="L").save(buf, format="PNG")
+        result.append(buf.getvalue())
+    return result
+
+
 def _run_batch_sync(
     images,
     scale: float,
@@ -495,13 +526,23 @@ def _run_batch_sync(
     metadata: dict | None,
     sim_id: uuid.UUID | None,
     calibration_source: str,
+    *,
+    project=None,
+    user=None,
+    zip_filename: str = "",
 ) -> dict:
     """Sync execution of a FRAKTAL batch (N ≤ 30).
 
-    Calls the PyO3 ``analyze_fraktal_batch`` orchestrator once and shapes
-    the result with :func:`_build_batch_response`.
+    Calls the PyO3 ``analyze_fraktal_batch`` orchestrator once, shapes
+    the result with :func:`_build_batch_response`, then persists to DB
+    via :func:`persist_batch_results`.
+
+    Returns the response payload with an added ``batch_id`` field.
     """
     import aglogen_core
+
+    from .models import FraktalBatch
+    from .services.batch import persist_batch_results
 
     rust_result = aglogen_core.analyze_fraktal_batch(
         images,
@@ -510,9 +551,31 @@ def _run_batch_sync(
         dpo_hint,
         algorithm,
     )
-    return _build_batch_response(
+    payload = _build_batch_response(
         rust_result, filenames, metadata, sim_id, scale, calibration_source
     )
+
+    # Persist to DB when project is available.
+    if project is not None:
+        batch = FraktalBatch.objects.create(
+            project=project,
+            created_by=user,
+            algorithm=algorithm,
+            calibration_source=calibration_source,
+            pixels_per_100nm=scale,
+            dpo_used=rust_result.get("dpo_used") or dpo_hint,
+            autocalibrate_source=rust_result.get("autocalibrate_source"),
+            autocalibrate_image_index=rust_result.get("autocalibrate_image_index"),
+            sim_id=sim_id,
+            original_zip_filename=zip_filename,
+        )
+        png_list = _images_to_png_bytes(images)
+        persist_batch_results(
+            batch, payload["images"], png_list, dpo_used=batch.dpo_used
+        )
+        payload["batch_id"] = str(batch.id)
+
+    return payload
 
 
 from celery.result import AsyncResult  # noqa: E402
