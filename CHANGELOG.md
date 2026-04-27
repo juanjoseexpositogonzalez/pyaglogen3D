@@ -10,6 +10,19 @@
 - **Projection ZIP exports in legacy mode** now include a `metadata.json` file with `parameters.pixels_per_100nm`, bringing legacy mode to parity with `grid`/`fibonacci` modes for FRAKTAL batch auto-calibration. Existing consumers that iterate PNG files are unaffected — PNG filenames and bytes are preserved (R3).
 - **R3 spec clause** softened: `metadata.json` MAY be present in legacy ZIPs as an additive file. Pre-existing parsers that ignore unknown ZIP entries continue to work.
 
+## fraktal-drilldown-and-csv (unreleased)
+
+### Changed (breaking for deployment)
+
+- **FRAKTAL batch results now DB-backed**: `FraktalBatch` + `FraktalBatchImage` models replace JSON-on-disk (`fraktal_batches/*.json`). Old batch JSON files are no longer written by the Celery task. Any in-flight async jobs completed under the old task will continue to be readable via the legacy `fraktal-results` endpoint, but new batches use DB persistence exclusively.
+- **Legacy cleanup**: The `fraktal_batches/` directory under `MEDIA_ROOT` (or `BASE_DIR`) can be safely deleted after all in-flight jobs drain. No auto-migration removes it — manual cleanup is recommended after verifying the deploy.
+
+### Added
+
+- `batch_id` (uuid) added to polling SUCCESS payload (`GET /api/v1/fraktal-status/{job_id}/`).
+- `batch_id` added to sync batch 200 response.
+- Project-scoped batch endpoint: `POST /api/v1/projects/{pk}/fraktal/analyze-batch/`.
+
 ## fraktal-batch-analysis (unreleased)
 
 ### Added
