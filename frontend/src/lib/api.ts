@@ -715,6 +715,8 @@ export interface FraktalBatchCalibration {
 }
 
 export interface FraktalBatchResult {
+  /** Batch ID from DB persistence (added by T3.4 polling shape). */
+  batch_id?: string
   images: FraktalBatchImageResult[]
   stats: FraktalBatchStats
   histogram: FraktalBatchHistogram | null

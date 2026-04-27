@@ -61,7 +61,12 @@ export default function FraktalBatchPage({
             >
               Analyze another batch
             </Button>
-            <FraktalBatchResultsView result={result} />
+            <FraktalBatchResultsView
+              result={result}
+              projectId={id}
+              batchId={result.batch_id ?? ''}
+              onDeleted={() => setResult(null)}
+            />
           </div>
         )}
       </main>

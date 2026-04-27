@@ -2,32 +2,44 @@
 
 /**
  * FraktalBatchResultsView — full result display for a completed batch
- * FRAKTAL analysis (T4.3, change: fraktal-batch-analysis). Renders:
+ * FRAKTAL analysis. Renders:
  *
  *   1. A batch-level statistics card (mean/std/median/Q1/Q3/min/max Df)
  *      + a calibration summary (source, px/100nm, dpo).
  *   2. A Df distribution histogram when the batch produced one (≥5
  *      successful images — R7).
  *   3. A per-image results table with client-side sorting (R9).
+ *      Rows are clickable — each links to the drill-down route (T6.1).
  *   4. Optional Sorensen comparison card when the batch was linked to a
  *      simulation (R11 via FraktalComparisonCard).
- *
- * Everything is computed from the `FraktalBatchResult` produced by
- * `fraktalApi.analyzeBatch`; no additional API calls happen here.
+ *   5. Download CSV button (T6.2) and Delete batch button (T6.3).
  */
-import { useMemo, useState } from 'react'
+import { useCallback, useMemo, useState } from 'react'
 import dynamic from 'next/dynamic'
-import { ArrowDown, ArrowUp, BarChart3, Table as TableIcon } from 'lucide-react'
+import Link from 'next/link'
+import {
+  ArrowDown,
+  ArrowUp,
+  BarChart3,
+  Download,
+  Table as TableIcon,
+  Trash2,
+} from 'lucide-react'
 
 import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FraktalComparisonCard } from './FraktalComparisonCard'
-import type { FraktalBatchResult } from '@/lib/api'
+import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 
 interface Props {
   result: FraktalBatchResult
+  projectId: string
+  batchId: string
+  /** Called after a successful delete so the parent can redirect / reset. */
+  onDeleted?: () => void
 }
 
 type SortKey =
@@ -42,16 +54,22 @@ type SortKey =
 
 type SortDir = 'asc' | 'desc'
 
-export function FraktalBatchResultsView({ result }: Props) {
+export function FraktalBatchResultsView({
+  result,
+  projectId,
+  batchId,
+  onDeleted,
+}: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('index')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleting, setDeleting] = useState(false)
 
   const sortedImages = useMemo(() => {
     const images = [...result.images]
     images.sort((a, b) => {
       const av = a[sortKey]
       const bv = b[sortKey]
-      // null last in asc, null first in desc (consistent stable ordering).
       if (av === null && bv === null) return 0
       if (av === null) return sortDir === 'asc' ? 1 : -1
       if (bv === null) return sortDir === 'asc' ? -1 : 1
@@ -88,8 +106,88 @@ export function FraktalBatchResultsView({ result }: Props) {
 
   const hasAnyError = sortedImages.some((img) => img.error)
 
+  const handleDownloadCsv = useCallback(async () => {
+    try {
+      const blob = await fraktalApi.downloadBatchCsv(projectId, batchId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `fraktal-batch-${batchId}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (err) {
+      console.error('CSV download failed:', err)
+    }
+  }, [projectId, batchId])
+
+  const handleDelete = useCallback(async () => {
+    setDeleting(true)
+    try {
+      await fraktalApi.deleteBatch(projectId, batchId)
+      onDeleted?.()
+    } catch (err) {
+      console.error('Batch delete failed:', err)
+    } finally {
+      setDeleting(false)
+      setShowDeleteConfirm(false)
+    }
+  }, [projectId, batchId, onDeleted])
+
   return (
     <div className="space-y-4">
+      {/* Action buttons bar */}
+      <div className="flex items-center gap-2">
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownloadCsv}
+          aria-label="Download CSV"
+        >
+          <Download className="h-4 w-4 mr-2" />
+          Download CSV
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={() => setShowDeleteConfirm(true)}
+          className="text-destructive border-destructive/50 hover:bg-destructive/10"
+          aria-label="Delete batch"
+        >
+          <Trash2 className="h-4 w-4 mr-2" />
+          Delete batch
+        </Button>
+      </div>
+
+      {/* Delete confirmation */}
+      {showDeleteConfirm && (
+        <Alert variant="destructive">
+          <AlertDescription className="flex items-center justify-between">
+            <span>
+              Are you sure you want to delete this batch? This action cannot be
+              undone.
+            </span>
+            <div className="flex gap-2 ml-4">
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={handleDelete}
+                disabled={deleting}
+                aria-label="Confirm delete"
+              >
+                {deleting ? 'Deleting...' : 'Confirm delete'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => setShowDeleteConfirm(false)}
+              >
+                Cancel
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Stats summary */}
       <Card>
         <CardHeader>
@@ -177,7 +275,7 @@ export function FraktalBatchResultsView({ result }: Props) {
       {/* Comparison card (R11) — present only when the batch was linked to a sim */}
       {result.comparison && <FraktalComparisonCard comparison={result.comparison} />}
 
-      {/* Per-image table (R9) */}
+      {/* Per-image table (R9) — rows are clickable (T6.1) */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2 text-sm">
@@ -220,25 +318,73 @@ export function FraktalBatchResultsView({ result }: Props) {
                 {sortedImages.map((img) => (
                   <tr
                     key={img.index}
-                    className="border-b hover:bg-muted/50"
+                    className="border-b hover:bg-muted/50 cursor-pointer"
                     title={img.error ?? undefined}
                   >
-                    <td className="p-2 font-mono">{img.index}</td>
-                    <td
-                      className="p-2 truncate max-w-[220px]"
-                      title={img.filename ?? ''}
-                    >
-                      {img.filename ?? '—'}
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {img.index}
+                      </Link>
                     </td>
-                    <td className="p-2 font-mono">{fmt(img.azimuth, 1)}</td>
-                    <td className="p-2 font-mono">{fmt(img.elevation, 1)}</td>
-                    <td className="p-2 font-mono">
-                      {fmt(img.fractal_dimension)}
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 truncate max-w-[220px]"
+                        title={img.filename ?? ''}
+                      >
+                        {img.filename ?? '—'}
+                      </Link>
                     </td>
-                    <td className="p-2 font-mono">{fmt(img.prefactor)}</td>
-                    <td className="p-2 font-mono">{fmt(img.r_squared)}</td>
-                    <td className="p-2 font-mono">
-                      {img.n_particles_counted ?? '—'}
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {fmt(img.azimuth, 1)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {fmt(img.elevation, 1)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {fmt(img.fractal_dimension)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {fmt(img.prefactor)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {fmt(img.r_squared)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {img.n_particles_counted ?? '—'}
+                      </Link>
                     </td>
                   </tr>
                 ))}

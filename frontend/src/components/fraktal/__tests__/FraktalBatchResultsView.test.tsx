@@ -10,8 +10,40 @@
  * absence without needing WebGL.
  */
 import React from 'react'
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach, type Mock } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+
+// Hoist mocks for API methods
+const { mockDownloadBatchCsv, mockDeleteBatch } = vi.hoisted(() => ({
+  mockDownloadBatchCsv: vi.fn(),
+  mockDeleteBatch: vi.fn(),
+}))
+
+vi.mock('@/lib/api', async () => {
+  const actual =
+    await vi.importActual<typeof import('@/lib/api')>('@/lib/api')
+  return {
+    ...actual,
+    fraktalApi: {
+      ...(actual.fraktalApi ?? {}),
+      downloadBatchCsv: mockDownloadBatchCsv,
+      deleteBatch: mockDeleteBatch,
+    },
+  }
+})
+
+vi.mock('next/link', () => ({
+  default: ({
+    href,
+    children,
+    ...rest
+  }: {
+    href: string
+    children: React.ReactNode
+    [key: string]: unknown
+  }) =>
+    React.createElement('a', { href, ...rest }, children),
+}))
 
 vi.mock('next/dynamic', () => ({
   default: (
@@ -104,24 +136,39 @@ async function flushMicrotasks() {
   await Promise.resolve()
 }
 
+const PROJECT_ID = 'proj-1'
+const BATCH_ID = 'batch-abc'
+
+function renderView(overrides: Partial<FraktalBatchResult> = {}) {
+  return render(
+    <FraktalBatchResultsView
+      result={makeResult(overrides)}
+      projectId={PROJECT_ID}
+      batchId={BATCH_ID}
+    />
+  )
+}
+
 describe('<FraktalBatchResultsView />', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
   it('renders the stats summary card with n_successful / n_images and mean Df', () => {
-    render(<FraktalBatchResultsView result={makeResult()} />)
+    renderView()
     expect(screen.getByText(/Batch Summary/i)).toBeTruthy()
     expect(screen.getByText('3 / 3')).toBeTruthy()
-    // mean_df formatted to 3 digits — appears twice (mean and median), so
-    // use getAllByText and assert at least one match.
     expect(screen.getAllByText('1.750').length).toBeGreaterThan(0)
   })
 
   it('includes the calibration summary line with source and px/100nm', () => {
-    render(<FraktalBatchResultsView result={makeResult()} />)
+    renderView()
     expect(screen.getByText(/metadata/)).toBeTruthy()
     expect(screen.getByText(/500\.0 px\/100nm/)).toBeTruthy()
   })
 
   it('hides the histogram when n_successful < 5 and shows the N<5 notice', () => {
-    render(<FraktalBatchResultsView result={makeResult()} />)
+    renderView()
     expect(screen.queryByTestId('plot')).toBeNull()
     expect(
       screen.getByText(/Histogram not shown \(fewer than 5 successful/i)
@@ -129,22 +176,20 @@ describe('<FraktalBatchResultsView />', () => {
   })
 
   it('renders the histogram plot when result.histogram is present', async () => {
-    const result = makeResult({
+    renderView({
       histogram: {
         bin_edges: [1.6, 1.7, 1.8, 1.9],
         counts: [1, 5, 2],
         rule_used: 'sturges',
       },
     })
-    render(<FraktalBatchResultsView result={result} />)
     await flushMicrotasks()
     expect(await screen.findByTestId('plot')).toBeTruthy()
     expect(screen.getByText(/Df Distribution \(sturges\)/i)).toBeTruthy()
   })
 
   it('sorts the per-image table by Df ascending then descending when the Df header is clicked', () => {
-    render(<FraktalBatchResultsView result={makeResult()} />)
-    // Header "Df" includes the sort icon but the text node is just "Df".
+    renderView()
     const headers = screen.getAllByRole('columnheader')
     const dfHeader = headers.find(
       (h) => (h.textContent ?? '').trim().startsWith('Df')
@@ -153,12 +198,10 @@ describe('<FraktalBatchResultsView />', () => {
     if (!dfHeader) return
 
     fireEvent.click(dfHeader)
-    // After ascending click: first row should be the 1.700 fractal_dimension.
     const rowsAsc = document.querySelectorAll('tbody tr')
     expect(rowsAsc[0].textContent).toContain('1.700')
     expect(rowsAsc[rowsAsc.length - 1].textContent).toContain('1.800')
 
-    // Click again to flip to descending.
     fireEvent.click(dfHeader)
     const rowsDesc = document.querySelectorAll('tbody tr')
     expect(rowsDesc[0].textContent).toContain('1.800')
@@ -166,7 +209,97 @@ describe('<FraktalBatchResultsView />', () => {
   })
 
   it('does not render the comparison card when comparison is null', () => {
-    render(<FraktalBatchResultsView result={makeResult()} />)
+    renderView()
     expect(screen.queryByText(/Df Comparison/i)).toBeNull()
+  })
+
+  // T6.1 — Clickable rows: each row wraps in a Link to drill-down route
+  describe('clickable rows (T6.1)', () => {
+    it('renders each row as a link to the drill-down route', () => {
+      renderView()
+      const links = screen.getAllByRole('link')
+      const rowLinks = links.filter((a) =>
+        a.getAttribute('href')?.includes('/fraktal/batch/')
+      )
+      // 3 images × 8 columns per row = 24 links (each cell is a Link)
+      expect(rowLinks.length).toBeGreaterThanOrEqual(3)
+
+      // Collect unique hrefs to verify all 3 image routes are present
+      const uniqueHrefs = [...new Set(rowLinks.map((a) => a.getAttribute('href')))]
+      expect(uniqueHrefs).toContain(
+        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/0`
+      )
+      expect(uniqueHrefs).toContain(
+        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
+      )
+      expect(uniqueHrefs).toContain(
+        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/2`
+      )
+    })
+  })
+
+  // T6.2 — Download CSV button
+  describe('batch CSV download (T6.2)', () => {
+    it('renders a Download CSV button', () => {
+      renderView()
+      expect(
+        screen.getByRole('button', { name: /download csv/i })
+      ).toBeTruthy()
+    })
+
+    it('calls downloadBatchCsv with correct projectId and batchId on click', async () => {
+      mockDownloadBatchCsv.mockResolvedValue(new Blob(['csv data']))
+      // Mock URL.createObjectURL and click
+      const mockCreateObjectURL = vi.fn(() => 'blob:test')
+      const mockRevokeObjectURL = vi.fn()
+      globalThis.URL.createObjectURL = mockCreateObjectURL
+      globalThis.URL.revokeObjectURL = mockRevokeObjectURL
+
+      renderView()
+      const btn = screen.getByRole('button', { name: /download csv/i })
+      fireEvent.click(btn)
+
+      await waitFor(() => {
+        expect(mockDownloadBatchCsv).toHaveBeenCalledWith(PROJECT_ID, BATCH_ID)
+      })
+    })
+  })
+
+  // T6.3 — Delete batch button
+  describe('delete batch (T6.3)', () => {
+    it('renders a Delete batch button', () => {
+      renderView()
+      expect(
+        screen.getByRole('button', { name: /delete batch/i })
+      ).toBeTruthy()
+    })
+
+    it('calls deleteBatch after confirmation and invokes onDeleted callback', async () => {
+      mockDeleteBatch.mockResolvedValue(undefined)
+      const onDeleted = vi.fn()
+      render(
+        <FraktalBatchResultsView
+          result={makeResult()}
+          projectId={PROJECT_ID}
+          batchId={BATCH_ID}
+          onDeleted={onDeleted}
+        />
+      )
+      const btn = screen.getByRole('button', { name: /delete batch/i })
+      fireEvent.click(btn)
+
+      // A confirm dialog should appear
+      const confirmBtn = await screen.findByRole('button', {
+        name: /confirm delete/i,
+      })
+      fireEvent.click(confirmBtn)
+
+      await waitFor(() => {
+        expect(mockDeleteBatch).toHaveBeenCalledWith(PROJECT_ID, BATCH_ID)
+      })
+      await waitFor(() => {
+        expect(onDeleted).toHaveBeenCalled()
+      })
+    })
   })
 })
