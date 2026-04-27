@@ -7,6 +7,7 @@
  * Bookmarkable URL: /projects/{id}/fraktal/batch/{batchId}/image/{index}
  * Resolves route params and delegates rendering to FraktalBatchImageDetail.
  */
+import { Header } from '@/components/layout/Header'
 import { FraktalBatchImageDetail } from '@/components/fraktal/FraktalBatchImageDetail'
 
 export default function FraktalBatchImagePage({
@@ -18,10 +19,13 @@ export default function FraktalBatchImagePage({
   const imageIndex = parseInt(index, 10)
 
   return (
-    <FraktalBatchImageDetail
-      projectId={projectId}
-      batchId={batchId}
-      index={imageIndex}
-    />
+    <div className="min-h-screen">
+      <Header />
+      <FraktalBatchImageDetail
+        projectId={projectId}
+        batchId={batchId}
+        index={imageIndex}
+      />
+    </div>
   )
 }
