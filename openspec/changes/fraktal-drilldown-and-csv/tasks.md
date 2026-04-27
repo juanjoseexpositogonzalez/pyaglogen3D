@@ -29,16 +29,16 @@
 
 ## Phase 4 — Backend New Endpoints
 
-- [ ] T4.1 — Add drill-down GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/` endpoint in `apps/fractal_analysis/views.py`
-- [ ] T4.2 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/` endpoint in `apps/fractal_analysis/views.py`
-- [ ] T4.3 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/png/` with `Cache-Control: public, max-age=31536000, immutable`
-- [ ] T4.4 — Add POST `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/reanalyze/` (creates new FraktalAnalysis, redirects)
-- [ ] T4.5 — Add DELETE `/api/v1/projects/{pk}/fraktal/batches/{batchId}/` endpoint (cascades to images, preserves re-analyses)
-- [ ] T4.6 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/csv/` batch CSV endpoint via csv_export.py
-- [ ] T4.7 — Add GET `/api/v1/projects/{pk}/fraktal/{analysisId}/csv/` single CSV endpoint (reuse csv_export.py)
-- [ ] T4.8 — Add serializers for FraktalBatch + FraktalBatchImage in `apps/fractal_analysis/serializers.py`
-- [ ] T4.9 — Register new URLs in `apps/fractal_analysis/urls.py`
-- [ ] T4.10 — Write endpoint integration tests covering 50 spec scenarios in `apps/fractal_analysis/tests/test_batch_endpoints.py`
+- [x] T4.1 — Add drill-down GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/` endpoint in `apps/fractal_analysis/views.py`
+- [x] T4.2 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/` endpoint in `apps/fractal_analysis/views.py`
+- [x] T4.3 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/png/` with `Cache-Control: public, max-age=31536000, immutable`
+- [x] T4.4 — Add POST `/api/v1/projects/{pk}/fraktal/batches/{batchId}/images/{index}/reanalyze/` (creates new FraktalAnalysis, redirects)
+- [x] T4.5 — Add DELETE `/api/v1/projects/{pk}/fraktal/batches/{batchId}/` endpoint (cascades to images, preserves re-analyses)
+- [x] T4.6 — Add GET `/api/v1/projects/{pk}/fraktal/batches/{batchId}/csv/` batch CSV endpoint via csv_export.py
+- [x] T4.7 — Add GET `/api/v1/projects/{pk}/fraktal/{analysisId}/csv/` single CSV endpoint (reuse csv_export.py)
+- [x] T4.8 — Add serializers for FraktalBatch + FraktalBatchImage in `apps/fractal_analysis/serializers.py`
+- [x] T4.9 — Register new URLs in `apps/fractal_analysis/urls.py`
+- [x] T4.10 — Write endpoint integration tests covering 50 spec scenarios in `apps/fractal_analysis/tests/test_batch_endpoints.py`
 
 ## Phase 5 — Frontend API + Drill-down Route
 
