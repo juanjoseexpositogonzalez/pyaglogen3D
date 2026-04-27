@@ -610,67 +610,59 @@ def analyze_fraktal_batch_task(
     algorithm: str,
     sim_id: str | None,
     calibration_source: str,
+    project_id: str | None = None,
+    user_id: str | None = None,
+    zip_filename: str = "",
 ) -> dict:
     """Async batch FRAKTAL analysis when N > 30.
 
     Progress stages reported via ``self.update_state``:
 
     - ``autocalibrate`` — before the Rust call (0%).
-    - ``analyzing`` — while the Rust batch orchestrator runs. The call is
-      batch-shaped (one-shot Rust loop) so per-image granularity isn't
-      available here; the stage flips to ``analyzing`` at 0% and stays
-      there until the Rust call returns. Future improvement: loop
-      image-by-image in Python via the single-image bindings for finer
-      progress, at a cost of re-running autocalibration policy in Python.
-    - ``aggregating`` — after Rust returns (80%), while we build stats,
-      histogram, and comparison card.
+    - ``analyzing`` — while the Rust batch orchestrator runs.
+    - ``aggregating`` — after Rust returns (80%), while we persist to DB.
 
-    The result JSON is persisted to
-    ``{MEDIA_ROOT|BASE_DIR}/fraktal_batches/{task_id}.json`` and the
-    return value points the polling view at
-    :func:`apps.fractal_analysis.views.fraktal_results_view`.
+    Results are persisted to ``FraktalBatch`` + ``FraktalBatchImage`` rows.
+    The return value includes ``batch_id`` for the polling endpoint.
     """
     import base64
-    import json
-    import os
+    import io as _io
     import uuid as uuid_mod
 
-    # Lazy import — keeps this task importable without Rust extension at
-    # collection time (e.g., during test discovery under stub builds).
     import aglogen_core
     import numpy as np
+    from PIL import Image as _Image
 
-    from apps.fractal_analysis.views import (
-        _build_batch_response,
-        _fraktal_batches_storage_dir,
-    )
+    from apps.fractal_analysis.views import _build_batch_response
 
     total = len(images_npy_b64)
 
-    self.update_state(
-        state="PROGRESS",
-        meta={
-            "progress": 0.0,
-            "current": 0,
-            "total": total,
-            "stage": "autocalibrate",
-        },
-    )
+    if self.request.id:
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "progress": 0.0,
+                "current": 0,
+                "total": total,
+                "stage": "autocalibrate",
+            },
+        )
 
     images = [
         np.frombuffer(base64.b64decode(b64), dtype=np.uint8).reshape(shape)
         for b64, shape in zip(images_npy_b64, image_shapes, strict=True)
     ]
 
-    self.update_state(
-        state="PROGRESS",
-        meta={
-            "progress": 0.0,
-            "current": 0,
-            "total": total,
-            "stage": "analyzing",
-        },
-    )
+    if self.request.id:
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "progress": 0.0,
+                "current": 0,
+                "total": total,
+                "stage": "analyzing",
+            },
+        )
 
     rust_result = aglogen_core.analyze_fraktal_batch(
         images,
@@ -680,15 +672,16 @@ def analyze_fraktal_batch_task(
         algorithm,
     )
 
-    self.update_state(
-        state="PROGRESS",
-        meta={
-            "progress": 0.8,
-            "current": total,
-            "total": total,
-            "stage": "aggregating",
-        },
-    )
+    if self.request.id:
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "progress": 0.8,
+                "current": total,
+                "total": total,
+                "stage": "aggregating",
+            },
+        )
 
     sim_uuid = uuid_mod.UUID(sim_id) if sim_id else None
     payload = _build_batch_response(
@@ -700,10 +693,36 @@ def analyze_fraktal_batch_task(
         calibration_source,
     )
 
-    storage_dir = _fraktal_batches_storage_dir()
-    results_path = os.path.join(storage_dir, f"{self.request.id}.json")
-    with open(results_path, "w", encoding="utf-8") as fp:
-        json.dump(payload, fp)
+    # Persist to DB.
+    batch_id = None
+    if project_id:
+        from apps.fractal_analysis.models import FraktalBatch
+        from apps.fractal_analysis.services.batch import persist_batch_results
+
+        batch = FraktalBatch.objects.create(
+            project_id=uuid_mod.UUID(project_id),
+            created_by_id=uuid_mod.UUID(user_id) if user_id else None,
+            algorithm=algorithm,
+            calibration_source=calibration_source,
+            pixels_per_100nm=pixels_per_100nm,
+            dpo_used=rust_result.get("dpo_used") or dpo_hint,
+            autocalibrate_source=rust_result.get("autocalibrate_source"),
+            autocalibrate_image_index=rust_result.get("autocalibrate_image_index"),
+            sim_id=sim_uuid,
+            original_zip_filename=zip_filename,
+        )
+
+        # Re-encode numpy arrays to PNG bytes for storage.
+        png_list: list[bytes] = []
+        for img_array in images:
+            buf = _io.BytesIO()
+            _Image.fromarray(img_array, mode="L").save(buf, format="PNG")
+            png_list.append(buf.getvalue())
+
+        persist_batch_results(
+            batch, payload["images"], png_list, dpo_used=batch.dpo_used
+        )
+        batch_id = str(batch.id)
 
     logger.info(
         f"FRAKTAL batch task {self.request.id} completed: {total} images, "
@@ -711,7 +730,6 @@ def analyze_fraktal_batch_task(
     )
 
     return {
-        "results_url": f"/api/v1/fraktal-status/{self.request.id}/results/",
-        "results_path": results_path,
+        "batch_id": batch_id,
         "n_images": total,
     }

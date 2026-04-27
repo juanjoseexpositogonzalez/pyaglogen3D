@@ -373,3 +373,98 @@ class TestSyncPathPersistsToDB:
         assert len(data["images"]) == 3
         # batch_id also present
         assert "batch_id" in data
+
+
+# ---------------------------------------------------------------------------
+# Integration: async Celery task → DB persistence
+# ---------------------------------------------------------------------------
+
+import base64
+
+
+def _encode_images_for_celery(
+    images: list[np.ndarray],
+) -> tuple[list[str], list[list[int]]]:
+    """Convert numpy arrays to base64 + shapes as the Celery task expects."""
+    b64_list = [base64.b64encode(img.tobytes()).decode() for img in images]
+    shapes = [list(img.shape) for img in images]
+    return b64_list, shapes
+
+
+@pytest.mark.django_db
+class TestAsyncTaskPersistsToDB:
+    """Integration: Celery task creates FraktalBatch + images in DB."""
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    @patch("aglogen_core.version", return_value="0.1.0-test")
+    def test_celery_task_creates_batch_and_images(
+        self, mock_version, mock_rust
+    ) -> None:
+        mock_rust.return_value = _fake_rust_result(3)
+        user = _make_user()
+        project = _make_project(user)
+
+        from apps.fractal_analysis.services.batch import extract_zip_images
+
+        zip_bytes = _make_zip_with_metadata(n=3, pixels_per_100nm=500.0)
+        images, metadata, filenames = extract_zip_images(zip_bytes)
+        b64_list, shapes = _encode_images_for_celery(images)
+
+        from apps.fractal_analysis.tasks import analyze_fraktal_batch_task
+
+        result = analyze_fraktal_batch_task(
+            images_npy_b64=b64_list,
+            image_shapes=shapes,
+            filenames=filenames,
+            metadata=metadata,
+            pixels_per_100nm=500.0,
+            autocalibrate_dpo=False,
+            dpo_hint=25.0,
+            algorithm="granulated_2012",
+            sim_id=None,
+            calibration_source="metadata",
+            project_id=str(project.id),
+            user_id=str(user.id),
+        )
+
+        assert "batch_id" in result
+        batch = FraktalBatch.objects.get(id=result["batch_id"])
+        assert batch.n_images == 3
+        assert batch.n_successful == 3
+        assert batch.project_id == project.id
+
+        images_db = FraktalBatchImage.objects.filter(batch=batch)
+        assert images_db.count() == 3
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    @patch("aglogen_core.version", return_value="0.1.0-test")
+    def test_celery_task_result_has_batch_id(self, mock_version, mock_rust) -> None:
+        mock_rust.return_value = _fake_rust_result(2)
+        user = _make_user()
+        project = _make_project(user)
+
+        from apps.fractal_analysis.services.batch import extract_zip_images
+
+        zip_bytes = _make_zip_with_metadata(n=2, pixels_per_100nm=500.0)
+        images, metadata, filenames = extract_zip_images(zip_bytes)
+        b64_list, shapes = _encode_images_for_celery(images)
+
+        from apps.fractal_analysis.tasks import analyze_fraktal_batch_task
+
+        result = analyze_fraktal_batch_task(
+            images_npy_b64=b64_list,
+            image_shapes=shapes,
+            filenames=filenames,
+            metadata=metadata,
+            pixels_per_100nm=500.0,
+            autocalibrate_dpo=False,
+            dpo_hint=25.0,
+            algorithm="granulated_2012",
+            sim_id=None,
+            calibration_source="metadata",
+            project_id=str(project.id),
+            user_id=str(user.id),
+        )
+
+        assert "batch_id" in result
+        assert result["n_images"] == 2

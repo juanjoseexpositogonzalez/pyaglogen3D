@@ -321,6 +321,9 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                 algorithm=algorithm,
                 sim_id=str(sim_id) if sim_id else None,
                 calibration_source=calibration_source,
+                project_id=str(project.id) if project else None,
+                user_id=str(request.user.id) if request.user.is_authenticated else None,
+                zip_filename=uploaded.name or "",
             )
         except OperationalError:
             logger.warning(
