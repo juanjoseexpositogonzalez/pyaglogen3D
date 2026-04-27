@@ -51,13 +51,13 @@
 
 ## Phase 6 — Frontend Buttons
 
-- [ ] T6.1 — Make FraktalBatchResultsView table rows clickable (tr click → drill-down route) in `app/projects/[id]/fraktal/batch/page.tsx`
-- [ ] T6.2 — Add "Download CSV" button to FraktalBatchResultsView header (batch CSV endpoint)
-- [ ] T6.3 — Add "Delete batch" button in FraktalBatchResultsView (DELETE endpoint, confirm dialog)
-- [ ] T6.4 — Add "Download CSV" button to FraktalResultsView single-image header (single CSV endpoint)
-- [ ] T6.5 — Add "Re-analyze" button on FraktalBatchImageDetail page (reanalyze endpoint, redirect on complete)
-- [ ] T6.6 — Add "Download PNG" button on FraktalBatchImageDetail (direct PNG link)
-- [ ] T6.7 — Write button interaction tests in `app/projects/[id]/fraktal/fraktal.test.tsx`
+- [x] T6.1 — Make FraktalBatchResultsView table rows clickable (tr click → drill-down route) in `app/projects/[id]/fraktal/batch/page.tsx`
+- [x] T6.2 — Add "Download CSV" button to FraktalBatchResultsView header (batch CSV endpoint)
+- [x] T6.3 — Add "Delete batch" button in FraktalBatchResultsView (DELETE endpoint, confirm dialog)
+- [x] T6.4 — Add "Download CSV" button to FraktalResultsView single-image header (single CSV endpoint)
+- [x] T6.5 — Add "Re-analyze" button on FraktalBatchImageDetail page (reanalyze endpoint, redirect on complete)
+- [x] T6.6 — Add "Download PNG" button on FraktalBatchImageDetail (direct PNG link)
+- [x] T6.7 — Write button interaction tests in `app/projects/[id]/fraktal/fraktal.test.tsx`
 
 ## Phase 7 — Tests + Docs
 
