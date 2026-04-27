@@ -61,9 +61,9 @@
 
 ## Phase 7 — Tests + Docs
 
-- [ ] T7.1 — Run full backend integration test suite (all 600+ tests pass including new endpoint tests)
-- [ ] T7.2 — Run full frontend vitest suite (all existing + new component tests pass)
-- [ ] T7.3 — Verify CSV output byte-equivalence (single + batch) against known-good fixtures
-- [ ] T7.4 — Verify DELETE cascade preserves re-analysis FraktalAnalysis rows
-- [ ] T7.5 — Write user guide `docs/fraktal-drilldown-csv.md` (~80 lines): batch workflow, drill-down navigation, CSV format, re-analyze behavior, delete behavior
-- [ ] T7.6 — Add CHANGELOG entry for fraktal-drilldown-and-csv under UNRELEASED section
+- [x] T7.1 — Run full backend integration test suite (324 tests pass including 13 new Phase 7 integration tests)
+- [x] T7.2 — Run full frontend vitest suite (234 tests pass, all existing + new component tests green)
+- [x] T7.3 — Verify CSV output byte-equivalence (single + batch) against known-good fixtures (es-AR, en-US, anonymous, summary row)
+- [x] T7.4 — Verify DELETE cascade preserves re-analysis FraktalAnalysis rows (end-to-end via API)
+- [x] T7.5 — Write user guide `docs/fraktal-drilldown-csv.md` (98 lines): drill-down nav, CSV format, re-analyze, delete, PNG cache, legacy dir
+- [x] T7.6 — Add CHANGELOG entry for fraktal-drilldown-and-csv under UNRELEASED section
