@@ -667,27 +667,120 @@ def fraktal_status_view(request: Request, job_id: str) -> Response:
 def fraktal_results_view(request: Request, job_id: str) -> HttpResponse:
     """GET /api/v1/fraktal-status/{job_id}/results/
 
-    Streams the completed batch result JSON stored by
-    :func:`apps.fractal_analysis.tasks.analyze_fraktal_batch_task` to
-    ``{MEDIA_ROOT|BASE_DIR}/fraktal_batches/{task_id}.json``.
+    Returns the completed batch result JSON.  Tries two sources in order:
+
+    1. **DB path** (post-Phase 3): look up the Celery ``AsyncResult`` for
+       *job_id* to extract ``batch_id``, then load ``FraktalBatch`` +
+       ``FraktalBatchImage`` rows and serialize to the ``FraktalBatchResult``
+       shape the frontend expects.
+    2. **Legacy JSON-on-disk** fallback: read
+       ``{MEDIA_ROOT|BASE_DIR}/fraktal_batches/{job_id}.json`` for any
+       batches that completed before the deploy that removed JSON writing.
+    3. If neither source has data → 404.
     """
     import os
 
+    # --- 1. Try DB via Celery result → batch_id ---
+    batch_id = _resolve_batch_id_from_celery(job_id)
+    if batch_id:
+        payload = _serialize_batch_from_db(batch_id)
+        if payload is not None:
+            return Response(payload)
+
+    # --- 2. Legacy JSON-on-disk fallback ---
     storage_dir = _fraktal_batches_storage_dir()
     results_path = os.path.join(storage_dir, f"{job_id}.json")
 
-    if not os.path.exists(results_path):
-        return Response(
-            {"detail": f"Results for job {job_id} not available"},
-            status=status.HTTP_404_NOT_FOUND,
+    if os.path.exists(results_path):
+        with open(results_path, "rb") as fp:
+            raw = fp.read()
+        response = HttpResponse(raw, content_type="application/json")
+        response["Content-Disposition"] = (
+            f'inline; filename="fraktal_batch_{job_id}.json"'
         )
+        return response
 
-    with open(results_path, "rb") as fp:
-        payload = fp.read()
+    # --- 3. Neither → 404 ---
+    return Response(
+        {"detail": f"Results for job {job_id} not available"},
+        status=status.HTTP_404_NOT_FOUND,
+    )
 
-    response = HttpResponse(payload, content_type="application/json")
-    response["Content-Disposition"] = f'inline; filename="fraktal_batch_{job_id}.json"'
-    return response
+
+def _resolve_batch_id_from_celery(job_id: str) -> str | None:
+    """Extract ``batch_id`` from the Celery task result for *job_id*.
+
+    Returns the batch UUID string, or ``None`` when the task hasn't finished
+    or its result doesn't include a ``batch_id``.
+    """
+    try:
+        result = AsyncResult(job_id)
+        if result.state == "SUCCESS" and isinstance(result.result, dict):
+            return result.result.get("batch_id")
+    except Exception:  # noqa: BLE001 — never blow up on broker issues
+        logger.debug("Could not fetch Celery result for job %s", job_id)
+    return None
+
+
+def _serialize_batch_from_db(batch_id: str) -> dict | None:
+    """Load a ``FraktalBatch`` by *batch_id* and serialize to the
+    ``FraktalBatchResult`` shape expected by the frontend.
+
+    Returns ``None`` when the batch doesn't exist.
+    """
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id)
+    except FraktalBatch.DoesNotExist:
+        return None
+
+    images = batch.images.all().order_by("index")
+    images_out = [
+        {
+            "index": img.index,
+            "filename": img.filename,
+            "azimuth": img.azimuth,
+            "elevation": img.elevation,
+            "fractal_dimension": img.fractal_dimension,
+            "prefactor": img.prefactor,
+            "r_squared": img.r_squared,
+            "n_particles_counted": img.n_particles_counted,
+            "error": img.error or None,
+        }
+        for img in images
+    ]
+
+    stats = {
+        "n_images": batch.n_images,
+        "n_successful": batch.n_successful,
+        "mean_df": batch.mean_df,
+        "std_df": batch.std_df,
+        "median_df": batch.median_df,
+        "min_df": batch.min_df,
+        "max_df": batch.max_df,
+    }
+
+    comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)
+
+    calibration = {
+        "source": batch.calibration_source,
+        "pixels_per_100nm": batch.pixels_per_100nm,
+        "dpo_used": batch.dpo_used,
+        "autocalibrate_image": batch.autocalibrate_image_index,
+    }
+
+    df_values = [
+        img.fractal_dimension for img in images if img.fractal_dimension is not None
+    ]
+    histogram = compute_histogram(df_values)
+
+    return {
+        "batch_id": str(batch.id),
+        "images": images_out,
+        "stats": stats,
+        "histogram": histogram,
+        "comparison": comparison,
+        "calibration": calibration,
+    }
 
 
 # ============================================================================
