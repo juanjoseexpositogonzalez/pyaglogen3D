@@ -106,21 +106,24 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 **THEN** the response is HTTP 202 with body `{job_id}`,
 **AND** the polling endpoint `GET /api/v1/fraktal-status/{job_id}/` returns:
 - during execution: `{status: "processing", progress: <float 0.0–1.0>, current: <int>, total: <int>, stage: "autocalibrate" | "analyzing" | "aggregating"}`,
-- on success: `{status: "done", results_url: <string>}`,
+- on success: `{status: "done", batch_id: <uuid>, results_url: <string>}`,
 - on failure: `{status: "failed", error: <string>}`,
-**AND** `progress` advances at least once per completed image.
+**AND** `progress` advances at least once per completed image,
+**AND** `results_url` points at the new DB-backed batch detail endpoint `/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/`.
+
+(Previously: success payload was `{status, results_url}` only; results lived in JSON-on-disk.)
 
 #### Scenario 5.1 — Async boundary (`N=31`)
-- **Expected**: 202 with `job_id`; polling reaches `status: "done"`; results accessible at `results_url`.
+- **Expected**: 202 with `job_id`; polling reaches `status: "done"` with `batch_id` populated and `results_url` resolves the new DB-backed batch endpoint.
 
 #### Scenario 5.2 — Mid-size async (`N=100`)
-- **Expected**: Status transitions through `autocalibrate` → `analyzing` → `aggregating`; `progress` reaches 1.0 at completion.
+- **Expected**: Status transitions through `autocalibrate` → `analyzing` → `aggregating`; `progress` reaches 1.0 at completion; final payload includes `batch_id`.
 
 #### Scenario 5.3 — Stress async (`N=500`)
-- **Expected**: Runs to completion without timeout; progress increments per image.
+- **Expected**: Runs to completion without timeout; progress increments per image; `batch_id` returned at done.
 
 #### Scenario 5.4 — Failure during run
-- **Expected**: Polling returns `{status: "failed", error: "..."}`; error message is non-empty.
+- **Expected**: Polling returns `{status: "failed", error: "..."}`; `batch_id` absent; error message non-empty.
 
 ### R6. Per-image result shape
 
@@ -128,7 +131,10 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 **WHEN** per-image results are assembled,
 **THEN** each entry MUST contain exactly: `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `calibration_used: {pixels_per_100nm, dpo_nm}`,
 **AND** `azimuth` / `elevation` are pulled from `metadata.directions[]` matched by filename when available, else `null`,
-**AND** `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted` MAY be `null` when the analyzer cannot produce a value.
+**AND** `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted` MAY be `null` when the analyzer cannot produce a value,
+**AND** entries are sourced from the DB-backed `FraktalBatchImage` rows persisted per `fraktal-batch-persistence` (no JSON-on-disk file is read or written).
+
+(Previously: results were assembled from a JSON file written to shared media; this delta keeps the wire shape and moves the source of truth to the DB.)
 
 #### Scenario 6.1 — Image matched to metadata direction
 - **Expected**: `azimuth` and `elevation` populated from `metadata.directions[i]`.
@@ -139,6 +145,9 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 
 #### Scenario 6.3 — Analyzer returns null Df
 - **Expected**: Entry present with `fractal_dimension = null`; entry is flagged as unsuccessful for R7 aggregation.
+
+#### Scenario 6.4 — Storage source
+- **Expected**: For any sync or async batch, the entry is materialized from a `FraktalBatchImage` row; no JSON-on-disk artifact is created.
 
 ### R7. Batch statistics
 
