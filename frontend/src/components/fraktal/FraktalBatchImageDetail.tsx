@@ -41,6 +41,8 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [reanalyzing, setReanalyzing] = useState(false)
+  const [blobUrl, setBlobUrl] = useState<string | null>(null)
+  const [imageError, setImageError] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -65,6 +67,37 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
 
     return () => {
       cancelled = true
+    }
+  }, [projectId, batchId, index])
+
+  // Fetch PNG with auth (Bearer token) and create blob URL for <img>.
+  // Revokes previous blob URL on cleanup (unmount or dependency change).
+  useEffect(() => {
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    setBlobUrl(null)
+    setImageError(null)
+
+    fraktalApi
+      .fetchBatchImagePng(projectId, batchId, index)
+      .then((blob) => {
+        if (!cancelled) {
+          objectUrl = URL.createObjectURL(blob)
+          setBlobUrl(objectUrl)
+        }
+      })
+      .catch((err) => {
+        if (!cancelled) {
+          setImageError(err?.message || 'Failed to load image')
+        }
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl) {
+        URL.revokeObjectURL(objectUrl)
+      }
     }
   }, [projectId, batchId, index])
 
@@ -122,7 +155,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
     )
   }
 
-  // --- Error state ---
+  // --- Error state (metadata fetch failed or no data) ---
   if (error || !data) {
     return (
       <div className="container mx-auto px-4 py-8 max-w-5xl">
@@ -130,6 +163,29 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
           <CardContent className="p-6">
             <p className="text-destructive">
               Failed to load image detail. {error}
+            </p>
+            <Link
+              href={batchUrl}
+              className="mt-4 inline-block"
+            >
+              <Button variant="outline" aria-label="Back to batch results">
+                Back to batch results
+              </Button>
+            </Link>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // --- Image fetch error (PNG auth failed, e.g. 401/404) ---
+  if (imageError) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-5xl">
+        <Card className="border-destructive">
+          <CardContent className="p-6">
+            <p className="text-destructive">
+              Failed to load image. {imageError}
             </p>
             <Link
               href={batchUrl}
@@ -242,14 +298,18 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* PNG image */}
+          {/* PNG image (fetched with auth, displayed via blob URL) */}
           <Card>
             <CardContent className="p-4">
-              <img
-                src={pngUrl}
-                alt={`Batch image ${data.index}: ${data.filename}`}
-                className="w-full rounded-lg"
-              />
+              {blobUrl ? (
+                <img
+                  src={blobUrl}
+                  alt={`Batch image ${data.index}: ${data.filename}`}
+                  className="w-full rounded-lg"
+                />
+              ) : (
+                <div className="h-64 bg-muted animate-pulse rounded-lg" />
+              )}
             </CardContent>
           </Card>
 

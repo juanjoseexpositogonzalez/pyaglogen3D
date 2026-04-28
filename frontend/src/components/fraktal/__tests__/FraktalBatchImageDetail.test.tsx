@@ -19,12 +19,13 @@ import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { FraktalBatchImageDetail as ImageDetailType } from '@/lib/api'
 
 // Hoist mocks so vi.mock factories can reference them
-const { mockPush, mockGetBatchImage, mockGetBatchImagePngUrl, mockReanalyzeBatchImage } = vi.hoisted(
+const { mockPush, mockGetBatchImage, mockGetBatchImagePngUrl, mockReanalyzeBatchImage, mockFetchBatchImagePng } = vi.hoisted(
   () => ({
     mockPush: vi.fn(),
     mockGetBatchImage: vi.fn(),
     mockGetBatchImagePngUrl: vi.fn(),
     mockReanalyzeBatchImage: vi.fn(),
+    mockFetchBatchImagePng: vi.fn(),
   })
 )
 
@@ -56,6 +57,7 @@ vi.mock('@/lib/api', async () => {
       getBatchImage: mockGetBatchImage,
       getBatchImagePngUrl: mockGetBatchImagePngUrl,
       reanalyzeBatchImage: mockReanalyzeBatchImage,
+      fetchBatchImagePng: mockFetchBatchImagePng,
     },
   }
 })
@@ -111,6 +113,13 @@ describe('<FraktalBatchImageDetail />', () => {
     mockGetBatchImagePngUrl.mockReturnValue(
       `http://localhost:8000/api/v1/projects/${PROJECT_ID}/fraktal/batches/${BATCH_ID}/images/2/png/`
     )
+    // Default: fetchBatchImagePng succeeds with a fake PNG blob
+    mockFetchBatchImagePng.mockResolvedValue(
+      new Blob(['fake-png'], { type: 'image/png' })
+    )
+    // Stub URL.createObjectURL / revokeObjectURL (jsdom doesn't implement them)
+    globalThis.URL.createObjectURL = vi.fn().mockReturnValue('blob:http://localhost/default-blob')
+    globalThis.URL.revokeObjectURL = vi.fn()
   })
 
   afterEach(() => {
@@ -152,11 +161,15 @@ describe('<FraktalBatchImageDetail />', () => {
 
   // --- T5.3: Image + metrics rendering ---
   describe('image and metrics', () => {
-    it('renders the PNG image via getBatchImagePngUrl', async () => {
+    it('renders the PNG image via authenticated blob URL', async () => {
       mockGetBatchImage.mockResolvedValue(makeImageDetail())
       renderComponent()
       const img = await screen.findByRole('img')
-      expect(img.getAttribute('src')).toContain('/images/2/png/')
+      // Image src should be a blob URL (from fetchBatchImagePng + createObjectURL),
+      // NOT a raw HTTP URL to the PNG endpoint
+      await waitFor(() => {
+        expect(img.getAttribute('src')).toMatch(/^blob:/)
+      })
     })
 
     it('displays fractal dimension (Df) value', async () => {
@@ -341,6 +354,80 @@ describe('<FraktalBatchImageDetail />', () => {
       expect(backLink.getAttribute('href')).toBe(
         `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}`
       )
+    })
+  })
+
+  // --- HOTFIX: PNG auth via blob URL (fetch + createObjectURL) ---
+  describe('PNG auth via blob URL', () => {
+    const FAKE_BLOB_URL = 'blob:http://localhost/fake-blob-123'
+    let mockCreateObjectURL: ReturnType<typeof vi.fn>
+    let mockRevokeObjectURL: ReturnType<typeof vi.fn>
+
+    beforeEach(() => {
+      mockCreateObjectURL = vi.fn().mockReturnValue(FAKE_BLOB_URL)
+      mockRevokeObjectURL = vi.fn()
+      // Override the stubs from outer beforeEach with specific spies
+      globalThis.URL.createObjectURL = mockCreateObjectURL
+      globalThis.URL.revokeObjectURL = mockRevokeObjectURL
+    })
+
+    it('calls fetchBatchImagePng to authenticate the PNG request', async () => {
+      const fakeBlob = new Blob(['png-data'], { type: 'image/png' })
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      mockFetchBatchImagePng.mockResolvedValue(fakeBlob)
+
+      renderComponent()
+      await screen.findByText('1.720') // wait for data to load
+
+      expect(mockFetchBatchImagePng).toHaveBeenCalledWith(
+        PROJECT_ID,
+        BATCH_ID,
+        2
+      )
+    })
+
+    it('sets <img> src to a blob: URL on successful fetch', async () => {
+      const fakeBlob = new Blob(['png-data'], { type: 'image/png' })
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      mockFetchBatchImagePng.mockResolvedValue(fakeBlob)
+
+      renderComponent()
+
+      const img = await screen.findByRole('img')
+      await waitFor(() => {
+        expect(img.getAttribute('src')).toBe(FAKE_BLOB_URL)
+      })
+      expect(mockCreateObjectURL).toHaveBeenCalledWith(fakeBlob)
+    })
+
+    it('shows error banner when fetchBatchImagePng returns 401', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      mockFetchBatchImagePng.mockRejectedValue(
+        new Error('Unauthorized')
+      )
+
+      renderComponent()
+
+      expect(
+        await screen.findByText(/failed to load image/i)
+      ).toBeTruthy()
+    })
+
+    it('calls URL.revokeObjectURL on unmount to prevent memory leak', async () => {
+      const fakeBlob = new Blob(['png-data'], { type: 'image/png' })
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      mockFetchBatchImagePng.mockResolvedValue(fakeBlob)
+
+      const { unmount } = renderComponent()
+
+      // Wait for blob URL to be set
+      await waitFor(() => {
+        expect(mockCreateObjectURL).toHaveBeenCalled()
+      })
+
+      unmount()
+
+      expect(mockRevokeObjectURL).toHaveBeenCalledWith(FAKE_BLOB_URL)
     })
   })
 })

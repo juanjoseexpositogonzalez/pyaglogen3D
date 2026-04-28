@@ -1013,6 +1013,11 @@ export const fraktalApi = {
   /**
    * Build the URL for the PNG image endpoint (for use in ``<img src>``).
    * Does NOT fetch — returns the URL string so the browser handles caching.
+   *
+   * NOTE: This endpoint requires JWT auth. Raw ``<img src>`` will NOT send
+   * the ``Authorization`` header → use ``fetchBatchImagePng`` instead for
+   * authenticated display. Kept for consumers that only need the URL string
+   * (e.g. download links that go through an ``<a>`` tag or copy-to-clipboard).
    */
   getBatchImagePngUrl: (
     projectId: string,
@@ -1020,6 +1025,25 @@ export const fraktalApi = {
     index: number
   ): string =>
     `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`,
+
+  /**
+   * Fetch the PNG image with authentication (Bearer token via ``authFetch``).
+   *
+   * Returns the image as a ``Blob`` on 2xx, throws ``ApiError`` on non-2xx.
+   * Use ``URL.createObjectURL(blob)`` on the result to display in ``<img>``.
+   */
+  fetchBatchImagePng: async (
+    projectId: string,
+    batchId: string,
+    index: number
+  ): Promise<Blob> => {
+    const url = `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`
+    const res = await authFetch(url)
+    if (!res.ok) {
+      throw new ApiError('Failed to load image', res.status)
+    }
+    return res.blob()
+  },
 
   /**
    * Re-analyze a batch image: POST creates a new FraktalAnalysis from the
