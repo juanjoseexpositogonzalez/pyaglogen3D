@@ -261,6 +261,46 @@ class TestImageDrilldownEndpoint:
         assert data["dpo_used"] == pytest.approx(25.0)
         assert data["fractal_dimension"] == pytest.approx(1.70)
 
+    def test_image_detail_includes_batch_calibration_fields(self) -> None:
+        """Drill-down includes pixels_per_100nm and autocalibrate_source from
+        the parent batch — needed for diagnostic metadata on failed images (C1).
+        """
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(
+            project,
+            user,
+            pixels_per_100nm=420.5,
+            autocalibrate_source="image_0",
+        )
+        _add_images(batch, 2)
+        client = _authed_client(user)
+
+        resp = client.get(_image_detail_url(project.id, batch.id, 0))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pixels_per_100nm"] == pytest.approx(420.5)
+        assert data["autocalibrate_source"] == "image_0"
+
+    def test_image_detail_autocalibrate_source_null_when_manual(self) -> None:
+        """When calibration_source is manual, autocalibrate_source is null."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(
+            project,
+            user,
+            calibration_source="manual",
+            autocalibrate_source=None,
+        )
+        _add_images(batch, 1)
+        client = _authed_client(user)
+
+        resp = client.get(_image_detail_url(project.id, batch.id, 0))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["pixels_per_100nm"] == pytest.approx(500.0)
+        assert data["autocalibrate_source"] is None
+
 
 # ===========================================================================
 # T4.3 — PNG bytes endpoint

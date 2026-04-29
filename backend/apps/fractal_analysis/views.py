@@ -958,6 +958,8 @@ def batch_image_detail_view(
             "n_particles_counted": img.n_particles_counted,
             "error": img.error or None,
             "dpo_used": img.dpo_used,
+            "pixels_per_100nm": batch.pixels_per_100nm,
+            "autocalibrate_source": batch.autocalibrate_source,
             "prev_index": prev_index,
             "next_index": next_index,
             "total_count": total,
