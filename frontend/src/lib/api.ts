@@ -17,6 +17,7 @@ import type {
   CreateParametricStudyInput,
   ParametricStudyResults,
   BoxCounting3DResult,
+  AnalysisStatus,
 } from './types'
 import { tokenStorage } from './token-storage'
 import { authApi } from './auth-api'
@@ -726,7 +727,7 @@ export interface FraktalBatchResult {
 
 export interface FraktalBatchListItem {
   id: string
-  status: string
+  status: AnalysisStatus
   created_at: string
   completed_at: string | null
   algorithm: string
