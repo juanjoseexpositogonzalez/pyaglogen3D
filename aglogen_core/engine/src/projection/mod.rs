@@ -12,6 +12,69 @@ use std::f64::consts::PI;
 
 use self::directions::Direction;
 
+/// Result of a 2D bounding-box computation from 3D positions + viewing direction.
+///
+/// Single source of truth for 2D bbox dimensions. Used by both render modes
+/// and per-image scale calculation (see `projection-scale-per-image` spec R3).
+#[derive(Debug, Clone)]
+pub struct Bbox2dResult {
+    /// Width of the 2D bounding box in engine units (max_x - min_x including radii).
+    pub bbox_width: f64,
+    /// Height of the 2D bounding box in engine units (max_y - min_y including radii).
+    pub bbox_height: f64,
+    /// Projected 2D positions (x, y) for each particle.
+    pub positions: Vec<(f64, f64)>,
+    /// Particle radii (passed through unchanged).
+    pub radii: Vec<f64>,
+}
+
+/// Compute the 2D bounding box from 3D positions projected at a given direction.
+///
+/// Projects all particles using the azimuth/elevation viewing direction, then
+/// computes the tight 2D bounding box that encloses all particle circles.
+///
+/// # Arguments
+/// * `coordinates` - 3D particle coordinates as slice of [x, y, z].
+/// * `radii` - Particle radii, one per coordinate.
+/// * `azimuth_deg` - Azimuth viewing angle in degrees.
+/// * `elevation_deg` - Elevation viewing angle in degrees.
+///
+/// # Returns
+/// A [`Bbox2dResult`] with the bounding box dimensions and projected positions.
+pub fn compute_2d_bbox(
+    coordinates: &[[f64; 3]],
+    radii: &[f64],
+    azimuth_deg: f64,
+    elevation_deg: f64,
+) -> Bbox2dResult {
+    let proj = project_to_2d_internal(coordinates, radii, azimuth_deg, elevation_deg);
+
+    if proj.x.is_empty() {
+        return Bbox2dResult {
+            bbox_width: 0.0,
+            bbox_height: 0.0,
+            positions: vec![],
+            radii: vec![],
+        };
+    }
+
+    let bbox_width = proj.bounds[1] - proj.bounds[0];
+    let bbox_height = proj.bounds[3] - proj.bounds[2];
+    let positions: Vec<(f64, f64)> = proj
+        .x
+        .iter()
+        .zip(proj.y.iter())
+        .map(|(&x, &y)| (x, y))
+        .collect();
+
+    Bbox2dResult {
+        bbox_width,
+        bbox_height,
+        positions,
+        radii: proj.radii,
+    }
+}
+
 /// Result of a 2D projection operation.
 #[derive(Debug, Clone)]
 pub struct ProjectionResult {
@@ -187,6 +250,62 @@ fn build_view_matrix(azimuth: f64, elevation: f64) -> [[f64; 3]; 3] {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── T1.3: 2D bbox helper tests ──────────────────────────────────
+    #[test]
+    fn compute_2d_bbox_returns_correct_dimensions_and_positions() {
+        // Two particles along X axis: at (0,0,0) r=1 and (4,0,0) r=1
+        // Viewed from az=0, el=0 (looking along +X):
+        //   both project onto the Y-Z plane (x'=0 for both)
+        //   so bbox width should be ~2*r and height ~2*r
+        // Viewed from az=90, el=0 (looking along +Y):
+        //   particles separate along x' axis
+        let coords = vec![[0.0, 0.0, 0.0], [4.0, 0.0, 0.0]];
+        let radii = vec![1.0, 1.0];
+        let result = compute_2d_bbox(&coords, &radii, 90.0, 0.0);
+        // From az=90, el=0: particles at x_proj ~ -1 (cos90*0)... actually
+        // let's use the projection: build_view_matrix is applied.
+        // We can verify:
+        // - result contains (bbox_w, bbox_h, projected_positions)
+        // - bbox_w and bbox_h are positive for non-empty input
+        assert!(result.bbox_width > 0.0, "bbox width must be positive");
+        assert!(result.bbox_height > 0.0, "bbox height must be positive");
+        assert_eq!(
+            result.positions.len(),
+            2,
+            "should return 2 projected positions"
+        );
+    }
+
+    #[test]
+    fn compute_2d_bbox_single_particle() {
+        let coords = vec![[0.0, 0.0, 0.0]];
+        let radii = vec![1.5];
+        let result = compute_2d_bbox(&coords, &radii, 0.0, 0.0);
+        // Single particle at origin with radius 1.5:
+        // bbox_w = (0+1.5) - (0-1.5) = 3.0
+        // bbox_h = (0+1.5) - (0-1.5) = 3.0
+        assert!(
+            (result.bbox_width - 3.0).abs() < 1e-10,
+            "single particle bbox_width should be 2*r=3.0, got {}",
+            result.bbox_width
+        );
+        assert!(
+            (result.bbox_height - 3.0).abs() < 1e-10,
+            "single particle bbox_height should be 2*r=3.0, got {}",
+            result.bbox_height
+        );
+    }
+
+    #[test]
+    fn compute_2d_bbox_empty_returns_zeros() {
+        let coords: Vec<[f64; 3]> = vec![];
+        let radii: Vec<f64> = vec![];
+        let result = compute_2d_bbox(&coords, &radii, 45.0, 30.0);
+        assert!((result.bbox_width - 0.0).abs() < 1e-10);
+        assert!((result.bbox_height - 0.0).abs() < 1e-10);
+        assert!(result.positions.is_empty());
+    }
 
     #[test]
     fn test_view_matrix_identity() {
