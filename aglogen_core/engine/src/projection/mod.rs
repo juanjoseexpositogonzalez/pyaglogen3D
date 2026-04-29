@@ -7,6 +7,7 @@
 //! rotation transformation.
 
 pub mod directions;
+pub mod render;
 
 use std::f64::consts::PI;
 
