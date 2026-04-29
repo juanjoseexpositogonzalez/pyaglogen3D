@@ -50,7 +50,7 @@ export function FraktalBatchesSection({
           {batches.map((batch) => (
             <Link
               key={batch.id}
-              href={`/projects/${projectId}/fraktal/batch/${batch.id}/image/0`}
+              href={`/projects/${projectId}/fraktal/batch/${batch.id}`}
             >
               <Card className="hover:border-primary/50 transition-colors cursor-pointer">
                 <CardContent className="p-4">

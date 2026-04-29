@@ -95,7 +95,7 @@ describe('<FraktalBatchesSection />', () => {
     expect(screen.getByText(/No FRAKTAL batches yet/i)).toBeTruthy()
   })
 
-  it('each batch links to drill-down at image index 0', () => {
+  it('each batch links to batch summary (not directly to image/0)', () => {
     render(
       <FraktalBatchesSection
         projectId="proj-1"
@@ -105,16 +105,17 @@ describe('<FraktalBatchesSection />', () => {
     )
 
     const links = screen.getAllByRole('link')
-    // Filter links that go to batch drill-down
+    // Filter links that go to batch pages
     const batchLinks = links.filter((a) =>
       a.getAttribute('href')?.includes('/fraktal/batch/')
     )
     expect(batchLinks).toHaveLength(2)
+    // Should link to batch summary, NOT image/0
     expect(batchLinks[0].getAttribute('href')).toBe(
-      '/projects/proj-1/fraktal/batch/batch-aaa/image/0'
+      '/projects/proj-1/fraktal/batch/batch-aaa'
     )
     expect(batchLinks[1].getAttribute('href')).toBe(
-      '/projects/proj-1/fraktal/batch/batch-bbb/image/0'
+      '/projects/proj-1/fraktal/batch/batch-bbb'
     )
   })
 
