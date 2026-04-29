@@ -244,6 +244,121 @@ class TestFraktalBatchImageCreation:
 
 
 # ---------------------------------------------------------------------------
+# FraktalBatchImage — png_scientific_bytes field tests
+# ---------------------------------------------------------------------------
+
+
+class TestPngScientificBytesField:
+    """Test the nullable BinaryField png_scientific_bytes on FraktalBatchImage.
+
+    Covers spec R-DELTA-F scenarios: null default, accepts bytes, is_null query,
+    and coexistence with existing fields.
+    """
+
+    def test_defaults_to_null_when_not_provided(self, batch):
+        """Scenario F.1: new field defaults to NULL on create (no value given)."""
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="legacy.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 10,
+        )
+        img.refresh_from_db()
+        assert img.png_scientific_bytes is None
+
+    def test_accepts_bytes_when_provided(self, batch):
+        """Scenario F.3: field stores scientific PNG bytes when explicitly set."""
+        scientific_data = b"\x89PNG\r\n\x1a\n" + b"\xff\x00\xff\x00" * 50
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="scientific.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 10,
+            png_scientific_bytes=scientific_data,
+        )
+        img.refresh_from_db()
+        assert bytes(img.png_scientific_bytes) == scientific_data
+
+    def test_queryable_as_isnull_true_for_legacy_rows(self, batch):
+        """Scenario 2.2/2.4: legacy rows (no scientific PNG) are queryable via isnull."""
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="legacy_a.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=1,
+            filename="legacy_b.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+        )
+        legacy_count = FraktalBatchImage.objects.filter(
+            png_scientific_bytes__isnull=True
+        ).count()
+        assert legacy_count == 2
+
+    def test_queryable_as_isnull_false_for_new_rows(self, batch):
+        """Scenario 2.1: new-mode rows with scientific PNG are queryable."""
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="new_mode.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+            png_scientific_bytes=b"\x89PNG" + b"\xff" * 20,
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=1,
+            filename="legacy.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+        )
+        with_scientific = FraktalBatchImage.objects.filter(
+            png_scientific_bytes__isnull=False
+        ).count()
+        without_scientific = FraktalBatchImage.objects.filter(
+            png_scientific_bytes__isnull=True
+        ).count()
+        assert with_scientific == 1
+        assert without_scientific == 1
+
+    def test_existing_fields_unaffected(self, batch):
+        """Verify adding png_scientific_bytes does not break existing fields."""
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="full_row.png",
+            azimuth=45.0,
+            elevation=30.0,
+            fractal_dimension=1.85,
+            prefactor=1.2,
+            r_squared=0.99,
+            n_particles_counted=42,
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 100,
+            png_scientific_bytes=b"\x89PNG" + b"\xff" * 50,
+        )
+        img.refresh_from_db()
+        assert img.fractal_dimension == 1.85
+        assert img.prefactor == 1.2
+        assert img.r_squared == 0.99
+        assert img.n_particles_counted == 42
+        assert bytes(img.image_png) == b"\x89PNG" + b"\x00" * 100
+        assert bytes(img.png_scientific_bytes) == b"\x89PNG" + b"\xff" * 50
+
+    def test_verbose_name(self):
+        """Field has the required verbose_name per spec."""
+        field = FraktalBatchImage._meta.get_field("png_scientific_bytes")
+        assert field.verbose_name == "Scientific PNG bytes"
+
+
+# ---------------------------------------------------------------------------
 # Cascade delete tests
 # ---------------------------------------------------------------------------
 

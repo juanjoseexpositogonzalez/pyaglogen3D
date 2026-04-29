@@ -347,6 +347,13 @@ class FraktalBatchImage(models.Model):
     # PNG raster bytes (~50-100KB typical)
     image_png = models.BinaryField()
 
+    # Scientific PNG: binary black/white (post-threshold), nullable for legacy rows
+    png_scientific_bytes = models.BinaryField(
+        null=True,
+        blank=True,
+        verbose_name="Scientific PNG bytes",
+    )
+
     class Meta:
         db_table = "fraktal_batch_images"
         unique_together = [("batch", "index")]
