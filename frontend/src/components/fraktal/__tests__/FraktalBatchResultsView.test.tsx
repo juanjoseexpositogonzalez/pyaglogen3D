@@ -225,7 +225,9 @@ describe('<FraktalBatchResultsView />', () => {
       expect(rowLinks.length).toBeGreaterThanOrEqual(3)
 
       // Collect unique hrefs to verify all 3 image routes are present
-      const uniqueHrefs = [...new Set(rowLinks.map((a) => a.getAttribute('href')))]
+      const uniqueHrefs = Array.from(
+        new Set(rowLinks.map((a) => a.getAttribute('href')))
+      )
       expect(uniqueHrefs).toContain(
         `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/0`
       )

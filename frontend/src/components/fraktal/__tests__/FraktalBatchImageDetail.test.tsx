@@ -367,8 +367,10 @@ describe('<FraktalBatchImageDetail />', () => {
       mockCreateObjectURL = vi.fn().mockReturnValue(FAKE_BLOB_URL)
       mockRevokeObjectURL = vi.fn()
       // Override the stubs from outer beforeEach with specific spies
-      globalThis.URL.createObjectURL = mockCreateObjectURL
-      globalThis.URL.revokeObjectURL = mockRevokeObjectURL
+      globalThis.URL.createObjectURL =
+        mockCreateObjectURL as unknown as typeof URL.createObjectURL
+      globalThis.URL.revokeObjectURL =
+        mockRevokeObjectURL as unknown as typeof URL.revokeObjectURL
     })
 
     it('calls fetchBatchImagePng to authenticate the PNG request', async () => {
