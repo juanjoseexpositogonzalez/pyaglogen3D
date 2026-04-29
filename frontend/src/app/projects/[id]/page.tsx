@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
 import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
+import { useFraktalBatches } from '@/hooks/useFraktalBatches'
+import { FraktalBatchesSection } from '@/components/fraktal/FraktalBatchesSection'
 import { simulationsApi, fraktalApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -33,6 +35,7 @@ export default function ProjectDetailPage({
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
   const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
+  const { data: fraktalBatches, isLoading: batchesLoading } = useFraktalBatches(id)
   const deleteFraktal = useDeleteFraktalAnalysis(id)
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -599,6 +602,13 @@ export default function ProjectDetailPage({
             </div>
           )}
         </div>
+
+        {/* FRAKTAL Batches Section */}
+        <FraktalBatchesSection
+          projectId={id}
+          batches={fraktalBatches?.results}
+          isLoading={batchesLoading}
+        />
       </main>
 
       {/* Sticky Compare bar — only when ≥2 sims selected (R1/S1.3). */}
