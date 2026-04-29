@@ -12,6 +12,7 @@ from .views import (
     batch_image_detail_view,
     batch_image_png_view,
     batch_image_reanalyze_view,
+    batch_list_view,
     fraktal_results_view,
     fraktal_status_view,
     single_image_csv_view,
@@ -123,6 +124,12 @@ urlpatterns = [
         "fraktal-status/<str:job_id>/results/",
         fraktal_results_view,
         name="fraktal-results",
+    ),
+    # Batch list (hotfix: dashboard gap)
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/",
+        batch_list_view,
+        name="project-fraktal-batch-list",
     ),
     # Phase 4 — Batch drill-down, PNG, re-analyze, delete, CSV endpoints
     path(

@@ -707,3 +707,109 @@ class TestSingleImageCsvEndpoint:
 
         resp = client.get(_single_csv_url(project_b.id, analysis.id))
         assert resp.status_code == 404
+
+
+# ===========================================================================
+# Batch list endpoint (hotfix: dashboard gap)
+# ===========================================================================
+
+
+def _batch_list_url(project_id) -> str:
+    return f"/api/v1/projects/{project_id}/fraktal/batches/"
+
+
+@pytest.mark.django_db
+class TestBatchListEndpoint:
+    """GET /api/v1/projects/{pk}/fraktal/batches/ — paginated batch list."""
+
+    def test_list_returns_batches_sorted_by_created_at_desc(self) -> None:
+        """Two batches → returned newest first."""
+        user = _make_user()
+        project = _make_project(user)
+        b1 = _make_batch(project, user)
+        _add_images(b1, 2)
+        b2 = _make_batch(project, user)
+        _add_images(b2, 3)
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project.id))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "results" in data
+        assert "count" in data
+        assert data["count"] == 2
+        assert len(data["results"]) == 2
+        # Newest first
+        assert data["results"][0]["id"] == str(b2.id)
+        assert data["results"][1]["id"] == str(b1.id)
+
+    def test_list_empty_project_returns_empty(self) -> None:
+        """No batches → count=0, results=[]."""
+        user = _make_user()
+        project = _make_project(user)
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project.id))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 0
+        assert data["results"] == []
+
+    def test_list_cross_project_returns_empty(self) -> None:
+        """User queries own project that has no batches,
+        other user's batches are invisible (403 cross-project)."""
+        owner = _make_user()
+        other = _make_user()
+        project_a = _make_project(owner)
+        project_b = _make_project(other)
+        batch = _make_batch(project_a, owner)
+        _add_images(batch, 2)
+        client = _authed_client(other)
+
+        # Other user queries their OWN project → batch from project_a is invisible
+        resp = client.get(_batch_list_url(project_b.id))
+        assert resp.status_code == 200
+        assert resp.json()["count"] == 0
+
+    def test_list_unauthenticated_rejected(self) -> None:
+        client = APIClient()
+        resp = client.get(_batch_list_url(uuid.uuid4()))
+        assert resp.status_code in (401, 403)
+
+    def test_list_item_shape(self) -> None:
+        """Each item has expected fields (no images array)."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images(batch, 5)
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project.id))
+        assert resp.status_code == 200
+        item = resp.json()["results"][0]
+        # Required fields
+        assert "id" in item
+        assert "status" in item
+        assert "created_at" in item
+        assert "n_images" in item
+        assert "mean_df" in item
+        assert "algorithm" in item
+        assert "dpo_used" in item
+        # Must NOT include per-image array (that's in detail endpoint)
+        assert "images" not in item
+
+    def test_list_only_own_project_visible(self) -> None:
+        """Batches from other projects do not leak."""
+        user = _make_user()
+        project_a = _make_project(user)
+        project_b = _make_project(user)
+        _make_batch(project_a, user)
+        b2 = _make_batch(project_b, user)
+        _add_images(b2, 1)
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project_b.id))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["count"] == 1
+        assert data["results"][0]["id"] == str(b2.id)

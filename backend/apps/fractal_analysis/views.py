@@ -791,6 +791,48 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
 from .models import FraktalBatch, FraktalBatchImage  # noqa: E402
 
 
+@api_view(["GET"])
+@permission_classes([IsAuthenticated])
+def batch_list_view(request: Request, project_pk: uuid.UUID) -> Response:
+    """GET /api/v1/projects/{project_pk}/fraktal/batches/
+
+    Paginated list of FraktalBatch rows for a project, ordered by
+    ``created_at DESC``. Returns summary stats per batch but NOT
+    the per-image array (use the detail endpoint for that).
+    """
+    from rest_framework.pagination import PageNumberPagination
+
+    batches = FraktalBatch.objects.filter(project_id=project_pk).order_by("-created_at")
+
+    paginator = PageNumberPagination()
+    paginator.page_size = 20
+    page = paginator.paginate_queryset(batches, request)
+
+    results = [
+        {
+            "id": str(b.id),
+            "status": "completed" if b.n_successful and b.n_successful > 0 else "empty",
+            "created_at": b.created_at.isoformat(),
+            "completed_at": None,
+            "algorithm": b.algorithm,
+            "calibration_source": b.calibration_source,
+            "dpo_used": b.dpo_used,
+            "autocalibrate_source": b.autocalibrate_source,
+            "n_images": b.n_images,
+            "n_successful": b.n_successful,
+            "mean_df": b.mean_df,
+            "std_df": b.std_df,
+            "median_df": b.median_df,
+            "min_df": b.min_df,
+            "max_df": b.max_df,
+            "original_zip_filename": b.original_zip_filename,
+        }
+        for b in page
+    ]
+
+    return paginator.get_paginated_response(results)
+
+
 @api_view(["GET", "DELETE"])
 @permission_classes([IsAuthenticated])
 def batch_detail_view(
