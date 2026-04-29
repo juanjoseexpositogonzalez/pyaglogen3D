@@ -724,6 +724,25 @@ export interface FraktalBatchResult {
   calibration: FraktalBatchCalibration
 }
 
+export interface FraktalBatchListItem {
+  id: string
+  status: string
+  created_at: string
+  completed_at: string | null
+  algorithm: string
+  calibration_source: string
+  dpo_used: number
+  autocalibrate_source: string | null
+  n_images: number
+  n_successful: number
+  mean_df: number | null
+  std_df: number | null
+  median_df: number | null
+  min_df: number | null
+  max_df: number | null
+  original_zip_filename: string
+}
+
 export interface FraktalBatchProgress {
   progress: number // 0..1
   current: number
@@ -851,6 +870,14 @@ export const fraktalApi = {
    */
   list: (projectId: string) =>
     request<PaginatedResponse<FraktalAnalysis>>(`/projects/${projectId}/fraktal/`),
+
+  /**
+   * List all FRAKTAL batches for a project (paginated, newest first).
+   */
+  listBatches: (projectId: string) =>
+    request<PaginatedResponse<FraktalBatchListItem>>(
+      `/projects/${projectId}/fraktal/batches/`
+    ),
 
   /**
    * Get a single FRAKTAL analysis.
