@@ -29,9 +29,9 @@
 
 ## Phase 4 — Backend fractal_analysis migration + model
 
-- [ ] T4.1 — Create migration 0007_add_scientific_png_field.py: add nullable BinaryField png_scientific_bytes (pyaglogen3D/backend/apps/fractal_analysis/migrations/0007_add_scientific_png_field.py)
-- [ ] T4.2 — Add png_scientific_bytes field to FraktalBatchImage model with verbose_name (pyaglogen3D/backend/apps/fractal_analysis/models.py)
-- [ ] T4.3 — Add migration tests confirming additive + reversible (pyaglogen3D/backend/tests/test_migration_0007.py)
+- [x] T4.1 — Create migration 0007_add_scientific_png_field.py: add nullable BinaryField png_scientific_bytes (pyaglogen3D/backend/apps/fractal_analysis/migrations/0007_add_scientific_png_field.py)
+- [x] T4.2 — Add png_scientific_bytes field to FraktalBatchImage model with verbose_name (pyaglogen3D/backend/apps/fractal_analysis/models.py)
+- [x] T4.3 — Add migration tests confirming additive + reversible (pyaglogen3D/backend/tests/test_migration_0007.py)
 
 ## Phase 5 — Backend fractal_analysis batch task + endpoints
 
