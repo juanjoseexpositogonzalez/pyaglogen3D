@@ -13,6 +13,8 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { createElement, type ReactNode } from 'react'
 import JSZip from 'jszip'
 
 import { FraktalBatchUpload } from '../FraktalBatchUpload'
@@ -34,19 +36,29 @@ vi.mock('@/lib/api', async () => {
   }
 })
 
+// QueryClientProvider wrapper for all renders — FraktalBatchUpload uses
+// useQueryClient() for cache invalidation on success.
+let queryClient: QueryClient
+function wrapper({ children }: { children: ReactNode }) {
+  return createElement(QueryClientProvider, { client: queryClient }, children)
+}
+
 describe('<FraktalBatchUpload />', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
   })
 
   it('renders the upload form with ZIP input', () => {
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     expect(screen.getByText(/Batch FRAKTAL Analysis/i)).toBeTruthy()
     expect(screen.getByLabelText(/ZIP file/i)).toBeTruthy()
   })
 
   it('does not show the manual scale input until a file is selected', () => {
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     // manual pixels/100nm input only appears once a file without metadata
     // is chosen; at render time no file is selected so it's hidden.
     expect(screen.queryByLabelText(/Pixels per 100 nm \(manual\)/i)).toBeNull()
@@ -66,7 +78,7 @@ describe('<FraktalBatchUpload />', () => {
     const blob = await zip.generateAsync({ type: 'blob' })
     const file = new File([blob], 'test.zip', { type: 'application/zip' })
 
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
@@ -82,7 +94,7 @@ describe('<FraktalBatchUpload />', () => {
     const blob = await zip.generateAsync({ type: 'blob' })
     const file = new File([blob], 'nometadata.zip', { type: 'application/zip' })
 
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
@@ -94,7 +106,7 @@ describe('<FraktalBatchUpload />', () => {
   })
 
   it('disables the submit button when no file is chosen', () => {
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     const btn = screen.getByRole('button', {
       name: /Analyze batch/i,
     }) as HTMLButtonElement
@@ -102,7 +114,7 @@ describe('<FraktalBatchUpload />', () => {
   })
 
   it('rejects files larger than 100 MB', async () => {
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
 
     // Fake a File whose .size reports > 100 MB without allocating 100 MB
@@ -149,7 +161,7 @@ describe('<FraktalBatchUpload />', () => {
       calibration: { source: 'metadata', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
     })
 
-    render(<FraktalBatchUpload projectId="proj-42" onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload projectId="proj-42" onSuccess={vi.fn()} />, { wrapper })
     const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
@@ -192,7 +204,7 @@ describe('<FraktalBatchUpload />', () => {
       calibration: { source: 'metadata', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
     })
 
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />)
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
     const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
     fireEvent.change(input, { target: { files: [file] } })
 
@@ -210,5 +222,66 @@ describe('<FraktalBatchUpload />', () => {
     // When no projectId is provided, options.projectId should be undefined
     const [, options] = mockAnalyzeBatch.mock.calls[0]
     expect(options.projectId).toBeUndefined()
+  })
+
+  it('invalidates fraktal-batches query on successful upload', async () => {
+    const zip = new JSZip()
+    zip.file('proj_000.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+    zip.file(
+      'metadata.json',
+      JSON.stringify({
+        mode: 'grid',
+        parameters: { pixels_per_100nm: 500.0 },
+      })
+    )
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], 'test.zip', { type: 'application/zip' })
+
+    mockAnalyzeBatch.mockResolvedValue({
+      images: [],
+      stats: { n_images: 0, n_successful: 0, mean_df: null, std_df: null, median_df: null, q1_df: null, q3_df: null, min_df: null, max_df: null },
+      histogram: null,
+      comparison: null,
+      calibration: { source: 'metadata', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
+    })
+
+    const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries')
+
+    render(
+      <FraktalBatchUpload projectId="proj-42" onSuccess={vi.fn()} />,
+      { wrapper }
+    )
+    const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+    })
+
+    const btn = screen.getByRole('button', { name: /Analyze batch/i })
+    fireEvent.click(btn)
+
+    await waitFor(() => {
+      expect(mockAnalyzeBatch).toHaveBeenCalledTimes(1)
+    })
+
+    // After successful upload, both query keys should be invalidated
+    await waitFor(() => {
+      const calls = invalidateSpy.mock.calls
+      const invalidatedKeys = calls.map((c) => c[0])
+      // Must invalidate fraktal-batches for the project
+      const batchInvalidation = invalidatedKeys.find(
+        (k: any) =>
+          k?.queryKey?.[0] === 'fraktal-batches' &&
+          k?.queryKey?.[1] === 'proj-42'
+      )
+      expect(batchInvalidation).toBeDefined()
+      // Must also invalidate the single-image fraktal list
+      const fraktalInvalidation = invalidatedKeys.find(
+        (k: any) =>
+          k?.queryKey?.[0] === 'fraktal' && k?.queryKey?.[1] === 'proj-42'
+      )
+      expect(fraktalInvalidation).toBeDefined()
+    })
   })
 })

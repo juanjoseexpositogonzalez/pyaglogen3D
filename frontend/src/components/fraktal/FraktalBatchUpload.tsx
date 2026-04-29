@@ -1,6 +1,7 @@
 'use client'
 
-import { useCallback, useState } from 'react'
+import { useCallback, useState, useRef } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import JSZip from 'jszip'
 import { Upload, FileArchive, Sparkles } from 'lucide-react'
 import {
@@ -49,6 +50,7 @@ export function FraktalBatchUpload({
   onError,
   projectId,
 }: FraktalBatchUploadProps) {
+  const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [metadataDetected, setMetadataDetected] =
     useState<DetectedMetadata | null>(null)
@@ -148,6 +150,11 @@ export function FraktalBatchUpload({
         onProgress: setProgress,
         projectId,
       })
+      // Invalidate dashboard queries so the batch list refreshes
+      if (projectId) {
+        queryClient.invalidateQueries({ queryKey: ['fraktal-batches', projectId] })
+        queryClient.invalidateQueries({ queryKey: ['fraktal', projectId] })
+      }
       onSuccess(result)
     } catch (err) {
       const msg = err instanceof ApiError ? err.message : 'Unexpected error'
