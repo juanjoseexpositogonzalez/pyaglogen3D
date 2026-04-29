@@ -316,14 +316,48 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
           {/* Metrics or Error */}
           <div className="space-y-4">
             {data.error ? (
-              <Card className="border-destructive">
-                <CardHeader>
-                  <CardTitle className="text-destructive">Analysis Error</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <p className="text-destructive">{data.error}</p>
-                </CardContent>
-              </Card>
+              <>
+                <Card className="border-destructive">
+                  <CardHeader>
+                    <CardTitle className="text-destructive">Analysis Error</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-destructive">{data.error}</p>
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Diagnostic Info</CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                      <dt className="text-muted-foreground">DPO Used</dt>
+                      <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
+
+                      <dt className="text-muted-foreground">Azimuth</dt>
+                      <dd className="font-mono">
+                        {data.azimuth !== null ? data.azimuth.toFixed(1) : '—'}
+                      </dd>
+
+                      <dt className="text-muted-foreground">Elevation</dt>
+                      <dd className="font-mono">
+                        {data.elevation !== null ? data.elevation.toFixed(1) : '—'}
+                      </dd>
+
+                      <dt className="text-muted-foreground">px/100nm</dt>
+                      <dd className="font-mono">
+                        {data.pixels_per_100nm.toFixed(1)}
+                      </dd>
+
+                      <dt className="text-muted-foreground">Autocalibrate</dt>
+                      <dd className="font-mono">
+                        {data.autocalibrate_source ?? '—'}
+                      </dd>
+                    </dl>
+                  </CardContent>
+                </Card>
+              </>
             ) : (
               <>
                 <Card>

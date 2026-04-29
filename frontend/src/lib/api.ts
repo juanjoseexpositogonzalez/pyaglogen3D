@@ -774,6 +774,8 @@ export interface FraktalBatchImageDetail {
   n_particles_counted: number | null
   error: string | null
   dpo_used: number
+  pixels_per_100nm: number
+  autocalibrate_source: string | null
   prev_index: number | null
   next_index: number | null
   sim_target_df: number | null

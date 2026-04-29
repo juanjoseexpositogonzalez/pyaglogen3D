@@ -84,6 +84,8 @@ function makeImageDetail(
     n_particles_counted: 48,
     error: null,
     dpo_used: 25.0,
+    pixels_per_100nm: 500.0,
+    autocalibrate_source: null,
     prev_index: 1,
     next_index: 3,
     sim_target_df: null,
@@ -341,6 +343,56 @@ describe('<FraktalBatchImageDetail />', () => {
       const link = await screen.findByRole('link', { name: /download png/i })
       expect(link).toBeTruthy()
       expect(link.getAttribute('href')).toContain('/images/2/png/')
+    })
+  })
+
+  // --- C1 HOTFIX: Diagnostic metadata shown alongside error ---
+  describe('C1: diagnostic metadata on error', () => {
+    it('renders error banner AND diagnostic card when data.error is truthy', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          error: 'Bisection method failed to converge',
+          fractal_dimension: null,
+          prefactor: null,
+          r_squared: null,
+          n_particles_counted: null,
+          dpo_used: 25.0,
+          azimuth: 60,
+          elevation: 30,
+          pixels_per_100nm: 500.0,
+          autocalibrate_source: 'image_0',
+        })
+      )
+      renderComponent()
+
+      // Error banner visible
+      expect(
+        await screen.findByText(/Bisection method failed to converge/)
+      ).toBeTruthy()
+      // Diagnostic card also visible
+      expect(screen.getByText('Diagnostic Info')).toBeTruthy()
+      expect(screen.getByText('25.0')).toBeTruthy() // dpo_used
+      expect(screen.getByText('60.0')).toBeTruthy() // azimuth
+      expect(screen.getByText('30.0')).toBeTruthy() // elevation
+      expect(screen.getByText('500.0')).toBeTruthy() // pixels_per_100nm
+      expect(screen.getByText('image_0')).toBeTruthy() // autocalibrate_source
+    })
+
+    it('does NOT render diagnostic card when data is successful (no error)', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          error: null,
+          pixels_per_100nm: 500.0,
+          autocalibrate_source: null,
+        })
+      )
+      renderComponent()
+
+      // Wait for success content to load
+      expect(await screen.findByText('1.720')).toBeTruthy()
+      // Metrics card is shown, diagnostic card is NOT
+      expect(screen.getByText('Fractal Metrics')).toBeTruthy()
+      expect(screen.queryByText('Diagnostic Info')).toBeNull()
     })
   })
 
