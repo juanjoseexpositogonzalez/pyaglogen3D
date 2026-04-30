@@ -964,6 +964,7 @@ def batch_image_detail_view(
             "next_index": next_index,
             "total_count": total,
             "png_url": f"/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/images/{index}/png/",
+            "has_scientific_png": img.png_scientific_bytes is not None,
             "sim_target_df": sim_target_df,
             "sim_box_counting_df": sim_box_counting_df,
             "sorensen_note": sorensen_note,
@@ -976,7 +977,23 @@ def batch_image_detail_view(
 def batch_image_png_view(
     request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID, index: int
 ) -> HttpResponse:
-    """GET .../images/{index}/png/ — raw PNG bytes."""
+    """GET .../images/{index}/png/?variant=presentation|scientific — raw PNG bytes.
+
+    ``variant`` query param selects which PNG to serve:
+    - ``presentation`` (default): the presentation render (``image_png``).
+    - ``scientific``: the binary B/W render (``png_scientific_bytes``).
+      Falls back to presentation when ``png_scientific_bytes IS NULL``
+      (legacy row — silent fallback, no 404).
+    """
+    variant = request.GET.get("variant", "presentation")
+    if variant not in ("presentation", "scientific"):
+        return Response(
+            {
+                "detail": f"Invalid variant: '{variant}'. Must be 'presentation' or 'scientific'."
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
     try:
         batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
     except FraktalBatch.DoesNotExist:
@@ -989,7 +1006,12 @@ def batch_image_png_view(
             {"detail": "Image index out of range."}, status=status.HTTP_404_NOT_FOUND
         )
 
-    png_bytes = bytes(img.image_png)
+    if variant == "scientific" and img.png_scientific_bytes:
+        png_bytes = bytes(img.png_scientific_bytes)
+    else:
+        # presentation (default) OR scientific fallback when NULL
+        png_bytes = bytes(img.image_png)
+
     if not png_bytes:
         return Response(
             {"detail": "Image has no PNG data (rasterization failed)."},
