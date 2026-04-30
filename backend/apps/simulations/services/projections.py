@@ -5,6 +5,10 @@ It is transport-agnostic: callers (views, Celery tasks) supply the
 direction list and rendered PNG bytes, and this module handles
 filename convention, metadata.json assembly, and ZIP packing.
 
+Also provides ``compute_per_direction_scales`` — the single source of
+truth for deriving ``pixels_per_100nm`` from 2D projected bounding boxes.
+All code paths (legacy, sync, async) MUST use this helper.
+
 Spec references: projection-export-contract.md R4 (filenames) + R5 (metadata).
 """
 
@@ -14,6 +18,60 @@ import io
 import json
 import zipfile
 from typing import Any
+
+import numpy as np
+
+
+def compute_per_direction_scales(
+    directions: list[tuple[float, float]],
+    positions: np.ndarray,
+    radii: np.ndarray,
+    img_size: int,
+    scale_factor_nm: float,
+) -> list[float]:
+    """Compute per-direction ``pixels_per_100nm`` from 2D projected bboxes.
+
+    This is the **single source of truth** for scale computation. All code
+    paths (legacy, sync grid/fibonacci, async Celery) MUST use this function
+    to derive the scale stamped into metadata.json.
+
+    For each direction, calls ``aglogen_core.compute_2d_bbox`` to obtain the
+    2D projected bounding box, then applies the standard formula:
+
+        span_engine = max(bbox_w, bbox_h) * 1.04   # 2% padding per side
+        span_nm     = span_engine * scale_factor_nm
+        pixels_per_100nm = 100 * img_size / span_nm
+
+    Args:
+        directions: list of (azimuth_deg, elevation_deg) tuples.
+        positions: 3D particle positions, shape ``(N, 3)``.
+        radii: Particle radii, shape ``(N,)``.
+        img_size: Target output image size in pixels (square).
+        scale_factor_nm: Engine→nm multiplier (``primary_particle_diameter_nm / 2``).
+
+    Returns:
+        List of ``pixels_per_100nm`` values, one per direction. Each value
+        is derived from the 2D projected bounding box for that direction.
+    """
+    import aglogen_core
+
+    coords_tuples = [(float(p[0]), float(p[1]), float(p[2])) for p in positions]
+    radii_list = [float(r) for r in radii]
+
+    per_direction_scale: list[float] = []
+    for az, el in directions:
+        bbox_w, bbox_h, _ = aglogen_core.compute_2d_bbox(
+            coords_tuples, radii_list, float(az), float(el)
+        )
+        span_engine = max(bbox_w, bbox_h) * 1.04
+        span_nm = span_engine * scale_factor_nm
+        if span_nm > 0:
+            pix = 100.0 * float(img_size) / span_nm
+        else:
+            pix = 0.0
+        per_direction_scale.append(pix)
+
+    return per_direction_scale
 
 
 def build_projection_filename(

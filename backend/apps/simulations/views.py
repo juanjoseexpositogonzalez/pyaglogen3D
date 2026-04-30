@@ -32,7 +32,7 @@ from .services.projection import (
     render_projection_svg,
     create_projection_filename,
 )
-from .services.projections import build_projection_zip
+from .services.projections import build_projection_zip, compute_per_direction_scales
 from .services.mat_parser import MatParseError, parse_mat_geometry
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
@@ -814,12 +814,10 @@ class SimulationViewSet(viewsets.ModelViewSet):
                         (float(proj.azimuth), float(proj.elevation))
                     )
 
-                    # Measure the first PNG so we can stamp a meaningful
-                    # pixels_per_100nm. Legacy PNGs are rendered with
-                    # bbox_inches='tight' (no fixed img_size knob), so we
-                    # have to measure the actual output rather than assume
-                    # a square canvas. SVG has no pixel dimensions — we
-                    # skip the probe and leave pixels_per_100nm unset.
+                    # Measure the first PNG so we can derive the actual
+                    # rendered pixel size for legacy scale computation.
+                    # Legacy PNGs use bbox_inches='tight' (no fixed img_size),
+                    # so we must measure output dimensions.
                     if first_png_size is None and img_format == "png":
                         try:
                             from PIL import Image as _PILImage
@@ -846,17 +844,36 @@ class SimulationViewSet(viewsets.ModelViewSet):
                     "format": img_format,
                 }
 
-                # Stamp pixels_per_100nm + scale_factor_nm using the same
-                # helper used by grid/fibonacci, so FRAKTAL sees the same
-                # parameter names in all modes. Only stamp pixel scale
-                # when we actually measured a PNG size (SVG path skips it).
-                if first_png_size is not None:
-                    # Use the smaller dimension as the reference "img_size"
-                    # since the legacy renderer preserves aspect ratio.
+                # Compute pixels_per_100nm from 2D projected bboxes.
+                # Legacy mode stamps ONLY the global (max) scale — no
+                # per-direction fields (conscious spec deferral).
+                scale_factor_nm = get_scale_factor_nm(simulation.parameters)
+                parameters["scale_factor_nm"] = float(scale_factor_nm)
+
+                if first_png_size is not None and len(projections) > 0:
+                    # Use min(width, height) as the effective img_size
+                    # (legacy renderer preserves aspect ratio via tight bbox).
                     legacy_img_size = int(min(first_png_size))
-                    _stamp_scale_metadata(
-                        parameters, simulation, coords, radii, legacy_img_size
+
+                    # Compute per-direction scale from 2D projected bounds.
+                    # proj.bounds = (min_x, max_x, min_y, max_y) — these ARE
+                    # the 2D bbox from the Rust projection.
+                    max_scale = 0.0
+                    for proj in projections:
+                        b = proj.bounds  # (min_x, max_x, min_y, max_y)
+                        bbox_w = b[1] - b[0]  # max_x - min_x
+                        bbox_h = b[3] - b[2]  # max_y - min_y
+                        span_engine = max(bbox_w, bbox_h) * 1.04
+                        span_nm = span_engine * scale_factor_nm
+                        if span_nm > 0:
+                            pix = 100.0 * float(legacy_img_size) / span_nm
+                            max_scale = max(max_scale, pix)
+
+                    parameters["pixels_per_100nm"] = (
+                        max_scale if max_scale > 0 else None
                     )
+                else:
+                    parameters["pixels_per_100nm"] = None
 
                 metadata = build_metadata_json(
                     mode="legacy",
@@ -979,14 +996,14 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # message instead of a 500 that loses context. Validation-stage
         # errors above stay as specific 400s.
         try:
-            # Load geometry ONCE here so we can (a) stamp scale metadata
-            # into ``parameters`` before dispatching sync or async, and
-            # (b) hand coords/radii to the sync renderer without a second
-            # load. FRAKTAL and other box-counting tools consume
-            # ``pixels_per_100nm`` from metadata.json to auto-scale box
-            # sizes into physical units.
+            # Load geometry ONCE here so both sync and async paths can use
+            # it without re-loading. Scale is computed PER-DIRECTION from
+            # the 2D projected bbox (not the 3D AABB).
             coords, radii = self._load_geometry(simulation)
-            _stamp_scale_metadata(parameters, simulation, coords, radii, img_size)
+
+            # Stamp scale_factor_nm into parameters (constant per aggregate).
+            scale_factor_nm = get_scale_factor_nm(simulation.parameters)
+            parameters["scale_factor_nm"] = float(scale_factor_nm)
 
             if len(directions) <= 200:
                 zip_bytes = self._render_and_zip_sync(
@@ -997,6 +1014,8 @@ class SimulationViewSet(viewsets.ModelViewSet):
                     parameters,
                     coords=coords,
                     radii=radii,
+                    img_size=img_size,
+                    scale_factor_nm=scale_factor_nm,
                 )
                 response = HttpResponse(zip_bytes, content_type="application/zip")
                 response["Content-Disposition"] = (
@@ -1039,30 +1058,57 @@ class SimulationViewSet(viewsets.ModelViewSet):
         *,
         coords: np.ndarray | None = None,
         radii: np.ndarray | None = None,
+        img_size: int = 512,
+        scale_factor_nm: float | None = None,
     ) -> bytes:
-        """Sync path: project, render PNGs, assemble ZIP in-request.
+        """Sync path: dual-render PNGs + per-direction scale, assemble ZIP.
 
-        ``coords`` / ``radii`` may be passed in by the caller to avoid
-        re-loading the simulation geometry (the caller already needs it
-        to stamp scale metadata into ``parameters``).
+        Uses ``render_projection_dual_png`` for each direction so the sync
+        path (N ≤ 200) has full parity with the async Celery path:
+        - Both presentation and scientific PNGs per direction
+        - Per-direction ``pixels_per_100nm`` from 2D projected bbox
+        - Global ``pixels_per_100nm`` = max(per-direction values)
         """
-        import aglogen_core
+        from .services.projection import render_projection_dual_png
 
         if coords is None or radii is None:
             coords, radii = self._load_geometry(simulation)
-        projection_results = aglogen_core.project_directions(coords, radii, directions)
 
-        img_size = parameters.get("img_size")
-        image_bytes_list: list[bytes] = []
-        for proj in projection_results:
-            image_bytes_list.append(
-                _render_projection_bytes(proj, "png", img_size=img_size)
-            )
+        if scale_factor_nm is None:
+            scale_factor_nm = get_scale_factor_nm(simulation.parameters)
 
         # directions may be a Rust-owned sequence — normalize to plain tuples
         directions_py = [(float(a), float(e)) for (a, e) in directions]
+
+        pres_list: list[bytes] = []
+        sci_list: list[bytes] = []
+        per_direction_scale: list[float] = []
+
+        for az, el in directions_py:
+            pres, sci, bbox_w, bbox_h = render_projection_dual_png(
+                positions=coords,
+                radii=radii,
+                azimuth=az,
+                elevation=el,
+                img_size=img_size,
+            )
+            pres_list.append(pres)
+            sci_list.append(sci)
+
+            # Per-direction scale from 2D bbox (same formula as async path)
+            span_engine = max(bbox_w, bbox_h) * 1.04
+            span_nm = span_engine * scale_factor_nm
+            pix = 100.0 * float(img_size) / span_nm if span_nm > 0 else 0.0
+            per_direction_scale.append(pix)
+
         return build_projection_zip(
-            directions_py, image_bytes_list, mode, n_requested, parameters
+            directions_py,
+            pres_list,
+            mode,
+            n_requested,
+            parameters,
+            scientific_bytes_list=sci_list,
+            per_direction_scale=per_direction_scale,
         )
 
     def _load_geometry(self, simulation: Simulation) -> tuple[np.ndarray, np.ndarray]:
