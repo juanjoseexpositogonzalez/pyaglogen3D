@@ -39,13 +39,13 @@
 
 ## Phase 5 — Backend fractal_analysis batch task + endpoints
 
-- [ ] T5.1 — Modify batch task ZIP unpack: detect *.scientific.png, persist when available (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
-- [ ] T5.2 — Store both png_bytes and png_scientific_bytes in FraktalBatchImage (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
-- [ ] T5.3 — Pass per-image scale list from metadata.directions to engine (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
-- [ ] T5.4 — Implement ?variant=presentation|scientific query param on PNG endpoint (pyaglogen3D/backend/apps/fractal_analysis/views.py)
-- [ ] T5.5 — Add fallback: variant=scientific returns presentation when png_scientific_bytes is NULL (pyaglogen3D/backend/apps/fractal_analysis/views.py)
-- [ ] T5.6 — Add has_scientific_png flag to drill-down detail response (pyaglogen3D/backend/apps/fractal_analysis/views.py)
-- [ ] T5.7 — Add pytest integration tests: batch task, PNG variant, drill-down detail (pyaglogen3D/backend/tests/test_batch_variant.py)
+- [x] T5.1 — Modify batch task ZIP unpack: detect *.scientific.png, persist when available (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
+- [x] T5.2 — Store both png_bytes and png_scientific_bytes in FraktalBatchImage (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
+- [x] T5.3 — Pass per-image scale list from metadata.directions to engine (pyaglogen3D/backend/apps/fractal_analysis/tasks.py)
+- [x] T5.4 — Implement ?variant=presentation|scientific query param on PNG endpoint (pyaglogen3D/backend/apps/fractal_analysis/views.py)
+- [x] T5.5 — Add fallback: variant=scientific returns presentation when png_scientific_bytes is NULL (pyaglogen3D/backend/apps/fractal_analysis/views.py)
+- [x] T5.6 — Add has_scientific_png flag to drill-down detail response (pyaglogen3D/backend/apps/fractal_analysis/views.py)
+- [x] T5.7 — Add pytest integration tests: batch task, PNG variant, drill-down detail (pyaglogen3D/backend/apps/fractal_analysis/tests/test_batch_variant.py)
 
 ## Phase 6 — Frontend variant toggle
 
