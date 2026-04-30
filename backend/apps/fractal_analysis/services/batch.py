@@ -51,14 +51,16 @@ def extract_zip_images(
         Tuple of ``(images_as_grayscale_arrays, metadata_dict_or_None,
         png_filenames_sorted)``.
 
-    Non-PNG entries are silently filtered out. PNG filenames are sorted so
-    downstream batch ordering is deterministic. ``metadata.json`` parse
+    ``*.scientific.png`` files are excluded from the returned image list —
+    they are handled separately via :func:`extract_scientific_png_map`.
+    Non-PNG entries are silently filtered out.  PNG filenames are sorted so
+    downstream batch ordering is deterministic.  ``metadata.json`` parse
     errors are swallowed (metadata becomes ``None``) so that image
     processing can still proceed.
 
     Raises:
         ValueError: If the bytes are not a valid ZIP or the ZIP contains
-            no PNG images.
+            no presentation PNG images.
     """
     try:
         zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
@@ -66,7 +68,12 @@ def extract_zip_images(
         raise ValueError(f"Invalid ZIP file: {e}") from e
 
     names = zf.namelist()
-    png_names = sorted(n for n in names if n.lower().endswith(".png"))
+    # Exclude *.scientific.png — those are a separate render variant
+    png_names = sorted(
+        n
+        for n in names
+        if n.lower().endswith(".png") and not n.lower().endswith(".scientific.png")
+    )
 
     metadata: dict | None = None
     if "metadata.json" in names:
@@ -85,6 +92,42 @@ def extract_zip_images(
             images.append(np.array(img, dtype=np.uint8))
 
     return images, metadata, png_names
+
+
+def extract_scientific_png_map(
+    zip_bytes: bytes,
+    metadata: dict | None,
+) -> dict[str, bytes]:
+    """Extract ``*.scientific.png`` bytes from a ZIP, keyed by presentation filename.
+
+    Uses ``metadata.directions[i].filename_scientific`` when available to map
+    each direction's scientific PNG to its presentation counterpart.  Returns
+    an empty dict for legacy ZIPs that contain no scientific PNGs.
+
+    The returned dict maps ``presentation_filename -> raw_scientific_png_bytes``.
+    """
+    if not metadata or not isinstance(metadata.get("directions"), list):
+        return {}
+
+    try:
+        zf = zipfile.ZipFile(io.BytesIO(zip_bytes))
+    except zipfile.BadZipFile:
+        return {}
+
+    zip_names = set(zf.namelist())
+    result: dict[str, bytes] = {}
+
+    for d in metadata["directions"]:
+        if not isinstance(d, dict):
+            continue
+        pres_fn = d.get("filename")
+        sci_fn = d.get("filename_scientific")
+        if not pres_fn or not sci_fn:
+            continue
+        if sci_fn in zip_names:
+            result[pres_fn] = zf.read(sci_fn)
+
+    return result
 
 
 def extract_scale_from_metadata(metadata: dict | None) -> float | None:
@@ -305,6 +348,7 @@ def persist_batch_results(
     image_results: list[dict],
     png_list: list[bytes],
     dpo_used: float,
+    scientific_png_list: list[bytes | None] | None = None,
 ) -> None:
     """Write per-image rows and update batch summary fields.
 
@@ -320,12 +364,17 @@ def persist_batch_results(
         image_results: Per-image dicts from ``_build_batch_response``.
         png_list: Parallel list of raw PNG bytes (same length as *image_results*).
         dpo_used: The ``dpo`` value used for analysis (stored on each image row).
+        scientific_png_list: Optional parallel list of scientific PNG bytes.
+            ``None`` entries or a missing list → ``png_scientific_bytes = NULL``.
     """
     from apps.fractal_analysis.models import FraktalBatchImage
 
     rows = []
     for i, result in enumerate(image_results):
         png_bytes = png_list[i] if i < len(png_list) else b""
+        sci_bytes: bytes | None = None
+        if scientific_png_list is not None and i < len(scientific_png_list):
+            sci_bytes = scientific_png_list[i]
         rows.append(
             FraktalBatchImage(
                 batch=batch,
@@ -340,6 +389,7 @@ def persist_batch_results(
                 dpo_used=dpo_used,
                 error=result.get("error") or "",
                 image_png=png_bytes,
+                png_scientific_bytes=sci_bytes,
             )
         )
     FraktalBatchImage.objects.bulk_create(rows)
