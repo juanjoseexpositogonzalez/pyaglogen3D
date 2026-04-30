@@ -60,6 +60,7 @@ def build_metadata_json(
     n_requested: int,
     directions: list[tuple[float, float]],
     parameters: dict[str, Any],
+    per_direction_scale: list[float] | None = None,
 ) -> dict[str, Any]:
     """Build the metadata.json contract per spec R5.
 
@@ -67,24 +68,43 @@ def build_metadata_json(
       - mode: "grid" | "fibonacci" | "legacy"
       - n_requested: the user-requested N (may differ from generated for grid)
       - n_generated: actual direction count
-      - parameters: passthrough caller-provided context (img_size, n_az, n_el, n, etc.)
-      - directions: list of {index, filename, azimuth, elevation} per direction
+      - parameters: passthrough caller-provided context (img_size, n_az, etc.)
+      - directions: list of per-direction entries
+
+    When ``per_direction_scale`` is provided (dual-render mode), each
+    direction entry gains:
+      - ``pixels_per_100nm``: per-direction scale value
+      - ``filename_scientific``: scientific PNG filename
+
+    and ``parameters.pixels_per_100nm`` is set to ``max(per_direction_scale)``.
+
+    In legacy mode (no ``per_direction_scale``), these keys are ABSENT
+    (not null) from the directions — consumers detect the mode by key
+    presence.
     """
+    params = dict(parameters)
     direction_entries = []
     for i, (az, el) in enumerate(directions):
-        direction_entries.append(
-            {
-                "index": i,
-                "filename": build_projection_filename(i, az, el),
-                "azimuth": float(az),
-                "elevation": float(el),
-            }
-        )
+        entry: dict[str, Any] = {
+            "index": i,
+            "filename": build_projection_filename(i, az, el),
+            "azimuth": float(az),
+            "elevation": float(el),
+        }
+        if per_direction_scale is not None:
+            entry["pixels_per_100nm"] = per_direction_scale[i]
+            base = build_projection_filename(i, az, el)
+            entry["filename_scientific"] = base.replace(".png", ".scientific.png")
+        direction_entries.append(entry)
+
+    if per_direction_scale is not None:
+        params["pixels_per_100nm"] = max(per_direction_scale)
+
     return {
         "mode": mode,
         "n_requested": int(n_requested),
         "n_generated": len(directions),
-        "parameters": dict(parameters),
+        "parameters": params,
         "directions": direction_entries,
     }
 
@@ -95,19 +115,26 @@ def build_projection_zip(
     mode: str,
     n_requested: int,
     parameters: dict[str, Any],
+    scientific_bytes_list: list[bytes] | None = None,
+    per_direction_scale: list[float] | None = None,
 ) -> bytes:
     """Assemble the full export ZIP.
 
     Takes per-direction rendered PNG bytes and produces a ZIP containing:
       - one PNG per direction with canonical filename
+      - (optional) one scientific PNG per direction
       - metadata.json at the ZIP root
 
     Args:
         directions: list of (azimuth, elevation) tuples
-        image_bytes_list: rendered PNG bytes, one per direction (SAME ORDER)
+        image_bytes_list: presentation PNG bytes, one per direction
         mode: "grid" | "fibonacci" | "legacy"
         n_requested: original N requested by user
         parameters: extra context (img_size, n_az, n_el, n, etc.)
+        scientific_bytes_list: scientific PNG bytes per direction (optional).
+            When ``None``, only presentation PNGs are included (legacy compat).
+        per_direction_scale: per-direction ``pixels_per_100nm`` values.
+            Forwarded to ``build_metadata_json`` for per-direction entries.
 
     Returns:
         bytes of the ZIP file.
@@ -120,6 +147,13 @@ def build_projection_zip(
             f"directions and image_bytes_list length mismatch: "
             f"{len(directions)} vs {len(image_bytes_list)}"
         )
+    if scientific_bytes_list is not None and len(scientific_bytes_list) != len(
+        directions
+    ):
+        raise ValueError(
+            f"directions and scientific_bytes_list length mismatch: "
+            f"{len(directions)} vs {len(scientific_bytes_list)}"
+        )
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
@@ -127,7 +161,13 @@ def build_projection_zip(
             filename = build_projection_filename(i, az, el)
             zf.writestr(filename, img_bytes)
 
-        metadata = build_metadata_json(mode, n_requested, directions, parameters)
+            if scientific_bytes_list is not None:
+                sci_filename = filename.replace(".png", ".scientific.png")
+                zf.writestr(sci_filename, scientific_bytes_list[i])
+
+        metadata = build_metadata_json(
+            mode, n_requested, directions, parameters, per_direction_scale
+        )
         zf.writestr("metadata.json", json.dumps(metadata, indent=2))
 
     return buf.getvalue()

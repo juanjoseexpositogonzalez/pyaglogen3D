@@ -5,6 +5,8 @@ T3.8 (ZIP dual PNGs), T3.9 (metadata per-direction scale), T3.10 (spec scenarios
 """
 
 import io
+import json
+import zipfile
 
 import numpy as np
 import pytest
@@ -15,6 +17,10 @@ from apps.simulations.services.projection import (
     render_projection_dual_png,
     render_projection_png,
     render_scientific_png,
+)
+from apps.simulations.services.projections import (
+    build_metadata_json,
+    build_projection_zip,
 )
 
 
@@ -249,3 +255,127 @@ class TestRenderProjectionDualPng:
         arr = np.array(img)
         unique = set(np.unique(arr))
         assert unique <= {0, 255}
+
+
+# ---------------------------------------------------------------------------
+# T3.8 — build_projection_zip: dual PNGs per direction
+# ---------------------------------------------------------------------------
+
+FAKE_PRES = b"\x89PNG\r\n\x1a\n" + b"presentation-data"
+FAKE_SCI = b"\x89PNG\r\n\x1a\n" + b"scientific-data"
+
+
+class TestBuildProjectionZipDual:
+    """T3.8: ZIP includes both presentation and scientific PNGs."""
+
+    def test_zip_contains_both_pngs_per_direction(self) -> None:
+        """Each direction should have a .png and a .scientific.png."""
+        directions = [(0.0, 0.0), (90.0, 0.0)]
+        zip_bytes = build_projection_zip(
+            directions=directions,
+            image_bytes_list=[FAKE_PRES, FAKE_PRES],
+            mode="grid",
+            n_requested=2,
+            parameters={},
+            scientific_bytes_list=[FAKE_SCI, FAKE_SCI],
+        )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            names = set(zf.namelist())
+            # presentation
+            assert "proj_000_Az000_El+000.png" in names
+            assert "proj_001_Az090_El+000.png" in names
+            # scientific
+            assert "proj_000_Az000_El+000.scientific.png" in names
+            assert "proj_001_Az090_El+000.scientific.png" in names
+            # metadata
+            assert "metadata.json" in names
+
+    def test_zip_file_count_with_dual(self) -> None:
+        """2 directions × 2 PNGs + metadata.json = 5 files."""
+        directions = [(0.0, 0.0), (90.0, 0.0)]
+        zip_bytes = build_projection_zip(
+            directions=directions,
+            image_bytes_list=[FAKE_PRES, FAKE_PRES],
+            mode="grid",
+            n_requested=2,
+            parameters={},
+            scientific_bytes_list=[FAKE_SCI, FAKE_SCI],
+        )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            assert len(zf.namelist()) == 5
+
+    def test_legacy_mode_no_scientific(self) -> None:
+        """Legacy mode (no scientific_bytes_list) produces single PNG only."""
+        directions = [(0.0, 0.0)]
+        zip_bytes = build_projection_zip(
+            directions=directions,
+            image_bytes_list=[FAKE_PRES],
+            mode="legacy",
+            n_requested=1,
+            parameters={},
+            # No scientific_bytes_list → legacy
+        )
+        with zipfile.ZipFile(io.BytesIO(zip_bytes)) as zf:
+            names = set(zf.namelist())
+            assert "proj_000_Az000_El+000.png" in names
+            assert "proj_000_Az000_El+000.scientific.png" not in names
+            # 1 PNG + metadata.json
+            assert len(zf.namelist()) == 2
+
+
+# ---------------------------------------------------------------------------
+# T3.9 — build_metadata_json: per-direction scale + filename_scientific
+# ---------------------------------------------------------------------------
+
+
+class TestBuildMetadataJsonDual:
+    """T3.9: metadata.json gains per-direction scale and filename_scientific."""
+
+    def test_per_direction_pixels_per_100nm(self) -> None:
+        """Each direction entry has its own pixels_per_100nm."""
+        meta = build_metadata_json(
+            mode="grid",
+            n_requested=2,
+            directions=[(0.0, 0.0), (90.0, 0.0)],
+            parameters={"img_size": 512},
+            per_direction_scale=[400.0, 500.0],
+        )
+        assert meta["directions"][0]["pixels_per_100nm"] == 400.0
+        assert meta["directions"][1]["pixels_per_100nm"] == 500.0
+
+    def test_top_level_pixels_per_100nm_is_max(self) -> None:
+        """parameters.pixels_per_100nm = max(per-image scales)."""
+        meta = build_metadata_json(
+            mode="grid",
+            n_requested=2,
+            directions=[(0.0, 0.0), (90.0, 0.0)],
+            parameters={"img_size": 512},
+            per_direction_scale=[400.0, 500.0],
+        )
+        assert meta["parameters"]["pixels_per_100nm"] == 500.0
+
+    def test_filename_scientific_present_in_dual_mode(self) -> None:
+        """In dual mode, directions[i] has filename_scientific."""
+        meta = build_metadata_json(
+            mode="grid",
+            n_requested=1,
+            directions=[(45.0, 30.0)],
+            parameters={"img_size": 512},
+            per_direction_scale=[450.0],
+        )
+        d = meta["directions"][0]
+        assert "filename_scientific" in d
+        assert d["filename_scientific"] == "proj_000_Az045_El+030.scientific.png"
+
+    def test_filename_scientific_absent_in_legacy_mode(self) -> None:
+        """In legacy mode (no per_direction_scale), filename_scientific is ABSENT."""
+        meta = build_metadata_json(
+            mode="legacy",
+            n_requested=1,
+            directions=[(0.0, 0.0)],
+            parameters={},
+            # No per_direction_scale → legacy behavior
+        )
+        d = meta["directions"][0]
+        assert "filename_scientific" not in d
+        assert "pixels_per_100nm" not in d
