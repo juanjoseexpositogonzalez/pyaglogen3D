@@ -6,6 +6,7 @@ Renders 2D projections of agglomerates as PNG or SVG images using matplotlib.
 import io
 from typing import Literal
 
+import numpy as np
 import matplotlib
 
 matplotlib.use("Agg")  # Use non-interactive backend
@@ -118,6 +119,74 @@ def render_projection_svg(
     plt.close(fig)
     buf.seek(0)
     return buf.read()
+
+
+def render_scientific_png(
+    x: list[float],
+    y: list[float],
+    radii: list[float],
+    bounds: tuple[float, float, float, float],
+    img_size: int = 512,
+) -> bytes:
+    """Render scientific PNG: solid black on white, binary B/W, no AA halo.
+
+    The output is a 3-channel RGB PNG where every pixel is exactly
+    ``(0,0,0)`` (black particle) or ``(255,255,255)`` (white background).
+    Anti-aliasing halos are removed via a post-render binary threshold.
+
+    Geometry layout (bounds, padding, figsize, dpi) is IDENTICAL to the
+    presentation render so both images have matching pixel coordinates.
+
+    Args:
+        x: X coordinates of particle centers.
+        y: Y coordinates of particle centers.
+        radii: Particle radii.
+        bounds: Bounding box ``(min_x, max_x, min_y, max_y)``.
+        img_size: Target output size in pixels (square).
+
+    Returns:
+        PNG image as bytes (RGB, strictly binary pixel values).
+    """
+    from PIL import Image
+
+    effective_dpi = 100
+    effective_figsize = (img_size / 100.0, img_size / 100.0)
+
+    fig, ax = plt.subplots(figsize=effective_figsize)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    circles = [Circle((xi, yi), ri) for xi, yi, ri in zip(x, y, radii)]
+    collection = PatchCollection(
+        circles,
+        facecolor="#000000",
+        edgecolor="none",
+        linewidth=0,
+        alpha=1.0,
+    )
+    ax.add_collection(collection)
+
+    min_x, max_x, min_y, max_y = bounds
+    width = max_x - min_x
+    height = max_y - min_y
+    padding = max(width, height) * 0.02
+    ax.set_xlim(min_x - padding, max_x + padding)
+    ax.set_ylim(min_y - padding, max_y + padding)
+    ax.set_aspect("equal")
+    ax.axis("off")
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=effective_dpi, pad_inches=0)
+    plt.close(fig)
+
+    # Post-render binary threshold: remove anti-aliasing halos
+    img = Image.open(io.BytesIO(buf.getvalue())).convert("L")
+    arr = np.array(img, dtype=np.uint8)
+    arr = np.where(arr > 127, 255, 0).astype(np.uint8)
+    out = Image.fromarray(arr, mode="L").convert("RGB")
+    out_buf = io.BytesIO()
+    out.save(out_buf, format="PNG")
+    return out_buf.getvalue()
 
 
 def _create_projection_figure(

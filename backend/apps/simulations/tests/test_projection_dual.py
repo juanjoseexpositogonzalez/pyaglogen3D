@@ -13,6 +13,7 @@ from PIL import Image
 from apps.simulations.services.projection import (
     _create_projection_figure,
     render_projection_png,
+    render_scientific_png,
 )
 
 
@@ -92,3 +93,78 @@ class TestPresentationRenderParity:
         collection = ax.collections[0]
         assert collection.get_alpha() == 1.0, "alpha must be 1.0 for presentation"
         plt.close(fig)
+
+
+# ---------------------------------------------------------------------------
+# T3.5 — Scientific render: solid black, binary B/W, no AA halo
+# ---------------------------------------------------------------------------
+
+
+class TestScientificRender:
+    """T3.5: _create_scientific_projection_figure + binary threshold."""
+
+    def test_scientific_png_is_strictly_binary(self) -> None:
+        """Every pixel must be exactly 0 or 255 (no anti-aliasing halo)."""
+        png_bytes = render_scientific_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=256,
+        )
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")
+        arr = np.array(img)
+        unique_vals = set(np.unique(arr))
+        assert unique_vals <= {0, 255}, (
+            f"Scientific render must be strictly binary, got values: {unique_vals}"
+        )
+
+    def test_scientific_png_has_black_pixels(self) -> None:
+        """Scientific render must have black (0) pixels from the particles."""
+        png_bytes = render_scientific_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=256,
+        )
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")
+        arr = np.array(img)
+        assert np.count_nonzero(arr == 0) > 0, "Expected black particle pixels"
+
+    def test_scientific_png_has_white_background(self) -> None:
+        """Scientific render must have white (255) background pixels."""
+        png_bytes = render_scientific_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=256,
+        )
+        img = Image.open(io.BytesIO(png_bytes)).convert("L")
+        arr = np.array(img)
+        assert np.count_nonzero(arr == 255) > 0, "Expected white background pixels"
+
+    def test_scientific_png_is_rgb_3channel(self) -> None:
+        """Output must be RGB (3 channels, no alpha) per spec."""
+        png_bytes = render_scientific_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=256,
+        )
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.mode == "RGB", f"Expected RGB mode, got {img.mode}"
+
+    def test_scientific_png_valid_png_bytes(self) -> None:
+        """Return value must be valid PNG bytes (starts with PNG signature)."""
+        png_bytes = render_scientific_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=512,
+        )
+        assert isinstance(png_bytes, bytes)
+        assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n", "Not a valid PNG"
