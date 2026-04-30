@@ -853,3 +853,43 @@ class TestBatchListEndpoint:
         data = resp.json()
         assert data["count"] == 1
         assert data["results"][0]["id"] == str(b2.id)
+
+    def test_batch_with_zero_successful_has_status_completed(self) -> None:
+        """Hotfix: batch with n_successful=0 must return status='completed',
+        never 'empty'. The lifecycle status is orthogonal to data quality."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        # Simulate all-failed batch: n_images=2, n_successful=0
+        batch.n_images = 2
+        batch.n_successful = 0
+        batch.save()
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project.id))
+        assert resp.status_code == 200
+        item = resp.json()["results"][0]
+        assert item["status"] == "completed"
+
+    def test_batch_status_always_in_canonical_set(self) -> None:
+        """Every batch status returned by batch_list must belong to the
+        canonical set: completed, running, queued, failed, cancelled."""
+        canonical = {"completed", "running", "queued", "failed", "cancelled"}
+        user = _make_user()
+        project = _make_project(user)
+        # Batch with successful images
+        b1 = _make_batch(project, user)
+        _add_images(b1, 3)
+        # Batch with zero successful images (default n_successful=0)
+        b2 = _make_batch(project, user)
+        b2.n_images = 5
+        b2.n_successful = 0
+        b2.save()
+        client = _authed_client(user)
+
+        resp = client.get(_batch_list_url(project.id))
+        assert resp.status_code == 200
+        for item in resp.json()["results"]:
+            assert item["status"] in canonical, (
+                f"status '{item['status']}' not in canonical set {canonical}"
+            )

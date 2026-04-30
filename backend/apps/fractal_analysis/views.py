@@ -850,7 +850,7 @@ def batch_list_view(request: Request, project_pk: uuid.UUID) -> Response:
     results = [
         {
             "id": str(b.id),
-            "status": "completed" if b.n_successful and b.n_successful > 0 else "empty",
+            "status": "completed",
             "created_at": b.created_at.isoformat(),
             "completed_at": None,
             "algorithm": b.algorithm,
