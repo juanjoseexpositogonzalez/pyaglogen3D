@@ -49,11 +49,11 @@
 
 ## Phase 6 — Frontend variant toggle
 
-- [ ] T6.1 — Update getBatchImagePngUrl to accept variant param (pyaglogen3D/frontend/src/lib/api.ts)
-- [ ] T6.2 — Update fetchBatchImagePng to accept variant param (pyaglogen3D/frontend/src/lib/api.ts)
-- [ ] T6.3 — Add FraktalBatchImageDetail toggle UI: presentation/scientific radio (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
-- [ ] T6.4 — State management: refetch blob URL on variant toggle change (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
-- [ ] T6.5 — Add vitest tests: API params, toggle state, refetch behavior (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.test.tsx)
+- [x] T6.1 — Update getBatchImagePngUrl to accept variant param (pyaglogen3D/frontend/src/lib/api.ts)
+- [x] T6.2 — Update fetchBatchImagePng to accept variant param (pyaglogen3D/frontend/src/lib/api.ts)
+- [x] T6.3 — Add FraktalBatchImageDetail toggle UI: presentation/scientific radio (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
+- [x] T6.4 — State management: refetch blob URL on variant toggle change (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
+- [x] T6.5 — Add vitest tests: API params, toggle state, refetch behavior (pyaglogen3D/frontend/src/components/fraktal/FraktalBatchImageDetail.test.tsx)
 
 ## Phase 7 — Tests + docs + Jira PYA-8
 
