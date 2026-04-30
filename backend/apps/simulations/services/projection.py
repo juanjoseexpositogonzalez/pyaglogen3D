@@ -189,6 +189,78 @@ def render_scientific_png(
     return out_buf.getvalue()
 
 
+def render_projection_dual_png(
+    positions: np.ndarray,
+    radii: np.ndarray,
+    azimuth: float,
+    elevation: float,
+    img_size: int = 512,
+) -> tuple[bytes, bytes, float, float]:
+    """Render both presentation and scientific PNGs for a single direction.
+
+    Calls ``aglogen_core.compute_2d_bbox`` once to obtain the 2D projected
+    positions and bounding box, then passes the SAME geometry + bounds to
+    both render functions so pixel coordinates match exactly.
+
+    Args:
+        positions: 3D particle positions, shape ``(N, 3)``.
+        radii: Particle radii, shape ``(N,)``.
+        azimuth: View azimuth in degrees.
+        elevation: View elevation in degrees.
+        img_size: Target output size in pixels (square).
+
+    Returns:
+        Tuple of ``(presentation_bytes, scientific_bytes,
+        bbox_2d_w, bbox_2d_h)`` where bbox dimensions are in engine
+        units (include particle radii on each side).
+    """
+    import aglogen_core
+
+    coords_tuples = [(float(p[0]), float(p[1]), float(p[2])) for p in positions]
+    radii_list = [float(r) for r in radii]
+
+    bbox_w, bbox_h, positions_2d = aglogen_core.compute_2d_bbox(
+        coords_tuples, radii_list, azimuth, elevation
+    )
+
+    # Extract projected x, y from 2D positions
+    x_2d = [p[0] for p in positions_2d]
+    y_2d = [p[1] for p in positions_2d]
+    radii_flat = radii_list
+
+    # Compute bounds from projected positions + radii (same as bbox logic)
+    if len(x_2d) > 0:
+        x_arr = np.array(x_2d)
+        y_arr = np.array(y_2d)
+        r_arr = np.array(radii_flat)
+        min_x = float((x_arr - r_arr).min())
+        max_x = float((x_arr + r_arr).max())
+        min_y = float((y_arr - r_arr).min())
+        max_y = float((y_arr + r_arr).max())
+    else:
+        min_x = max_x = min_y = max_y = 0.0
+
+    bounds = (min_x, max_x, min_y, max_y)
+
+    pres_bytes = render_projection_png(
+        x=x_2d,
+        y=y_2d,
+        radii=radii_flat,
+        bounds=bounds,
+        img_size=img_size,
+    )
+
+    sci_bytes = render_scientific_png(
+        x=x_2d,
+        y=y_2d,
+        radii=radii_flat,
+        bounds=bounds,
+        img_size=img_size,
+    )
+
+    return pres_bytes, sci_bytes, float(bbox_w), float(bbox_h)
+
+
 def _create_projection_figure(
     x: list[float],
     y: list[float],

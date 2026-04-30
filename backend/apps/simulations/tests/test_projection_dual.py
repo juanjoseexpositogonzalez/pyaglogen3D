@@ -12,6 +12,7 @@ from PIL import Image
 
 from apps.simulations.services.projection import (
     _create_projection_figure,
+    render_projection_dual_png,
     render_projection_png,
     render_scientific_png,
 )
@@ -168,3 +169,83 @@ class TestScientificRender:
         )
         assert isinstance(png_bytes, bytes)
         assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n", "Not a valid PNG"
+
+
+# ---------------------------------------------------------------------------
+# T3.6 — render_projection_dual_png: both variants + bbox dims
+# ---------------------------------------------------------------------------
+
+# 3D positions + radii for compute_2d_bbox mocking
+SAMPLE_POSITIONS_3D = np.array(
+    [[0.0, 0.0, 0.0], [2.0, 0.0, 0.0], [1.0, 1.73, 0.0]], dtype=np.float64
+)
+SAMPLE_RADII_3D = np.array([0.5, 0.5, 0.5], dtype=np.float64)
+
+
+class TestRenderProjectionDualPng:
+    """T3.6: render_projection_dual_png returns both variants + bbox."""
+
+    def test_returns_four_element_tuple(self) -> None:
+        """Must return (pres_bytes, sci_bytes, bbox_w, bbox_h)."""
+        result = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=0.0,
+            elevation=0.0,
+            img_size=256,
+        )
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+
+    def test_both_outputs_are_valid_png(self) -> None:
+        """Both presentation and scientific bytes must be valid PNG."""
+        pres, sci, bw, bh = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=0.0,
+            elevation=0.0,
+            img_size=256,
+        )
+        assert pres[:8] == b"\x89PNG\r\n\x1a\n"
+        assert sci[:8] == b"\x89PNG\r\n\x1a\n"
+
+    def test_both_pngs_have_identical_dimensions(self) -> None:
+        """Presentation and scientific PNGs must have the same pixel size."""
+        pres, sci, _, _ = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=0.0,
+            elevation=0.0,
+            img_size=256,
+        )
+        pres_img = Image.open(io.BytesIO(pres))
+        sci_img = Image.open(io.BytesIO(sci))
+        assert pres_img.size == sci_img.size
+
+    def test_bbox_dimensions_are_positive(self) -> None:
+        """bbox_w and bbox_h must be positive floats."""
+        _, _, bw, bh = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=0.0,
+            elevation=0.0,
+            img_size=256,
+        )
+        assert isinstance(bw, float)
+        assert isinstance(bh, float)
+        assert bw > 0.0
+        assert bh > 0.0
+
+    def test_scientific_is_binary(self) -> None:
+        """Scientific output must be strictly binary (0 or 255 only)."""
+        _, sci, _, _ = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=90.0,
+            elevation=45.0,
+            img_size=256,
+        )
+        img = Image.open(io.BytesIO(sci)).convert("L")
+        arr = np.array(img)
+        unique = set(np.unique(arr))
+        assert unique <= {0, 255}
