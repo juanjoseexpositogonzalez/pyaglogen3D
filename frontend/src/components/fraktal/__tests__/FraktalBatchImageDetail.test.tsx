@@ -523,6 +523,113 @@ describe('<FraktalBatchImageDetail />', () => {
     })
   })
 
+  // --- T6.5: Comprehensive variant toggle tests ---
+  describe('comprehensive variant toggle (T6.5)', () => {
+    const PRES_BLOB_URL = 'blob:http://localhost/pres-blob-t65'
+    const SCI_BLOB_URL = 'blob:http://localhost/sci-blob-t65'
+    const PRES2_BLOB_URL = 'blob:http://localhost/pres2-blob-t65'
+
+    beforeEach(() => {
+      let callCount = 0
+      ;(globalThis.URL.createObjectURL as ReturnType<typeof vi.fn>)
+        .mockImplementation(() => {
+          callCount++
+          if (callCount === 1) return PRES_BLOB_URL
+          if (callCount === 2) return SCI_BLOB_URL
+          return PRES2_BLOB_URL
+        })
+    })
+
+    it('toggle from presentation to scientific calls fetchBatchImagePng with scientific', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail({ has_scientific_png: true }))
+      mockFetchBatchImagePng
+        .mockResolvedValueOnce(new Blob(['pres'], { type: 'image/png' }))
+        .mockResolvedValueOnce(new Blob(['sci'], { type: 'image/png' }))
+
+      renderComponent()
+      await screen.findByText('1.720')
+      await waitFor(() => expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(1))
+
+      fireEvent.click(screen.getByRole('button', { name: /scientific/i }))
+
+      await waitFor(() => {
+        expect(mockFetchBatchImagePng).toHaveBeenCalledWith(
+          PROJECT_ID, BATCH_ID, 2, 'scientific'
+        )
+      })
+    })
+
+    it('toggle back to presentation calls fetchBatchImagePng with presentation', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail({ has_scientific_png: true }))
+      mockFetchBatchImagePng
+        .mockResolvedValueOnce(new Blob(['pres'], { type: 'image/png' }))
+        .mockResolvedValueOnce(new Blob(['sci'], { type: 'image/png' }))
+        .mockResolvedValueOnce(new Blob(['pres2'], { type: 'image/png' }))
+
+      renderComponent()
+      await screen.findByText('1.720')
+      await waitFor(() => expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(1))
+
+      // Click scientific
+      fireEvent.click(screen.getByRole('button', { name: /scientific/i }))
+      await waitFor(() => expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(2))
+
+      // Click presentation again
+      fireEvent.click(screen.getByRole('button', { name: /presentation/i }))
+
+      await waitFor(() => {
+        expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(3)
+        expect(mockFetchBatchImagePng).toHaveBeenLastCalledWith(
+          PROJECT_ID, BATCH_ID, 2, 'presentation'
+        )
+      })
+    })
+
+    it('scientific button has disabled attribute when has_scientific_png=false', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail({ has_scientific_png: false }))
+      mockFetchBatchImagePng.mockResolvedValue(new Blob(['pres'], { type: 'image/png' }))
+
+      renderComponent()
+      await screen.findByText('1.720')
+
+      const sciBtn = screen.getByRole('button', { name: /scientific/i })
+      expect(sciBtn.hasAttribute('disabled')).toBe(true)
+    })
+
+    it('clicking disabled scientific button does NOT trigger fetch', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail({ has_scientific_png: false }))
+      mockFetchBatchImagePng.mockResolvedValue(new Blob(['pres'], { type: 'image/png' }))
+
+      renderComponent()
+      await screen.findByText('1.720')
+      await waitFor(() => expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(1))
+
+      // Try clicking disabled scientific button
+      const sciBtn = screen.getByRole('button', { name: /scientific/i })
+      fireEvent.click(sciBtn)
+
+      // Should NOT have been called again — still only 1 call (the initial presentation)
+      expect(mockFetchBatchImagePng).toHaveBeenCalledTimes(1)
+    })
+
+    it('blob URL is revoked when variant changes (revokeObjectURL called with old URL)', async () => {
+      const mockRevoke = globalThis.URL.revokeObjectURL as ReturnType<typeof vi.fn>
+      mockGetBatchImage.mockResolvedValue(makeImageDetail({ has_scientific_png: true }))
+      mockFetchBatchImagePng
+        .mockResolvedValueOnce(new Blob(['pres'], { type: 'image/png' }))
+        .mockResolvedValueOnce(new Blob(['sci'], { type: 'image/png' }))
+
+      renderComponent()
+      await waitFor(() => expect(globalThis.URL.createObjectURL).toHaveBeenCalledTimes(1))
+
+      fireEvent.click(screen.getByRole('button', { name: /scientific/i }))
+
+      await waitFor(() => {
+        expect(mockRevoke).toHaveBeenCalledWith(PRES_BLOB_URL)
+      })
+    })
+  })
+
   // --- HOTFIX: PNG auth via blob URL (fetch + createObjectURL) ---
   describe('PNG auth via blob URL', () => {
     const FAKE_BLOB_URL = 'blob:http://localhost/fake-blob-123'
