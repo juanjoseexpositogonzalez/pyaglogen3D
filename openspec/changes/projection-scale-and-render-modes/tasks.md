@@ -2,12 +2,12 @@
 
 ## Phase 1 — Engine Rust dual render
 
-- [x] T1.1 — Split render function into presentation and scientific modes (engine/aglogen_core/engine/src/projection/render.rs)
-- [x] T1.2 — Implement post-render binary threshold (>127→255, ≤127→0) for scientific mode (engine/aglogen_core/engine/src/projection/render.rs)
-- [x] T1.3 — Create shared 2D bounding box helper returning (width, height) from projection bounds (engine/aglogen_core/engine/src/projection/mod.rs)
-- [x] T1.4 — Return (png_bytes, bbox_w, bbox_h) tuple from dual render function (engine/aglogen_core/engine/src/projection/render.rs)
-- [x] T1.5 — Add presentation render: red fill, dark edge, alpha, AA, border (engine/aglogen_core/engine/src/projection/render.rs)
-- [x] T1.6 — Add cargo tests for dual render output: binary check, dimension parity, bbox correctness (engine/aglogen_core/engine/src/projection/render.rs)
+- [ ] T1.1 — Split render function into presentation and scientific modes (engine/aglogen_core/engine/src/projection/render.rs)
+- [ ] T1.2 — Implement post-render binary threshold (>127→255, ≤127→0) for scientific mode (engine/aglogen_core/engine/src/projection/render.rs)
+- [ ] T1.3 — Create shared 2D bounding box helper returning (width, height) from projection bounds (engine/aglogen_core/engine/src/projection/mod.rs)
+- [ ] T1.4 — Return (png_bytes, bbox_w, bbox_h) tuple from dual render function (engine/aglogen_core/engine/src/projection/render.rs)
+- [ ] T1.5 — Add presentation render: red fill, dark edge, alpha, AA, border (engine/aglogen_core/engine/src/projection/render.rs)
+- [ ] T1.6 — Add cargo tests for dual render output: binary check, dimension parity, bbox correctness (engine/aglogen_core/engine/tests/dual_render_test.rs)
 
 ## Phase 2 — Engine Rust FRAKTAL batch per-image scale
 
