@@ -57,8 +57,8 @@
 
 ## Phase 7 — Tests + docs + Jira PYA-8
 
-- [ ] T7.1 — Cross-cutting integration test: simulate→projection→upload→batch→drill-down with both variants (pyaglogen3D/tests/integration/test_projection_scale_render_modes.py)
-- [ ] T7.2 — CSV byte-equivalence test still passes (pyaglogen3D/tests/integration/test_csv_byte_equivalence.py)
-- [ ] T7.3 — Write documentation docs/projection-scale-and-render-modes.md (pyaglogen3D/docs/projection-scale-and-render-modes.md)
-- [ ] T7.4 — Add CHANGELOG entry for projection-scale-and-render-modes (pyaglogen3D/CHANGELOG.md)
-- [ ] T7.5 — Close Jira PYA-8 with link to commit range (pyaglogen3D/.jira-config.json)
+- [x] T7.1 — Cross-cutting integration test: simulate→projection→upload→batch→drill-down with both variants (pyaglogen3D/backend/tests/integration/test_projection_scale_render_modes.py)
+- [x] T7.2 — CSV byte-equivalence test still passes (63 CSV tests verified, 0 regressions)
+- [x] T7.3 — Write documentation docs/projection-scale-and-render-modes.md (pyaglogen3D/docs/projection-scale-and-render-modes.md)
+- [x] T7.4 — Add CHANGELOG entry for projection-scale-and-render-modes (pyaglogen3D/CHANGELOG.md)
+- [x] T7.5 — Close Jira PYA-8 with link to commit range (transitioned to Finalizada via Jira MCP)
