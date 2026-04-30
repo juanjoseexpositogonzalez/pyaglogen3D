@@ -256,6 +256,42 @@ class TestRenderProjectionDualPng:
         unique = set(np.unique(arr))
         assert unique <= {0, 255}
 
+    def test_bbox_matches_compute_2d_bbox(self) -> None:
+        """bbox_w/h from dual render must match compute_2d_bbox output."""
+        import aglogen_core
+
+        coords_tuples = [
+            (float(p[0]), float(p[1]), float(p[2])) for p in SAMPLE_POSITIONS_3D
+        ]
+        radii_list = [float(r) for r in SAMPLE_RADII_3D]
+        az, el = 0.0, 0.0
+        expected_w, expected_h, _ = aglogen_core.compute_2d_bbox(
+            coords_tuples, radii_list, az, el
+        )
+        _, _, actual_w, actual_h = render_projection_dual_png(
+            positions=SAMPLE_POSITIONS_3D,
+            radii=SAMPLE_RADII_3D,
+            azimuth=az,
+            elevation=el,
+            img_size=256,
+        )
+        assert actual_w == pytest.approx(expected_w, rel=1e-9)
+        assert actual_h == pytest.approx(expected_h, rel=1e-9)
+
+    def test_legacy_single_png_still_valid(self) -> None:
+        """Legacy render_projection_png still works as standalone."""
+        png_bytes = render_projection_png(
+            x=SAMPLE_X,
+            y=SAMPLE_Y,
+            radii=SAMPLE_RADII,
+            bounds=SAMPLE_BOUNDS,
+            img_size=256,
+        )
+        assert isinstance(png_bytes, bytes)
+        assert png_bytes[:8] == b"\x89PNG\r\n\x1a\n"
+        img = Image.open(io.BytesIO(png_bytes))
+        assert img.size[0] > 0 and img.size[1] > 0
+
 
 # ---------------------------------------------------------------------------
 # T3.8 — build_projection_zip: dual PNGs per direction
