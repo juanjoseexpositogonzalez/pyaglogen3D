@@ -16,6 +16,8 @@ use aglogen_engine::fractal::fraktal::batch::{
     analyze_batch_broadcast as engine_analyze_batch_broadcast, AutocalibrateSource, BatchAlgorithm,
     BatchInput,
 };
+// Re-export for per-image-scale binding (T3.2)
+// analyze_batch is used directly in analyze_fraktal_batch_per_image_scale
 use aglogen_engine::fractal::fraktal::result::{FraktalResult, FraktalStatus};
 use aglogen_engine::fractal::fraktal::{
     analyze_granulated_2012, analyze_voxel_2018, Granulated2012Params, Voxel2018Params,
@@ -1459,6 +1461,116 @@ fn analyze_fraktal_batch<'py>(
     Ok(dict)
 }
 
+// ============================================================================
+// 2D bounding box binding
+// ============================================================================
+
+/// Compute the 2D bounding box from 3D positions projected at a given
+/// viewing direction (azimuth/elevation).
+///
+/// Returns `(bbox_width, bbox_height, projected_2d_positions, radii)`.
+/// `projected_2d_positions` is a list of `(x, y)` tuples in engine units.
+///
+/// This is the Python-facing wrapper around `engine::projection::compute_2d_bbox`.
+/// It is the single source of truth for 2D bbox dimensions used by both render
+/// modes and per-image scale calculation.
+#[pyfunction]
+#[pyo3(text_signature = "(coordinates, radii, az_deg, el_deg)")]
+fn compute_2d_bbox(
+    coordinates: Vec<(f64, f64, f64)>,
+    radii: Vec<f64>,
+    az_deg: f64,
+    el_deg: f64,
+) -> PyResult<(f64, f64, Vec<(f64, f64)>)> {
+    if coordinates.len() != radii.len() {
+        return Err(pyo3::exceptions::PyValueError::new_err(format!(
+            "coordinates length ({}) must match radii length ({})",
+            coordinates.len(),
+            radii.len()
+        )));
+    }
+    let coords: Vec<[f64; 3]> = coordinates.iter().map(|&(x, y, z)| [x, y, z]).collect();
+
+    let result = aglogen_engine::projection::compute_2d_bbox(&coords, &radii, az_deg, el_deg);
+
+    Ok((result.bbox_width, result.bbox_height, result.positions))
+}
+
+// ============================================================================
+// FRAKTAL batch per-image scale binding
+// ============================================================================
+
+/// Run FRAKTAL batch analysis with per-image scale values.
+///
+/// `pixels_per_100nm` is a list of per-image scale values (one per image).
+/// Unlike `analyze_fraktal_batch` which broadcasts a single float,
+/// this function accepts a distinct scale for each image.
+///
+/// Returns a dict with the same shape as `analyze_fraktal_batch`,
+/// plus `pixels_per_100nm_used` per image in each result entry.
+#[pyfunction]
+#[pyo3(signature = (images, pixels_per_100nm, autocalibrate_dpo, dpo_hint, algorithm))]
+fn analyze_fraktal_batch_per_image_scale<'py>(
+    py: Python<'py>,
+    images: Vec<PyReadonlyArray2<'py, u8>>,
+    pixels_per_100nm: Vec<f64>,
+    autocalibrate_dpo: bool,
+    dpo_hint: f64,
+    algorithm: &str,
+) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
+    let algo = match algorithm.to_lowercase().as_str() {
+        "granulated_2012" | "granulated" => BatchAlgorithm::Granulated2012,
+        "voxel_2018" | "voxel" => BatchAlgorithm::Voxel2018,
+        other => {
+            return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                "Unknown algorithm: {}. Use 'granulated_2012' or 'voxel_2018'.",
+                other
+            )))
+        }
+    };
+
+    let engine_images: Vec<Array2<u8>> = images.iter().map(numpy_to_engine_array2_u8).collect();
+
+    let input = BatchInput {
+        images: engine_images,
+        pixels_per_100nm,
+        autocalibrate_dpo,
+        dpo_hint,
+        algorithm: algo,
+    };
+
+    let output = py
+        .allow_threads(|| aglogen_engine::fractal::fraktal::batch::analyze_batch(input))
+        .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let n = output.results.len();
+    let dict = pyo3::types::PyDict::new(py);
+
+    let results_list = pyo3::types::PyList::empty(py);
+    for r in output.results.iter() {
+        let item = pyo3::types::PyDict::new(py);
+        item.set_item("index", r.index)?;
+        item.set_item("fractal_dimension", r.fractal_dimension)?;
+        item.set_item("prefactor", r.prefactor)?;
+        item.set_item("r_squared", r.r_squared)?;
+        item.set_item("n_particles_counted", r.n_particles_counted)?;
+        item.set_item("dpo_used", r.dpo_used)?;
+        item.set_item("pixels_per_100nm_used", r.pixels_per_100nm_used)?;
+        item.set_item("error", r.error.clone())?;
+        results_list.append(item)?;
+    }
+    dict.set_item("results", results_list)?;
+    dict.set_item("dpo_used", output.dpo_used)?;
+    dict.set_item("autocalibrate_source", output.autocalibrate_source.as_str())?;
+    let image_idx: Option<usize> = match output.autocalibrate_source {
+        AutocalibrateSource::Manual => None,
+        _ => output.autocalibrate_source.image_index(n),
+    };
+    dict.set_item("autocalibrate_image_index", image_idx)?;
+
+    Ok(dict)
+}
+
 #[pyfunction]
 fn version() -> &'static str {
     env!("CARGO_PKG_VERSION")
@@ -1489,6 +1601,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(fraktal_granulated_2012, m)?)?;
     m.add_function(wrap_pyfunction!(fraktal_voxel_2018, m)?)?;
     m.add_function(wrap_pyfunction!(analyze_fraktal_batch, m)?)?;
+    m.add_function(wrap_pyfunction!(analyze_fraktal_batch_per_image_scale, m)?)?;
 
     // Projection functions
     m.add_function(wrap_pyfunction!(project_to_2d, m)?)?;
@@ -1496,6 +1609,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(generate_direction_grid, m)?)?;
     m.add_function(wrap_pyfunction!(generate_direction_fibonacci, m)?)?;
     m.add_function(wrap_pyfunction!(project_directions, m)?)?;
+    m.add_function(wrap_pyfunction!(compute_2d_bbox, m)?)?;
 
     // Optical properties functions
     m.add_function(wrap_pyfunction!(run_tmatrix, m)?)?;
@@ -1515,4 +1629,149 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<PyOpticalResult>()?;
 
     Ok(())
+}
+
+// ============================================================================
+// Tests for binding conversion logic (no Python interpreter needed)
+// ============================================================================
+#[cfg(test)]
+mod tests {
+    use aglogen_engine::fractal::fraktal::batch::{
+        analyze_batch, analyze_batch_broadcast, BatchAlgorithm, BatchInput,
+    };
+    use aglogen_engine::projection::compute_2d_bbox;
+    use ndarray::Array2;
+
+    // ── T3.1: compute_2d_bbox binding conversion logic ────────────
+    #[test]
+    fn compute_2d_bbox_binding_conversion_single_particle() {
+        // Mirrors the binding's conversion: Vec<(f64,f64,f64)> → Vec<[f64;3]>
+        let positions: Vec<(f64, f64, f64)> = vec![(0.0, 0.0, 0.0)];
+        let radii: Vec<f64> = vec![1.5];
+        let coords: Vec<[f64; 3]> = positions.iter().map(|&(x, y, z)| [x, y, z]).collect();
+
+        let result = compute_2d_bbox(&coords, &radii, 0.0, 0.0);
+        // Single particle at origin with radius 1.5: bbox = 2*r = 3.0
+        assert!(
+            (result.bbox_width - 3.0).abs() < 1e-10,
+            "bbox_width should be 3.0, got {}",
+            result.bbox_width
+        );
+        assert!(
+            (result.bbox_height - 3.0).abs() < 1e-10,
+            "bbox_height should be 3.0, got {}",
+            result.bbox_height
+        );
+        assert_eq!(result.positions.len(), 1);
+    }
+
+    #[test]
+    fn compute_2d_bbox_binding_conversion_multi_particle() {
+        // Three particles forming a triangle in the XY plane, viewed from above
+        let positions: Vec<(f64, f64, f64)> =
+            vec![(0.0, 0.0, 0.0), (4.0, 0.0, 0.0), (0.0, 4.0, 0.0)];
+        let radii: Vec<f64> = vec![1.0, 1.0, 1.0];
+        let coords: Vec<[f64; 3]> = positions.iter().map(|&(x, y, z)| [x, y, z]).collect();
+
+        let result = compute_2d_bbox(&coords, &radii, 0.0, 90.0);
+        // From top (el=90°): X-Y plane is visible
+        // Width and height depend on projection; must be > 0
+        assert!(result.bbox_width > 0.0, "width must be positive");
+        assert!(result.bbox_height > 0.0, "height must be positive");
+        assert_eq!(result.positions.len(), 3);
+    }
+
+    #[test]
+    fn compute_2d_bbox_binding_empty_input() {
+        let coords: Vec<[f64; 3]> = vec![];
+        let radii: Vec<f64> = vec![];
+        let result = compute_2d_bbox(&coords, &radii, 45.0, 30.0);
+        assert!((result.bbox_width).abs() < 1e-10);
+        assert!((result.bbox_height).abs() < 1e-10);
+        assert!(result.positions.is_empty());
+    }
+
+    // ── T3.2: per-image scale batch analysis ──────────────────────
+    fn make_particle_image(size: usize, centers: &[(usize, usize)], radius: f64) -> Array2<u8> {
+        let mut img = Array2::<u8>::from_elem((size, size), 220);
+        for (cy, cx) in centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    let d = (dy * dy + dx * dx).sqrt();
+                    if d <= radius {
+                        img[[i, j]] = 30;
+                    }
+                }
+            }
+        }
+        img
+    }
+
+    #[test]
+    fn per_image_scale_batch_returns_used_scales() {
+        // T3.2: pass 3 images with 3 different scales, verify each result
+        // has the correct pixels_per_100nm_used value.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let scales = vec![30.0, 50.0, 70.0];
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: scales.clone(),
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let output = analyze_batch(input).expect("per-image scale batch must succeed");
+        assert_eq!(output.results.len(), 3);
+        assert_eq!(output.results[0].pixels_per_100nm_used, 30.0);
+        assert_eq!(output.results[1].pixels_per_100nm_used, 50.0);
+        assert_eq!(output.results[2].pixels_per_100nm_used, 70.0);
+    }
+
+    #[test]
+    fn per_image_scale_batch_length_mismatch_rejected() {
+        // T3.2: 3 images with 2 scales → error
+        let img = Array2::<u8>::from_elem((40, 40), 200);
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![30.0, 50.0],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(err.contains("mismatch"));
+    }
+
+    // ── T3.3: legacy broadcast backward compat ────────────────────
+    #[test]
+    fn legacy_broadcast_still_works() {
+        // T3.3: single float broadcast → all images get the same scale
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let output = analyze_batch_broadcast(
+            vec![img.clone(), img.clone(), img],
+            42.5,
+            false,
+            25.0,
+            BatchAlgorithm::Granulated2012,
+        )
+        .expect("broadcast batch must succeed");
+
+        assert_eq!(output.results.len(), 3);
+        for r in &output.results {
+            assert_eq!(
+                r.pixels_per_100nm_used, 42.5,
+                "all images must use broadcast scale"
+            );
+        }
+    }
 }
