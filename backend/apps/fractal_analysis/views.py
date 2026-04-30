@@ -31,7 +31,9 @@ from .services.batch import (
     compute_batch_statistics,
     compute_histogram,
     detect_sim_id_from_filename,
+    extract_per_image_scales,
     extract_scale_from_metadata,
+    extract_scientific_png_map,
     extract_zip_images,
 )
 from .tasks import (
@@ -265,6 +267,15 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         else:
             sim_id = detect_sim_id_from_filename(uploaded.name or "")
 
+        # Extract per-image scales from metadata directions (P5 T5.3).
+        per_image_scales = extract_per_image_scales(metadata, filenames)
+
+        # Extract scientific PNGs from ZIP for dual-PNG persistence (P5 T5.1).
+        scientific_png_map = extract_scientific_png_map(zip_bytes, metadata)
+        scientific_png_list: list[bytes | None] | None = None
+        if scientific_png_map:
+            scientific_png_list = [scientific_png_map.get(fn) for fn in filenames]
+
         # Resolve project for DB persistence (available on nested URLs).
         project_pk = self.kwargs.get("project_pk")
         project = None
@@ -292,6 +303,8 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     project=project,
                     user=request.user if request.user.is_authenticated else None,
                     zip_filename=uploaded.name or "",
+                    per_image_scales=per_image_scales,
+                    scientific_png_list=scientific_png_list,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001 — surface as 400 per R3
@@ -309,6 +322,13 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         images_b64 = [base64.b64encode(img.tobytes()).decode() for img in images]
         image_shapes = [list(img.shape) for img in images]
 
+        # Serialize scientific PNGs as base64 for Celery transport
+        scientific_b64: list[str | None] | None = None
+        if scientific_png_list:
+            scientific_b64 = [
+                base64.b64encode(b).decode() if b else None for b in scientific_png_list
+            ]
+
         try:
             task = analyze_fraktal_batch_task.delay(
                 images_npy_b64=images_b64,
@@ -324,6 +344,8 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                 project_id=str(project.id) if project else None,
                 user_id=str(request.user.id) if request.user.is_authenticated else None,
                 zip_filename=uploaded.name or "",
+                per_image_scales=per_image_scales,
+                scientific_png_b64=scientific_b64,
             )
         except OperationalError:
             logger.warning(
@@ -343,6 +365,8 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     project=project,
                     user=request.user if request.user.is_authenticated else None,
                     zip_filename=uploaded.name or "",
+                    per_image_scales=per_image_scales,
+                    scientific_png_list=scientific_png_list,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001
@@ -533,6 +557,8 @@ def _run_batch_sync(
     project=None,
     user=None,
     zip_filename: str = "",
+    per_image_scales: list[float] | None = None,
+    scientific_png_list: list[bytes | None] | None = None,
 ) -> dict:
     """Sync execution of a FRAKTAL batch (N ≤ 30).
 
@@ -547,13 +573,22 @@ def _run_batch_sync(
     from .models import FraktalBatch
     from .services.batch import persist_batch_results
 
-    rust_result = aglogen_core.analyze_fraktal_batch(
-        images,
-        scale,
-        autocalibrate_dpo,
-        dpo_hint,
-        algorithm,
-    )
+    if per_image_scales is not None:
+        rust_result = aglogen_core.analyze_fraktal_batch_per_image_scale(
+            images,
+            per_image_scales,
+            autocalibrate_dpo,
+            dpo_hint,
+            algorithm,
+        )
+    else:
+        rust_result = aglogen_core.analyze_fraktal_batch(
+            images,
+            scale,
+            autocalibrate_dpo,
+            dpo_hint,
+            algorithm,
+        )
     payload = _build_batch_response(
         rust_result, filenames, metadata, sim_id, scale, calibration_source
     )
@@ -574,7 +609,11 @@ def _run_batch_sync(
         )
         png_list = _images_to_png_bytes(images)
         persist_batch_results(
-            batch, payload["images"], png_list, dpo_used=batch.dpo_used
+            batch,
+            payload["images"],
+            png_list,
+            dpo_used=batch.dpo_used,
+            scientific_png_list=scientific_png_list,
         )
         payload["batch_id"] = str(batch.id)
 

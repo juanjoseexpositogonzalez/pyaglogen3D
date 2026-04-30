@@ -613,6 +613,8 @@ def analyze_fraktal_batch_task(
     project_id: str | None = None,
     user_id: str | None = None,
     zip_filename: str = "",
+    per_image_scales: list[float] | None = None,
+    scientific_png_b64: list[str | None] | None = None,
 ) -> dict:
     """Async batch FRAKTAL analysis when N > 30.
 
@@ -664,13 +666,22 @@ def analyze_fraktal_batch_task(
             },
         )
 
-    rust_result = aglogen_core.analyze_fraktal_batch(
-        images,
-        pixels_per_100nm,
-        autocalibrate_dpo,
-        dpo_hint,
-        algorithm,
-    )
+    if per_image_scales is not None:
+        rust_result = aglogen_core.analyze_fraktal_batch_per_image_scale(
+            images,
+            per_image_scales,
+            autocalibrate_dpo,
+            dpo_hint,
+            algorithm,
+        )
+    else:
+        rust_result = aglogen_core.analyze_fraktal_batch(
+            images,
+            pixels_per_100nm,
+            autocalibrate_dpo,
+            dpo_hint,
+            algorithm,
+        )
 
     if self.request.id:
         self.update_state(
@@ -692,6 +703,13 @@ def analyze_fraktal_batch_task(
         pixels_per_100nm,
         calibration_source,
     )
+
+    # Decode scientific PNGs from base64 transport format.
+    scientific_png_list: list[bytes | None] | None = None
+    if scientific_png_b64:
+        scientific_png_list = [
+            base64.b64decode(b) if b else None for b in scientific_png_b64
+        ]
 
     # Persist to DB.
     batch_id = None
@@ -720,7 +738,11 @@ def analyze_fraktal_batch_task(
             png_list.append(buf.getvalue())
 
         persist_batch_results(
-            batch, payload["images"], png_list, dpo_used=batch.dpo_used
+            batch,
+            payload["images"],
+            png_list,
+            dpo_used=batch.dpo_used,
+            scientific_png_list=scientific_png_list,
         )
         batch_id = str(batch.id)
 

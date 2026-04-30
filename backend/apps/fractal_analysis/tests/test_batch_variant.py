@@ -172,6 +172,73 @@ def _build_zip_with_scientific(
 
 
 # ===========================================================================
+# T5.3 — Per-image scale extraction from metadata
+# ===========================================================================
+
+
+class TestPerImageScaleExtraction:
+    """R-DELTA-C / R1 modified: per-direction pixels_per_100nm."""
+
+    def test_per_image_scales_extracted(self) -> None:
+        """Scenario 1.1 — new-mode ZIP: per-image scales consumed."""
+        from apps.fractal_analysis.services.batch import extract_per_image_scales
+
+        scales = [42.1, 38.5]
+        filenames = ["proj_000.png", "proj_001.png"]
+        metadata = {
+            "parameters": {"pixels_per_100nm": 42.1},
+            "directions": [
+                {"filename": "proj_000.png", "pixels_per_100nm": 42.1},
+                {"filename": "proj_001.png", "pixels_per_100nm": 38.5},
+            ],
+        }
+
+        result = extract_per_image_scales(metadata, filenames)
+        assert result is not None
+        assert result == pytest.approx(scales)
+
+    def test_legacy_zip_returns_none(self) -> None:
+        """Scenario 1.2 — legacy ZIP: no per-direction scales."""
+        from apps.fractal_analysis.services.batch import extract_per_image_scales
+
+        filenames = ["proj_000.png", "proj_001.png"]
+        metadata = {
+            "parameters": {"pixels_per_100nm": 42.0},
+            "directions": [
+                {"filename": "proj_000.png"},
+                {"filename": "proj_001.png"},
+            ],
+        }
+
+        result = extract_per_image_scales(metadata, filenames)
+        assert result is None
+
+    def test_mixed_zip_falls_back_to_top_level(self) -> None:
+        """Scenario 1.3 — mixed ZIP: partial per-direction scales."""
+        from apps.fractal_analysis.services.batch import extract_per_image_scales
+
+        filenames = ["proj_000.png", "proj_001.png"]
+        metadata = {
+            "parameters": {"pixels_per_100nm": 40.0},
+            "directions": [
+                {"filename": "proj_000.png", "pixels_per_100nm": 42.1},
+                {"filename": "proj_001.png"},  # no per-direction scale
+            ],
+        }
+
+        result = extract_per_image_scales(metadata, filenames)
+        assert result is not None
+        assert result[0] == pytest.approx(42.1)
+        assert result[1] == pytest.approx(40.0)  # falls back to top-level
+
+    def test_no_metadata_returns_none(self) -> None:
+        from apps.fractal_analysis.services.batch import extract_per_image_scales
+
+        result = extract_per_image_scales(None, ["proj_000.png"])
+        assert result is None
+
+
+# ===========================================================================
 # T5.1 — ZIP unpack: detect *.scientific.png per direction
 # ===========================================================================
 
@@ -203,6 +270,37 @@ class TestZipUnpackScientificPng:
         assert len(images) == 2
         for fn in filenames:
             assert ".scientific.png" not in fn
+
+    def test_scientific_png_map_extracted(self) -> None:
+        """extract_scientific_png_map returns presentation→scientific mapping."""
+        from apps.fractal_analysis.services.batch import (
+            extract_scientific_png_map,
+            extract_zip_images,
+        )
+
+        zip_bytes = _build_zip_with_scientific(n_directions=2, include_scientific=True)
+        _images, metadata, _filenames = extract_zip_images(zip_bytes)
+
+        sci_map = extract_scientific_png_map(zip_bytes, metadata)
+        assert len(sci_map) == 2
+        assert "proj_000.png" in sci_map
+        assert "proj_001.png" in sci_map
+        # Each value is non-empty bytes
+        for v in sci_map.values():
+            assert len(v) > 0
+
+    def test_scientific_png_map_empty_for_legacy(self) -> None:
+        """Legacy ZIP → empty map."""
+        from apps.fractal_analysis.services.batch import (
+            extract_scientific_png_map,
+            extract_zip_images,
+        )
+
+        zip_bytes = _build_zip_with_scientific(n_directions=2, include_scientific=False)
+        _images, metadata, _filenames = extract_zip_images(zip_bytes)
+
+        sci_map = extract_scientific_png_map(zip_bytes, metadata)
+        assert sci_map == {}
 
 
 # ===========================================================================

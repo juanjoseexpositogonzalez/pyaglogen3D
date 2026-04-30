@@ -130,6 +130,64 @@ def extract_scientific_png_map(
     return result
 
 
+def extract_per_image_scales(
+    metadata: dict | None,
+    filenames: list[str],
+) -> list[float] | None:
+    """Extract per-direction ``pixels_per_100nm`` from ``metadata.directions``.
+
+    Returns a list of floats (one per presentation filename in *filenames*
+    order) when at least one direction carries a per-image scale.  Directions
+    without a per-image scale fall back to the top-level
+    ``parameters.pixels_per_100nm`` (broadcast value).
+
+    Returns ``None`` when no per-direction scale is found at all (fully
+    legacy ZIP) — callers should use the top-level scale as a single float.
+    """
+    if not isinstance(metadata, dict):
+        return None
+
+    directions = metadata.get("directions")
+    if not isinstance(directions, list):
+        return None
+
+    top_level = extract_scale_from_metadata(metadata)
+
+    # Build filename → per-direction scale map
+    fn_to_scale: dict[str, float] = {}
+    has_any = False
+    for d in directions:
+        if not isinstance(d, dict):
+            continue
+        fn = d.get("filename")
+        per_dir_scale = d.get("pixels_per_100nm")
+        if (
+            fn
+            and isinstance(per_dir_scale, (int, float))
+            and not isinstance(per_dir_scale, bool)
+        ):
+            if np.isfinite(per_dir_scale) and per_dir_scale > 0:
+                fn_to_scale[fn] = float(per_dir_scale)
+                has_any = True
+
+    if not has_any:
+        return None
+
+    # Build ordered list matching filenames
+    result: list[float] = []
+    for fn in filenames:
+        if fn in fn_to_scale:
+            result.append(fn_to_scale[fn])
+        elif top_level is not None:
+            result.append(top_level)
+        else:
+            # Cannot resolve scale for this direction — caller should
+            # fall back to single-float broadcast
+            return None
+
+    return result
+
+
 def extract_scale_from_metadata(metadata: dict | None) -> float | None:
     """Return ``metadata.parameters.pixels_per_100nm`` (nested path per R1).
 
