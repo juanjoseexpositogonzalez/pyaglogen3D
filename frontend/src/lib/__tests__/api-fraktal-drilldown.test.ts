@@ -142,6 +142,19 @@ describe('fraktalApi drill-down methods (T5.1)', () => {
       expect(url0).toContain('/images/0/png/')
       expect(url5).toContain('/images/5/png/')
     })
+
+    // T6.1: variant param support
+    it('returns URL without variant query param when variant is default (presentation)', () => {
+      const url = fraktalApi.getBatchImagePngUrl(PROJECT_ID, BATCH_ID, 2)
+      expect(url).not.toContain('variant=')
+      expect(url).toContain('/images/2/png/')
+    })
+
+    it('appends ?variant=scientific when variant is "scientific"', () => {
+      const url = fraktalApi.getBatchImagePngUrl(PROJECT_ID, BATCH_ID, 2, 'scientific')
+      expect(url).toContain('/images/2/png/')
+      expect(url).toContain('?variant=scientific')
+    })
   })
 
   // --- reanalyzeBatchImage ---

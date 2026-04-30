@@ -1048,13 +1048,20 @@ export const fraktalApi = {
    * the ``Authorization`` header → use ``fetchBatchImagePng`` instead for
    * authenticated display. Kept for consumers that only need the URL string
    * (e.g. download links that go through an ``<a>`` tag or copy-to-clipboard).
+   *
+   * @param variant — 'presentation' (default, omitted from URL) or 'scientific'
+   *   (appends ``?variant=scientific``). Omitting the param preserves backward
+   *   compatibility — existing callers without the arg still get the same URL.
    */
   getBatchImagePngUrl: (
     projectId: string,
     batchId: string,
-    index: number
-  ): string =>
-    `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`,
+    index: number,
+    variant: 'presentation' | 'scientific' = 'presentation'
+  ): string => {
+    const base = `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`
+    return variant === 'scientific' ? `${base}?variant=scientific` : base
+  },
 
   /**
    * Fetch the PNG image with authentication (Bearer token via ``authFetch``).
