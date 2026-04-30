@@ -13,7 +13,8 @@ use aglogen_engine::fractal::box_counting_3d::{
     box_counting_3d_morton, generate_sphere_points, BoxCountingResult3D,
 };
 use aglogen_engine::fractal::fraktal::batch::{
-    analyze_batch as engine_analyze_batch, AutocalibrateSource, BatchAlgorithm, BatchInput,
+    analyze_batch_broadcast as engine_analyze_batch_broadcast, AutocalibrateSource, BatchAlgorithm,
+    BatchInput,
 };
 use aglogen_engine::fractal::fraktal::result::{FraktalResult, FraktalStatus};
 use aglogen_engine::fractal::fraktal::{
@@ -1419,16 +1420,16 @@ fn analyze_fraktal_batch<'py>(
     // operate without borrowing from Python (required to drop the GIL).
     let engine_images: Vec<Array2<u8>> = images.iter().map(numpy_to_engine_array2_u8).collect();
 
-    let input = BatchInput {
-        images: engine_images,
-        pixels_per_100nm,
-        autocalibrate_dpo,
-        dpo_hint,
-        algorithm: algo,
-    };
-
     let output = py
-        .allow_threads(|| engine_analyze_batch(input))
+        .allow_threads(|| {
+            engine_analyze_batch_broadcast(
+                engine_images,
+                pixels_per_100nm,
+                autocalibrate_dpo,
+                dpo_hint,
+                algo,
+            )
+        })
         .map_err(pyo3::exceptions::PyValueError::new_err)?;
 
     let n = output.results.len();

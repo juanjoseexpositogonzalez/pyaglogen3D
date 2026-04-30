@@ -1,12 +1,16 @@
 //! Batch FRAKTAL analysis: one-shot dpo calibration + per-image analyzer loop.
 //!
 //! Wraps the existing single-image analyzers (`analyze_granulated_2012`,
-//! `analyze_voxel_2018`) so the caller can process N images with a single
-//! `pixels_per_100nm` scale and a single `dpo` value (shared across the
-//! batch for speed — the dpo is a property of the aggregate, not of
+//! `analyze_voxel_2018`) so the caller can process N images with
+//! **per-image** `pixels_per_100nm` scales (`Vec<f64>`) and a shared
+//! `dpo` value (the dpo is a property of the aggregate, not of
 //! individual projections).
 //!
-//! Spec: `fraktal-batch-contract` (R3 one-shot dpo, R6 per-image shape).
+//! Use [`analyze_batch_broadcast`] to expand a single scalar to all
+//! images (backward-compatible legacy path).
+//!
+//! Spec: `fraktal-batch-contract` (R3 one-shot dpo, R6 per-image shape)
+//! + `fraktal-batch-contract-delta` R-DELTA-C (per-image scale).
 //!
 //! ## Design note on inputs
 //!
@@ -70,8 +74,10 @@ impl AutocalibrateSource {
 /// output for traceability.
 pub struct BatchInput {
     pub images: Vec<Array2<u8>>,
-    /// Pixels-per-100nm scale shared across every image in the batch.
-    pub pixels_per_100nm: f64,
+    /// Pixels-per-100nm scale — one value per image. Length must equal
+    /// `images.len()`. Use [`analyze_batch_broadcast`] to expand a
+    /// single scalar to all images.
+    pub pixels_per_100nm: Vec<f64>,
     /// If true, run one-shot autocalibrate per R3; otherwise use
     /// `dpo_hint` as-is.
     pub autocalibrate_dpo: bool,
@@ -94,6 +100,8 @@ pub struct BatchImageResult {
     pub r_squared: Option<f64>,
     pub n_particles_counted: Option<u64>,
     pub dpo_used: f64,
+    /// The pixels-per-100nm scale actually used for this image.
+    pub pixels_per_100nm_used: f64,
     pub error: Option<String>,
 }
 
@@ -109,12 +117,16 @@ pub struct BatchOutput {
 /// `Voxel2018Params` (the `escala` field).
 const ESCALA_NM: f64 = 100.0;
 
-/// Run a FRAKTAL batch.
+/// Run a FRAKTAL batch with per-image scale.
+///
+/// `pixels_per_100nm` must have exactly one entry per image. Use
+/// [`analyze_batch_broadcast`] to expand a single scalar.
 ///
 /// Returns `Err(msg)` only for batch-level failures:
 ///   1. empty input,
-///   2. autocalibrate requested but failed on both image[0] and
-///      image[N/2] (per R3).
+///   2. `images.len() != pixels_per_100nm.len()` (scale vector mismatch),
+///   3. autocalibrate requested but failed on both image\[0\] and
+///      image\[N/2\] (per R3).
 ///
 /// Per-image analyzer failures are captured in the corresponding
 /// `BatchImageResult.error` and do NOT short-circuit the batch.
@@ -123,11 +135,20 @@ pub fn analyze_batch(input: BatchInput) -> Result<BatchOutput, String> {
         return Err("batch requires at least one image".to_string());
     }
 
+    if input.images.len() != input.pixels_per_100nm.len() {
+        return Err(format!(
+            "scale vector length mismatch: got {} scales for {} images",
+            input.pixels_per_100nm.len(),
+            input.images.len(),
+        ));
+    }
+
     let (dpo, source) = resolve_dpo(&input)?;
 
     let mut results = Vec::with_capacity(input.images.len());
     for (i, img) in input.images.iter().enumerate() {
-        let res = run_one_image(i, img, input.pixels_per_100nm, dpo, input.algorithm);
+        let scale_i = input.pixels_per_100nm[i];
+        let res = run_one_image(i, img, scale_i, dpo, input.algorithm);
         results.push(res);
     }
 
@@ -138,14 +159,40 @@ pub fn analyze_batch(input: BatchInput) -> Result<BatchOutput, String> {
     })
 }
 
+/// Convenience wrapper: broadcast a single `pixels_per_100nm` scalar
+/// to all images, then run `analyze_batch`.
+///
+/// This is the backward-compatible entry point — existing callers
+/// passing a single float use this function, and it internally expands
+/// to `vec![scale; images.len()]`.
+pub fn analyze_batch_broadcast(
+    images: Vec<Array2<u8>>,
+    pixels_per_100nm: f64,
+    autocalibrate_dpo: bool,
+    dpo_hint: f64,
+    algorithm: BatchAlgorithm,
+) -> Result<BatchOutput, String> {
+    let n = images.len();
+    analyze_batch(BatchInput {
+        images,
+        pixels_per_100nm: vec![pixels_per_100nm; n],
+        autocalibrate_dpo,
+        dpo_hint,
+        algorithm,
+    })
+}
+
 /// R3 one-shot dpo policy: try image[0]; on failure retry image[N/2];
 /// on second failure, error the whole batch.
+///
+/// Uses the per-image scale of the calibration candidate (image\[0\] or
+/// image\[N/2\]) for the autocalibrate computation.
 fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String> {
     if !input.autocalibrate_dpo {
         return Ok((input.dpo_hint, AutocalibrateSource::Manual));
     }
 
-    match try_autocalibrate(&input.images[0], input.pixels_per_100nm) {
+    match try_autocalibrate(&input.images[0], input.pixels_per_100nm[0]) {
         Ok(dpo) => Ok((dpo, AutocalibrateSource::Image0)),
         Err(e0) => {
             let n = input.images.len();
@@ -155,7 +202,7 @@ fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String>
             let mid = n / 2;
             // n > 1 implies mid >= 1 (n=2 -> mid=1; n=3 -> mid=1), so
             // mid is always a distinct index from 0 when we reach here.
-            match try_autocalibrate(&input.images[mid], input.pixels_per_100nm) {
+            match try_autocalibrate(&input.images[mid], input.pixels_per_100nm[mid]) {
                 Ok(dpo) => Ok((dpo, AutocalibrateSource::ImageNHalf)),
                 Err(e_mid) => Err(format!(
                     "autocalibrate failed on image[0] ({}) and image[{}] ({})",
@@ -206,6 +253,7 @@ fn run_one_image(
                     r_squared: None,
                     n_particles_counted: Some(r.npo_visual),
                     dpo_used: dpo,
+                    pixels_per_100nm_used: pixels_per_100nm,
                     error: None,
                 },
                 ref status => BatchImageResult {
@@ -215,6 +263,7 @@ fn run_one_image(
                     r_squared: None,
                     n_particles_counted: None,
                     dpo_used: dpo,
+                    pixels_per_100nm_used: pixels_per_100nm,
                     error: Some(status.message()),
                 },
             }
@@ -236,6 +285,7 @@ fn run_one_image(
                     // expose it anyway so the shape stays stable.
                     n_particles_counted: Some(r.npo_visual),
                     dpo_used: dpo,
+                    pixels_per_100nm_used: pixels_per_100nm,
                     error: None,
                 },
                 ref status => BatchImageResult {
@@ -245,6 +295,7 @@ fn run_one_image(
                     r_squared: None,
                     n_particles_counted: None,
                     dpo_used: dpo,
+                    pixels_per_100nm_used: pixels_per_100nm,
                     error: Some(status.message()),
                 },
             }
@@ -288,7 +339,7 @@ mod tests {
     fn test_batch_empty_input_rejected() {
         let input = BatchInput {
             images: vec![],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -303,7 +354,7 @@ mod tests {
         let img = make_particle_image(40, &[(20, 20)], 5.0);
         let input = BatchInput {
             images: vec![img],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![50.0],
             autocalibrate_dpo: false,
             dpo_hint: 20.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -324,7 +375,7 @@ mod tests {
         let good = make_particle_image(64, &centers, 3.0);
         let input = BatchInput {
             images: vec![good.clone(), good.clone(), good],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -351,7 +402,7 @@ mod tests {
         let bad = make_noise_image(64, 200);
         let input = BatchInput {
             images: vec![bad.clone(), good.clone(), bad],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -367,7 +418,7 @@ mod tests {
         let bad = make_noise_image(64, 200);
         let input = BatchInput {
             images: vec![bad.clone(), bad.clone(), bad.clone(), bad],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![50.0, 50.0, 50.0, 50.0],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -395,7 +446,7 @@ mod tests {
 
         let input = BatchInput {
             images: vec![good.clone(), blank, good],
-            pixels_per_100nm: 50.0,
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -419,5 +470,133 @@ mod tests {
         assert_eq!(AutocalibrateSource::Image0.image_index(10), Some(0));
         assert_eq!(AutocalibrateSource::ImageNHalf.image_index(10), Some(5));
         assert_eq!(AutocalibrateSource::ImageNHalf.image_index(3), Some(1));
+    }
+
+    // ── Phase 2: per-image scale tests ─────────────────────────────
+
+    #[test]
+    fn test_vec_scale_per_image_used() {
+        // T2.1 + T2.3: 3 images with 3 different scales.
+        // Each image should use its OWN pixels_per_100nm for the
+        // analyzer (npix field in params). We verify by checking that
+        // per-image `pixels_per_100nm_used` reflects each scale.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let scales = vec![30.0, 50.0, 70.0];
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: scales.clone(),
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("per-image scale batch must succeed");
+        assert_eq!(out.results.len(), 3);
+        // Each result must report the scale that was used for that image.
+        assert_eq!(out.results[0].pixels_per_100nm_used, 30.0);
+        assert_eq!(out.results[1].pixels_per_100nm_used, 50.0);
+        assert_eq!(out.results[2].pixels_per_100nm_used, 70.0);
+    }
+
+    #[test]
+    fn test_length_mismatch_rejected() {
+        // T2.4: 3 images with 2 scales → descriptive error.
+        let img = make_noise_image(40, 200);
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![30.0, 50.0],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(
+            err.contains("mismatch"),
+            "expected 'mismatch' in error: {}",
+            err
+        );
+        assert!(
+            err.contains("3") && err.contains("2"),
+            "expected image count (3) and scale count (2) in error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_broadcast_single_scale_to_all_images() {
+        // T2.2: pass single f64 via broadcast wrapper, verify all images
+        // use the same scale internally.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let out = analyze_batch_broadcast(
+            vec![img.clone(), img.clone(), img],
+            42.5,
+            false,
+            25.0,
+            BatchAlgorithm::Granulated2012,
+        )
+        .expect("broadcast batch must succeed");
+
+        assert_eq!(out.results.len(), 3);
+        for r in &out.results {
+            assert_eq!(
+                r.pixels_per_100nm_used, 42.5,
+                "broadcast must expand single scale to all images"
+            );
+        }
+    }
+
+    #[test]
+    fn test_per_image_scale_changes_bisection_result() {
+        // T2.5 scenario: same image analyzed with very different scales
+        // should produce different fractal dimension results, because
+        // the scale (npix) changes the bisection parameters.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        // Run same image with two very different scales.
+        let input_low = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![20.0],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let input_high = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![80.0],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_low = analyze_batch(input_low).expect("low-scale batch");
+        let out_high = analyze_batch(input_high).expect("high-scale batch");
+
+        // With the same dpo but very different scales, the internal
+        // dpo_pixels = dpo * pixels_per_100nm / escala differs
+        // significantly, affecting the bisection coverage and thus Df.
+        // We just assert they are NOT equal (different scales →
+        // different analysis).
+        let df_low = out_low.results[0].fractal_dimension;
+        let df_high = out_high.results[0].fractal_dimension;
+        // At least one must succeed for meaningful comparison.
+        assert!(
+            df_low.is_some() || df_high.is_some(),
+            "at least one scale must produce a valid Df"
+        );
+        if let (Some(dfl), Some(dfh)) = (df_low, df_high) {
+            assert!(
+                (dfl - dfh).abs() > 1e-6,
+                "different scales should produce different Df: low={} high={}",
+                dfl,
+                dfh
+            );
+        }
     }
 }

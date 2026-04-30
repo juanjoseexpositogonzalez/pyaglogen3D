@@ -9,11 +9,11 @@
 
 ## Phase 2 — Engine Rust FRAKTAL batch per-image scale
 
-- [ ] T2.1 — Change BatchInput.pixels_per_100nm from f64 to Vec<f64> (engine/aglogen_core/engine/src/fractal/batch.rs)
-- [ ] T2.2 — Create broadcast wrapper: single f64 expands to Vec with same value for all images (engine/aglogen_core/engine/src/fractal/batch.rs)
-- [ ] T2.3 — Implement per-image bisection using correct scale per image (engine/aglogen_core/engine/src/fractal/batch.rs)
-- [ ] T2.4 — Validate images.len() == pixels_per_100nm.len() at entry point, return error on mismatch (engine/aglogen_core/engine/src/fractal/batch.rs)
-- [ ] T2.5 — Add cargo tests covering Vec<f64> path and single-float broadcast path (engine/aglogen_core/engine/tests/batch_per_image_scale_test.rs)
+- [x] T2.1 — Change BatchInput.pixels_per_100nm from f64 to Vec<f64> (engine/aglogen_core/engine/src/fractal/batch.rs)
+- [x] T2.2 — Create broadcast wrapper: single f64 expands to Vec with same value for all images (engine/aglogen_core/engine/src/fractal/batch.rs)
+- [x] T2.3 — Implement per-image bisection using correct scale per image (engine/aglogen_core/engine/src/fractal/batch.rs)
+- [x] T2.4 — Validate images.len() == pixels_per_100nm.len() at entry point, return error on mismatch (engine/aglogen_core/engine/src/fractal/batch.rs)
+- [x] T2.5 — Add cargo tests covering Vec<f64> path and single-float broadcast path (engine/aglogen_core/engine/src/fractal/fraktal/batch.rs)
 
 ## Phase 3 — Python binding + backend simulations dual matplotlib render
 
