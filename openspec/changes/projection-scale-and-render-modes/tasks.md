@@ -1,13 +1,11 @@
 # Implementation Tasks: projection-scale-and-render-modes
 
-## Phase 1 — Engine Rust dual render
+> **Note**: Phase 1 was originally scoped as Rust render. After exploration confirmed aglogen3D canonical uses matplotlib (MATLAB equivalent), Rust render was reverted and dual render moved to P3 (Python/matplotlib). Only the 2D bbox helper stayed in Rust. See `_explore-only/aglogen3d-render-style.md`.
 
-- [ ] T1.1 — Split render function into presentation and scientific modes (engine/aglogen_core/engine/src/projection/render.rs)
-- [ ] T1.2 — Implement post-render binary threshold (>127→255, ≤127→0) for scientific mode (engine/aglogen_core/engine/src/projection/render.rs)
-- [ ] T1.3 — Create shared 2D bounding box helper returning (width, height) from projection bounds (engine/aglogen_core/engine/src/projection/mod.rs)
-- [ ] T1.4 — Return (png_bytes, bbox_w, bbox_h) tuple from dual render function (engine/aglogen_core/engine/src/projection/render.rs)
-- [ ] T1.5 — Add presentation render: red fill, dark edge, alpha, AA, border (engine/aglogen_core/engine/src/projection/render.rs)
-- [ ] T1.6 — Add cargo tests for dual render output: binary check, dimension parity, bbox correctness (engine/aglogen_core/engine/tests/dual_render_test.rs)
+## Phase 1 — Engine Rust 2D bbox helper
+
+- [x] T1.1 — Create shared 2D bounding box helper `compute_2d_bbox(positions, az, el) -> Bbox2dResult { width_nm, height_nm, projected_2d }` (engine/aglogen_core/engine/src/projection/mod.rs)
+- [x] T1.2 — Add cargo tests: multi-particle, single-particle, empty (engine/aglogen_core/engine/src/projection/mod.rs)
 
 ## Phase 2 — Engine Rust FRAKTAL batch per-image scale
 
@@ -17,15 +15,21 @@
 - [ ] T2.4 — Validate images.len() == pixels_per_100nm.len() at entry point, return error on mismatch (engine/aglogen_core/engine/src/fractal/batch.rs)
 - [ ] T2.5 — Add cargo tests covering Vec<f64> path and single-float broadcast path (engine/aglogen_core/engine/tests/batch_per_image_scale_test.rs)
 
-## Phase 3 — Python binding + backend simulations service
+## Phase 3 — Python binding + backend simulations dual matplotlib render
 
-- [ ] T3.1 — Expose render_projection_dual binding: returns (pres_bytes, sci_bytes, bbox_w, bbox_h) (pyaglogen3D/src/lib.rs)
-- [ ] T3.2 — Expose analyze_fraktal_batch_per_image_scale accepting list[float] pixels_per_100nm (pyaglogen3D/src/lib.rs)
-- [ ] T3.3 — Maintain backward compat: analyze_fraktal_batch broadcasts single float to all images (pyaglogen3D/src/lib.rs)
-- [ ] T3.4 — Refactor Celery task to render-all-first→measure→stamp-once-at-end order (pyaglogen3D/backend/apps/simulations/tasks.py)
-- [ ] T3.5 — Modify build_projection_zip to include both PNG variants per direction (pyaglogen3D/backend/apps/simulations/services/projection.py)
-- [ ] T3.6 — Update build_metadata_json: directions[] gains per-direction pixels_per_100nm + filename_scientific (pyaglogen3D/backend/apps/simulations/services/projection.py)
-- [ ] T3.7 — Add pytest tests: dual render, per-direction metadata, legacy mode (pyaglen3D/backend/tests/test_projection_dual.py)
+> **Style locked**: presentation = `facecolor=red, edgecolor=black, linewidth=0.5, alpha=1.0, white background, axis off + equal` (matches MATLAB `create2DImages.m`). Scientific = `facecolor=#000000, edgecolor=none, linewidth=0, alpha=1.0, white background` + post-render binary threshold (`>127→255, ≤127→0`). Both renders share identical img_size, dpi=100, figsize=(img_size/100, img_size/100), pad_inches=0, same bbox + 2% padding.
+
+- [ ] T3.1 — Expose `compute_2d_bbox` to Python via PyO3 binding: `compute_2d_bbox(positions, az, el) -> (width_nm, height_nm, projected_2d_positions)` (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [ ] T3.2 — Expose `analyze_fraktal_batch_per_image_scale(images, pixels_per_100nm: list[float], ...)` accepting list (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [ ] T3.3 — Maintain backward compat: legacy `analyze_fraktal_batch(images, pixels_per_100nm: float, ...)` broadcasts internally (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [ ] T3.4 — Update `_create_projection_figure` for presentation parity: change `edgecolor` from "darkred" to "black" and `alpha` from 0.9 to 1.0 (pyaglogen3D/backend/apps/simulations/services/projection.py)
+- [ ] T3.5 — Add `_create_scientific_projection_figure` helper: identical geometry to presentation, but `facecolor="#000000"`, `edgecolor="none"`, `linewidth=0`, `alpha=1.0`. Apply post-render binary threshold via PIL+numpy (`>127→255, ≤127→0`), output as L-mode then convert to RGB (no alpha channel) (pyaglogen3D/backend/apps/simulations/services/projection.py)
+- [ ] T3.6 — Add `render_projection_dual_png(...) -> (presentation_bytes, scientific_bytes, bbox_2d_w_nm, bbox_2d_h_nm)`. Both renders share the same bbox computation (call `compute_2d_bbox` once, pass result into both render fns) (pyaglogen3D/backend/apps/simulations/services/projection.py)
+- [ ] T3.7 — Refactor Celery projection task to render-all-first → measure-per-image-scale → stamp-metadata.json-once-at-end. Per-direction inline stamping forbidden (pyaglogen3D/backend/apps/simulations/tasks.py)
+- [ ] T3.8 — Update `build_projection_zip`: include both PNGs per direction. Filenames: `{base}.png` (presentation), `{base}.scientific.png` (scientific) (pyaglogen3D/backend/apps/simulations/services/projection.py)
+- [ ] T3.9 — Update `build_metadata_json`: directions[] gains per-direction `pixels_per_100nm` and `filename_scientific` (ABSENT key in legacy mode, NOT null). Top-level `parameters.pixels_per_100nm` = max(per-image) (pyaglogen3D/backend/apps/simulations/services/projection.py)
+- [ ] T3.10 — Add pytest tests: dual render returns identical pixel dimensions, scientific bytes are strictly binary (assert no value in 1..254 in pixel array), per-direction metadata, legacy mode parity (single PNG, no scientific filename) (pyaglogen3D/backend/apps/simulations/tests/test_projection_dual.py)
+- [ ] T3.11 — Add pytest tests for the Celery task render→measure→stamp ordering (assert metadata.json written once, not per-direction) (pyaglogen3D/backend/apps/simulations/tests/test_projection_task_order.py)
 
 ## Phase 4 — Backend fractal_analysis migration + model
 
