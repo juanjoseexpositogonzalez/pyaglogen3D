@@ -230,8 +230,17 @@ class TestGridMode:
 
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
             names = zf.namelist()
-            pngs = [n for n in names if n.endswith(".png")]
-            assert len(pngs) == 32, f"expected 32 PNGs, got {len(pngs)}: {pngs}"
+            # Frente 7 dual render: each direction emits both presentation
+            # (.png) and scientific (.scientific.png). Filter to presentation
+            # only for the count check.
+            pres_pngs = [
+                n
+                for n in names
+                if n.endswith(".png") and not n.endswith(".scientific.png")
+            ]
+            assert len(pres_pngs) == 32, (
+                f"expected 32 presentation PNGs, got {len(pres_pngs)}: {pres_pngs}"
+            )
             assert "metadata.json" in names
 
     def test_grid_filenames_match_spec_pattern(self) -> None:
@@ -249,7 +258,10 @@ class TestGridMode:
             format="json",
         )
         assert response.status_code == 200
-        pattern = re.compile(r"^proj_\d{3}_Az\d{3}_El[+-]\d{3}\.png$")
+        # Frente 7 dual render: filenames are either presentation
+        # (proj_000_Az000_El+000.png) or scientific
+        # (proj_000_Az000_El+000.scientific.png).
+        pattern = re.compile(r"^proj_\d{3}_Az\d{3}_El[+-]\d{3}(\.scientific)?\.png$")
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
             pngs = sorted(n for n in zf.namelist() if n.endswith(".png"))
             for name in pngs:
@@ -303,8 +315,13 @@ class TestFibonacciMode:
         )
         assert response.status_code == 200, response.content
         with zipfile.ZipFile(io.BytesIO(response.content)) as zf:
-            pngs = [n for n in zf.namelist() if n.endswith(".png")]
-            assert len(pngs) == 50
+            # Frente 7 dual render: filter presentation only for count.
+            pres_pngs = [
+                n
+                for n in zf.namelist()
+                if n.endswith(".png") and not n.endswith(".scientific.png")
+            ]
+            assert len(pres_pngs) == 50
             meta = json.loads(zf.read("metadata.json").decode("utf-8"))
             assert meta["mode"] == "fibonacci"
             assert meta["n_generated"] == 50
@@ -420,11 +437,12 @@ class TestModeValidation:
 @pytest.mark.django_db
 class TestModernPathErrorSurfacing:
     def test_projection_export_wraps_render_exceptions_as_400(self) -> None:
-        """A failure in ``aglogen_core.project_directions`` must surface as
-        HTTP 400 with a ``detail`` field containing the exception message —
-        not a 500 that loses all context. This closes the gap where a
-        downstream render failure previously leaked as an uninformative
-        server error.
+        """A failure in the projection engine must surface as HTTP 400 with
+        a ``detail`` field containing the exception message — not a 500
+        that loses all context. After the frente 7 hotfix, the sync path
+        uses ``compute_2d_bbox`` (not ``project_directions``) as the engine
+        entry point, but the wrapping property must hold for any engine
+        failure. Mock ``compute_2d_bbox`` to assert the same surfacing.
         """
         user = _make_user()
         project = _make_project(user)
@@ -432,7 +450,7 @@ class TestModernPathErrorSurfacing:
         client = _authed_client(user)
 
         with patch(
-            "aglogen_core.project_directions",
+            "aglogen_core.compute_2d_bbox",
             side_effect=RuntimeError("boom: projection kernel exploded"),
         ):
             response = client.post(

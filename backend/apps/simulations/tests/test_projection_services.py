@@ -254,21 +254,26 @@ def _batch_url(project: Project, sim: Simulation) -> str:
 class TestPixelsPer100nmMetadata:
     """Root-level ``pixels_per_100nm`` in metadata.json for grid/fibonacci.
 
-    Formula (see views._stamp_scale_metadata):
-      max_extent_engine = max(bbox side) + 2*max(radii)
-      span_engine       = max_extent_engine * 1.04     # 2% padding per side
+    Formula (per-direction, from 2D projected bbox):
+      span_engine       = max(bbox_w, bbox_h) * 1.04   # 2% padding per side
       span_nm           = span_engine * scale_factor_nm
       pixels_per_100nm  = 100 * img_size / span_nm
 
-    Fixture: cube span 0..2 on each axis, radius=1 per sphere →
-      max_extent_engine = 2 + 2*1 = 4
-      span_engine       = 4 * 1.04 = 4.16
+    Global ``parameters.pixels_per_100nm`` = max(per-direction values).
+
+    Fixture: cube span 0..2 on each axis, radius=1 per sphere.
+    For axis-aligned views (az=0/90, el=0/90): 2D bbox = 4×4 engine units
+      span_engine = 4 * 1.04 = 4.16
     With default diameter=50nm (legacy fallback, scale_factor_nm=25.0):
-      span_nm           = 4.16 * 25 = 104
-      pixels_per_100nm  ≈ 100 * 512 / 104 ≈ 492.31
+      span_nm     = 4.16 * 25 = 104
+      pixels_per_100nm ≈ 100 * 512 / 104 ≈ 492.31
+
+    For diagonal views (e.g., az=45): projected bbox is larger (√2 effect)
+    giving a LOWER pixels_per_100nm for that direction.
     """
 
-    EXPECTED_DEFAULT_SCALE = 100.0 * 512.0 / (4.16 * 25.0)  # ~492.31
+    # Max possible scale for this cube (axis-aligned views)
+    EXPECTED_MAX_SCALE = 100.0 * 512.0 / (4.16 * 25.0)  # ~492.31
 
     def test_metadata_includes_pixels_per_100nm_for_grid(self) -> None:
         """Grid mode exports must include pixels_per_100nm in metadata."""
@@ -292,11 +297,16 @@ class TestPixelsPer100nmMetadata:
         assert "scale_factor_nm" in params
         assert params["scale_factor_nm"] == pytest.approx(25.0, rel=1e-6)
         assert params["pixels_per_100nm"] == pytest.approx(
-            self.EXPECTED_DEFAULT_SCALE, rel=0.05
+            self.EXPECTED_MAX_SCALE, rel=0.05
         )
 
     def test_metadata_includes_pixels_per_100nm_for_fibonacci(self) -> None:
-        """Fibonacci mode exports must include pixels_per_100nm in metadata."""
+        """Fibonacci mode exports must include pixels_per_100nm in metadata.
+
+        Fibonacci sampling does NOT include exact axis-aligned views, so
+        the max(per-direction) is typically 7-15% lower than grid mode's
+        axis-aligned max. Tolerance: 20% of the theoretical maximum.
+        """
         user = _make_user()
         project = _make_project(user)
         sim = _make_completed_simulation(project)
@@ -313,15 +323,17 @@ class TestPixelsPer100nmMetadata:
             meta = json.loads(zf.read("metadata.json").decode("utf-8"))
 
         assert meta["parameters"]["pixels_per_100nm"] == pytest.approx(
-            self.EXPECTED_DEFAULT_SCALE, rel=0.05
+            self.EXPECTED_MAX_SCALE, rel=0.20
         )
 
     def test_pixels_per_100nm_constant_across_modes(self) -> None:
-        """Value is root-level: same aggregate + same img_size → same scale.
+        """Global scale (max of per-direction) is similar across modes.
 
-        The scale is a property of the aggregate's 3D bounding box, not
-        the direction, so grid and fibonacci exports of the same sim at
-        the same img_size yield the same value.
+        After frente 7 hotfix: each direction has its own scale (2D bbox
+        based). The global ``pixels_per_100nm`` is ``max(per-direction)``.
+        Grid mode includes axis-aligned views (max scale); Fibonacci
+        does NOT, so its max is typically 7-15% lower.
+        Assertion: both modes within 20% of each other.
         """
         user = _make_user()
         project = _make_project(user)
@@ -347,7 +359,7 @@ class TestPixelsPer100nmMetadata:
             meta_fib = json.loads(zf.read("metadata.json").decode("utf-8"))
 
         assert meta_grid["parameters"]["pixels_per_100nm"] == pytest.approx(
-            meta_fib["parameters"]["pixels_per_100nm"], rel=1e-9
+            meta_fib["parameters"]["pixels_per_100nm"], rel=0.20
         )
 
     def test_pixels_per_100nm_honors_primary_particle_diameter(self) -> None:

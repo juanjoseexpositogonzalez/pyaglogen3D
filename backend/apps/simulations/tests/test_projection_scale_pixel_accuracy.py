@@ -381,10 +381,12 @@ class TestSyncGridPixelAccuracy:
             kwargs={"project_pk": project.id, "pk": sim.id},
         )
 
-        # Sync grid: 3×2 = 6 directions (well under 200 threshold)
+        # Sync fibonacci: 10 directions (well under 200 threshold)
+        # Fibonacci gives well-distributed directions that will produce
+        # varying 2D bboxes for the elongated aggregate.
         response = client.post(
             url,
-            {"mode": "grid", "n_az": 3, "n_el": 2, "img_size": 512},
+            {"mode": "fibonacci", "n": 10, "img_size": 512},
             format="json",
         )
 
