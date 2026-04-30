@@ -14,7 +14,6 @@ rand_distr = "0.4"
 rayon = "1.8"
 thiserror = "1.0"
 num-complex = "0.4"
-image = { version = "0.24", default-features = false, features = ["png"] }
 
 [dev-dependencies]
 approx = "0.5"
