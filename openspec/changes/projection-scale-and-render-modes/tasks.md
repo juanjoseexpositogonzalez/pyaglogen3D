@@ -19,9 +19,9 @@
 
 > **Style locked**: presentation = `facecolor=red, edgecolor=black, linewidth=0.5, alpha=1.0, white background, axis off + equal` (matches MATLAB `create2DImages.m`). Scientific = `facecolor=#000000, edgecolor=none, linewidth=0, alpha=1.0, white background` + post-render binary threshold (`>127→255, ≤127→0`). Both renders share identical img_size, dpi=100, figsize=(img_size/100, img_size/100), pad_inches=0, same bbox + 2% padding.
 
-- [ ] T3.1 — Expose `compute_2d_bbox` to Python via PyO3 binding: `compute_2d_bbox(positions, az, el) -> (width_nm, height_nm, projected_2d_positions)` (pyaglogen3D/aglogen_core/python/src/lib.rs)
-- [ ] T3.2 — Expose `analyze_fraktal_batch_per_image_scale(images, pixels_per_100nm: list[float], ...)` accepting list (pyaglogen3D/aglogen_core/python/src/lib.rs)
-- [ ] T3.3 — Maintain backward compat: legacy `analyze_fraktal_batch(images, pixels_per_100nm: float, ...)` broadcasts internally (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [x] T3.1 — Expose `compute_2d_bbox` to Python via PyO3 binding: `compute_2d_bbox(positions, az, el) -> (width_nm, height_nm, projected_2d_positions)` (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [x] T3.2 — Expose `analyze_fraktal_batch_per_image_scale(images, pixels_per_100nm: list[float], ...)` accepting list (pyaglogen3D/aglogen_core/python/src/lib.rs)
+- [x] T3.3 — Maintain backward compat: legacy `analyze_fraktal_batch(images, pixels_per_100nm: float, ...)` broadcasts internally (pyaglogen3D/aglogen_core/python/src/lib.rs)
 - [ ] T3.4 — Update `_create_projection_figure` for presentation parity: change `edgecolor` from "darkred" to "black" and `alpha` from 0.9 to 1.0 (pyaglogen3D/backend/apps/simulations/services/projection.py)
 - [ ] T3.5 — Add `_create_scientific_projection_figure` helper: identical geometry to presentation, but `facecolor="#000000"`, `edgecolor="none"`, `linewidth=0`, `alpha=1.0`. Apply post-render binary threshold via PIL+numpy (`>127→255, ≤127→0`), output as L-mode then convert to RGB (no alpha channel) (pyaglogen3D/backend/apps/simulations/services/projection.py)
 - [ ] T3.6 — Add `render_projection_dual_png(...) -> (presentation_bytes, scientific_bytes, bbox_2d_w_nm, bbox_2d_h_nm)`. Both renders share the same bbox computation (call `compute_2d_bbox` once, pass result into both render fns) (pyaglogen3D/backend/apps/simulations/services/projection.py)
