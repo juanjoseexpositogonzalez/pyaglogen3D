@@ -43,12 +43,14 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const [reanalyzing, setReanalyzing] = useState(false)
   const [blobUrl, setBlobUrl] = useState<string | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
+  const [currentVariant, setCurrentVariant] = useState<'presentation' | 'scientific'>('presentation')
 
   useEffect(() => {
     let cancelled = false
     setLoading(true)
     setError(null)
     setData(null)
+    setCurrentVariant('presentation') // reset variant on image change
 
     fraktalApi
       .getBatchImage(projectId, batchId, index)
@@ -71,7 +73,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   }, [projectId, batchId, index])
 
   // Fetch PNG with auth (Bearer token) and create blob URL for <img>.
-  // Revokes previous blob URL on cleanup (unmount or dependency change).
+  // Revokes previous blob URL on cleanup (unmount or dependency/variant change).
   useEffect(() => {
     let cancelled = false
     let objectUrl: string | null = null
@@ -80,7 +82,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
     setImageError(null)
 
     fraktalApi
-      .fetchBatchImagePng(projectId, batchId, index)
+      .fetchBatchImagePng(projectId, batchId, index, currentVariant)
       .then((blob) => {
         if (!cancelled) {
           objectUrl = URL.createObjectURL(blob)
@@ -99,7 +101,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
         URL.revokeObjectURL(objectUrl)
       }
     }
-  }, [projectId, batchId, index])
+  }, [projectId, batchId, index, currentVariant])
 
   const handleReanalyze = useCallback(async () => {
     setReanalyzing(true)
@@ -295,6 +297,34 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
           )}
+        </div>
+
+        {/* Variant toggle: Presentation / Scientific */}
+        <div className="flex items-center gap-2 mb-4">
+          <Button
+            variant={currentVariant === 'presentation' ? 'default' : 'outline'}
+            size="sm"
+            aria-pressed={currentVariant === 'presentation'}
+            data-active={currentVariant === 'presentation'}
+            onClick={() => setCurrentVariant('presentation')}
+          >
+            Presentation
+          </Button>
+          <Button
+            variant={currentVariant === 'scientific' ? 'default' : 'outline'}
+            size="sm"
+            aria-pressed={currentVariant === 'scientific'}
+            data-active={currentVariant === 'scientific'}
+            disabled={!data.has_scientific_png}
+            onClick={() => {
+              if (data.has_scientific_png) {
+                setCurrentVariant('scientific')
+              }
+            }}
+            title={!data.has_scientific_png ? 'No scientific PNG available' : undefined}
+          >
+            Scientific
+          </Button>
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">

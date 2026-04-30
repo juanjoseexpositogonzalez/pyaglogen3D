@@ -781,6 +781,8 @@ export interface FraktalBatchImageDetail {
   sim_target_df: number | null
   sim_box_counting_df: number | null
   sorensen_note: string
+  /** Whether a scientific PNG variant exists for this image (P5 backend). */
+  has_scientific_png: boolean
 }
 
 interface FraktalBatchStatusProcessing {
