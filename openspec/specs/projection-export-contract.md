@@ -148,40 +148,168 @@ This spec describes **observable behavior** — what a caller sees in responses,
   "mode": "grid" | "fibonacci" | "legacy",
   "n_requested": <integer>,
   "n_generated": <integer>,
-  "parameters": { /* mode-specific, free-form */ },
+  "parameters": {
+    "pixels_per_100nm": <float | null>
+  },
   "directions": [
     {
       "index": <integer>,
       "filename": "proj_000_Az000_El-090.png",
+      "filename_scientific": "proj_000_Az000_El-090.scientific.png",
       "azimuth": <float in [0, 360)>,
-      "elevation": <float in [-90, +90]>
+      "elevation": <float in [-90, +90]>,
+      "pixels_per_100nm": <float | null>
     }
   ]
 }
 ```
 
-**AND** `directions` is an array whose length equals the number of PNG (or SVG) entries in the ZIP (`n_generated`),
-**AND** every image file in the ZIP is referenced by exactly one `directions[i].filename` (no orphan images, no dangling references).
+**AND** in `grid` or `fibonacci` mode, `directions[i].pixels_per_100nm` MUST be present in
+every entry (positive float or `null` for degenerate views — see `projection-scale-per-image`
+R1),
+**AND** in `grid` or `fibonacci` mode, `directions[i].filename_scientific` MUST be present
+in every entry and equal `{base_filename}.scientific.png` where `{base_filename}` is the stem
+of `directions[i].filename`,
+**AND** in `legacy` mode, `directions[i].pixels_per_100nm` MUST be absent (key not in dict)
+and `directions[i].filename_scientific` MUST be absent (key not in dict) — legacy entries
+keep only the pre-change fields,
+**AND** `parameters.pixels_per_100nm` equals `max(directions[i].pixels_per_100nm)` for all
+non-null entries (backward compat for consumers reading only the top-level field),
+**AND** `directions` is an array whose length equals `n_generated`,
+**AND** every image file in the ZIP is referenced by exactly one `directions[i].filename`
+(presentation) or `directions[i].filename_scientific` (scientific).
 
-#### Scenario 5.1 — Grid metadata
-- **Input**: `mode=grid, n_az=6, n_el=3`
-- **Expected metadata**: `mode="grid"`, `n_requested=8`, `n_generated=8`, `parameters={n_az: 6, n_el: 3}`, `directions` has 8 entries.
-- **Observable**: `len(directions) == 8`; ZIP has 8 PNGs + 1 `metadata.json` = 9 entries total.
+(Previously: `directions[]` entries contained only `index`, `filename`, `azimuth`,
+`elevation`; no `pixels_per_100nm` or `filename_scientific` per-entry fields existed.)
 
-#### Scenario 5.2 — Fibonacci metadata
+#### Scenario 5.1 — Grid metadata shape (new mode)
+- **Input**: `mode=grid, n_az=6, n_el=3` producing 8 directions
+- **Expected metadata**: `mode="grid"`, `n_requested=8`, `n_generated=8`, `parameters={pixels_per_100nm: <max>}`, `directions` has 8 entries.
+- **Observable**: `len(directions) == 8`; every `directions[i]` has keys `index`, `filename`, `filename_scientific`, `azimuth`, `elevation`, `pixels_per_100nm`; ZIP has 16 PNGs + 1 `metadata.json` = 17 entries total.
+
+#### Scenario 5.2 — Fibonacci metadata shape (new mode)
 - **Input**: `mode=fibonacci, n=50`
-- **Expected metadata**: `mode="fibonacci"`, `n_requested=50`, `n_generated=50`, `parameters={n: 50}`, `directions` has 50 entries.
-- **Observable**: `len(directions) == 50`; ZIP has 50 PNGs + 1 `metadata.json`.
+- **Expected metadata**: `mode="fibonacci"`, `n_requested=50`, `n_generated=50`, `parameters={pixels_per_100nm: <max>}`, `directions` has 50 entries.
+- **Observable**: `len(directions) == 50`; all 50 entries have `filename_scientific` ending in `.scientific.png`; all 50 entries have `pixels_per_100nm` as positive float (non-degenerate aggregate); ZIP has 100 PNGs + 1 `metadata.json`.
 
 #### Scenario 5.3 — Legacy metadata present with scale stamp
 - **Input**: legacy mode request
-- **Expected**: `metadata.json` is present with `mode="legacy"`, a `parameters` block capturing the legacy sweep inputs (`azimuth_start`, `azimuth_end`, `azimuth_step`, `elevation_start`, `elevation_end`, `elevation_step`, `format`), and — when the render format is PNG — an additional `pixels_per_100nm` field so FRAKTAL batch analysis can auto-calibrate against legacy ZIPs. The `directions` array is populated with the same legacy filenames written to the ZIP (PNG filenames follow the legacy `{sim_id_short}_Az###_El###.png` shape — NOT the `proj_###_…` shape used by grid/fibonacci, preserving R3's PNG-layer byte compatibility).
+- **Expected**: `metadata.json` is present with `mode="legacy"`, a `parameters` block capturing the legacy sweep inputs (`azimuth_start`, `azimuth_end`, `azimuth_step`, `elevation_start`, `elevation_end`, `elevation_step`, `format`), and — when the render format is PNG — an additional `pixels_per_100nm` field so FRAKTAL batch analysis can auto-calibrate against legacy ZIPs. The `directions` array is populated with the same legacy filenames written to the ZIP (PNG filenames follow the legacy `{sim_id_short}_Az###_El###.png` shape — NOT the `proj_###_…` shape used by grid/fibonacci, preserving R3's PNG-layer byte compatibility). Per-direction `pixels_per_100nm` and `filename_scientific` MUST NOT be present in legacy mode entries.
 - **Observable**: presence of `metadata.json` does not break any legacy-only parser that iterates PNGs and ignores unknown files in the ZIP. Parsers that DO consume `metadata.json` can correlate `directions[i].filename` to the legacy PNG entries.
 
-#### Scenario 5.4 — No orphan images
-- **Input**: any grid or fibonacci request
-- **Expected**: the set of image filenames in the ZIP equals exactly the set `{d.filename for d in metadata.directions}`.
+#### Scenario 5.4 — No orphan images (dual-emit parity)
+- **Input**: any grid or fibonacci export
+- **Expected**: the set of PNG filenames in the ZIP equals exactly the union of `{d.filename, d.filename_scientific}` for all `d` in `metadata.directions`.
 - **Observable**: set difference in either direction is empty.
+
+---
+
+### R-DELTA-A. ZIP structure for grid and fibonacci modes includes dual PNGs per direction
+
+**GIVEN** a projection ZIP produced in `grid` or `fibonacci` mode,
+**WHEN** the ZIP contents are enumerated,
+**THEN** for every direction at index `i`, the ZIP MUST contain BOTH:
+- `proj_{idx:03d}_Az{AAA}_El{±EEE}.png` — presentation PNG (styled, AA, red fill, border),
+- `proj_{idx:03d}_Az{AAA}_El{±EEE}.scientific.png` — scientific PNG (strict binary, no AA, no border),
+
+**AND** both files MUST be present for every direction (no partial pairs),
+**AND** the total number of image files in the ZIP MUST equal `2 × n_generated`,
+**AND** in legacy mode, the ZIP MUST contain only the presentation PNGs (no `*.scientific.png`
+files) — backward compatibility is preserved at the ZIP layer.
+
+(Previously: ZIP contained exactly `n_generated` PNG files — one per direction in grid/fibonacci,
+one per sweep step in legacy. Scientific PNGs did not exist.)
+
+#### Scenario A.1 — Dual emit happy path
+
+- GIVEN `mode=grid, n_az=6, n_el=3` → 8 directions
+- WHEN the ZIP is opened
+- THEN the ZIP contains exactly 16 PNG files (8 presentation + 8 scientific) + `metadata.json`
+- AND each presentation file `proj_{i}_...png` has an exact scientific counterpart `proj_{i}_....scientific.png`
+
+#### Scenario A.2 — Legacy ZIP has no scientific PNGs
+
+- GIVEN `mode=legacy` or omitted mode
+- WHEN the ZIP contents are listed
+- THEN no filename ending in `.scientific.png` appears
+- AND the total image count equals the number of legacy sweep steps (unchanged)
+
+#### Scenario A.3 — Fibonacci dual emit
+
+- GIVEN `mode=fibonacci, n=50`
+- WHEN the ZIP is listed
+- THEN exactly 100 PNG files are present (50 presentation + 50 scientific) + `metadata.json`
+
+#### Scenario A.4 — Poles-only grid has full dual pair
+
+- GIVEN `mode=grid, n_az=1, n_el=2` (2 poles only)
+- WHEN the ZIP is listed
+- THEN ZIP contains 4 PNGs (2 presentation + 2 scientific) + `metadata.json`
+- AND no orphan files exist (R5 no-orphan condition holds)
+
+#### Scenario A.5 — Presentation-only consumer unaffected
+
+- GIVEN a caller that reads only `{base}.png` files from a grid/fibonacci ZIP
+- WHEN the ZIP produced by this change is consumed
+- THEN `{base}.png` files are present and byte-identical to a presentation-only render
+- AND the presence of `{base}.scientific.png` is additive and non-breaking
+
+---
+
+### R-DELTA-B. Render → measure → write order: render all directions first, then metadata once
+
+**GIVEN** a projection export task (sync or Celery async) in any mode,
+**WHEN** the export pipeline executes,
+**THEN** ALL PNG files (both presentation and scientific, for all directions) MUST be
+rendered and written to the ZIP before `pixels_per_100nm` is measured for any direction,
+**AND** per-direction `pixels_per_100nm` MUST be measured after rendering using the 2D bbox
+returned by the engine for each direction,
+**AND** `metadata.json` MUST be written exactly once, as the final entry before the ZIP is
+closed,
+**AND** per-direction inline stamping of `metadata.json` (writing or updating the metadata
+file once per direction during iteration) is FORBIDDEN,
+**AND** this order applies to both the sync path (`n_generated ≤ 200`) and the Celery async
+path (`n_generated > 200`).
+
+(Previously: no explicit render-order contract existed. The earlier implementation updated
+metadata inline per direction, which created partial-write windows and race conditions in
+the Celery path.)
+
+#### Scenario B.1 — Metadata is the last entry in the ZIP
+
+- GIVEN any grid or fibonacci export
+- WHEN the ZIP central directory is inspected
+- THEN `metadata.json` has the highest local file offset (i.e. it was added last)
+- AND all PNG entries precede it in the central directory order
+
+#### Scenario B.2 — Single direction: render-then-measure still applies
+
+- GIVEN `mode=grid, n_az=1, n_el=2` (2 directions)
+- WHEN the export runs
+- THEN both PNGs are written before `pixels_per_100nm` is measured for either direction
+- AND `metadata.json` is written after both measurements
+
+#### Scenario B.3 — Celery async path obeys the same order
+
+- GIVEN an async export (`mode=fibonacci, n=300`)
+- WHEN the Celery task runs
+- THEN the task renders all 300 × 2 = 600 PNGs first, then measures 300 per-direction scales,
+  then writes `metadata.json` once, then closes the ZIP
+
+#### Scenario B.4 — Identical bbox results between sync and async
+
+- GIVEN the same aggregate and direction list exported once sync and once async
+- WHEN `directions[i].pixels_per_100nm` values are compared
+- THEN values match within ±0.01% floating-point tolerance (render-order difference
+  does not alter the measured bbox)
+
+#### Scenario B.5 — Partial-write window does not exist
+
+- GIVEN the Celery worker is killed mid-export after all PNGs are rendered but before
+  `metadata.json` is written
+- WHEN the incomplete ZIP is detected by the polling endpoint
+- THEN the polling status is `"failed"` (no partial `metadata.json` was ever written)
+- AND no `metadata.json` with incomplete `directions[]` is present in the ZIP
 
 ---
 
@@ -296,3 +424,5 @@ Note: the axis convention is `y`-up; the spec canonicalizes poles to `azimuth = 
 - R3 implies that any new `metadata.json` emitted in legacy mode must remain additive: pre-existing consumers typically iterate PNG entries and ignore unknown files, so adding `metadata.json` does not break them, but changing legacy filename shapes **would** and is forbidden. As of 2026-04-24 the legacy mode ZIP DOES carry `metadata.json` (with `parameters.pixels_per_100nm` when rendered as PNG) for FRAKTAL batch-analysis parity.
 - R6's boundary is inclusive on the sync side (`n ≤ 200` is sync, `n > 200` is async). The threshold value `200` is a contract constant; implementations MAY expose it as config but callers MUST NOT rely on a different threshold.
 - R4's `idx` is scoped per-ZIP, starts at `000`, and increments by 1 per projection in generation order.
+
+<!-- Last sync: 2026-04-30 from change projection-scale-and-render-modes -->

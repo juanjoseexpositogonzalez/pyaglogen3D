@@ -15,22 +15,30 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 **GIVEN** a caller uploads a ZIP previously produced by pyaglogen3D's projection export,
 **AND** the ZIP contains `metadata.json` with `parameters.pixels_per_100nm` present and positive,
 **WHEN** the batch endpoint processes the upload,
-**THEN** the scale is taken from metadata and used for every image WITHOUT requiring a user-supplied `pixels_per_100nm`,
+**THEN** the scale for each image is taken from `directions[i].pixels_per_100nm` when that
+field is present in the corresponding `directions[]` entry (new-mode ZIP),
+**AND** when `directions[i].pixels_per_100nm` is absent for an entry (legacy-mode ZIP), the
+top-level `parameters.pixels_per_100nm` is broadcast to that image (legacy fallback — no
+parse error, no calibration failure),
+**AND** `calibration_source: "metadata"` is reported in both cases,
 **AND** the response body includes `calibration_source: "metadata"`.
 
-#### Scenario 1.1 — Standard grid ZIP
-- **Input**: ZIP from `mode=grid, n_az=10, n_el=5` (32 PNGs) with `metadata.parameters.pixels_per_100nm = 42.0`.
-- **Expected**: Batch runs with scale 42.0 for all 32 images; `calibration_source = "metadata"`.
+(Previously: only `parameters.pixels_per_100nm` was read and applied uniformly to every
+image; per-image `directions[i].pixels_per_100nm` did not exist.)
 
-#### Scenario 1.2 — Fibonacci ZIP
-- **Input**: ZIP from `mode=fibonacci, n=50` with `metadata.parameters.pixels_per_100nm = 37.5`.
-- **Expected**: Scale 37.5 used for all 50 images; `calibration_source = "metadata"`.
+#### Scenario 1.1 — New-mode ZIP: per-image scales consumed
+- **Input**: ZIP from `mode=grid, n_az=10, n_el=5` (32 directions) where each `directions[i].pixels_per_100nm` has a distinct value (non-spherical aggregate).
+- **Expected**: Each of the 32 analyzer calls receives its own per-image scale; `calibration_source = "metadata"`.
 
-#### Scenario 1.3 — Metadata with extra unknown fields
-- **Input**: ZIP whose `metadata.json` contains additional unknown keys alongside `parameters.pixels_per_100nm = 50.0`.
-- **Expected**: Unknown fields ignored; analysis proceeds with scale 50.0; no validation error.
+#### Scenario 1.2 — Legacy ZIP: top-level broadcast
+- **Input**: ZIP with `metadata.parameters.pixels_per_100nm = 38.5` and NO per-direction `pixels_per_100nm` fields.
+- **Expected**: Batch runs with scale 38.5 broadcast to all images; `calibration_source = "metadata"`.
 
-#### Scenario 1.4 — Metadata present but scale non-positive
+#### Scenario 1.3 — Mixed ZIP (partial per-direction)
+- **Input**: ZIP where some `directions[i]` have `pixels_per_100nm` and some do not.
+- **Expected**: Entries WITH the field use their individual scale; entries WITHOUT it fall back to `parameters.pixels_per_100nm`; no HTTP 400.
+
+#### Scenario 1.4 — Metadata present but top-level scale non-positive
 - **Input**: ZIP where `metadata.parameters.pixels_per_100nm = 0`.
 - **Expected**: Metadata treated as missing; fallback path per R2 applies.
 
@@ -250,3 +258,63 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 #### Scenario 11.2 — No comparison, no note
 - **Input**: Batch where R9 produces `comparison = null` (or equivalent hidden state).
 - **Expected**: Comparison card is not rendered; Sorensen note does not appear.
+
+---
+
+### R-DELTA-C. Engine batch function accepts per-image `Vec<f64>` scales or single broadcast float
+
+**GIVEN** the FRAKTAL batch engine function `analyze_fraktal_batch`,
+**WHEN** called from the Python binding layer,
+**THEN** it MUST accept a `Vec<f64>` of per-image scale values (one per image in the batch),
+**AND** it MUST also accept a single `f64` value in the legacy-broadcast form, silently
+expanding it to `[scale; N]` for all N images before the first analyzer call,
+**AND** when `Vec<f64>` is provided with length ≠ N (batch image count), the call MUST fail
+with a clear error (scale vector length mismatch),
+**AND** the single-float legacy form MUST NOT require any caller-side migration — existing
+call sites passing a single float continue to work without change.
+
+#### Scenario C.1 — Per-image Vec accepted
+- GIVEN a batch of 8 images with scales `[42.1, 41.8, 43.0, 40.5, 44.2, 41.0, 42.9, 43.5]`
+- WHEN `analyze_fraktal_batch` is called with the Vec
+- THEN each image is analyzed with its own scale value; per-image `calibration_used.pixels_per_100nm` reflects each image's value
+
+#### Scenario C.2 — Legacy single-float broadcast
+- GIVEN a legacy batch call passing a single `f64 = 38.5`
+- WHEN `analyze_fraktal_batch` is invoked
+- THEN the engine internally broadcasts `[38.5; N]` for all N images; results match a Vec call with the same repeated value
+
+#### Scenario C.3 — Vec length mismatch is rejected
+- GIVEN a batch of 10 images with a `Vec<f64>` of length 9
+- WHEN `analyze_fraktal_batch` is called
+- THEN the call returns an error describing the length mismatch; no analyzer calls are made
+
+---
+
+### R-DELTA-D. ZIP unpacking: prefer scientific PNG per direction when available; fall back to presentation
+
+**GIVEN** a ZIP is ingested by the FRAKTAL batch task,
+**WHEN** the task unpacks image files for analysis,
+**THEN** for each direction entry `i`, the task MUST use `directions[i].filename_scientific`
+(the scientific PNG) as the analysis input when that file is present in the ZIP,
+**AND** when `directions[i].filename_scientific` is absent OR the referenced file is not
+present in the ZIP (legacy mode or pre-change ZIP), the task MUST fall back silently to
+`directions[i].filename` (the presentation PNG),
+**AND** the fallback MUST NOT emit an HTTP 4xx or raise an exception — it is a silent
+compatibility path,
+**AND** `calibration_source` and per-image result fields are unaffected by the
+presentation/scientific selection.
+
+(Previously: the batch task consumed whichever PNG it found matching the direction filename;
+there was no concept of a scientific variant.)
+
+#### Scenario D.1 — New-mode ZIP: scientific PNG consumed
+- GIVEN a new-mode ZIP where each direction has both `.png` and `.scientific.png`
+- WHEN the batch task unpacks direction `i`
+- THEN the bytes fed to the FRAKTAL analyzer are from `{base}.scientific.png` (no AA halo)
+
+#### Scenario D.2 — Legacy ZIP: presentation PNG used as fallback
+- GIVEN a legacy ZIP with no `*.scientific.png` files
+- WHEN the batch task unpacks any direction
+- THEN the bytes fed to the analyzer are from the presentation `.png`
+
+<!-- Last sync: 2026-04-30 from change projection-scale-and-render-modes -->

@@ -33,39 +33,59 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 
 **GIVEN** N images in a batch,
 **WHEN** the batch task completes,
-**THEN** N `FraktalBatchImage` rows exist, each with: `batch` (FK), `index` (int, unique together with `batch`), `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `dpo_used`, `error`, `image_png` (`BinaryField`).
+**THEN** N `FraktalBatchImage` rows exist, each with: `batch` (FK), `index` (int, unique together with `batch`), `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `dpo_used`, `error`, `png_bytes` (`BinaryField`), `png_scientific_bytes` (`BinaryField`, nullable),
+**AND** when the batch ZIP contains a scientific PNG for a direction, `png_scientific_bytes` MUST be populated with the threshold-applied binary bytes (post-render: pixels > 127 → 255, pixels ≤ 127 → 0; output is EXACTLY 0 or 255 per pixel — no tolerance),
+**AND** when the batch ZIP does NOT contain a scientific PNG for a direction (legacy batch), `png_scientific_bytes` MUST be NULL (not empty bytes — NULL),
+**AND** existing rows written before this migration have `png_scientific_bytes = NULL` and MUST remain fully accessible without error (additive field, no destructive migration).
 
-#### Scenario 2.1 — All-success batch
-- **Expected**: N rows, every `image_png` populated, `error` is null/empty.
+(Previously: `FraktalBatchImage` had only `image_png` (now renamed `png_bytes`); no `png_scientific_bytes` field existed.)
 
-#### Scenario 2.2 — Partial-failure batch
-- **Input**: N=10, 3 analyzer failures.
-- **Expected**: 10 rows; failed rows have `error` populated and `fractal_dimension = null`; `image_png` still populated when rasterization succeeded.
+#### Scenario 2.1 — New batch: scientific bytes populated
+- **Input**: new-mode ZIP (grid/fibonacci) with both `*.png` and `*.scientific.png` per direction.
+- **Expected**: Every `FraktalBatchImage` row has `png_scientific_bytes` populated; every value is strictly binary (every byte is 0 or 255); `png_bytes` is also populated.
 
-#### Scenario 2.3 — Index uniqueness
-- **Expected**: Inserting two rows with same `(batch, index)` violates the unique constraint.
+#### Scenario 2.2 — Legacy batch: scientific bytes NULL
+- **Input**: legacy ZIP with no `*.scientific.png` files.
+- **Expected**: Every `FraktalBatchImage` row has `png_scientific_bytes = NULL` (not empty bytes); `png_bytes` is populated as before.
+
+#### Scenario 2.3 — Index uniqueness unchanged
+- **Expected**: Inserting two rows with same `(batch, index)` violates the unique constraint; unchanged behavior.
+
+#### Scenario 2.4 — Pre-migration rows remain accessible
+- **Input**: Existing `FraktalBatchImage` rows written before migration `0007`.
+- **Expected**: HTTP 200 when drill-down endpoint is queried; `png_scientific_bytes = NULL` for these rows; no error; `png_bytes` serves correctly.
 
 ### R3. Drill-down endpoint returns single-image detail
 
 **GIVEN** a batch + image index,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/`,
-**THEN** the response includes the image's metrics (R6 of `fraktal-batch-contract`) plus navigation hints `prev_index` and `next_index` (each may be null at the boundaries).
+**THEN** the response includes the image's metrics (R6 of `fraktal-batch-contract`) plus navigation hints `prev_index` and `next_index` (each may be null at the boundaries),
+**AND** the response MUST include `has_scientific_png: bool`,
+**AND** `has_scientific_png` is `true` when `png_scientific_bytes IS NOT NULL` for this row,
+**AND** `has_scientific_png` is `false` when `png_scientific_bytes IS NULL`,
+**AND** `has_scientific_png` MUST always be present in the response (never omitted, even for legacy rows).
 
-#### Scenario 3.1 — First image
-- **Input**: `index = 0`, N = 10.
-- **Expected**: 200; `prev_index = null`; `next_index = 1`.
+(Previously: drill-down response had no `has_scientific_png` field; scientific PNG did not exist.)
 
-#### Scenario 3.2 — Last image
-- **Input**: `index = 9`, N = 10.
-- **Expected**: 200; `prev_index = 8`; `next_index = null`.
+#### Scenario 3.1 — First image (new-mode batch)
+- **Input**: `index = 0`, N = 10, new-mode batch.
+- **Expected**: 200; `prev_index = null`; `next_index = 1`; `has_scientific_png = true` (row has `png_scientific_bytes` populated).
 
-#### Scenario 3.3 — Out-of-range index
+#### Scenario 3.2 — Last image (new-mode batch)
+- **Input**: `index = 9`, N = 10, new-mode batch.
+- **Expected**: 200; `prev_index = 8`; `next_index = null`; `has_scientific_png = true`.
+
+#### Scenario 3.3 — Legacy row: has_scientific_png is false
+- **Input**: A `FraktalBatchImage` row created before migration `0007` (or from a legacy-mode batch).
+- **Expected**: 200; `has_scientific_png = false`; no error raised; navigation unaffected.
+
+#### Scenario 3.4 — Out-of-range index
 - **Input**: `index = 99`, N = 10.
-- **Expected**: 404.
+- **Expected**: 404 (unchanged from R3 of main spec).
 
-#### Scenario 3.4 — Cross-project access
+#### Scenario 3.5 — Cross-project access
 - **Input**: batch belongs to another project.
-- **Expected**: 403.
+- **Expected**: 403 (unchanged from R3 of main spec).
 
 ### R4. Per-image PNG endpoint streams bytes
 
@@ -172,3 +192,29 @@ This is a soft guarantee documented in the spec, not a CI hard gate.
 
 #### Scenario 10.1 — Sync N=30 overhead budget
 - **Expected**: Observed delta within budget; if exceeded, treat as a perf bug, not a correctness regression.
+
+---
+
+### R-DELTA-F. Migration 0007 is additive: nullable column, no data loss
+
+**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
+**WHEN** migration `0007_add_scientific_png_field.py` is applied,
+**THEN** a nullable `BinaryField` column `png_scientific_bytes` MUST be added to the
+`fractal_analysis_fraktalbatchimage` table,
+**AND** all existing rows MUST have `png_scientific_bytes = NULL` after the migration (no
+value is backfilled — NULL is the correct sentinel for "no scientific PNG available"),
+**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
+**AND** migration MUST be reversible: the reverse operation drops only the
+`png_scientific_bytes` column and restores the pre-migration table state without data loss
+in any other column.
+
+#### Scenario F.1 — Forward migration on production rows
+- **Input**: database with 500 existing `FraktalBatchImage` rows.
+- **Expected**: all 500 rows gain `png_scientific_bytes = NULL`; migration completes without error; all rows still queryable.
+
+#### Scenario F.2 — Reverse migration
+- **Given** migration `0007` has been applied.
+- **When** `manage.py migrate fractal_analysis 0006` runs (reverse).
+- **Then** the `png_scientific_bytes` column is dropped; pre-migration table state is restored; no data loss in other columns.
+
+<!-- Last sync: 2026-04-30 from change projection-scale-and-render-modes -->
