@@ -22,7 +22,7 @@ def render_projection_png(
     dpi: int = 150,
     figsize: tuple[float, float] | None = None,
     facecolor: str = "red",
-    edgecolor: str = "darkred",
+    edgecolor: str = "black",
     background: str = "white",
     img_size: int | None = None,
 ) -> bytes:
@@ -91,7 +91,7 @@ def render_projection_svg(
     bounds: tuple[float, float, float, float],
     figsize: tuple[float, float] | None = None,
     facecolor: str = "red",
-    edgecolor: str = "darkred",
+    edgecolor: str = "black",
     background: str = "white",
 ) -> str:
     """Render 2D projection as SVG image.
@@ -178,7 +178,7 @@ def _create_projection_figure(
         facecolor=facecolor,
         edgecolor=edgecolor,
         linewidth=0.5,
-        alpha=0.9,
+        alpha=1.0,
     )
     ax.add_collection(collection)
 
