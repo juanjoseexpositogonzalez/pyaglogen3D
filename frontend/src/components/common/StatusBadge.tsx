@@ -18,6 +18,10 @@ const statusConfig: Record<Status, { label: string; variant: 'default' | 'second
 export function StatusBadge({ status }: StatusBadgeProps) {
   const config = statusConfig[status]
 
+  if (!config) {
+    return <Badge variant="secondary">{status || 'unknown'}</Badge>
+  }
+
   return (
     <Badge variant={config.variant}>
       {status === 'running' && (
