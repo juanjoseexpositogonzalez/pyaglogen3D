@@ -157,6 +157,38 @@ describe('fraktalApi drill-down methods (T5.1)', () => {
     })
   })
 
+  // --- fetchBatchImagePng variant support (T6.2) ---
+  describe('fetchBatchImagePng variant support', () => {
+    it('fetches from presentation URL by default (no variant param)', async () => {
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        blob: async () => new Blob(['png-data'], { type: 'image/png' }),
+      } as unknown as Response)
+
+      await fraktalApi.fetchBatchImagePng(PROJECT_ID, BATCH_ID, 2)
+
+      const calledUrl = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(calledUrl).toContain(
+        `/projects/${PROJECT_ID}/fraktal/batches/${BATCH_ID}/images/2/png/`
+      )
+      expect(calledUrl).not.toContain('variant=')
+    })
+
+    it('fetches from scientific URL when variant="scientific"', async () => {
+      ;(global.fetch as ReturnType<typeof vi.fn>).mockResolvedValueOnce({
+        status: 200,
+        ok: true,
+        blob: async () => new Blob(['sci-png'], { type: 'image/png' }),
+      } as unknown as Response)
+
+      await fraktalApi.fetchBatchImagePng(PROJECT_ID, BATCH_ID, 2, 'scientific')
+
+      const calledUrl = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0][0]
+      expect(calledUrl).toContain('?variant=scientific')
+    })
+  })
+
   // --- reanalyzeBatchImage ---
   describe('reanalyzeBatchImage', () => {
     it('POSTs to the reanalyze endpoint and returns the analysis id', async () => {

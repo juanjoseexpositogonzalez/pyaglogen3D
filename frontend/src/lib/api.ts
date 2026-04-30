@@ -1068,13 +1068,18 @@ export const fraktalApi = {
    *
    * Returns the image as a ``Blob`` on 2xx, throws ``ApiError`` on non-2xx.
    * Use ``URL.createObjectURL(blob)`` on the result to display in ``<img>``.
+   *
+   * @param variant — 'presentation' (default) or 'scientific'. Delegates URL
+   *   construction to ``getBatchImagePngUrl`` to keep the variant query param
+   *   logic in one place.
    */
   fetchBatchImagePng: async (
     projectId: string,
     batchId: string,
-    index: number
+    index: number,
+    variant: 'presentation' | 'scientific' = 'presentation'
   ): Promise<Blob> => {
-    const url = `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/png/`
+    const url = fraktalApi.getBatchImagePngUrl(projectId, batchId, index, variant)
     const res = await authFetch(url)
     if (!res.ok) {
       throw new ApiError('Failed to load image', res.status)
