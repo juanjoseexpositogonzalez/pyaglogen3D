@@ -1,3 +1,33 @@
+## projection-scale-and-render-modes (unreleased)
+
+### Added
+
+- **Per-image `pixels_per_100nm`** in `metadata.json`: each projection direction now stamps its own scale computed from the 2D projected bounding box via `compute_2d_bbox` (Rust). Formula: `pixels_per_100nm = (100 * img_size) / (max(bbox_2d_w, bbox_2d_h) * 1.04)`.
+- **Dual PNG render**: each direction produces both a presentation PNG (red fill, black edge, alpha 1.0 — aglogen3D MATLAB parity) and a scientific PNG (solid black, no edge, post-render binary threshold `>127→255, ≤127→0`).
+- **`?variant=` query param** on PNG endpoint: `GET .../images/{i}/png/?variant=presentation|scientific`. Default is presentation; scientific falls back to presentation when `png_scientific_bytes` is NULL.
+- **`has_scientific_png`** flag in drill-down detail response.
+- **Frontend toggle UI**: Presentation/Scientific radio buttons in drill-down, disabled when `has_scientific_png=false`.
+- Cross-cutting integration test covering full pipeline from ZIP build through PNG variant endpoints.
+- User guide at `docs/projection-scale-and-render-modes.md`.
+
+### Changed
+
+- **Presentation render** now matches aglogen3D MATLAB parity: `edgecolor=black` (was `darkred`), `alpha=1.0` (was `0.9`).
+- **Celery projection task** reordered: render ALL → measure per-image scale → stamp `metadata.json` ONCE at end. Per-direction inline stamping removed.
+
+### Migration
+
+- Run `python manage.py migrate fractal_analysis 0007` after deploy to add `png_scientific_bytes` column (additive, nullable, no data loss).
+
+### Backward compatibility
+
+- Legacy single-PNG ZIPs and legacy single-scale metadata still work via broadcast + endpoint fallback.
+- Existing `FraktalBatchImage` rows have `png_scientific_bytes=NULL` and the endpoint falls back to presentation.
+
+### Closes
+
+- Jira **PYA-8**: rasterizer 1.43× inflation root cause (3D AABB ≠ 2D projected bbox) + per-image scale fix.
+
 ## 2026-04-24 — Hotfix: FRAKTAL + Legacy ZIP metadata
 
 ### Fixed
