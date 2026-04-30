@@ -2024,35 +2024,32 @@ def build_projections_zip_task(
 ) -> dict:
     """Build a projections ZIP asynchronously when N > 200 (R6).
 
+    **Ordering contract (T3.7)**:
+      1. Render ALL directions first (dual: presentation + scientific)
+      2. Measure per-image scale AFTER the render loop
+      3. Write metadata.json ONCE before ZIP close
+
+    Per-direction inline stamping is FORBIDDEN — the scale computation
+    depends on ALL rendered bboxes being available.
+
     Progress reporting: every 10 rendered projections we call
     ``self.update_state(state="PROGRESS", meta={...})`` with a
-    ``{progress: float in [0,1], current: int, total: int}`` meta. The
-    project does NOT have an existing progress-bearing task — this is the
-    first one — so we set the shape here for future tasks to mirror.
-    The polling view (``projections_status_view``) maps this meta directly
-    into its contract response.
+    ``{progress: float in [0,1], current: int, total: int}`` meta.
 
     On completion, the ZIP is written to :func:`_projections_storage_dir`
     as ``{task_id}.zip`` and the returned payload includes both
     ``download_url`` (used by the frontend) and ``zip_path`` (used by the
     download view to locate the file on disk).
-
-    ``plt.close(fig)`` cleanup is inside ``render_projection_png`` (and
-    therefore inside ``_render_projection_bytes``), so no explicit
-    try/finally is needed here — the matplotlib-leak risk (design.md
-    Component 5) is handled by the renderer layer.
     """
     import io
     import os
 
+    from apps.simulations.services.projection import render_projection_dual_png
     from apps.simulations.services.projections import build_projection_zip
-    from apps.simulations.views import _render_projection_bytes
 
     from .models import Simulation
 
     try:
-        import aglogen_core
-
         simulation = Simulation.objects.get(id=UUID(simulation_id))
         if simulation.geometry is None:
             raise ValueError("Simulation has no geometry data")
@@ -2062,21 +2059,29 @@ def build_projections_zip_task(
         coords = np.ascontiguousarray(geometry_array[:, :3])
         radii = np.ascontiguousarray(geometry_array[:, 3])
 
-        # Normalize directions — Celery serializes as list-of-lists, but we
-        # want tuples for the Rust / service layers.
+        # Normalize directions — Celery serializes as list-of-lists.
         directions_py = [(float(a), float(e)) for (a, e) in directions]
 
-        projection_results = aglogen_core.project_directions(
-            coords, radii, directions_py
-        )
+        total = len(directions_py)
+        img_size = parameters.get("img_size", 512) if parameters else 512
 
-        total = len(projection_results)
-        img_size = parameters.get("img_size") if parameters else None
-        image_bytes_list: list[bytes] = []
-        for i, proj in enumerate(projection_results):
-            image_bytes_list.append(
-                _render_projection_bytes(proj, "png", img_size=img_size)
+        # ── Phase 1: Render ALL directions (dual) ──────────────────────
+        pres_list: list[bytes] = []
+        sci_list: list[bytes] = []
+        bbox_dims: list[tuple[float, float]] = []
+
+        for i, (az, el) in enumerate(directions_py):
+            pres, sci, bw, bh = render_projection_dual_png(
+                positions=coords,
+                radii=radii,
+                azimuth=az,
+                elevation=el,
+                img_size=img_size,
             )
+            pres_list.append(pres)
+            sci_list.append(sci)
+            bbox_dims.append((bw, bh))
+
             # Progress every 10 projections (and always on the last one).
             if (i + 1) % 10 == 0 or (i + 1) == total:
                 self.update_state(
@@ -2088,8 +2093,33 @@ def build_projections_zip_task(
                     },
                 )
 
+        # ── Phase 2: Measure per-image scale ───────────────────────────
+        # pixels_per_100nm = (100 * img_size) / (max(bbox_w, bbox_h) * 1.04)
+        # The 1.04 factor accounts for the 2% padding on each side.
+        from apps.simulations.services.params import get_scale_factor_nm
+
+        scale_factor_nm = get_scale_factor_nm(simulation.parameters)
+        per_direction_scale: list[float] = []
+        for bw, bh in bbox_dims:
+            span_engine = max(bw, bh) * 1.04
+            span_nm = span_engine * scale_factor_nm
+            if span_nm > 0:
+                pix = 100.0 * float(img_size) / span_nm
+            else:
+                pix = 0.0
+            per_direction_scale.append(pix)
+
+        parameters["scale_factor_nm"] = float(scale_factor_nm)
+
+        # ── Phase 3: Build ZIP with metadata (stamped ONCE) ───────────
         zip_bytes = build_projection_zip(
-            directions_py, image_bytes_list, mode, n_requested, parameters
+            directions=directions_py,
+            image_bytes_list=pres_list,
+            mode=mode,
+            n_requested=n_requested,
+            parameters=parameters,
+            scientific_bytes_list=sci_list,
+            per_direction_scale=per_direction_scale,
         )
 
         storage_dir = _projections_storage_dir()
