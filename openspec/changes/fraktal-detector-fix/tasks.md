@@ -30,9 +30,9 @@
 
 ## Phase 4 — Backend: autocalibrate default by origin
 
-- [ ] T4.1 — Modify `views.py::analyze_batch`: accept `origin` ("simulation" | "external") and `sim_dpo_nm` params (backend/apps/fractal_analysis/views.py)
-- [ ] T4.2 — When `origin="simulation"`: require `sim_dpo_nm` param, default `autocalibrate_dpo=False`, use `sim_dpo_nm` as `dpo_hint`, set `calibration_source="manual"` (backend/apps/fractal_analysis/views.py)
-- [ ] T4.3 — When `origin="simulation"` and `sim_dpo_nm` absent/invalid: return HTTP 400 with descriptive error (backend/apps/fractal_analysis/views.py)
+- [x] T4.1 — Modify `views.py::analyze_batch`: accept `origin` ("simulation" | "external") and `sim_dpo_nm` params (backend/apps/fractal_analysis/views.py)
+- [x] T4.2 — When `origin="simulation"`: require `sim_dpo_nm` param, default `autocalibrate_dpo=False`, use `sim_dpo_nm` as `dpo_hint`, set `calibration_source="manual"` (backend/apps/fractal_analysis/views.py)
+- [x] T4.3 — When `origin="simulation"` and `sim_dpo_nm` absent/invalid: return HTTP 400 with descriptive error (backend/apps/fractal_analysis/views.py)
 - [ ] T4.4 — When origin not "simulation": keep current behavior (autocalibrate default depends on scale) (backend/apps/fractal_analysis/views.py)
 - [ ] T4.5 — Update serializers to include `analysis_input_variant` in drill-down detail response (backend/apps/fractal_analysis/serializers.py)
 - [ ] T4.6 — pytest: test simulation origin with valid `sim_dpo_nm`, verify autocalibrate OFF, dpo_hint set (backend/apps/fractal_analysis/tests/)

@@ -203,12 +203,43 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         except ValueError as exc:
             return Response({"detail": str(exc)}, status=400)
 
+        # --- Origin-aware autocalibrate defaults (R-DELTA-E3) ---
+        origin: str = str(request.data.get("origin", "external")).strip().lower()
+        if origin not in ("simulation", "external"):
+            origin = "external"
+
+        sim_dpo_nm: float | None = None
+        autocal_explicitly_sent = "autocalibrate_dpo" in request.data
+
+        if origin == "simulation":
+            sim_dpo_raw = request.data.get("sim_dpo_nm")
+            if sim_dpo_raw in (None, ""):
+                return Response(
+                    {"detail": ("sim_dpo_nm is required when origin is 'simulation'.")},
+                    status=400,
+                )
+            try:
+                sim_dpo_nm = float(sim_dpo_raw)
+                if sim_dpo_nm <= 0:
+                    raise ValueError
+            except (TypeError, ValueError):
+                return Response(
+                    {"detail": ("sim_dpo_nm must be a positive number.")},
+                    status=400,
+                )
+
         # Parse autocalibrate flag early — we need it for scale resolution.
         autocal_raw = request.data.get("autocalibrate_dpo", False)
         if isinstance(autocal_raw, str):
             autocalibrate_dpo = autocal_raw.strip().lower() in ("true", "1", "yes")
         else:
             autocalibrate_dpo = bool(autocal_raw)
+
+        # Apply origin-based defaults (E3.1): simulation → autocalibrate OFF,
+        # use sim_dpo_nm as dpo_hint unless user explicitly overrides.
+        if origin == "simulation" and sim_dpo_nm is not None:
+            if not autocal_explicitly_sent:
+                autocalibrate_dpo = False
 
         # Scale resolution (R1).
         req_scale_raw = request.data.get("pixels_per_100nm")
@@ -245,6 +276,12 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
             dpo_hint = float(dpo_hint_raw) if dpo_hint_raw not in (None, "") else 0.0
         except (TypeError, ValueError):
             return Response({"detail": "Invalid dpo_hint"}, status=400)
+
+        # Apply sim_dpo_nm as dpo_hint when origin=simulation and dpo_hint
+        # was not explicitly provided (E3.1).
+        if origin == "simulation" and sim_dpo_nm is not None and dpo_hint <= 0:
+            dpo_hint = sim_dpo_nm
+            calibration_source = "manual"
 
         if not autocalibrate_dpo and dpo_hint <= 0:
             return Response(
