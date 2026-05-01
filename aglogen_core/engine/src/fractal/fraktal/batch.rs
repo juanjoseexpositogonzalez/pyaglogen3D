@@ -482,6 +482,84 @@ mod tests {
         );
     }
 
+    /// T2.6: Presentation variant with AA-halo image behaves exactly
+    /// like before P2 — same as empty input_variants (backward compat).
+    #[test]
+    fn test_presentation_variant_unchanged_from_pre_p2() {
+        // Standard TEM-style image (dark particles on light background
+        // with soft edges = AA halo).
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        // Run with explicit Presentation variant.
+        let input_explicit = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![ImageInputVariant::Presentation],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_explicit =
+            analyze_batch(input_explicit).expect("explicit Presentation must succeed");
+
+        // Run with empty input_variants (default path).
+        let input_default = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_default = analyze_batch(input_default).expect("default path must succeed");
+
+        // Both must produce identical results.
+        assert_eq!(
+            out_explicit.results[0].fractal_dimension, out_default.results[0].fractal_dimension,
+            "Presentation variant must produce same Df as default"
+        );
+        assert_eq!(
+            out_explicit.results[0].prefactor, out_default.results[0].prefactor,
+            "Presentation variant must produce same kf as default"
+        );
+    }
+
+    /// T2.6 triangulation: autocalibrate path with Presentation handles
+    /// AA-halo images (P1 changes are not affected by P2).
+    #[test]
+    fn test_presentation_autocalibrate_aa_halo_unchanged() {
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Presentation,
+            ],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("presentation autocalibrate must succeed");
+        assert!(
+            out.dpo_used > 0.0,
+            "autocalibrate must produce positive dpo"
+        );
+        assert_eq!(
+            out.autocalibrate_source,
+            AutocalibrateSource::Image0,
+            "autocalibrate should succeed on image[0]"
+        );
+    }
+
     /// T2.4 triangulation: Scientific variant through autocalibrate path.
     #[test]
     fn test_scientific_variant_autocalibrate_path() {

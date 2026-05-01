@@ -15,7 +15,7 @@
 - [x] T2.3 — Add `smart_segment_or_passthrough()` wrapper in `image_processing.rs`: when `pre_thresholded=true`, skip Otsu and treat input as binary (pixel > 127 = foreground) (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
 - [x] T2.4 — Update `run_one_image` and `try_autocalibrate` to pass `pre_thresholded` flag based on `input_variant` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
 - [x] T2.5 — Python binding: expose `input_variants` optional param in `analyze_fraktal_batch_per_image_scale`, default "presentation", backward-compatible (aglogen_core/python/src/lib.rs)
-- [ ] T2.6 — Add cargo test: feed pre-thresholded binary array, verify Otsu skipped, output binary matches input threshold (aglogen_core/engine/tests/)
+- [x] T2.6 — Add cargo test: feed pre-thresholded binary array, verify Otsu skipped, output binary matches input threshold (aglogen_core/engine/tests/)
 - [ ] T2.7 — Add binding test: call `analyze_fraktal_batch_per_image_scale` with `input_variants=["scientific"]`, verify path executes (aglogen_core/python/tests/ or pytest)
 
 ## Phase 3 — Backend: DB + batch task
