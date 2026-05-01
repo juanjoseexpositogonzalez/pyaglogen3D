@@ -184,6 +184,7 @@ pub fn analyze_granulated_2012(
         params.pixel_min,
         params.pixel_max,
         params.auto_threshold,
+        false,
     );
 
     // Debug info available via detected_threshold and is_dark_on_light

@@ -252,7 +252,7 @@ fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String>
 /// retry on a different frame.
 fn try_autocalibrate(image: &Array2<u8>, pixels_per_100nm: f64) -> Result<f64, String> {
     // Use the same segmentation defaults as the single-image analyzers.
-    let (binary, _threshold, _inverted) = smart_segment(image.view(), 10, 240, true);
+    let (binary, _threshold, _inverted) = smart_segment(image.view(), 10, 240, true, false);
     let length_per_pixel = ESCALA_NM / pixels_per_100nm;
     let (count, dpo, _avg_radius) = estimate_particles_and_dpo(binary.view(), length_per_pixel);
     if count == 0 || !dpo.is_finite() || dpo <= 0.0 {

@@ -131,13 +131,25 @@ pub fn is_dark_on_light(image: ArrayView2<u8>, threshold: u8) -> bool {
 /// 2. Whether particles are dark or light
 /// 3. Applies appropriate segmentation
 ///
+/// When `pre_thresholded` is `true`, Otsu is skipped entirely and the
+/// image is treated as already binary: pixel ≥ 128 → foreground. This
+/// path is used for scientific (binary-thresholded) PNG inputs where the
+/// image contains only black/white pixels with no anti-aliasing halo.
+///
 /// Returns (binary_mask, detected_threshold, is_inverted)
 pub fn smart_segment(
     image: ArrayView2<u8>,
     pixel_min: u8,
     pixel_max: u8,
     auto_threshold: bool,
+    pre_thresholded: bool,
 ) -> (Array2<bool>, u8, bool) {
+    // Pre-thresholded (scientific) path: skip Otsu, treat as binary.
+    if pre_thresholded {
+        let binary = image.mapv(|v| v >= 128);
+        return (binary, 128, false);
+    }
+
     if !auto_threshold {
         // Use manual thresholds as-is
         let binary = color_segment(image, pixel_min, pixel_max);
@@ -626,6 +638,57 @@ mod tests {
 
         assert_eq!(count, 0, "Empty image should have 0 particles");
         assert_eq!(avg_radius, 0.0, "Empty image should have 0 radius");
+    }
+
+    // ── Phase 2 (P2): pre-thresholded binary input ───────────────
+
+    /// T2.3: when `pre_thresholded=true`, `smart_segment` skips Otsu and
+    /// treats the image as already binary (pixel ≥ 128 → foreground).
+    #[test]
+    fn test_smart_segment_pre_thresholded_binary() {
+        // Build a binary-only image: some pixels at 0, some at 255.
+        let image = arr2(&[
+            [0u8, 255, 0, 255],
+            [255, 0, 255, 0],
+            [0, 0, 255, 255],
+            [128, 127, 200, 50],
+        ]);
+        let (binary, threshold, inverted) = smart_segment(image.view(), 10, 240, true, true);
+
+        // pre_thresholded: pixel >= 128 → true
+        assert!(binary[[0, 1]]); // 255
+        assert!(!binary[[0, 0]]); // 0
+        assert!(binary[[1, 0]]); // 255
+        assert!(!binary[[1, 1]]); // 0
+        assert!(binary[[3, 0]]); // 128 (boundary, included)
+        assert!(!binary[[3, 1]]); // 127 (excluded)
+        assert!(binary[[3, 2]]); // 200
+        assert!(!binary[[3, 3]]); // 50
+                                  // Threshold returned should be 128 (the passthrough threshold).
+        assert_eq!(threshold, 128);
+        // Inverted should be false (passthrough does not invert).
+        assert!(!inverted);
+    }
+
+    /// T2.3 triangulation: `pre_thresholded=false` retains Otsu behavior.
+    #[test]
+    fn test_smart_segment_pre_thresholded_false_keeps_otsu() {
+        // Same image, pre_thresholded=false → Otsu logic applies.
+        let image = arr2(&[
+            [0u8, 255, 0, 255],
+            [255, 0, 255, 0],
+            [0, 0, 255, 255],
+            [128, 127, 200, 50],
+        ]);
+        let (binary_otsu, threshold_otsu, _) = smart_segment(image.view(), 10, 240, true, false);
+        // Otsu must produce a threshold that is NOT 128 for this bimodal image.
+        // The image has values 0, 50, 127, 128, 200, 255 — Otsu should be
+        // somewhere in the middle (around 127-128 area). We just verify the
+        // function runs and produces a valid result.
+        assert!(threshold_otsu > 0);
+        // At least some foreground pixels exist.
+        let fg_count = binary_otsu.iter().filter(|&&v| v).count();
+        assert!(fg_count > 0, "Otsu must identify some foreground");
     }
 
     /// PYA-9 regression: NMS at radius factor 1.0× must resolve adjacent

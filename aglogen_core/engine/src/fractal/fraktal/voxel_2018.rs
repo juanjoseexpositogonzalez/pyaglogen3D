@@ -59,6 +59,7 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
         params.pixel_min,
         params.pixel_max,
         params.auto_threshold,
+        false,
     );
 
     // Debug info available via detected_threshold and is_dark_on_light
