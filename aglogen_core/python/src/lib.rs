@@ -14,7 +14,7 @@ use aglogen_engine::fractal::box_counting_3d::{
 };
 use aglogen_engine::fractal::fraktal::batch::{
     analyze_batch_broadcast as engine_analyze_batch_broadcast, AutocalibrateSource, BatchAlgorithm,
-    BatchInput,
+    BatchInput, ImageInputVariant,
 };
 // Re-export for per-image-scale binding (T3.2)
 // analyze_batch is used directly in analyze_fraktal_batch_per_image_scale
@@ -1375,6 +1375,24 @@ fn structure_factor(
 }
 
 // ============================================================================
+// Helper: parse ImageInputVariant from string
+// ============================================================================
+
+/// Parse a string into [`ImageInputVariant`]. Case-insensitive.
+///
+/// Valid values: `"presentation"`, `"scientific"`.
+fn parse_image_input_variant(s: &str) -> Result<ImageInputVariant, String> {
+    match s.to_lowercase().as_str() {
+        "presentation" => Ok(ImageInputVariant::Presentation),
+        "scientific" => Ok(ImageInputVariant::Scientific),
+        other => Err(format!(
+            "Invalid input_variant '{}'. Use 'presentation' or 'scientific'.",
+            other
+        )),
+    }
+}
+
+// ============================================================================
 // FRAKTAL batch analysis binding
 // ============================================================================
 
@@ -1509,7 +1527,7 @@ fn compute_2d_bbox(
 /// Returns a dict with the same shape as `analyze_fraktal_batch`,
 /// plus `pixels_per_100nm_used` per image in each result entry.
 #[pyfunction]
-#[pyo3(signature = (images, pixels_per_100nm, autocalibrate_dpo, dpo_hint, algorithm))]
+#[pyo3(signature = (images, pixels_per_100nm, autocalibrate_dpo, dpo_hint, algorithm, input_variants=None))]
 fn analyze_fraktal_batch_per_image_scale<'py>(
     py: Python<'py>,
     images: Vec<PyReadonlyArray2<'py, u8>>,
@@ -1517,6 +1535,7 @@ fn analyze_fraktal_batch_per_image_scale<'py>(
     autocalibrate_dpo: bool,
     dpo_hint: f64,
     algorithm: &str,
+    input_variants: Option<Vec<String>>,
 ) -> PyResult<Bound<'py, pyo3::types::PyDict>> {
     let algo = match algorithm.to_lowercase().as_str() {
         "granulated_2012" | "granulated" => BatchAlgorithm::Granulated2012,
@@ -1531,10 +1550,30 @@ fn analyze_fraktal_batch_per_image_scale<'py>(
 
     let engine_images: Vec<Array2<u8>> = images.iter().map(numpy_to_engine_array2_u8).collect();
 
+    // Parse input_variants: None → empty (default to Presentation),
+    // Some → validate length and parse each string.
+    let variants = match input_variants {
+        None => vec![],
+        Some(ref strs) => {
+            if strs.len() != engine_images.len() {
+                return Err(pyo3::exceptions::PyValueError::new_err(format!(
+                    "input_variants length ({}) must match images length ({})",
+                    strs.len(),
+                    engine_images.len()
+                )));
+            }
+            strs.iter()
+                .map(|s| {
+                    parse_image_input_variant(s).map_err(pyo3::exceptions::PyValueError::new_err)
+                })
+                .collect::<PyResult<Vec<_>>>()?
+        }
+    };
+
     let input = BatchInput {
         images: engine_images,
         pixels_per_100nm,
-        input_variants: vec![],
+        input_variants: variants,
         autocalibrate_dpo,
         dpo_hint,
         algorithm: algo,
@@ -1637,11 +1676,47 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
 // ============================================================================
 #[cfg(test)]
 mod tests {
+    use super::parse_image_input_variant;
     use aglogen_engine::fractal::fraktal::batch::{
-        analyze_batch, analyze_batch_broadcast, BatchAlgorithm, BatchInput,
+        analyze_batch, analyze_batch_broadcast, BatchAlgorithm, BatchInput, ImageInputVariant,
     };
     use aglogen_engine::projection::compute_2d_bbox;
     use ndarray::Array2;
+
+    // ── T2.5: string→enum conversion tests ────────────────────────
+    #[test]
+    fn test_parse_image_input_variant_presentation() {
+        assert_eq!(
+            parse_image_input_variant("presentation").unwrap(),
+            ImageInputVariant::Presentation
+        );
+        assert_eq!(
+            parse_image_input_variant("Presentation").unwrap(),
+            ImageInputVariant::Presentation
+        );
+        assert_eq!(
+            parse_image_input_variant("PRESENTATION").unwrap(),
+            ImageInputVariant::Presentation
+        );
+    }
+
+    #[test]
+    fn test_parse_image_input_variant_scientific() {
+        assert_eq!(
+            parse_image_input_variant("scientific").unwrap(),
+            ImageInputVariant::Scientific
+        );
+        assert_eq!(
+            parse_image_input_variant("Scientific").unwrap(),
+            ImageInputVariant::Scientific
+        );
+    }
+
+    #[test]
+    fn test_parse_image_input_variant_invalid() {
+        let err = parse_image_input_variant("unknown").unwrap_err();
+        assert!(err.contains("unknown"));
+    }
 
     // ── T3.1: compute_2d_bbox binding conversion logic ────────────
     #[test]
