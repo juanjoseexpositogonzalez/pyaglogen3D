@@ -361,6 +361,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     per_image_scales=per_image_scales,
                     scientific_png_list=scientific_png_list,
                     input_variants=input_variants,
+                    origin=origin,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001 — surface as 400 per R3
@@ -424,6 +425,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     per_image_scales=per_image_scales,
                     scientific_png_list=scientific_png_list,
                     input_variants=input_variants,
+                    origin=origin,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001
@@ -617,6 +619,7 @@ def _run_batch_sync(
     per_image_scales: list[float] | None = None,
     scientific_png_list: list[bytes | None] | None = None,
     input_variants: list[str] | None = None,
+    origin: str = "external",
 ) -> dict:
     """Sync execution of a FRAKTAL batch (N ≤ 30).
 
@@ -665,6 +668,7 @@ def _run_batch_sync(
             autocalibrate_image_index=rust_result.get("autocalibrate_image_index"),
             sim_id=sim_id,
             original_zip_filename=zip_filename,
+            origin=origin,
         )
         png_list = _images_to_png_bytes(images)
         persist_batch_results(

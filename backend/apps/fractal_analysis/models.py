@@ -295,6 +295,14 @@ class FraktalBatch(models.Model):
     autocalibrate_source = models.CharField(max_length=16, null=True, blank=True)
     autocalibrate_image_index = models.IntegerField(null=True, blank=True)
 
+    # Batch origin: "simulation" or "external" (default for backward compat)
+    origin = models.CharField(
+        max_length=16,
+        default="external",
+        choices=[("simulation", "Simulation"), ("external", "External")],
+        verbose_name="Batch origin",
+    )
+
     # Optional link to simulation that generated the projections
     sim_id = models.UUIDField(null=True, blank=True)
 
