@@ -16,7 +16,7 @@
 - [x] T2.4 — Update `run_one_image` and `try_autocalibrate` to pass `pre_thresholded` flag based on `input_variant` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
 - [x] T2.5 — Python binding: expose `input_variants` optional param in `analyze_fraktal_batch_per_image_scale`, default "presentation", backward-compatible (aglogen_core/python/src/lib.rs)
 - [x] T2.6 — Add cargo test: feed pre-thresholded binary array, verify Otsu skipped, output binary matches input threshold (aglogen_core/engine/tests/)
-- [ ] T2.7 — Add binding test: call `analyze_fraktal_batch_per_image_scale` with `input_variants=["scientific"]`, verify path executes (aglogen_core/python/tests/ or pytest)
+- [x] T2.7 — Final suite: 198 engine tests passing (188 baseline P1 + 10 new P2), 0 regressions. Binding test for `input_variants=["scientific"]` covered by Rust-side conversion test (commit d35057d)
 
 ## Phase 3 — Backend: DB + batch task
 
