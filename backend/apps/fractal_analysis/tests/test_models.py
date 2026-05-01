@@ -244,6 +244,94 @@ class TestFraktalBatchImageCreation:
 
 
 # ---------------------------------------------------------------------------
+# FraktalBatchImage — analysis_input_variant field tests
+# ---------------------------------------------------------------------------
+
+
+class TestAnalysisInputVariantField:
+    """Test CharField analysis_input_variant on FraktalBatchImage.
+
+    Covers spec R-DELTA-H: default, accepts both values, verbose_name,
+    queryable by value.
+    """
+
+    def test_defaults_to_presentation(self, batch):
+        """Default value is 'presentation' for rows without explicit variant."""
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="legacy.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 10,
+        )
+        img.refresh_from_db()
+        assert img.analysis_input_variant == "presentation"
+
+    def test_accepts_scientific_value(self, batch):
+        """Field stores 'scientific' when explicitly set."""
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="scientific.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 10,
+            analysis_input_variant="scientific",
+        )
+        img.refresh_from_db()
+        assert img.analysis_input_variant == "scientific"
+
+    def test_accepts_presentation_value(self, batch):
+        """Field stores 'presentation' when explicitly set."""
+        img = FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="pres.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG" + b"\x00" * 10,
+            analysis_input_variant="presentation",
+        )
+        img.refresh_from_db()
+        assert img.analysis_input_variant == "presentation"
+
+    def test_queryable_by_variant_value(self, batch):
+        """Can filter FraktalBatchImage by analysis_input_variant."""
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="a.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+            analysis_input_variant="scientific",
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=1,
+            filename="b.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG",
+            analysis_input_variant="presentation",
+        )
+        sci_count = FraktalBatchImage.objects.filter(
+            analysis_input_variant="scientific"
+        ).count()
+        pres_count = FraktalBatchImage.objects.filter(
+            analysis_input_variant="presentation"
+        ).count()
+        assert sci_count == 1
+        assert pres_count == 1
+
+    def test_verbose_name(self):
+        """Field has verbose_name per spec."""
+        field = FraktalBatchImage._meta.get_field("analysis_input_variant")
+        assert field.verbose_name == "Analysis input variant"
+
+    def test_max_length_is_16(self):
+        """Field max_length matches migration spec."""
+        field = FraktalBatchImage._meta.get_field("analysis_input_variant")
+        assert field.max_length == 16
+
+
+# ---------------------------------------------------------------------------
 # FraktalBatchImage — png_scientific_bytes field tests
 # ---------------------------------------------------------------------------
 

@@ -354,6 +354,13 @@ class FraktalBatchImage(models.Model):
         verbose_name="Scientific PNG bytes",
     )
 
+    # Which PNG variant was fed to the FRAKTAL engine for this image
+    analysis_input_variant = models.CharField(
+        max_length=16,
+        default="presentation",
+        verbose_name="Analysis input variant",
+    )
+
     class Meta:
         db_table = "fraktal_batch_images"
         unique_together = [("batch", "index")]
