@@ -666,6 +666,25 @@ def analyze_fraktal_batch_task(
             },
         )
 
+    # Determine per-image input variant based on scientific PNG availability.
+    # When a scientific PNG is available for a direction, decode it and use
+    # it as the engine input (pre-thresholded binary); otherwise fall back
+    # to the presentation PNG.
+    input_variants: list[str] = []
+    if scientific_png_b64:
+        for i, sci_b64 in enumerate(scientific_png_b64):
+            if sci_b64:
+                # Decode scientific PNG into grayscale array and replace
+                # the presentation image so the engine sees binary input.
+                sci_bytes = base64.b64decode(sci_b64)
+                sci_img = _Image.open(_io.BytesIO(sci_bytes)).convert("L")
+                images[i] = np.array(sci_img, dtype=np.uint8)
+                input_variants.append("scientific")
+            else:
+                input_variants.append("presentation")
+    else:
+        input_variants = ["presentation"] * total
+
     if per_image_scales is not None:
         rust_result = aglogen_core.analyze_fraktal_batch_per_image_scale(
             images,
@@ -673,6 +692,7 @@ def analyze_fraktal_batch_task(
             autocalibrate_dpo,
             dpo_hint,
             algorithm,
+            input_variants=input_variants,
         )
     else:
         rust_result = aglogen_core.analyze_fraktal_batch(
@@ -743,6 +763,7 @@ def analyze_fraktal_batch_task(
             png_list,
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
+            input_variants=input_variants,
         )
         batch_id = str(batch.id)
 

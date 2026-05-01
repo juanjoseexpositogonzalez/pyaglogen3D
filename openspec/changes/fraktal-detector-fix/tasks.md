@@ -22,11 +22,11 @@
 
 - [x] T3.1 — Create migration `0008_add_analysis_input_variant_field.py`: CharField max_length=16, default="presentation", NOT NULL (backend/apps/fractal_analysis/migrations/)
 - [x] T3.2 — Add `analysis_input_variant` field to `FraktalBatchImage` model (backend/apps/fractal_analysis/models.py)
-- [ ] T3.3 — Modify `analyze_fraktal_batch_task`: when `png_scientific_bytes[i]` is non-NULL, decode and use as engine input, set `input_variants[i]="scientific"`; else use presentation PNG with variant "presentation" (backend/apps/fractal_analysis/tasks.py)
-- [ ] T3.4 — Modify `persist_batch_results` in `services/batch.py` to persist `analysis_input_variant` per `FraktalBatchImage` row (backend/apps/fractal_analysis/services/batch.py)
-- [ ] T3.5 — pytest: test scientific path — ZIP with `*.scientific.png`, verify variant="scientific" persisted (backend/apps/fractal_analysis/tests/)
-- [ ] T3.6 — pytest: test presentation fallback — legacy ZIP without scientific, verify variant="presentation" (backend/apps/fractal_analysis/tests/)
-- [ ] T3.7 — pytest: test mixed batch — some images have scientific, some don't, verify per-image variant (backend/apps/fractal_analysis/tests/)
+- [x] T3.3 — Modify `analyze_fraktal_batch_task`: when `png_scientific_bytes[i]` is non-NULL, decode and use as engine input, set `input_variants[i]="scientific"`; else use presentation PNG with variant "presentation" (backend/apps/fractal_analysis/tasks.py)
+- [x] T3.4 — Modify `persist_batch_results` in `services/batch.py` to persist `analysis_input_variant` per `FraktalBatchImage` row (backend/apps/fractal_analysis/services/batch.py)
+- [x] T3.5 — pytest: test scientific path — ZIP with `*.scientific.png`, verify variant="scientific" persisted (backend/apps/fractal_analysis/tests/)
+- [x] T3.6 — pytest: test presentation fallback — legacy ZIP without scientific, verify variant="presentation" (backend/apps/fractal_analysis/tests/)
+- [x] T3.7 — pytest: test mixed batch — some images have scientific, some don't, verify per-image variant (backend/apps/fractal_analysis/tests/)
 
 ## Phase 4 — Backend: autocalibrate default by origin
 

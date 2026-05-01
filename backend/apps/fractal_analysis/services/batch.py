@@ -407,6 +407,7 @@ def persist_batch_results(
     png_list: list[bytes],
     dpo_used: float,
     scientific_png_list: list[bytes | None] | None = None,
+    input_variants: list[str] | None = None,
 ) -> None:
     """Write per-image rows and update batch summary fields.
 
@@ -424,6 +425,9 @@ def persist_batch_results(
         dpo_used: The ``dpo`` value used for analysis (stored on each image row).
         scientific_png_list: Optional parallel list of scientific PNG bytes.
             ``None`` entries or a missing list → ``png_scientific_bytes = NULL``.
+        input_variants: Optional parallel list of variant strings
+            (``"scientific"`` or ``"presentation"``).  When ``None``, all
+            rows default to ``"presentation"`` (backward-compatible).
     """
     from apps.fractal_analysis.models import FraktalBatchImage
 
@@ -433,6 +437,9 @@ def persist_batch_results(
         sci_bytes: bytes | None = None
         if scientific_png_list is not None and i < len(scientific_png_list):
             sci_bytes = scientific_png_list[i]
+        variant = "presentation"
+        if input_variants is not None and i < len(input_variants):
+            variant = input_variants[i]
         rows.append(
             FraktalBatchImage(
                 batch=batch,
@@ -448,6 +455,7 @@ def persist_batch_results(
                 error=result.get("error") or "",
                 image_png=png_bytes,
                 png_scientific_bytes=sci_bytes,
+                analysis_input_variant=variant,
             )
         )
     FraktalBatchImage.objects.bulk_create(rows)

@@ -3,6 +3,7 @@
 import logging
 import uuid
 
+import numpy as np
 from django.conf import settings
 from django.http import HttpResponse
 from kombu.exceptions import OperationalError
@@ -276,6 +277,23 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
         if scientific_png_map:
             scientific_png_list = [scientific_png_map.get(fn) for fn in filenames]
 
+        # Build per-image input_variants and swap images for scientific
+        # PNGs when available (P3 T3.3).
+        input_variants: list[str] | None = None
+        if scientific_png_list:
+            import io as _io
+
+            from PIL import Image as _Image
+
+            input_variants = []
+            for i, sci_bytes in enumerate(scientific_png_list):
+                if sci_bytes:
+                    sci_img = _Image.open(_io.BytesIO(sci_bytes)).convert("L")
+                    images[i] = np.array(sci_img, dtype=np.uint8)
+                    input_variants.append("scientific")
+                else:
+                    input_variants.append("presentation")
+
         # Resolve project for DB persistence (available on nested URLs).
         project_pk = self.kwargs.get("project_pk")
         project = None
@@ -305,6 +323,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     zip_filename=uploaded.name or "",
                     per_image_scales=per_image_scales,
                     scientific_png_list=scientific_png_list,
+                    input_variants=input_variants,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001 — surface as 400 per R3
@@ -367,6 +386,7 @@ class FraktalAnalysisViewSet(viewsets.ModelViewSet):
                     zip_filename=uploaded.name or "",
                     per_image_scales=per_image_scales,
                     scientific_png_list=scientific_png_list,
+                    input_variants=input_variants,
                 )
                 return Response(payload, status=200)
             except Exception as exc:  # noqa: BLE001
@@ -559,6 +579,7 @@ def _run_batch_sync(
     zip_filename: str = "",
     per_image_scales: list[float] | None = None,
     scientific_png_list: list[bytes | None] | None = None,
+    input_variants: list[str] | None = None,
 ) -> dict:
     """Sync execution of a FRAKTAL batch (N ≤ 30).
 
@@ -580,6 +601,7 @@ def _run_batch_sync(
             autocalibrate_dpo,
             dpo_hint,
             algorithm,
+            **({"input_variants": input_variants} if input_variants else {}),
         )
     else:
         rust_result = aglogen_core.analyze_fraktal_batch(
@@ -614,6 +636,7 @@ def _run_batch_sync(
             png_list,
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
+            input_variants=input_variants,
         )
         payload["batch_id"] = str(batch.id)
 
@@ -1004,6 +1027,7 @@ def batch_image_detail_view(
             "total_count": total,
             "png_url": f"/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/images/{index}/png/",
             "has_scientific_png": img.png_scientific_bytes is not None,
+            "analysis_input_variant": img.analysis_input_variant,
             "sim_target_df": sim_target_df,
             "sim_box_counting_df": sim_box_counting_df,
             "sorensen_note": sorensen_note,
