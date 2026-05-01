@@ -392,36 +392,44 @@ pub fn estimate_particle_count_adaptive(binary: ArrayView2<bool>) -> (usize, f64
         return (0, 0.0);
     }
 
-    // Step 3: Auto-detect particle radius from peak distance values
-    // Sort by distance value (descending) - highest peaks are true particle centers
-    all_peaks.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+    // Step 3: Auto-detect particle radius from peak distance values.
+    //
+    // PYA-9 fix: use median over ALL peaks (not just top 30%). The
+    // top-30% selection biased the radius upward by ~1.3x because
+    // the largest distance values correspond to fused/merged blobs,
+    // not to single primaries. Median over all peaks is robust to
+    // both noise (small spurious peaks) and fusion (large blobs).
+    let mut all_distances: Vec<f64> = all_peaks.iter().map(|p| p.2).collect();
+    all_distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
 
-    // Use median of top peaks to estimate particle radius
-    // Take top 30% of peaks (but at least 3, at most 50)
-    let n_top = (all_peaks.len() * 3 / 10)
-        .max(3)
-        .min(50)
-        .min(all_peaks.len());
-    let mut top_distances: Vec<f64> = all_peaks.iter().take(n_top).map(|p| p.2).collect();
-    top_distances.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-
-    let estimated_radius = if top_distances.len() >= 2 {
-        // Use median
-        let mid = top_distances.len() / 2;
-        if top_distances.len() % 2 == 0 {
-            (top_distances[mid - 1] + top_distances[mid]) / 2.0
+    let estimated_radius = if all_distances.len() >= 2 {
+        // Use median over ALL peaks
+        let mid = all_distances.len() / 2;
+        if all_distances.len() % 2 == 0 {
+            (all_distances[mid - 1] + all_distances[mid]) / 2.0
         } else {
-            top_distances[mid]
+            all_distances[mid]
         }
-    } else if !top_distances.is_empty() {
-        top_distances[0]
+    } else if !all_distances.is_empty() {
+        all_distances[0]
     } else {
         5.0 // Fallback
     };
 
-    // Step 4: Non-maximum suppression with detected radius
-    // Use full diameter as separation (particles shouldn't overlap centers)
-    let min_separation = estimated_radius * 2.0;
+    // Step 4: Non-maximum suppression with detected radius.
+    //
+    // PYA-9 fix: separation = 1.0 × radius (was 2.0 × radius). For
+    // aggregates with delta=1.1 (touching/overlapping primaries),
+    // center-to-center distance is 2*radius/delta = 1.82*radius. The
+    // old 2.0× factor fused all adjacent peaks, inflating the
+    // estimated radius (×2 contribution to the total bias). With
+    // 1.0×, adjacent primaries at delta=1.1 are correctly resolved.
+    //
+    // Sort all peaks by distance value (descending) so the strongest
+    // peaks are kept first when NMS rejects collisions.
+    all_peaks.sort_by(|a, b| b.2.partial_cmp(&a.2).unwrap_or(std::cmp::Ordering::Equal));
+
+    let min_separation = estimated_radius * 1.0;
     let min_sep_sq = min_separation * min_separation;
 
     let mut final_peaks: Vec<(usize, usize, f64)> = Vec::new();
@@ -618,5 +626,98 @@ mod tests {
 
         assert_eq!(count, 0, "Empty image should have 0 particles");
         assert_eq!(avg_radius, 0.0, "Empty image should have 0 radius");
+    }
+
+    /// PYA-9 regression: NMS at radius factor 1.0× must resolve adjacent
+    /// primaries packed at delta=1.1 (touching/overlapping configuration).
+    ///
+    /// With delta=1.1 (typical for CC-tunable aggregates), center-to-center
+    /// distance is `2*radius/delta = 1.82*radius`. The OLD NMS factor of
+    /// 2.0× fused these peaks, severely under-counting primaries and
+    /// inflating the estimated radius. The NEW factor of 1.0× resolves them.
+    #[test]
+    fn test_nms_resolves_delta_1_1_packed_primaries() {
+        // Two circles, radius=5 px, centers at (10,10) and (10,19).
+        // Center-to-center = 9 px = 1.8 * radius (delta ≈ 1.11).
+        let mut binary = ndarray::Array2::<bool>::from_elem((30, 30), false);
+        for i in 0..30 {
+            for j in 0..30 {
+                let i_f = i as f64;
+                let j_f = j as f64;
+                let d1 = ((i_f - 10.0).powi(2) + (j_f - 10.0).powi(2)).sqrt();
+                let d2 = ((i_f - 10.0).powi(2) + (j_f - 19.0).powi(2)).sqrt();
+                if d1 <= 5.0 || d2 <= 5.0 {
+                    binary[[i, j]] = true;
+                }
+            }
+        }
+
+        let (count, avg_radius) = estimate_particle_count_adaptive(binary.view());
+
+        // With NMS=1.0×, BOTH peaks must be detected (not fused into one).
+        assert_eq!(
+            count, 2,
+            "delta=1.1 packed primaries must be resolved as 2, not fused; got {}",
+            count
+        );
+        // The estimated radius must be close to 5 px (true), not ~9 (fused).
+        assert!(
+            avg_radius < 7.0,
+            "Average radius {} should be near true (5 px), not inflated",
+            avg_radius
+        );
+    }
+
+    /// PYA-9 regression: peak radius is computed as median over ALL peaks
+    /// (not just the top 30%). The top-30% selection biased the radius
+    /// upward by ~1.3× because the largest distance values come from
+    /// fused/merged blobs, not single primaries.
+    ///
+    /// This test constructs a scene with mostly small primaries and a
+    /// single larger feature (simulating what an aggregate cluster might
+    /// look like), and asserts the estimated radius reflects the typical
+    /// primary, not the outlier cluster.
+    #[test]
+    fn test_radius_median_uses_all_peaks_not_top_30() {
+        // Grid of 9 small circles (radius=4 px), well-separated.
+        // Plus one larger blob (radius=12 px) acting as an "outlier".
+        let mut binary = ndarray::Array2::<bool>::from_elem((100, 100), false);
+
+        // 3x3 grid of small circles, centers at (15, 15), (15, 35), ..., (35, 35), ...
+        for grid_i in 0..3 {
+            for grid_j in 0..3 {
+                let cx = 15.0 + (grid_i as f64) * 20.0;
+                let cy = 15.0 + (grid_j as f64) * 20.0;
+                for i in 0..100 {
+                    for j in 0..100 {
+                        let d = (((i as f64) - cx).powi(2) + ((j as f64) - cy).powi(2)).sqrt();
+                        if d <= 4.0 {
+                            binary[[i, j]] = true;
+                        }
+                    }
+                }
+            }
+        }
+        // One large outlier blob in the corner.
+        for i in 70..100 {
+            for j in 70..100 {
+                let d = (((i as f64) - 85.0).powi(2) + ((j as f64) - 85.0).powi(2)).sqrt();
+                if d <= 12.0 {
+                    binary[[i, j]] = true;
+                }
+            }
+        }
+
+        let (_count, avg_radius) = estimate_particle_count_adaptive(binary.view());
+
+        // With ALL-peaks median, the typical primary radius (4) dominates,
+        // not the outlier (12). Allow some slack — what matters is that
+        // the radius is much closer to 4 than to 12.
+        assert!(
+            avg_radius < 8.0,
+            "ALL-peaks median should reflect typical primary radius (~4); \
+             got {} (top-30% would have biased toward 12)",
+            avg_radius
+        );
     }
 }

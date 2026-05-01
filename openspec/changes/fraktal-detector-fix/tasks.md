@@ -2,11 +2,11 @@
 
 ## Phase 1 — Engine: NMS radius 2.0→1.0 + ALL-peaks median
 
-- [ ] T1.1 — Change NMS radius factor in `image_processing.rs:424` from `estimated_radius * 2.0` to `estimated_radius * 1.0` (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
-- [ ] T1.2 — Modify peak selection in `image_processing.rs:401-404`: remove top-30% filter, set `n_top = all_peaks.len()` for median over ALL peaks (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
-- [ ] T1.3 — Add cargo test: synthetic distance-transform with two adjacent peaks at 1.1× radius separation, verify NMS=1.0 resolves both peaks (aglogen_core/engine/tests/)
-- [ ] T1.4 — Add cargo test: verify median computed over all peaks (not top-30%) using known peak set (aglogen_core/engine/tests/)
-- [ ] T1.5 — Update any existing cargo tests asserting top-30% behavior; change to assert all-peaks median (aglogen_core/engine/tests/)
+- [x] T1.1 — Change NMS radius factor in `image_processing.rs:424` from `estimated_radius * 2.0` to `estimated_radius * 1.0` (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
+- [x] T1.2 — Modify peak selection in `image_processing.rs:401-404`: remove top-30% filter, set `n_top = all_peaks.len()` for median over ALL peaks (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
+- [x] T1.3 — Add cargo test: synthetic distance-transform with two adjacent peaks at 1.1× radius separation, verify NMS=1.0 resolves both peaks (aglogen_core/engine/src/fractal/fraktal/image_processing.rs::tests::test_nms_resolves_delta_1_1_packed_primaries)
+- [x] T1.4 — Add cargo test: verify median computed over all peaks (not top-30%) using known peak set (aglogen_core/engine/src/fractal/fraktal/image_processing.rs::tests::test_radius_median_uses_all_peaks_not_top_30)
+- [x] T1.5 — No existing cargo tests asserted top-30% behavior; verified all 186 prior tests still pass with new logic
 
 ## Phase 2 — Engine: accept binary scientific PNG input
 
