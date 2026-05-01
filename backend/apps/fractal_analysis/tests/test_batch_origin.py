@@ -107,7 +107,7 @@ BATCH_URL = "/api/v1/fraktal/analyze-batch/"
 
 
 # ---------------------------------------------------------------------------
-# T4.2 — RED: missing sim_dpo_nm with origin=simulation → 400
+# T4.2/T4.3 — Validation: missing sim_dpo_nm with origin=simulation → 400
 # ---------------------------------------------------------------------------
 
 
@@ -166,3 +166,102 @@ class TestSimulationOriginValidation:
             format="multipart",
         )
         assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# T4.4/T4.5 — Default autocalibrate by origin
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.django_db
+class TestAutocalibrateDefaultByOrigin:
+    """E3.1, E3.2, E3.3 — autocalibrate default depends on origin."""
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_simulation_origin_defaults_autocalibrate_off(
+        self, mock_rust, authenticated_client: APIClient
+    ) -> None:
+        """E3.1 — origin=simulation, sim_dpo_nm=25 → autocalibrate=False, dpo=25."""
+        mock_rust.return_value = _fake_rust_result(2, dpo_used=25.0)
+        zip_bytes = _make_zip_with_metadata(n=2)
+        resp = authenticated_client.post(
+            BATCH_URL,
+            {
+                "file": SimpleUploadedFile("sim.zip", zip_bytes),
+                "origin": "simulation",
+                "sim_dpo_nm": "25.0",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+        # Verify autocalibrate was False and dpo_hint was 25.0 in the call
+        call_args = mock_rust.call_args
+        _, autocalibrate_arg, dpo_arg, _ = call_args[0][1:]
+        assert autocalibrate_arg is False
+        assert dpo_arg == 25.0
+        # Calibration source should be "manual"
+        data = resp.json()
+        assert data["calibration"]["source"] == "manual"
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_simulation_origin_explicit_autocalibrate_override(
+        self, mock_rust, authenticated_client: APIClient
+    ) -> None:
+        """E3.2 — origin=simulation, sim_dpo_nm=25, autocalibrate_dpo=true → honored."""
+        mock_rust.return_value = _fake_rust_result(2, dpo_used=25.0)
+        zip_bytes = _make_zip_with_metadata(n=2)
+        resp = authenticated_client.post(
+            BATCH_URL,
+            {
+                "file": SimpleUploadedFile("sim.zip", zip_bytes),
+                "origin": "simulation",
+                "sim_dpo_nm": "25.0",
+                "autocalibrate_dpo": "true",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+        call_args = mock_rust.call_args
+        _, autocalibrate_arg, dpo_arg, _ = call_args[0][1:]
+        assert autocalibrate_arg is True
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_external_origin_defaults_autocalibrate_on(
+        self, mock_rust, authenticated_client: APIClient
+    ) -> None:
+        """E3.3 — origin=external → autocalibrate default unchanged (depends on request)."""
+        mock_rust.return_value = _fake_rust_result(2, dpo_used=25.0)
+        zip_bytes = _make_zip_with_metadata(n=2)
+        resp = authenticated_client.post(
+            BATCH_URL,
+            {
+                "file": SimpleUploadedFile("ext.zip", zip_bytes),
+                "origin": "external",
+                "autocalibrate_dpo": "true",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+        call_args = mock_rust.call_args
+        _, autocalibrate_arg, _, _ = call_args[0][1:]
+        assert autocalibrate_arg is True
+
+    @patch("aglogen_core.analyze_fraktal_batch")
+    def test_missing_origin_defaults_to_external(
+        self, mock_rust, authenticated_client: APIClient
+    ) -> None:
+        """E3.3 — no origin field → defaults to external, autocalibrate from request."""
+        mock_rust.return_value = _fake_rust_result(2, dpo_used=25.0)
+        zip_bytes = _make_zip_with_metadata(n=2)
+        resp = authenticated_client.post(
+            BATCH_URL,
+            {
+                "file": SimpleUploadedFile("legacy.zip", zip_bytes),
+                "autocalibrate_dpo": "true",
+            },
+            format="multipart",
+        )
+        assert resp.status_code == 200, resp.content
+        call_args = mock_rust.call_args
+        _, autocalibrate_arg, _, _ = call_args[0][1:]
+        assert autocalibrate_arg is True
