@@ -389,3 +389,73 @@ class TestFraktalBatchOriginField:
         assert batch_id is not None
         batch = FraktalBatch.objects.get(id=batch_id)
         assert batch.origin == "simulation"
+
+
+# ---------------------------------------------------------------------------
+# T4.7 — Drill-down detail response includes batch_origin
+# ---------------------------------------------------------------------------
+
+
+from apps.fractal_analysis.models import FraktalBatchImage  # noqa: E402
+
+
+@pytest.mark.django_db
+class TestDrillDownIncludesOrigin:
+    """Drill-down image detail returns batch_origin field."""
+
+    def test_drill_down_includes_batch_origin_simulation(self) -> None:
+        """batch_origin appears in drill-down response with correct value."""
+        from apps.projects.models import Project
+
+        project = Project.objects.create(name="drilldown-origin")
+        batch = FraktalBatch.objects.create(
+            project=project,
+            algorithm="granulated_2012",
+            calibration_source="manual",
+            pixels_per_100nm=500.0,
+            dpo_used=25.0,
+            origin="simulation",
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="test.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+        )
+        user = _make_user()
+        client = _authed_client(user)
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/images/0/"
+        resp = client.get(url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert "batch_origin" in data
+        assert data["batch_origin"] == "simulation"
+
+    def test_drill_down_includes_batch_origin_external(self) -> None:
+        """batch_origin=external for legacy/default batches."""
+        from apps.projects.models import Project
+
+        project = Project.objects.create(name="drilldown-ext")
+        batch = FraktalBatch.objects.create(
+            project=project,
+            algorithm="granulated_2012",
+            calibration_source="manual",
+            pixels_per_100nm=500.0,
+            dpo_used=25.0,
+            # origin defaults to "external"
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="test.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+        )
+        user = _make_user()
+        client = _authed_client(user)
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/images/0/"
+        resp = client.get(url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["batch_origin"] == "external"

@@ -36,7 +36,7 @@
 - [x] T4.4 — When origin not "simulation": keep current behavior (autocalibrate default depends on scale) (backend/apps/fractal_analysis/views.py)
 - [x] T4.5 — Update serializers to include `analysis_input_variant` in drill-down detail response (backend/apps/fractal_analysis/serializers.py)
 - [x] T4.6 — pytest: test simulation origin with valid `sim_dpo_nm`, verify autocalibrate OFF, dpo_hint set (backend/apps/fractal_analysis/tests/)
-- [ ] T4.7 — pytest: test simulation origin missing `sim_dpo_nm`, verify HTTP 400 (backend/apps/fractal_analysis/tests/)
+- [x] T4.7 — pytest: test simulation origin missing `sim_dpo_nm`, verify HTTP 400 (backend/apps/fractal_analysis/tests/)
 - [ ] T4.8 — pytest: test external origin, verify autocalibrate default unchanged (backend/apps/fractal_analysis/tests/)
 
 ## Phase 5 — Frontend: upload UX differentiation

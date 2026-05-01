@@ -1069,6 +1069,7 @@ def batch_image_detail_view(
             "png_url": f"/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/images/{index}/png/",
             "has_scientific_png": img.png_scientific_bytes is not None,
             "analysis_input_variant": img.analysis_input_variant,
+            "batch_origin": batch.origin,
             "sim_target_df": sim_target_df,
             "sim_box_counting_df": sim_box_counting_df,
             "sorensen_note": sorensen_note,
