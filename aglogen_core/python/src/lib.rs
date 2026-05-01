@@ -1534,6 +1534,7 @@ fn analyze_fraktal_batch_per_image_scale<'py>(
     let input = BatchInput {
         images: engine_images,
         pixels_per_100nm,
+        input_variants: vec![],
         autocalibrate_dpo,
         dpo_hint,
         algorithm: algo,
@@ -1722,6 +1723,7 @@ mod tests {
         let input = BatchInput {
             images: vec![img.clone(), img.clone(), img],
             pixels_per_100nm: scales.clone(),
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -1740,6 +1742,7 @@ mod tests {
         let input = BatchInput {
             images: vec![img.clone(), img.clone(), img],
             pixels_per_100nm: vec![30.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,

@@ -10,8 +10,8 @@
 
 ## Phase 2 — Engine: accept binary scientific PNG input
 
-- [ ] T2.1 — Add `ImageInputVariant { Presentation, Scientific }` enum in `batch.rs` with derives `Debug, Clone, Copy, PartialEq, Eq` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
-- [ ] T2.2 — Modify `BatchInput` to add `input_variants: Vec<ImageInputVariant>` field, default all to `Presentation` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
+- [x] T2.1 — Add `ImageInputVariant { Presentation, Scientific }` enum in `batch.rs` with derives `Debug, Clone, Copy, PartialEq, Eq` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
+- [x] T2.2 — Modify `BatchInput` to add `input_variants: Vec<ImageInputVariant>` field, default all to `Presentation` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
 - [ ] T2.3 — Add `smart_segment_or_passthrough()` wrapper in `image_processing.rs`: when `pre_thresholded=true`, skip Otsu and treat input as binary (pixel > 127 = foreground) (aglogen_core/engine/src/fractal/fraktal/image_processing.rs)
 - [ ] T2.4 — Update `run_one_image` and `try_autocalibrate` to pass `pre_thresholded` flag based on `input_variant` (aglogen_core/engine/src/fractal/fraktal/batch.rs)
 - [ ] T2.5 — Python binding: expose `input_variants` optional param in `analyze_fraktal_batch_per_image_scale`, default "presentation", backward-compatible (aglogen_core/python/src/lib.rs)

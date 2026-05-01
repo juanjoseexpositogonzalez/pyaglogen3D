@@ -17,7 +17,7 @@ pub mod voxel_2018;
 
 pub use batch::{
     analyze_batch, analyze_batch_broadcast, AutocalibrateSource, BatchAlgorithm, BatchImageResult,
-    BatchInput, BatchOutput,
+    BatchInput, BatchOutput, ImageInputVariant,
 };
 pub use granulated_2012::analyze_granulated_2012;
 pub use params::{Granulated2012Params, Voxel2018Params};

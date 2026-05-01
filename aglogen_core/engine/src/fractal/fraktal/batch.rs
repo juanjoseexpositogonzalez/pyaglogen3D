@@ -27,6 +27,21 @@ use super::params::{Granulated2012Params, Voxel2018Params};
 use super::result::FraktalStatus;
 use super::{analyze_granulated_2012, analyze_voxel_2018};
 
+/// Whether the input image is a presentation PNG (with AA halo) or a
+/// scientific PNG (binary-thresholded, no halo).
+///
+/// When `Scientific`, the engine skips Otsu segmentation and treats the
+/// image as already binary (pixel ≥ 128 → foreground).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageInputVariant {
+    /// Presentation PNG — typical TEM-style image requiring Otsu
+    /// segmentation (the default, backward-compatible path).
+    #[default]
+    Presentation,
+    /// Scientific (binary-thresholded) PNG — skip Otsu, treat as binary.
+    Scientific,
+}
+
 /// Which batch algorithm to run.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BatchAlgorithm {
@@ -78,6 +93,10 @@ pub struct BatchInput {
     /// `images.len()`. Use [`analyze_batch_broadcast`] to expand a
     /// single scalar to all images.
     pub pixels_per_100nm: Vec<f64>,
+    /// Per-image input variant. When empty, defaults to `Presentation`
+    /// for all images (backward-compatible). When non-empty, length
+    /// must equal `images.len()`.
+    pub input_variants: Vec<ImageInputVariant>,
     /// If true, run one-shot autocalibrate per R3; otherwise use
     /// `dpo_hint` as-is.
     pub autocalibrate_dpo: bool,
@@ -143,11 +162,25 @@ pub fn analyze_batch(input: BatchInput) -> Result<BatchOutput, String> {
         ));
     }
 
+    // Resolve input_variants: empty → default all to Presentation.
+    let variants = if input.input_variants.is_empty() {
+        vec![ImageInputVariant::Presentation; input.images.len()]
+    } else if input.input_variants.len() != input.images.len() {
+        return Err(format!(
+            "input_variants length mismatch: got {} input_variants for {} images",
+            input.input_variants.len(),
+            input.images.len(),
+        ));
+    } else {
+        input.input_variants.clone()
+    };
+
     let (dpo, source) = resolve_dpo(&input)?;
 
     let mut results = Vec::with_capacity(input.images.len());
     for (i, img) in input.images.iter().enumerate() {
         let scale_i = input.pixels_per_100nm[i];
+        let _variant_i = variants[i];
         let res = run_one_image(i, img, scale_i, dpo, input.algorithm);
         results.push(res);
     }
@@ -176,6 +209,7 @@ pub fn analyze_batch_broadcast(
     analyze_batch(BatchInput {
         images,
         pixels_per_100nm: vec![pixels_per_100nm; n],
+        input_variants: vec![],
         autocalibrate_dpo,
         dpo_hint,
         algorithm,
@@ -335,11 +369,73 @@ mod tests {
         Array2::<u8>::from_elem((size, size), value)
     }
 
+    // ── Phase 2 (P2): ImageInputVariant + scientific PNG input ─────
+
+    #[test]
+    fn test_image_input_variant_default_is_presentation() {
+        let variant = ImageInputVariant::default();
+        assert_eq!(variant, ImageInputVariant::Presentation);
+    }
+
+    #[test]
+    fn test_image_input_variant_debug_clone_copy() {
+        let v = ImageInputVariant::Scientific;
+        let v2 = v; // Copy
+        let v3 = v.clone(); // Clone
+        assert_eq!(v, v2);
+        assert_eq!(v2, v3);
+        assert_eq!(format!("{:?}", v), "Scientific");
+    }
+
+    #[test]
+    fn test_input_variants_length_mismatch_rejected() {
+        // T2.2: 3 images, 2 input_variants → error mentioning mismatch.
+        let img = make_noise_image(40, 200);
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Scientific,
+            ],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(
+            err.contains("input_variants"),
+            "error should mention input_variants: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_input_variants_default_all_presentation() {
+        // T2.2: when input_variants is empty, defaults to Presentation for all.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out =
+            analyze_batch(input).expect("empty input_variants should default to Presentation");
+        assert_eq!(out.results.len(), 2);
+    }
+
     #[test]
     fn test_batch_empty_input_rejected() {
         let input = BatchInput {
             images: vec![],
             pixels_per_100nm: vec![],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -355,6 +451,7 @@ mod tests {
         let input = BatchInput {
             images: vec![img],
             pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 20.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -376,6 +473,7 @@ mod tests {
         let input = BatchInput {
             images: vec![good.clone(), good.clone(), good],
             pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -403,6 +501,7 @@ mod tests {
         let input = BatchInput {
             images: vec![bad.clone(), good.clone(), bad],
             pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -419,6 +518,7 @@ mod tests {
         let input = BatchInput {
             images: vec![bad.clone(), bad.clone(), bad.clone(), bad],
             pixels_per_100nm: vec![50.0, 50.0, 50.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: true,
             dpo_hint: 0.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -447,6 +547,7 @@ mod tests {
         let input = BatchInput {
             images: vec![good.clone(), blank, good],
             pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -488,6 +589,7 @@ mod tests {
         let input = BatchInput {
             images: vec![img.clone(), img.clone(), img],
             pixels_per_100nm: scales.clone(),
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -507,6 +609,7 @@ mod tests {
         let input = BatchInput {
             images: vec![img.clone(), img.clone(), img],
             pixels_per_100nm: vec![30.0, 50.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -564,6 +667,7 @@ mod tests {
         let input_low = BatchInput {
             images: vec![img.clone()],
             pixels_per_100nm: vec![20.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
@@ -571,6 +675,7 @@ mod tests {
         let input_high = BatchInput {
             images: vec![img],
             pixels_per_100nm: vec![80.0],
+            input_variants: vec![],
             autocalibrate_dpo: false,
             dpo_hint: 25.0,
             algorithm: BatchAlgorithm::Granulated2012,
