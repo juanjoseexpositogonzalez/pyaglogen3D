@@ -175,13 +175,13 @@ pub fn analyze_batch(input: BatchInput) -> Result<BatchOutput, String> {
         input.input_variants.clone()
     };
 
-    let (dpo, source) = resolve_dpo(&input)?;
+    let (dpo, source) = resolve_dpo(&input, &variants)?;
 
     let mut results = Vec::with_capacity(input.images.len());
     for (i, img) in input.images.iter().enumerate() {
         let scale_i = input.pixels_per_100nm[i];
-        let _variant_i = variants[i];
-        let res = run_one_image(i, img, scale_i, dpo, input.algorithm);
+        let variant_i = variants[i];
+        let res = run_one_image(i, img, scale_i, dpo, input.algorithm, variant_i);
         results.push(res);
     }
 
@@ -221,12 +221,16 @@ pub fn analyze_batch_broadcast(
 ///
 /// Uses the per-image scale of the calibration candidate (image\[0\] or
 /// image\[N/2\]) for the autocalibrate computation.
-fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String> {
+fn resolve_dpo(
+    input: &BatchInput,
+    variants: &[ImageInputVariant],
+) -> Result<(f64, AutocalibrateSource), String> {
     if !input.autocalibrate_dpo {
         return Ok((input.dpo_hint, AutocalibrateSource::Manual));
     }
 
-    match try_autocalibrate(&input.images[0], input.pixels_per_100nm[0]) {
+    let pre_thresh_0 = variants[0] == ImageInputVariant::Scientific;
+    match try_autocalibrate(&input.images[0], input.pixels_per_100nm[0], pre_thresh_0) {
         Ok(dpo) => Ok((dpo, AutocalibrateSource::Image0)),
         Err(e0) => {
             let n = input.images.len();
@@ -234,9 +238,12 @@ fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String>
                 return Err(format!("autocalibrate failed on image[0]: {}", e0));
             }
             let mid = n / 2;
-            // n > 1 implies mid >= 1 (n=2 -> mid=1; n=3 -> mid=1), so
-            // mid is always a distinct index from 0 when we reach here.
-            match try_autocalibrate(&input.images[mid], input.pixels_per_100nm[mid]) {
+            let pre_thresh_mid = variants[mid] == ImageInputVariant::Scientific;
+            match try_autocalibrate(
+                &input.images[mid],
+                input.pixels_per_100nm[mid],
+                pre_thresh_mid,
+            ) {
                 Ok(dpo) => Ok((dpo, AutocalibrateSource::ImageNHalf)),
                 Err(e_mid) => Err(format!(
                     "autocalibrate failed on image[0] ({}) and image[{}] ({})",
@@ -250,9 +257,14 @@ fn resolve_dpo(input: &BatchInput) -> Result<(f64, AutocalibrateSource), String>
 /// Segment the image and run `estimate_particles_and_dpo`, translating
 /// "no particles detected" into an `Err` so the caller can decide to
 /// retry on a different frame.
-fn try_autocalibrate(image: &Array2<u8>, pixels_per_100nm: f64) -> Result<f64, String> {
+fn try_autocalibrate(
+    image: &Array2<u8>,
+    pixels_per_100nm: f64,
+    pre_thresholded: bool,
+) -> Result<f64, String> {
     // Use the same segmentation defaults as the single-image analyzers.
-    let (binary, _threshold, _inverted) = smart_segment(image.view(), 10, 240, true, false);
+    let (binary, _threshold, _inverted) =
+        smart_segment(image.view(), 10, 240, true, pre_thresholded);
     let length_per_pixel = ESCALA_NM / pixels_per_100nm;
     let (count, dpo, _avg_radius) = estimate_particles_and_dpo(binary.view(), length_per_pixel);
     if count == 0 || !dpo.is_finite() || dpo <= 0.0 {
@@ -269,13 +281,27 @@ fn run_one_image(
     pixels_per_100nm: f64,
     dpo: f64,
     algorithm: BatchAlgorithm,
+    variant: ImageInputVariant,
 ) -> BatchImageResult {
+    // When Scientific, pre-threshold to clean binary (0/255) and widen
+    // pixel_min/pixel_max to 0/255 so the analyzers' Otsu path handles
+    // the bimodal image correctly (no clipping at 240).
+    let (image, pmin, pmax) = match variant {
+        ImageInputVariant::Scientific => {
+            let clean = image.mapv(|v| if v >= 128 { 255u8 } else { 0u8 });
+            (clean, 0u8, 255u8)
+        }
+        ImageInputVariant::Presentation => (image.clone(), 10u8, 240u8),
+    };
+
     match algorithm {
         BatchAlgorithm::Granulated2012 => {
             let params = Granulated2012Params {
                 npix: pixels_per_100nm,
                 dpo,
                 escala: ESCALA_NM,
+                pixel_min: pmin,
+                pixel_max: pmax,
                 ..Granulated2012Params::default()
             };
             let r = analyze_granulated_2012(image.view(), &params);
@@ -306,6 +332,8 @@ fn run_one_image(
             let params = Voxel2018Params {
                 npix: pixels_per_100nm,
                 escala: ESCALA_NM,
+                pixel_min: pmin,
+                pixel_max: pmax,
                 ..Voxel2018Params::default()
             };
             let r = analyze_voxel_2018(image.view(), &params);
@@ -408,6 +436,88 @@ mod tests {
             "error should mention input_variants: {}",
             err
         );
+    }
+
+    /// T2.4: Scientific variant + binary image → results identical to
+    /// processing the same binary through Otsu (since a true binary
+    /// image's Otsu threshold coincides with 128).
+    #[test]
+    fn test_scientific_variant_skips_otsu_binary_image() {
+        // Build a binary image: white circles on black background
+        // (pixel values: 0 or 255 only — no anti-aliasing).
+        let size = 64;
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let mut img = Array2::<u8>::from_elem((size, size), 0);
+        for (cy, cx) in &centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    if (dy * dy + dx * dx).sqrt() <= 3.0 {
+                        img[[i, j]] = 255;
+                    }
+                }
+            }
+        }
+
+        // Run with Scientific variant.
+        let input = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![ImageInputVariant::Scientific],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("scientific variant batch must succeed");
+        assert_eq!(out.results.len(), 1);
+        // Must produce a valid Df (not error out) — proof that the engine
+        // processed the binary image without Otsu interfering.
+        assert!(
+            out.results[0].fractal_dimension.is_some(),
+            "scientific variant should produce a valid Df, got error: {:?}",
+            out.results[0].error
+        );
+    }
+
+    /// T2.4 triangulation: Scientific variant through autocalibrate path.
+    #[test]
+    fn test_scientific_variant_autocalibrate_path() {
+        let size = 64;
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let mut img = Array2::<u8>::from_elem((size, size), 0);
+        for (cy, cx) in &centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    if (dy * dy + dx * dx).sqrt() <= 3.0 {
+                        img[[i, j]] = 255;
+                    }
+                }
+            }
+        }
+
+        // Autocalibrate with Scientific variant.
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Scientific,
+                ImageInputVariant::Scientific,
+                ImageInputVariant::Scientific,
+            ],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("autocalibrate with scientific variant must succeed");
+        assert!(out.dpo_used > 0.0, "dpo must be positive");
+        assert_eq!(out.autocalibrate_source, AutocalibrateSource::Image0);
     }
 
     #[test]
