@@ -17,11 +17,11 @@
 
 ## Phase 3 — Frontend: FraktalBatchDistributions component
 
-- [ ] T3.1 — Create `FraktalBatchDistributions.tsx` component with props: `images: FraktalBatchImageResult[]`, `totalImages: number` (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T3.2 — Implement 4 Plotly histograms (Df, kf, Rg, npo) in responsive 2×2 grid layout (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T3.3 — Implement Sturges' rule bucket count: `k = clamp(ceil(log2(n) + 1), 3, 30)` per metric (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T3.4 — Handle edge cases: empty data, single value, all-failures with appropriate messages (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T3.5 — vitest: render with mock data, assert 4 histogram Plot elements, edge case message rendering (file: `frontend/src/components/fraktal/FraktalBatchDistributions.test.tsx`)
+- [x] T3.1 — Create `FraktalBatchDistributions.tsx` component with props: `images: FraktalBatchImageResult[]`, `stats?: FraktalBatchStats` (`totalImages` derived from `images.length`)
+- [x] T3.2 — Implement 4 Plotly histograms (Df, kf, Rg, npo) in responsive 2×2 grid (`grid grid-cols-1 md:grid-cols-2`)
+- [x] T3.3 — Implement Sturges' rule bucket count: `k = clamp(ceil(log2(n) + 1), 3, 30)` exposed as `sturgesBuckets` helper
+- [x] T3.4 — Edge cases: all-failures global message + per-metric "not enough" (< 5) + single-value (zero variance) handled by Plotly natively + missing stats fallback computed inline
+- [x] T3.5 — vitest 12 tests passing (sturgesBuckets, happy path, 3 edge cases) + types updated (`rg_nm` optional + `FraktalMetricStats` + `df/kf/rg/npo` blocks in `FraktalBatchStats`)
 
 ## Phase 4 — Frontend: integrate distributions in FraktalBatchSummaryView + Rg column
 

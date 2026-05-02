@@ -681,12 +681,25 @@ export interface FraktalBatchImageResult {
   prefactor: number | null
   r_squared: number | null
   n_particles_counted: number | null
+  /** Radius of gyration in nm. Frente 9: surfaced from engine FraktalResult.
+   *  Optional for backward compat with legacy server responses. */
+  rg_nm?: number | null
   error: string | null
+}
+
+/** Aggregate stats for a single metric across a batch (excludes failed images). */
+export interface FraktalMetricStats {
+  mean: number | null
+  std: number | null
+  median: number | null
+  min: number | null
+  max: number | null
 }
 
 export interface FraktalBatchStats {
   n_images: number
   n_successful: number
+  // Legacy Df-only block (preserved for backward compat).
   mean_df: number | null
   std_df: number | null
   median_df: number | null
@@ -694,6 +707,12 @@ export interface FraktalBatchStats {
   q3_df: number | null
   min_df: number | null
   max_df: number | null
+  // Frente 9: per-metric stats block (additive). May be missing on
+  // responses from servers that haven't been deployed yet.
+  df?: FraktalMetricStats
+  kf?: FraktalMetricStats
+  rg?: FraktalMetricStats
+  npo?: FraktalMetricStats
 }
 
 export interface FraktalBatchHistogram {
