@@ -121,6 +121,9 @@ pub struct BatchImageResult {
     pub dpo_used: f64,
     /// The pixels-per-100nm scale actually used for this image.
     pub pixels_per_100nm_used: f64,
+    /// Radius of gyration in nm, surfaced from `FraktalResult.rg`.
+    /// `None` when the image failed analysis.
+    pub rg_nm: Option<f64>,
     pub error: Option<String>,
 }
 
@@ -314,6 +317,7 @@ fn run_one_image(
                     n_particles_counted: Some(r.npo_visual),
                     dpo_used: dpo,
                     pixels_per_100nm_used: pixels_per_100nm,
+                    rg_nm: Some(r.rg),
                     error: None,
                 },
                 ref status => BatchImageResult {
@@ -324,6 +328,7 @@ fn run_one_image(
                     n_particles_counted: None,
                     dpo_used: dpo,
                     pixels_per_100nm_used: pixels_per_100nm,
+                    rg_nm: None,
                     error: Some(status.message()),
                 },
             }
@@ -348,6 +353,7 @@ fn run_one_image(
                     n_particles_counted: Some(r.npo_visual),
                     dpo_used: dpo,
                     pixels_per_100nm_used: pixels_per_100nm,
+                    rg_nm: Some(r.rg),
                     error: None,
                 },
                 ref status => BatchImageResult {
@@ -358,6 +364,7 @@ fn run_one_image(
                     n_particles_counted: None,
                     dpo_used: dpo,
                     pixels_per_100nm_used: pixels_per_100nm,
+                    rg_nm: None,
                     error: Some(status.message()),
                 },
             }
@@ -395,6 +402,88 @@ mod tests {
     /// primary particles — exercises the autocalibrate failure path.
     fn make_noise_image(size: usize, value: u8) -> Array2<u8> {
         Array2::<u8>::from_elem((size, size), value)
+    }
+
+    // ── Phase 1: rg_nm field in BatchImageResult ────────────────────
+
+    #[test]
+    fn test_batch_image_result_default_rg_nm_is_none() {
+        // T1.4: default BatchImageResult should have rg_nm = None.
+        let result = BatchImageResult {
+            index: 0,
+            fractal_dimension: None,
+            prefactor: None,
+            r_squared: None,
+            n_particles_counted: None,
+            dpo_used: 0.0,
+            pixels_per_100nm_used: 0.0,
+            error: None,
+            rg_nm: None,
+        };
+        assert!(result.rg_nm.is_none(), "default rg_nm must be None");
+    }
+
+    #[test]
+    fn test_successful_batch_has_rg_nm_some() {
+        // T1.4: a successful batch run should produce rg_nm = Some(value)
+        // matching the underlying FraktalResult.rg (which is in nm).
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        assert_eq!(out.results.len(), 1);
+        let r = &out.results[0];
+        assert!(
+            r.fractal_dimension.is_some(),
+            "analysis must succeed for rg_nm to be meaningful"
+        );
+        assert!(
+            r.rg_nm.is_some(),
+            "successful analysis must produce rg_nm = Some(_)"
+        );
+        let rg = r.rg_nm.unwrap();
+        assert!(
+            rg > 0.0,
+            "rg_nm must be positive for a valid analysis, got {}",
+            rg
+        );
+    }
+
+    #[test]
+    fn test_failed_image_has_rg_nm_none() {
+        // T1.4: a failed image (e.g. all-white = no object pixels)
+        // should produce rg_nm = None.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+        let input = BatchInput {
+            images: vec![good, blank],
+            pixels_per_100nm: vec![50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        assert_eq!(out.results.len(), 2);
+        // First image succeeds → rg_nm = Some
+        assert!(out.results[0].rg_nm.is_some(), "good image must have rg_nm");
+        // Second image fails → rg_nm = None
+        assert!(
+            out.results[1].rg_nm.is_none(),
+            "failed image must have rg_nm = None"
+        );
     }
 
     // ── Phase 2 (P2): ImageInputVariant + scientific PNG input ─────
