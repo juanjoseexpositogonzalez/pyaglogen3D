@@ -52,7 +52,7 @@
 
 ## Phase 6 — Tests + docs + Jira close
 
-- [ ] T6.1 — Integration test: synthetic projection (35 primaries, dpo=25nm, scale=80px/100nm → radius 10px), full pipeline, assert detector reports radius within ±10% (aglogen_core/engine/tests/)
-- [ ] T6.2 — Documentation: `docs/fraktal-detector-fix.md` (~80 lines): why, what changed, NMS rationale, scientific PNG path, autocalibrate default, scientific result impact warning (docs/fraktal-detector-fix.md)
-- [ ] T6.3 — CHANGELOG entry under `fraktal-detector-fix` (CHANGELOG.md or docs/CHANGELOG.md)
-- [ ] T6.4 — Close Jira PYA-9 with comment summarizing fix + commit range. Note PYA-13 remains open for bisection UX (cycle B) (Jira)
+- [x] T6.1 — Integration test: synthetic projection (35 primaries, dpo=25nm, scale=80px/100nm → radius 10px), full pipeline, assert detector reports radius within ±10% (backend/tests/integration/test_fraktal_detector_pixel_accuracy.py)
+- [x] T6.2 — Documentation: `docs/fraktal-detector-fix.md` (~80 lines): why, what changed, NMS rationale, scientific PNG path, autocalibrate default, scientific result impact warning (docs/fraktal-detector-fix.md)
+- [x] T6.3 — CHANGELOG entry under `fraktal-detector-fix` (CHANGELOG.md)
+- [x] T6.4 — Close Jira PYA-9 with comment summarizing fix + commit range. Note PYA-13 remains open for bisection UX (cycle B) (Jira)
