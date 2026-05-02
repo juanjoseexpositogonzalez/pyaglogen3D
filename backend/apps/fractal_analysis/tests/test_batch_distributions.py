@@ -308,3 +308,298 @@ class TestBatchDetailRgNm:
         assert resp.status_code == 200
         data = resp.json()
         assert data["rg_nm"] == pytest.approx(145.7)
+
+
+# ===========================================================================
+# T2.3 — Aggregate stats per metric + T2.4 — Failed images excluded
+# ===========================================================================
+
+
+@pytest.mark.django_db
+class TestComputeMetricStats:
+    """T2.3 / T2.4: compute_metric_stats helper — unit tests."""
+
+    def test_basic_stats_for_known_values(self) -> None:
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {
+                "fractal_dimension": 1.7,
+                "prefactor": 1.3,
+                "n_particles_counted": 300,
+                "rg_nm": 150.0,
+                "error": None,
+            },
+            {
+                "fractal_dimension": 1.8,
+                "prefactor": 1.5,
+                "n_particles_counted": 350,
+                "rg_nm": 160.0,
+                "error": None,
+            },
+            {
+                "fractal_dimension": 1.9,
+                "prefactor": 1.4,
+                "n_particles_counted": 400,
+                "rg_nm": 170.0,
+                "error": None,
+            },
+        ]
+        result = compute_metric_stats(images, "rg_nm")
+        assert result is not None
+        assert result["mean"] == pytest.approx(160.0)
+        assert result["median"] == pytest.approx(160.0)
+        assert result["min"] == pytest.approx(150.0)
+        assert result["max"] == pytest.approx(170.0)
+        expected_std = float(np.std([150.0, 160.0, 170.0], ddof=0))
+        assert result["std"] == pytest.approx(expected_std)
+
+    def test_excludes_failed_images(self) -> None:
+        """T2.4: failed images (error or null metric) excluded from stats."""
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {
+                "fractal_dimension": 1.7,
+                "prefactor": 1.3,
+                "n_particles_counted": 300,
+                "rg_nm": 150.0,
+                "error": None,
+            },
+            {
+                "fractal_dimension": None,
+                "prefactor": None,
+                "n_particles_counted": None,
+                "rg_nm": None,
+                "error": "Failed",
+            },
+            {
+                "fractal_dimension": 1.9,
+                "prefactor": 1.4,
+                "n_particles_counted": 400,
+                "rg_nm": 170.0,
+                "error": None,
+            },
+        ]
+        result = compute_metric_stats(images, "rg_nm")
+        assert result is not None
+        # Only 150.0 and 170.0
+        assert result["mean"] == pytest.approx(160.0)
+        assert result["min"] == pytest.approx(150.0)
+        assert result["max"] == pytest.approx(170.0)
+
+    def test_all_null_returns_null_stats(self) -> None:
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {"fractal_dimension": None, "rg_nm": None, "error": "Failed"},
+            {"fractal_dimension": None, "rg_nm": None, "error": "Failed"},
+        ]
+        result = compute_metric_stats(images, "rg_nm")
+        assert result is not None
+        assert result["mean"] is None
+        assert result["std"] is None
+        assert result["median"] is None
+        assert result["min"] is None
+        assert result["max"] is None
+
+    def test_single_value(self) -> None:
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {"fractal_dimension": 1.7, "rg_nm": 150.0, "error": None},
+        ]
+        result = compute_metric_stats(images, "rg_nm")
+        assert result["mean"] == pytest.approx(150.0)
+        assert result["std"] == pytest.approx(0.0)
+        assert result["median"] == pytest.approx(150.0)
+
+    def test_kf_metric(self) -> None:
+        """Stats work for prefactor (kf)."""
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {"prefactor": 1.3, "error": None},
+            {"prefactor": 1.5, "error": None},
+        ]
+        result = compute_metric_stats(images, "prefactor")
+        assert result["mean"] == pytest.approx(1.4)
+
+    def test_npo_metric(self) -> None:
+        """Stats work for n_particles_counted (npo)."""
+        from apps.fractal_analysis.services.batch import compute_metric_stats
+
+        images = [
+            {"n_particles_counted": 300, "error": None},
+            {"n_particles_counted": 400, "error": None},
+        ]
+        result = compute_metric_stats(images, "n_particles_counted")
+        assert result["mean"] == pytest.approx(350.0)
+
+
+@pytest.mark.django_db
+class TestBatchDetailAggregateStats:
+    """T2.3: batch_detail_view includes stats.{kf,rg,npo} block."""
+
+    def test_stats_block_has_kf_rg_npo(self) -> None:
+        """Scenario 8.1: full stats for all four metrics."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": 1.82,
+                    "prefactor": 1.5,
+                    "n_particles_counted": 290,
+                    "rg_nm": 145.7,
+                },
+                {
+                    "fractal_dimension": 1.75,
+                    "prefactor": 1.3,
+                    "n_particles_counted": 350,
+                    "rg_nm": 160.0,
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        assert resp.status_code == 200
+        stats = resp.json()["stats"]
+
+        # kf stats
+        assert "kf" in stats
+        assert stats["kf"]["mean"] == pytest.approx(np.mean([1.4, 1.5, 1.3]))
+        assert stats["kf"]["min"] == pytest.approx(1.3)
+        assert stats["kf"]["max"] == pytest.approx(1.5)
+
+        # rg stats
+        assert "rg" in stats
+        assert stats["rg"]["mean"] == pytest.approx(np.mean([152.3, 145.7, 160.0]))
+        assert stats["rg"]["min"] == pytest.approx(145.7)
+        assert stats["rg"]["max"] == pytest.approx(160.0)
+
+        # npo stats
+        assert "npo" in stats
+        assert stats["npo"]["mean"] == pytest.approx(np.mean([320, 290, 350]))
+
+    def test_stats_failed_images_excluded(self) -> None:
+        """Scenario 8.3: partial failure — per-metric null handling."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": None,
+                    "prefactor": None,
+                    "n_particles_counted": None,
+                    "rg_nm": None,
+                    "error": "Failed",
+                },
+                {
+                    "fractal_dimension": 1.75,
+                    "prefactor": 1.3,
+                    "n_particles_counted": 350,
+                    "rg_nm": 160.0,
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        stats = resp.json()["stats"]
+
+        # rg: computed only over 2 successful values
+        assert stats["rg"]["mean"] == pytest.approx(np.mean([152.3, 160.0]))
+        assert stats["rg"]["min"] == pytest.approx(152.3)
+        assert stats["rg"]["max"] == pytest.approx(160.0)
+
+    def test_all_failed_stats_null(self) -> None:
+        """Scenario 8.2: all images failed → stats are null."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": None,
+                    "prefactor": None,
+                    "n_particles_counted": None,
+                    "rg_nm": None,
+                    "error": "Failed",
+                },
+                {
+                    "fractal_dimension": None,
+                    "prefactor": None,
+                    "n_particles_counted": None,
+                    "rg_nm": None,
+                    "error": "Failed",
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        stats = resp.json()["stats"]
+
+        for metric in ("kf", "rg", "npo"):
+            assert stats[metric]["mean"] is None
+            assert stats[metric]["std"] is None
+            assert stats[metric]["median"] is None
+            assert stats[metric]["min"] is None
+            assert stats[metric]["max"] is None
+
+    def test_backward_compat_legacy_df_fields_preserved(self) -> None:
+        """Scenario 8.4: legacy mean_df, std_df fields still present."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": 1.82,
+                    "prefactor": 1.5,
+                    "n_particles_counted": 290,
+                    "rg_nm": 145.7,
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        stats = resp.json()["stats"]
+
+        # Legacy fields must be present and correct
+        assert "mean_df" in stats
+        assert "std_df" in stats
+        assert "median_df" in stats
+        assert "min_df" in stats
+        assert "max_df" in stats
+        assert "n_images" in stats
+        assert "n_successful" in stats
+        assert stats["mean_df"] == pytest.approx(np.mean([1.78, 1.82]))
+        assert stats["n_successful"] == 2

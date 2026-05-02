@@ -31,6 +31,7 @@ from .services.batch import (
     build_comparison_data,
     compute_batch_statistics,
     compute_histogram,
+    compute_metric_stats,
     detect_sim_id_from_filename,
     extract_per_image_scales,
     extract_scale_from_metadata,
@@ -984,6 +985,9 @@ def batch_detail_view(
         "median_df": batch.median_df,
         "min_df": batch.min_df,
         "max_df": batch.max_df,
+        "kf": compute_metric_stats(images_data, "prefactor"),
+        "rg": compute_metric_stats(images_data, "rg_nm"),
+        "npo": compute_metric_stats(images_data, "n_particles_counted"),
     }
 
     comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)

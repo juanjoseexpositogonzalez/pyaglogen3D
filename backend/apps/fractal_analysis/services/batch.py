@@ -341,6 +341,35 @@ def compute_batch_statistics(results: list[dict]) -> dict:
     return base
 
 
+def compute_metric_stats(images: list[dict], key: str) -> dict:
+    """Compute {mean, std, median, min, max} for a given metric key.
+
+    Filters out ``None`` values (failed images). Returns all-null dict
+    when no valid values exist. Population std (ddof=0).
+    """
+    values = [img[key] for img in images if img.get(key) is not None]
+
+    null_result: dict = {
+        "mean": None,
+        "std": None,
+        "median": None,
+        "min": None,
+        "max": None,
+    }
+
+    if not values:
+        return null_result
+
+    arr = np.array(values, dtype=np.float64)
+    return {
+        "mean": float(np.mean(arr)),
+        "std": float(np.std(arr, ddof=0)),
+        "median": float(np.median(arr)),
+        "min": float(np.min(arr)),
+        "max": float(np.max(arr)),
+    }
+
+
 # ---------------------------------------------------------------------------
 # R8 — Histogram (FD ≥ 10 / Sturges 5-9 / omit < 5)
 # ---------------------------------------------------------------------------
