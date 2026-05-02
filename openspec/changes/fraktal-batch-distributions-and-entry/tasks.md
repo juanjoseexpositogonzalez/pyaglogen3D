@@ -10,7 +10,7 @@
 ## Phase 2 — Backend: response shape adjustments
 
 - [x] T2.1 — Verify `batch_detail_view` returns `rg_nm` per image; add if missing (file: `backend/apps/fractal_analysis/views.py`)
-- [ ] T2.2 — Add `compute_metric_stats(images, key)` helper in batch service (file: `backend/apps/fractal_analysis/services/batch.py`)
+- [x] T2.2 — Add `compute_metric_stats(images, key)` helper in batch service (file: `backend/apps/fractal_analysis/services/batch.py`)
 - [ ] T2.3 — Extend `_build_batch_response` to include aggregate stats {mean, std, median, min, max} for kf, rg, npo metrics (file: `backend/apps/fractal_analysis/views.py`)
 - [ ] T2.4 — Ensure failed images excluded from stats computation (file: `backend/apps/fractal_analysis/services/batch.py`)
 - [ ] T2.5 — pytest integration tests: response shape verification, aggregate correctness, NULL handling for legacy rows (file: `backend/tests/`)

@@ -561,6 +561,7 @@ def _build_batch_response(
                 "prefactor": r.get("prefactor"),
                 "r_squared": r.get("r_squared"),
                 "n_particles_counted": r.get("n_particles_counted"),
+                "rg_nm": r.get("rg_nm"),
                 "error": r.get("error"),
             }
         )
@@ -847,6 +848,7 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
             "prefactor": img.prefactor,
             "r_squared": img.r_squared,
             "n_particles_counted": img.n_particles_counted,
+            "rg_nm": img.rg_nm,
             "error": img.error or None,
         }
         for img in images
@@ -967,6 +969,7 @@ def batch_detail_view(
             "prefactor": img.prefactor,
             "r_squared": img.r_squared,
             "n_particles_counted": img.n_particles_counted,
+            "rg_nm": img.rg_nm,
             "error": img.error or None,
             "dpo_used": img.dpo_used,
         }
@@ -1059,6 +1062,7 @@ def batch_image_detail_view(
             "prefactor": img.prefactor,
             "r_squared": img.r_squared,
             "n_particles_counted": img.n_particles_counted,
+            "rg_nm": img.rg_nm,
             "error": img.error or None,
             "dpo_used": img.dpo_used,
             "pixels_per_100nm": batch.pixels_per_100nm,

@@ -173,3 +173,138 @@ class TestRgNmPersistence:
 
         img.refresh_from_db()
         assert img.rg_nm is None
+
+
+# ===========================================================================
+# T2.2 — batch_detail_view returns rg_nm per image
+# ===========================================================================
+
+
+def _add_images_with_rg(
+    batch: FraktalBatch,
+    data: list[dict],
+) -> list[FraktalBatchImage]:
+    """Add image rows with rg_nm to a batch. Each dict in data has keys:
+    fractal_dimension, prefactor, n_particles_counted, rg_nm, error.
+    """
+    imgs = []
+    for i, d in enumerate(data):
+        imgs.append(
+            FraktalBatchImage.objects.create(
+                batch=batch,
+                index=i,
+                filename=f"img_{i:03d}.png",
+                azimuth=float(i * 10),
+                elevation=0.0,
+                fractal_dimension=d.get("fractal_dimension"),
+                prefactor=d.get("prefactor"),
+                r_squared=d.get("r_squared", 0.99),
+                n_particles_counted=d.get("n_particles_counted"),
+                rg_nm=d.get("rg_nm"),
+                dpo_used=25.0,
+                error=d.get("error", ""),
+                image_png=_make_png(),
+            )
+        )
+    n_successful = sum(1 for d in data if d.get("fractal_dimension") is not None)
+    batch.n_images = len(data)
+    batch.n_successful = n_successful
+    dfs = [
+        d["fractal_dimension"] for d in data if d.get("fractal_dimension") is not None
+    ]
+    if dfs:
+        arr = np.array(dfs)
+        batch.mean_df = float(arr.mean())
+        batch.std_df = float(arr.std(ddof=0))
+        batch.median_df = float(np.median(arr))
+        batch.min_df = float(arr.min())
+        batch.max_df = float(arr.max())
+    batch.save()
+    return imgs
+
+
+@pytest.mark.django_db
+class TestBatchDetailRgNm:
+    """T2.2: batch_detail_view returns rg_nm per image."""
+
+    def test_batch_detail_includes_rg_nm_per_image(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": 1.82,
+                    "prefactor": 1.5,
+                    "n_particles_counted": 290,
+                    "rg_nm": 145.7,
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["images"]) == 2
+        assert data["images"][0]["rg_nm"] == pytest.approx(152.3)
+        assert data["images"][1]["rg_nm"] == pytest.approx(145.7)
+
+    def test_batch_detail_rg_nm_null_for_failed_image(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": None,
+                    "prefactor": None,
+                    "n_particles_counted": None,
+                    "rg_nm": None,
+                    "error": "Failed",
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_batch_detail_url(project.id, batch.id))
+        data = resp.json()
+        assert data["images"][0]["rg_nm"] == pytest.approx(152.3)
+        assert data["images"][1]["rg_nm"] is None
+
+    def test_drill_down_includes_rg_nm(self) -> None:
+        """R3 delta: drill-down image detail also has rg_nm."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 145.7,
+                },
+            ],
+        )
+        client = _authed_client(user)
+
+        resp = client.get(_image_detail_url(project.id, batch.id, 0))
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rg_nm"] == pytest.approx(145.7)
