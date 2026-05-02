@@ -451,6 +451,7 @@ def persist_batch_results(
                 prefactor=result.get("prefactor"),
                 r_squared=result.get("r_squared"),
                 n_particles_counted=result.get("n_particles_counted"),
+                rg_nm=result.get("rg_nm"),
                 dpo_used=dpo_used,
                 error=result.get("error") or "",
                 image_png=png_bytes,

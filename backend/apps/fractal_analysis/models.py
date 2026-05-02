@@ -362,6 +362,13 @@ class FraktalBatchImage(models.Model):
         verbose_name="Scientific PNG bytes",
     )
 
+    # Radius of gyration (nm) — populated from engine result
+    rg_nm = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Radius of gyration (nm)",
+    )
+
     # Which PNG variant was fed to the FRAKTAL engine for this image
     analysis_input_variant = models.CharField(
         max_length=16,
