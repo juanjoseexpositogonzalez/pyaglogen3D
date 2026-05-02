@@ -206,4 +206,19 @@ describe('<FraktalBatchSummaryPage />', () => {
     const link = await screen.findByRole('link', { name: /back to project/i })
     expect(link.getAttribute('href')).toBe('/projects/proj-1')
   })
+
+  // Frente 9 P4: distributions section persists in the summary view.
+  it('renders the Distributions section above the results table', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(
+      <FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />
+    )
+
+    // Distributions heading appears
+    await screen.findByText(/distributions/i)
+    // Section is labeled for accessibility
+    expect(
+      screen.getByRole('region', { name: /metric distributions/i }),
+    ).toBeTruthy()
+  })
 })

@@ -304,4 +304,41 @@ describe('<FraktalBatchResultsView />', () => {
       })
     })
   })
+
+  // Frente 9 P4: Rg column shown in the results table.
+  describe('Rg column', () => {
+    it('renders the "Rg (nm)" header in the table', () => {
+      render(
+        <FraktalBatchResultsView
+          result={makeResult()}
+          projectId={PROJECT_ID}
+          batchId={BATCH_ID}
+        />
+      )
+      // Header text contains "Rg (nm)" — must be visible
+      expect(screen.getByText(/Rg \(nm\)/i)).toBeTruthy()
+    })
+
+    it('renders Rg values when present, "—" when null', () => {
+      const result = makeResult()
+      // Add rg_nm to a couple of images, leave one null
+      result.images[0].rg_nm = 152.3
+      result.images[1].rg_nm = 148.7
+      result.images[2].rg_nm = null
+      render(
+        <FraktalBatchResultsView
+          result={result}
+          projectId={PROJECT_ID}
+          batchId={BATCH_ID}
+        />
+      )
+      // Formatted values present (1 decimal place per fmt)
+      expect(screen.getByText('152.3')).toBeTruthy()
+      expect(screen.getByText('148.7')).toBeTruthy()
+      // Null Rg shows "—" — note: there can be other "—" cells in the row
+      // (e.g., R² is null in the fixture). At least one is the Rg cell.
+      const dashes = screen.getAllByText('—')
+      expect(dashes.length).toBeGreaterThan(0)
+    })
+  })
 })

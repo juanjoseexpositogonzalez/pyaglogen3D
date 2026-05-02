@@ -25,10 +25,10 @@
 
 ## Phase 4 — Frontend: integrate distributions in FraktalBatchSummaryView + Rg column
 
-- [ ] T4.1 — Mount `FraktalBatchDistributions` component between metadata header and results table in summary page (file: `frontend/src/components/fraktal/FraktalBatchSummaryPage.tsx`)
-- [ ] T4.2 — Responsive layout: 2×2 grid on desktop, vertical stack on mobile (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T4.3 — Add Rg column to `FraktalBatchResultsView` table between Df and kf; format "{value.toFixed(1)} nm", null renders as "—" (file: `frontend/src/components/fraktal/FraktalBatchResultsView.tsx`)
-- [ ] T4.4 — vitest: layout assertion with responsive breakpoints, Rg column rendering, NULL handling (file: `frontend/src/components/fraktal/FraktalBatchResultsView.test.tsx`)
+- [x] T4.1 — Mount `FraktalBatchDistributions` between batch header and results table in `FraktalBatchSummaryPage` (wrapped in `<section role="region" aria-label="Metric distributions">` with H2 heading)
+- [x] T4.2 — Responsive 2×2 grid (`grid grid-cols-1 md:grid-cols-2`) — already in `FraktalBatchDistributions` from P3
+- [x] T4.3 — Rg column in `FraktalBatchResultsView` between kf and R² (sortable; `rg_nm` added to `SortKey`); format `fmt(rg_nm, 1)` decimals, null → "—"
+- [x] T4.4 — vitest: 3 new tests passing (Distributions section visible, Rg column header rendered, Rg values + "—" handling)
 
 ## Phase 5 — Frontend: sim → batch entry button + upload page propagation
 

@@ -49,6 +49,7 @@ type SortKey =
   | 'elevation'
   | 'fractal_dimension'
   | 'prefactor'
+  | 'rg_nm'
   | 'r_squared'
   | 'n_particles_counted'
 
@@ -306,6 +307,9 @@ export function FraktalBatchResultsView({
                   <Th onClick={() => handleSort('prefactor')}>
                     kf{sortIcon('prefactor')}
                   </Th>
+                  <Th onClick={() => handleSort('rg_nm')}>
+                    Rg (nm){sortIcon('rg_nm')}
+                  </Th>
                   <Th onClick={() => handleSort('r_squared')}>
                     R²{sortIcon('r_squared')}
                   </Th>
@@ -368,6 +372,14 @@ export function FraktalBatchResultsView({
                         className="block p-2 font-mono"
                       >
                         {fmt(img.prefactor)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2 font-mono"
+                      >
+                        {img.rg_nm != null ? fmt(img.rg_nm, 1) : '—'}
                       </Link>
                     </td>
                     <td className="p-0">

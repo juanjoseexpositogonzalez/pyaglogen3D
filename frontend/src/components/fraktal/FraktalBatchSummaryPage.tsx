@@ -18,6 +18,7 @@ import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { FraktalBatchResultsView } from './FraktalBatchResultsView'
+import { FraktalBatchDistributions } from './FraktalBatchDistributions'
 
 interface Props {
   projectId: string
@@ -106,6 +107,15 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
       <div className="mb-8">
         <h1 className="text-3xl font-bold">Batch Summary</h1>
       </div>
+
+      {/* Frente 9: persistent distributions for Df/kf/Rg/npo. */}
+      <section className="mb-8" aria-label="Metric distributions">
+        <h2 className="text-lg font-semibold mb-3">Distributions</h2>
+        <FraktalBatchDistributions
+          images={data.images}
+          stats={data.stats}
+        />
+      </section>
 
       <FraktalBatchResultsView
         result={data}
