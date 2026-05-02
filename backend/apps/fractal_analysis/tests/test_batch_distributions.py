@@ -603,3 +603,94 @@ class TestBatchDetailAggregateStats:
         assert "n_successful" in stats
         assert stats["mean_df"] == pytest.approx(np.mean([1.78, 1.82]))
         assert stats["n_successful"] == 2
+
+
+@pytest.mark.django_db
+class TestSerializeBatchFromDb:
+    """_serialize_batch_from_db also includes aggregate stats + rg_nm."""
+
+    def test_serialize_includes_rg_nm_and_aggregate_stats(self) -> None:
+        from apps.fractal_analysis.views import _serialize_batch_from_db
+
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _add_images_with_rg(
+            batch,
+            [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                },
+                {
+                    "fractal_dimension": 1.82,
+                    "prefactor": 1.5,
+                    "n_particles_counted": 290,
+                    "rg_nm": 145.7,
+                },
+            ],
+        )
+
+        payload = _serialize_batch_from_db(str(batch.id))
+        assert payload is not None
+
+        # rg_nm per image
+        assert payload["images"][0]["rg_nm"] == pytest.approx(152.3)
+        assert payload["images"][1]["rg_nm"] == pytest.approx(145.7)
+
+        # aggregate stats
+        stats = payload["stats"]
+        assert "kf" in stats
+        assert stats["kf"]["mean"] == pytest.approx(np.mean([1.4, 1.5]))
+        assert "rg" in stats
+        assert stats["rg"]["mean"] == pytest.approx(np.mean([152.3, 145.7]))
+        assert "npo" in stats
+
+        # legacy fields preserved
+        assert "mean_df" in stats
+        assert stats["mean_df"] == pytest.approx(np.mean([1.78, 1.82]))
+
+
+@pytest.mark.django_db
+class TestBuildBatchResponse:
+    """_build_batch_response includes aggregate stats from engine output."""
+
+    def test_build_response_includes_aggregate_stats(self) -> None:
+        from apps.fractal_analysis.views import _build_batch_response
+
+        rust_result = {
+            "results": [
+                {
+                    "fractal_dimension": 1.78,
+                    "prefactor": 1.4,
+                    "r_squared": 0.99,
+                    "n_particles_counted": 320,
+                    "rg_nm": 152.3,
+                    "error": None,
+                },
+                {
+                    "fractal_dimension": 1.82,
+                    "prefactor": 1.5,
+                    "r_squared": 0.98,
+                    "n_particles_counted": 290,
+                    "rg_nm": 145.7,
+                    "error": None,
+                },
+            ],
+            "dpo_used": 25.0,
+        }
+        filenames = ["img_000.png", "img_001.png"]
+
+        payload = _build_batch_response(
+            rust_result, filenames, None, None, 500.0, "metadata"
+        )
+
+        stats = payload["stats"]
+        assert "kf" in stats
+        assert stats["kf"]["mean"] == pytest.approx(np.mean([1.4, 1.5]))
+        assert "rg" in stats
+        assert stats["rg"]["mean"] == pytest.approx(np.mean([152.3, 145.7]))
+        assert "npo" in stats
+        assert stats["npo"]["mean"] == pytest.approx(np.mean([320, 290]))

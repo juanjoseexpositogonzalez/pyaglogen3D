@@ -568,6 +568,9 @@ def _build_batch_response(
         )
 
     stats = compute_batch_statistics(images_out)
+    stats["kf"] = compute_metric_stats(images_out, "prefactor")
+    stats["rg"] = compute_metric_stats(images_out, "rg_nm")
+    stats["npo"] = compute_metric_stats(images_out, "n_particles_counted")
     df_values = [
         e["fractal_dimension"] for e in images_out if e["fractal_dimension"] is not None
     ]
@@ -863,6 +866,9 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         "median_df": batch.median_df,
         "min_df": batch.min_df,
         "max_df": batch.max_df,
+        "kf": compute_metric_stats(images_out, "prefactor"),
+        "rg": compute_metric_stats(images_out, "rg_nm"),
+        "npo": compute_metric_stats(images_out, "n_particles_counted"),
     }
 
     comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)
