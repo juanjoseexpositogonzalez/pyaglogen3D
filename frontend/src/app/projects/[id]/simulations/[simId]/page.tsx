@@ -27,7 +27,7 @@ import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
+import { ArrowLeft, BarChart3, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
@@ -338,6 +338,23 @@ export default function SimulationDetailPage({
               >
                 <Download className="h-4 w-4 mr-2" />
                 {isExporting ? 'Exporting...' : 'Export CSV'}
+              </Button>
+            )}
+            {/* Frente 9 P5: sim → batch FRAKTAL entry point. Pre-fills the
+                upload form via query params so autocalibrate defaults to
+                OFF with the known dpo from this simulation. */}
+            {simulation.status === 'completed' && (
+              <Button
+                variant="outline"
+                onClick={() =>
+                  router.push(
+                    `/projects/${id}/fraktal/batch?origin=simulation&sim_id=${simId}`,
+                  )
+                }
+                aria-label="Analyze projections with FRAKTAL"
+              >
+                <BarChart3 className="h-4 w-4 mr-2" />
+                Analyze projections
               </Button>
             )}
             {showDeleteConfirm ? (

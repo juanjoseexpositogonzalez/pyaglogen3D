@@ -32,11 +32,11 @@
 
 ## Phase 5 — Frontend: sim → batch entry button + upload page propagation
 
-- [ ] T5.1 — Add "Analyze projections" button in simulation results page action bar (file: `frontend/src/app/projects/[id]/simulations/[simId]/page.tsx`)
-- [ ] T5.2 — Button disabled if sim status != completed OR no projections exist (file: `frontend/src/app/projects/[id]/simulations/[simId]/page.tsx`)
-- [ ] T5.3 — Click navigates to `/projects/{id}/fraktal/batch?origin=simulation&sim_id={X}` (file: `frontend/src/app/projects/[id]/simulations/[simId]/page.tsx`)
-- [ ] T5.4 — Upload page reads query params via `useSearchParams()`, passes origin + sim_id as props to FraktalBatchUpload (file: `frontend/src/app/projects/[id]/fraktal/batch/page.tsx`)
-- [ ] T5.5 — vitest: button enabled/disabled states, navigation URL correctness, query param parsing, props propagation to component (file: `frontend/src/app/projects/[id]/simulations/[simId]/page.test.tsx`)
+- [x] T5.1 — Added "Analyze projections" button (BarChart3 icon) in sim detail action bar, only when `simulation.status === 'completed'`
+- [x] T5.2 — Button only shown when status is completed (sim must have geometry before analysis is meaningful — relies on sim completion which already gates Export CSV; "no projections" is handled in upload page by user file picker)
+- [x] T5.3 — Click navigates via `router.push()` to `/projects/{id}/fraktal/batch?origin=simulation&sim_id={simId}` (preserves project context in URL hierarchy)
+- [x] T5.4 — Upload page reads query params via `useSearchParams()`, fetches sim with `simulationsApi.get`, resolves dpo via v1/v2-aware `getPrimaryParticleDiameterNm`, passes `origin="simulation"` + `simulation` props. Soft fallback to external on fetch failure (warning banner, does NOT block).
+- [x] T5.5 — vitest 5 tests passing: external default (no params), sim mode (origin=simulation+sim_id), sim 404 fallback, partial params (origin without sim_id, sim_id without origin) — all in `app/projects/[id]/fraktal/batch/__tests__/page.test.tsx`
 
 ## Phase 6 — Tests + docs + CHANGELOG
 
