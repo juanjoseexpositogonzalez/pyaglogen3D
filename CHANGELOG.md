@@ -1,3 +1,36 @@
+## fraktal-batch-distributions-and-entry (unreleased)
+
+### Added
+
+- **`rg_nm`** (radius of gyration in nm) on per-image batch results: the engine `BatchImageResult` surfaces `rg_nm` from the underlying `FraktalResult.rg`, the binding exposes it in both `analyze_fraktal_batch` and `analyze_fraktal_batch_per_image_scale`, and the backend persists it on `FraktalBatchImage.rg_nm` (additive nullable migration `0010`).
+- **Aggregate stats per metric** in batch detail response: `stats.df`, `stats.kf`, `stats.rg`, `stats.npo` each carry `{mean, std, median, min, max}`. Computed at request time, excludes failed images. Legacy `mean_df`/`std_df`/etc. fields preserved for backward compat.
+- **`FraktalBatchDistributions`** component: 4 Plotly histograms (Df, kf, Rg, npo) in a responsive 2×2 grid. Sturges' rule bucket count clamped to [3, 30]. Per-metric "Not enough data" placeholder for < 5 successes; global "No data" card when all images failed. Mounted in `FraktalBatchSummaryPage` between header and table — distributions are now persistent on every revisit (was "fresh-only" before).
+- **Rg column** in `FraktalBatchResultsView` (sortable, between kf and R²): format `fmt(rg_nm, 1)` decimals nm, null → "—".
+- **"Analyze projections" button** (BarChart3 icon) in `SimulationDetailPage` action bar, visible when `simulation.status === 'completed'`. Click navigates to `/projects/{id}/fraktal/batch?origin=simulation&sim_id={simId}`, finally surfacing the sim-origin Path A pre-fill that frente 8 P5 implemented but left unreachable.
+
+### Changed
+
+- `FraktalBatchPage` (batch upload route) reads `useSearchParams()` and, when `origin=simulation` + `sim_id` are present, fetches the simulation and propagates `origin`/`simulation` props to `FraktalBatchUpload`. Soft fallback to external mode on sim 404 with a warning banner (does NOT block the user).
+
+### Migration
+
+- Run `python manage.py migrate fractal_analysis 0010` after deploy. Additive, nullable, reversible.
+
+### Backward compatibility
+
+- Legacy DB rows without `rg_nm`: API returns `rg_nm: null`; table shows "—"; histograms exclude the row.
+- Legacy server responses without `stats.{kf,rg,npo}`: frontend computes stats client-side as fallback.
+- External ZIP uploads keep prior behavior — `autocalibrate=ON` default, manual dpo input.
+
+### Closes
+
+- Frente 8 P5 reachability gap (sim-origin Path A pre-fill was implemented but had no UI trigger).
+- User-reported "Df distribution disappears when I navigate back" — now persistent in the route-driven summary view.
+
+### Known limitations
+
+- Pure binary 2D projections fed through `input_variants=["scientific"]` may produce `n_particles_counted=1` and identical `rg_nm` across different geometries (engine detector behavior on bypass-Otsu binary inputs). Does NOT affect production pipelines on real projection PNGs. Tracked in engram backlog.
+
 ## fraktal-detector-fix (unreleased)
 
 ### Added
