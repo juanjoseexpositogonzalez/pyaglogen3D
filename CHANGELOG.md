@@ -1,3 +1,35 @@
+## fraktal-detector-fix (unreleased)
+
+### Added
+
+- **`analysis_input_variant`** field on `FraktalBatchImage`: records whether `"scientific"` or `"presentation"` PNG was fed to the FRAKTAL engine for each image.
+- **`origin`** field on `FraktalBatch`: tracks batch provenance (`"simulation"` or `"external"`).
+- **`?origin=simulation&sim_dpo_nm=X`** params on batch upload endpoint: sim-origin batches default to `autocalibrate=OFF` with known dpo.
+- **Toggle UI** for sim-origin batches in upload form: "Using known dpo = X nm from simulation. Override?"
+- **Badge** in drill-down showing analysis input variant ("Scientific (binary)" or "Presentation").
+
+### Changed
+
+- **NMS radius factor 2.0 → 1.0**: resolves packed primaries at delta=1.1 separation that were fused into single peaks.
+- **Peak radius via median over ALL peaks** (was top-30%): eliminates upward bias from fused outliers.
+- **Detector accepts pre-thresholded scientific PNG as input**: when available, skips Otsu segmentation and uses binary image directly (no AA halo).
+- **Sim-origin batches default to `autocalibrate=OFF`**: uses `dpo` from simulation parameters instead of running the detector.
+
+### Migration
+
+- Run `python manage.py migrate fractal_analysis 0008 0009` after deploy.
+
+### Backward compatibility
+
+- Legacy ZIPs without scientific PNGs fall back to presentation (with NMS=1.0 + median, still more accurate than before).
+- External ZIP uploads keep `autocalibrate=ON` default.
+- Legacy batch rows: `analysis_input_variant` defaults to `"presentation"`, `origin` defaults to `"external"`.
+
+### Closes
+
+- Jira **PYA-9**: FRAKTAL detector dpo overestimation (~2-3x) caused by AA halo + NMS fusion + top-30% selection bias.
+- Mitigates **PYA-13** (bisection failures on Df<2 geometries) but does NOT fully resolve — separate cycle pending for graceful degradation.
+
 ## projection-scale-and-render-modes (unreleased)
 
 ### Added
