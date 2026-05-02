@@ -26,11 +26,20 @@ import {
   type FraktalBatchResult,
 } from '@/lib/api'
 
+interface SimulationRef {
+  id: string
+  parameters: { dpo_nm: number }
+}
+
 interface FraktalBatchUploadProps {
   onSuccess: (result: FraktalBatchResult) => void
   onError?: (error: string) => void
   /** Project ID for the project-scoped batch endpoint. */
   projectId?: string
+  /** Batch origin: "simulation" pre-fills dpo from sim; "external" (default) keeps current behavior. */
+  origin?: 'simulation' | 'external'
+  /** Simulation reference — required when origin="simulation". */
+  simulation?: SimulationRef
 }
 
 interface DetectedMetadata {
@@ -49,14 +58,19 @@ export function FraktalBatchUpload({
   onSuccess,
   onError,
   projectId,
+  origin = 'external',
+  simulation,
 }: FraktalBatchUploadProps) {
+  const isSimOrigin = origin === 'simulation' && simulation != null
   const queryClient = useQueryClient()
   const [file, setFile] = useState<File | null>(null)
   const [metadataDetected, setMetadataDetected] =
     useState<DetectedMetadata | null>(null)
 
   const [manualScale, setManualScale] = useState<string>('')
-  const [dpoHint, setDpoHint] = useState<string>('25')
+  const [dpoHint, setDpoHint] = useState<string>(
+    isSimOrigin ? String(simulation!.parameters.dpo_nm) : '25'
+  )
   const [autocalibrateDpo, setAutocalibrateDpo] = useState(false)
   const [algorithm, setAlgorithm] =
     useState<FraktalBatchAlgorithm>('granulated_2012')
@@ -193,6 +207,15 @@ export function FraktalBatchUpload({
             onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
           />
         </div>
+
+        {isSimOrigin && (
+          <Alert>
+            <Sparkles className="h-4 w-4" />
+            <AlertDescription>
+              Using known dpo = {simulation!.parameters.dpo_nm} nm from simulation. Override?
+            </AlertDescription>
+          </Alert>
+        )}
 
         {metadataDetected?.pixels_per_100nm && (
           <Alert>

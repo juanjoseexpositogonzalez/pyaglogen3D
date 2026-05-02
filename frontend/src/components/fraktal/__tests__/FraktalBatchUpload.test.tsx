@@ -284,4 +284,86 @@ describe('<FraktalBatchUpload />', () => {
       expect(fraktalInvalidation).toBeDefined()
     })
   })
+
+  // --- T5.1/T5.2: sim-origin props pre-fill autocalibrate OFF + dpo from sim ---
+  describe('sim-origin path (T5.1 + T5.2)', () => {
+    it('defaults autocalibrate OFF and pre-fills dpo when origin="simulation"', () => {
+      render(
+        <FraktalBatchUpload
+          onSuccess={vi.fn()}
+          origin="simulation"
+          simulation={{ id: 'sim-1', parameters: { dpo_nm: 25 } }}
+        />,
+        { wrapper }
+      )
+
+      // Autocalibrate checkbox should be unchecked (OFF)
+      const autoCheckbox = screen.getByLabelText(/auto-calibrate dpo/i) as HTMLInputElement
+      expect(autoCheckbox.checked).toBe(false)
+
+      // dpo input should be visible and pre-filled with 25
+      const dpoInput = screen.getByLabelText(/dpo \(nm\)/i) as HTMLInputElement
+      expect(dpoInput.value).toBe('25')
+    })
+
+    it('shows sim-origin info banner with literal spec E3.5 text', () => {
+      render(
+        <FraktalBatchUpload
+          onSuccess={vi.fn()}
+          origin="simulation"
+          simulation={{ id: 'sim-1', parameters: { dpo_nm: 25 } }}
+        />,
+        { wrapper }
+      )
+
+      expect(
+        screen.getByText(/Using known dpo = 25 nm from simulation\. Override\?/i)
+      ).toBeTruthy()
+    })
+
+    it('pre-fills dpo with a different sim value (triangulation)', () => {
+      render(
+        <FraktalBatchUpload
+          onSuccess={vi.fn()}
+          origin="simulation"
+          simulation={{ id: 'sim-2', parameters: { dpo_nm: 42.5 } }}
+        />,
+        { wrapper }
+      )
+
+      const dpoInput = screen.getByLabelText(/dpo \(nm\)/i) as HTMLInputElement
+      expect(dpoInput.value).toBe('42.5')
+
+      expect(
+        screen.getByText(/Using known dpo = 42\.5 nm from simulation\. Override\?/i)
+      ).toBeTruthy()
+    })
+  })
+
+  // --- T5.3: external/default path keeps current behavior ---
+  describe('external-origin path (T5.3)', () => {
+    it('defaults autocalibrate OFF with no banner when origin="external"', () => {
+      render(
+        <FraktalBatchUpload onSuccess={vi.fn()} origin="external" />,
+        { wrapper }
+      )
+
+      // Default behavior: autocalibrate checkbox unchecked (current default is false)
+      const autoCheckbox = screen.getByLabelText(/auto-calibrate dpo/i) as HTMLInputElement
+      expect(autoCheckbox.checked).toBe(false)
+
+      // No sim-origin banner
+      expect(screen.queryByText(/Using known dpo/i)).toBeNull()
+    })
+
+    it('defaults to external behavior when origin prop is omitted', () => {
+      render(
+        <FraktalBatchUpload onSuccess={vi.fn()} />,
+        { wrapper }
+      )
+
+      // No sim-origin banner
+      expect(screen.queryByText(/Using known dpo/i)).toBeNull()
+    })
+  })
 })
