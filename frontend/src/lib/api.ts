@@ -666,6 +666,10 @@ export interface FraktalBatchRequest {
   dpo_hint?: number
   algorithm?: FraktalBatchAlgorithm
   sim_id?: string
+  /** Batch origin: "simulation" (from sim results) or "external" (user upload). */
+  origin?: 'simulation' | 'external'
+  /** DPO from simulation parameters — required when origin="simulation". */
+  sim_dpo_nm?: number
 }
 
 export interface FraktalBatchImageResult {
@@ -974,6 +978,12 @@ export const fraktalApi = {
     }
     if (request.sim_id) {
       formData.append('sim_id', request.sim_id)
+    }
+    if (request.origin) {
+      formData.append('origin', request.origin)
+    }
+    if (request.sim_dpo_nm !== undefined) {
+      formData.append('sim_dpo_nm', String(request.sim_dpo_nm))
     }
 
     const batchUrl = options?.projectId

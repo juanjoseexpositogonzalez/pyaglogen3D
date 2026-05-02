@@ -159,6 +159,12 @@ export function FraktalBatchUpload({
       request.sim_id = manualSimId.trim()
     }
 
+    // Wire origin + sim_dpo_nm for backend autocalibrate-default contract (R-DELTA-E3)
+    request.origin = origin
+    if (isSimOrigin) {
+      request.sim_dpo_nm = simulation!.parameters.dpo_nm
+    }
+
     try {
       const result = await fraktalApi.analyzeBatch(request, {
         onProgress: setProgress,

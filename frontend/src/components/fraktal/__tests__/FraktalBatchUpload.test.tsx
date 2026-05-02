@@ -340,6 +340,76 @@ describe('<FraktalBatchUpload />', () => {
     })
   })
 
+  // --- T5.4: origin + sim_dpo_nm wired to API call ---
+  describe('API wiring (T5.4)', () => {
+    async function renderAndSubmitWithMetadata(
+      extraProps: Partial<Parameters<typeof FraktalBatchUpload>[0]> = {}
+    ) {
+      const zip = new JSZip()
+      zip.file('proj_000.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+      zip.file(
+        'metadata.json',
+        JSON.stringify({
+          mode: 'grid',
+          parameters: { pixels_per_100nm: 500.0 },
+        })
+      )
+      const blob = await zip.generateAsync({ type: 'blob' })
+      const file = new File([blob], 'test.zip', { type: 'application/zip' })
+
+      mockAnalyzeBatch.mockResolvedValue({
+        images: [],
+        stats: { n_images: 0, n_successful: 0, mean_df: null, std_df: null, median_df: null, q1_df: null, q3_df: null, min_df: null, max_df: null },
+        histogram: null,
+        comparison: null,
+        calibration: { source: 'manual', pixels_per_100nm: 500, dpo_used: 25, autocalibrate_image: null },
+      })
+
+      render(
+        <FraktalBatchUpload onSuccess={vi.fn()} projectId="proj-42" {...extraProps} />,
+        { wrapper }
+      )
+      const input = screen.getByLabelText(/ZIP file/i) as HTMLInputElement
+      fireEvent.change(input, { target: { files: [file] } })
+
+      await waitFor(() => {
+        expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+      })
+
+      const btn = screen.getByRole('button', { name: /Analyze batch/i })
+      fireEvent.click(btn)
+
+      await waitFor(() => {
+        expect(mockAnalyzeBatch).toHaveBeenCalledTimes(1)
+      })
+
+      return mockAnalyzeBatch.mock.calls[0]
+    }
+
+    it('sends origin="simulation" and sim_dpo_nm when origin is simulation', async () => {
+      const [reqArg] = await renderAndSubmitWithMetadata({
+        origin: 'simulation',
+        simulation: { id: 'sim-1', parameters: { dpo_nm: 25 } },
+      })
+      expect(reqArg.origin).toBe('simulation')
+      expect(reqArg.sim_dpo_nm).toBe(25)
+    })
+
+    it('sends origin="external" and no sim_dpo_nm for external origin', async () => {
+      const [reqArg] = await renderAndSubmitWithMetadata({
+        origin: 'external',
+      })
+      expect(reqArg.origin).toBe('external')
+      expect(reqArg.sim_dpo_nm).toBeUndefined()
+    })
+
+    it('defaults origin to "external" when prop is omitted', async () => {
+      const [reqArg] = await renderAndSubmitWithMetadata()
+      expect(reqArg.origin).toBe('external')
+      expect(reqArg.sim_dpo_nm).toBeUndefined()
+    })
+  })
+
   // --- T5.3: external/default path keeps current behavior ---
   describe('external-origin path (T5.3)', () => {
     it('defaults autocalibrate OFF with no banner when origin="external"', () => {
