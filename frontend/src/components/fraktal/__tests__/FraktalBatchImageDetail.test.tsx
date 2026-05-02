@@ -435,6 +435,42 @@ describe('<FraktalBatchImageDetail />', () => {
     })
   })
 
+  // --- T5.6: batch_origin indicator ---
+  describe('batch_origin indicator (T5.6)', () => {
+    it('shows "Origin: From Simulation" when batch_origin is simulation', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({ batch_origin: 'simulation' })
+      )
+      renderComponent()
+
+      expect(
+        await screen.findByText(/Origin: From Simulation/i)
+      ).toBeTruthy()
+    })
+
+    it('shows "Origin: External upload" when batch_origin is external', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({ batch_origin: 'external' })
+      )
+      renderComponent()
+
+      expect(
+        await screen.findByText(/Origin: External upload/i)
+      ).toBeTruthy()
+    })
+
+    it('does not show origin badge when batch_origin is undefined', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({ batch_origin: undefined })
+      )
+      renderComponent()
+
+      // Wait for data to load
+      await screen.findByText('1.720')
+      expect(screen.queryByText(/Origin:/i)).toBeNull()
+    })
+  })
+
   // --- T6.3: Variant toggle UI ---
   describe('variant toggle (T6.3)', () => {
     it('renders Presentation and Scientific buttons', async () => {
