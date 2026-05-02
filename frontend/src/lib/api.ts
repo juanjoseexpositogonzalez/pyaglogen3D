@@ -787,6 +787,10 @@ export interface FraktalBatchImageDetail {
   sorensen_note: string
   /** Whether a scientific PNG variant exists for this image (P5 backend). */
   has_scientific_png: boolean
+  /** Which input variant was actually fed to the analyzer. */
+  analysis_input_variant?: 'presentation' | 'scientific'
+  /** Batch origin: "simulation" (from sim results) or "external" (user upload). */
+  batch_origin?: 'simulation' | 'external'
 }
 
 interface FraktalBatchStatusProcessing {

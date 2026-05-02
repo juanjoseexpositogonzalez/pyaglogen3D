@@ -299,6 +299,23 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
           )}
         </div>
 
+        {/* Analysis input variant badge + batch origin (T5.5 + T5.6) */}
+        <div className="flex items-center gap-2 mb-4">
+          {data.analysis_input_variant && (
+            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-muted-foreground/20">
+              Analysis input:{' '}
+              {data.analysis_input_variant === 'scientific'
+                ? 'Scientific (binary)'
+                : 'Presentation'}
+            </span>
+          )}
+          {data.batch_origin && (
+            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-muted-foreground/20">
+              Origin: {data.batch_origin === 'simulation' ? 'From Simulation' : 'External upload'}
+            </span>
+          )}
+        </div>
+
         {/* Variant toggle: Presentation / Scientific */}
         <div className="flex items-center gap-2 mb-4">
           <Button

@@ -410,6 +410,31 @@ describe('<FraktalBatchImageDetail />', () => {
     })
   })
 
+  // --- T5.5: analysis_input_variant badge ---
+  describe('analysis_input_variant badge (T5.5)', () => {
+    it('shows "Analysis input: Presentation" badge when variant is presentation', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({ analysis_input_variant: 'presentation' })
+      )
+      renderComponent()
+
+      expect(
+        await screen.findByText(/Analysis input: Presentation/i)
+      ).toBeTruthy()
+    })
+
+    it('shows "Analysis input: Scientific (binary)" badge when variant is scientific', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({ analysis_input_variant: 'scientific' })
+      )
+      renderComponent()
+
+      expect(
+        await screen.findByText(/Analysis input: Scientific \(binary\)/i)
+      ).toBeTruthy()
+    })
+  })
+
   // --- T6.3: Variant toggle UI ---
   describe('variant toggle (T6.3)', () => {
     it('renders Presentation and Scientific buttons', async () => {
