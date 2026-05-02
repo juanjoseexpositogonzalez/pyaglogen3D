@@ -4,7 +4,7 @@
 
 - [x] T1.1 — Add `rg_nm: Option<f64>` field to `BatchImageResult` struct in `aglogen_core/engine/src/fractal/fraktal/batch.rs` (file: `aglogen_core/engine/src/fractal/fraktal/batch.rs`)
 - [x] T1.2 — Wire `rg_nm` from `FraktalResult.rg` (exists per design result.rs:47) into batch wrapper on success, `None` on failure (file: `aglogen_core/engine/src/fractal/fraktal/batch.rs`)
-- [ ] T1.3 — Update Python PyO3 binding to expose `rg_nm` in per-image result dict via `set_item("rg_nm", ...)` (file: `aglogen_core/python/src/lib.rs`)
+- [x] T1.3 — Update Python PyO3 binding to expose `rg_nm` in per-image result dict via `set_item("rg_nm", ...)` (file: `aglogen_core/python/src/lib.rs`)
 - [ ] T1.4 — Cargo test: synthetic batch returns rg_nm with known input (file: `aglogen_core/engine/src/fractal/fraktal/batch.rs`)
 
 ## Phase 2 — Backend: response shape adjustments

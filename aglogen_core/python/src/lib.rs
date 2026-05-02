@@ -1464,6 +1464,7 @@ fn analyze_fraktal_batch<'py>(
         item.set_item("r_squared", r.r_squared)?;
         item.set_item("n_particles_counted", r.n_particles_counted)?;
         item.set_item("dpo_used", r.dpo_used)?;
+        item.set_item("rg_nm", r.rg_nm)?;
         item.set_item("error", r.error.clone())?;
         results_list.append(item)?;
     }
@@ -1596,6 +1597,7 @@ fn analyze_fraktal_batch_per_image_scale<'py>(
         item.set_item("n_particles_counted", r.n_particles_counted)?;
         item.set_item("dpo_used", r.dpo_used)?;
         item.set_item("pixels_per_100nm_used", r.pixels_per_100nm_used)?;
+        item.set_item("rg_nm", r.rg_nm)?;
         item.set_item("error", r.error.clone())?;
         results_list.append(item)?;
     }
@@ -1824,6 +1826,51 @@ mod tests {
         };
         let err = analyze_batch(input).unwrap_err();
         assert!(err.contains("mismatch"));
+    }
+
+    // ── P1-T1.3: rg_nm exposed in batch result ─────────────────────
+
+    #[test]
+    fn batch_result_includes_rg_nm_some_on_success() {
+        // T1.3: verify the engine batch result carries rg_nm for the
+        // binding to forward into the Python dict.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let output =
+            analyze_batch_broadcast(vec![img], 50.0, false, 25.0, BatchAlgorithm::Granulated2012)
+                .expect("batch must succeed");
+
+        assert_eq!(output.results.len(), 1);
+        let rg = output.results[0].rg_nm;
+        assert!(rg.is_some(), "successful image must have rg_nm = Some(_)");
+        assert!(rg.unwrap() > 0.0, "rg_nm must be positive");
+    }
+
+    #[test]
+    fn batch_result_includes_rg_nm_none_on_failure() {
+        // T1.3: verify failed images carry rg_nm = None (binding will
+        // forward as Python None).
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+
+        let output = analyze_batch_broadcast(
+            vec![good, blank],
+            50.0,
+            false,
+            25.0,
+            BatchAlgorithm::Granulated2012,
+        )
+        .expect("batch must succeed");
+
+        assert_eq!(output.results.len(), 2);
+        assert!(output.results[0].rg_nm.is_some(), "good → Some");
+        assert!(output.results[1].rg_nm.is_none(), "blank → None");
     }
 
     // ── T3.3: legacy broadcast backward compat ────────────────────
