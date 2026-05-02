@@ -41,14 +41,14 @@
 
 ## Phase 5 — Frontend: upload UX differentiation
 
-- [ ] T5.1 — Add `origin` and `sim_dpo_nm` props to `FraktalBatchUpload` component (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
-- [ ] T5.2 — Path A (sim-origin): pre-fill `autocalibrateDpo=false`, `dpoHint=simDpoNm`, display "Using known dpo = {X} nm from simulation. Override?" (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
-- [ ] T5.3 — Path B (external ZIP): keep current behavior, default `autocalibrateDpo=true`, `dpoHint=25` (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
-- [ ] T5.4 — Update `fraktalApi.uploadBatch` (or equivalent) to send `origin` and `sim_dpo_nm` when sim-origin (frontend/src/api/)
-- [ ] T5.5 — Add `analysis_input_variant` badge in `FraktalBatchImageDetail.tsx`: "Analysis input: Scientific (binary)" or "Presentation" (frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
-- [ ] T5.6 — vitest: render FraktalBatchUpload with `fromSimulation=true`, assert autocalibrate toggle OFF and dpo pre-filled (frontend/src/components/fraktal/)
-- [ ] T5.7 — vitest: render FraktalBatchUpload with `fromSimulation=false`, assert autocalibrate ON default (frontend/src/components/fraktal/)
-- [ ] T5.8 — vitest: render FraktalBatchImageDetail with `analysis_input_variant="scientific"`, assert badge displays "Scientific (binary)" (frontend/src/components/fraktal/)
+- [x] T5.1 — Add `origin` and `sim_dpo_nm` props to `FraktalBatchUpload` component (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
+- [x] T5.2 — Path A (sim-origin): pre-fill `autocalibrateDpo=false`, `dpoHint=simDpoNm`, display "Using known dpo = {X} nm from simulation. Override?" (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
+- [x] T5.3 — Path B (external ZIP): keep current behavior, default `autocalibrateDpo=true`, `dpoHint=25` (frontend/src/components/fraktal/FraktalBatchUpload.tsx)
+- [x] T5.4 — Update `fraktalApi.uploadBatch` (or equivalent) to send `origin` and `sim_dpo_nm` when sim-origin (frontend/src/api/)
+- [x] T5.5 — Add `analysis_input_variant` badge in `FraktalBatchImageDetail.tsx`: "Analysis input: Scientific (binary)" or "Presentation" (frontend/src/components/fraktal/FraktalBatchImageDetail.tsx)
+- [x] T5.6 — vitest: render FraktalBatchUpload with `fromSimulation=true`, assert autocalibrate toggle OFF and dpo pre-filled (frontend/src/components/fraktal/)
+- [x] T5.7 — vitest: render FraktalBatchUpload with `fromSimulation=false`, assert autocalibrate ON default (frontend/src/components/fraktal/)
+- [x] T5.8 — vitest: render FraktalBatchImageDetail with `analysis_input_variant="scientific"`, assert badge displays "Scientific (binary)" (frontend/src/components/fraktal/)
 
 ## Phase 6 — Tests + docs + Jira close
 
