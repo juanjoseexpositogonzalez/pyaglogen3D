@@ -33,13 +33,16 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 
 **GIVEN** N images in a batch,
 **WHEN** the batch task completes,
-**THEN** N `FraktalBatchImage` rows exist, each with: `batch` (FK), `index` (int, unique together with `batch`), `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `dpo_used`, `error`, `png_bytes` (`BinaryField`), `png_scientific_bytes` (`BinaryField`, nullable), `analysis_input_variant` (string, NOT NULL),
+**THEN** N `FraktalBatchImage` rows exist, each with: `batch` (FK), `index` (int, unique together with `batch`), `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `dpo_used`, `error`, `png_bytes` (`BinaryField`), `png_scientific_bytes` (`BinaryField`, nullable), `rg_nm` (`FloatField`, nullable), `analysis_input_variant` (string, NOT NULL),
 **AND** when the batch ZIP contains a scientific PNG for a direction, `png_scientific_bytes` MUST be populated with the threshold-applied binary bytes (post-render: pixels > 127 → 255, pixels ≤ 127 → 0; output is EXACTLY 0 or 255 per pixel — no tolerance),
 **AND** when the batch ZIP does NOT contain a scientific PNG for a direction (legacy batch), `png_scientific_bytes` MUST be NULL (not empty bytes — NULL),
 **AND** `analysis_input_variant` MUST be set to `"scientific"` when `png_scientific_bytes` was fed to the FRAKTAL engine for this image, and `"presentation"` when `png_bytes` was used instead,
+**AND** `rg_nm` MUST be populated from the engine result when the analyzer returns a valid radius of gyration for that image,
+**AND** `rg_nm` MUST be stored as NULL when the analyzer does not produce an Rg value for that image (analysis failure, or engine version that does not output Rg),
+**AND** existing rows written before this migration have `rg_nm = NULL` and MUST remain fully accessible without error (additive field, no destructive migration),
 **AND** existing rows written before migration `0008` have `analysis_input_variant = "presentation"` as the migration default and MUST remain fully accessible without error (additive field).
 
-(Previously: R2 did not include `analysis_input_variant`; which PNG variant was fed to the analyzer was not recorded anywhere.)
+(Previously: R2 did not include `analysis_input_variant` or `rg_nm`; which PNG variant was fed to the analyzer was not recorded anywhere, and per-image Rg values were not persisted.)
 
 #### Scenario 2.1 — New batch: scientific bytes used → variant recorded
 
@@ -79,10 +82,13 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 **AND** `has_scientific_png` MUST always be present in the response (never omitted, even for legacy rows),
 **AND** the response MUST include `analysis_input_variant: "presentation" | "scientific"`,
 **AND** `analysis_input_variant` MUST always be present (never omitted, never null),
+**AND** the response MUST include `rg_nm: float | null`,
+**AND** `rg_nm` is the stored value from `FraktalBatchImage.rg_nm` — null for legacy rows or failed images,
+**AND** `rg_nm` MUST always be present in the response (never omitted, even for legacy rows),
 **AND** for legacy rows (pre-migration `0008`), `analysis_input_variant` MUST equal `"presentation"`.
 
-(Previously: drill-down response included `has_scientific_png` but not `analysis_input_variant`.
-This delta adds `analysis_input_variant` to the response.)
+(Previously: drill-down response included `has_scientific_png` but not `analysis_input_variant` or `rg_nm`.
+This delta adds both fields to the response.)
 
 #### Scenario 3.1 — New-mode batch: scientific used
 
@@ -192,16 +198,51 @@ This delta adds `analysis_input_variant` to the response.)
 
 **GIVEN** an existing `FraktalBatch`,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/`,
-**THEN** the response body MATCHES the current frente-5 sync 200 response: `{images[], stats, histogram, comparison, calibration_used, calibration_source}`.
+**THEN** the response body MATCHES the current shape: `{images[], stats, histogram, comparison, calibration_used, calibration_source}`,
+**AND** the `stats` block MUST be extended to include per-metric aggregates for all four metrics: `{mean, std, median, min, max}` for each of `df`, `kf`, `rg`, `npo`,
+**AND** aggregate fields for a metric are `null` when `n_successful = 0` for that metric,
+**AND** `images[]` entries MUST include `rg_nm: float | null` per image (R3 delta above),
+**AND** existing fields in `stats` (`n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `q1_df`, `q3_df`, `min_df`, `max_df`) MUST remain present unchanged (backward-compatible extension, not replacement).
+
+(Previously: `stats` contained only Df aggregates; `images[]` entries had no `rg_nm`.)
 
 #### Scenario 8.1 — Sync-origin batch
-- **Expected**: Body shape equivalent to inline sync response for the same input.
+- **Expected**: Body shape equivalent to inline sync response for the same input; stats extended with per-metric aggregates.
 
 #### Scenario 8.2 — Async-origin batch
-- **Expected**: Body shape equivalent to sync, regardless of execution path.
+- **Expected**: Body shape equivalent to sync, regardless of execution path; stats include all four metrics.
 
 #### Scenario 8.3 — Partial-failure batch
-- **Expected**: `images[]` includes failed entries with `error` populated; `stats` computed over successful only.
+- **Expected**: `images[]` includes failed entries with `error` populated; `stats` computed over successful only per metric.
+
+#### Scenario 8.4 — Full stats for all four metrics
+
+- GIVEN a batch with n_successful ≥ 1 for Df, kf, Rg, and npo
+- WHEN the batch detail endpoint is called
+- THEN `stats.kf = {mean, std, median, min, max}` is present
+- AND `stats.rg = {mean, std, median, min, max}` is present (units: nm)
+- AND `stats.npo = {mean, std, median, min, max}` is present
+- AND legacy `stats.mean_df`, `stats.std_df`, etc., are still present unchanged
+
+#### Scenario 8.5 — Rg stats null when all Rg values are null (legacy batch)
+
+- GIVEN a batch where all `FraktalBatchImage.rg_nm = NULL` (pre-migration rows)
+- WHEN the batch detail endpoint is called
+- THEN `stats.rg = {mean: null, std: null, median: null, min: null, max: null}`
+- AND `stats.df` and other metrics are computed normally if their data exists
+
+#### Scenario 8.6 — Partial failure: per-metric null handling
+
+- GIVEN a batch of 10 images where 3 have null Rg but only 1 has null Df
+- WHEN the batch detail endpoint is called
+- THEN `stats.rg` is computed over the 7 non-null Rg values
+- AND `stats.df` (and legacy `mean_df` etc.) computed over 9 non-null Df values
+
+#### Scenario 8.7 — Backward compat: legacy client only reads df stats
+
+- GIVEN a client that reads only `stats.mean_df`, `stats.std_df`, `stats.n_successful`
+- WHEN the batch detail endpoint returns the new shape
+- THEN the client reads its fields without error; new fields are additive and ignorable
 
 ### R9. Persisted PNG matches the analyzer-rendered image (round-trip)
 
@@ -294,4 +335,87 @@ only and SHOULD NOT be relied upon for new batch task code.
 - WHEN a drill-down request hits a row created before the migration (column default fills in)
 - THEN HTTP 200; `analysis_input_variant = "presentation"`; no AttributeError or column error
 
-<!-- Last sync: 2026-05-02 from change fraktal-detector-fix -->
+---
+
+### R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
+
+**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
+**WHEN** migration `0008_add_analysis_input_variant_field.py` is applied,
+**THEN** a NOT NULL `CharField` (or equivalent string column) `analysis_input_variant` with
+`default="presentation"` MUST be added to the `fractal_analysis_fraktalbatchimage` table,
+**AND** all existing rows MUST have `analysis_input_variant = "presentation"` after the migration
+(no backfill required — the column default provides this value),
+**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
+**AND** the migration MUST be reversible: the reverse operation drops only `analysis_input_variant`
+and restores the pre-migration table state without data loss in any other column,
+**AND** new rows inserted after migration MUST explicitly set `analysis_input_variant` to either
+`"scientific"` or `"presentation"` — the default `"presentation"` is a fallback for legacy rows
+only and SHOULD NOT be relied upon for new batch task code.
+
+#### Scenario H.1 — Forward migration on production rows
+
+- GIVEN a database with 500 existing `FraktalBatchImage` rows
+- WHEN `manage.py migrate fractal_analysis 0008` runs
+- THEN all 500 rows gain `analysis_input_variant = "presentation"` (column default)
+- AND migration completes without error
+- AND all rows remain queryable via drill-down and PNG endpoints
+
+#### Scenario H.2 — Reverse migration
+
+- GIVEN migration `0008` has been applied
+- WHEN `manage.py migrate fractal_analysis 0007` runs (reverse)
+- THEN the `analysis_input_variant` column is dropped
+- AND all other columns and data are intact
+- AND HTTP endpoints that do not reference `analysis_input_variant` continue to work
+
+#### Scenario H.3 — New batch after migration: variant explicitly set
+
+- GIVEN migration `0008` is applied and a new-mode ZIP is submitted
+- WHEN the batch task stores results
+- THEN new rows with scientific input have `analysis_input_variant = "scientific"` (explicit, not from default)
+- AND new rows with presentation fallback have `analysis_input_variant = "presentation"` (explicit)
+- AND old pre-migration rows still have `analysis_input_variant = "presentation"` (from default)
+
+#### Scenario H.4 — Drill-down during rolling deploy (migration window)
+
+- GIVEN migration `0008` is applied while the app is serving requests
+- WHEN a drill-down request hits a row created before the migration (column default fills in)
+- THEN HTTP 200; `analysis_input_variant = "presentation"`; no AttributeError or column error
+
+---
+
+### R-DELTA-I. Migration adds nullable rg_nm column to FraktalBatchImage
+
+**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
+**WHEN** migration `0009_add_rg_nm_field.py` (or equivalent) is applied,
+**THEN** a nullable `FloatField` column `rg_nm` MUST be added to the
+`fractal_analysis_fraktalbatchimage` table,
+**AND** all existing rows MUST have `rg_nm = NULL` after the migration (no backfill),
+**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
+**AND** migration MUST be reversible: the reverse drops only `rg_nm` and restores the
+pre-migration state without data loss in any other column.
+
+#### Scenario I.1 — Forward migration on production rows
+
+- GIVEN a database with existing `FraktalBatchImage` rows
+- WHEN the `rg_nm` migration is applied
+- THEN all existing rows gain `rg_nm = NULL`
+- AND the migration completes without error
+- AND all rows remain queryable via drill-down and list endpoints
+
+#### Scenario I.2 — Reverse migration
+
+- GIVEN the `rg_nm` migration has been applied
+- WHEN the reverse migration runs
+- THEN the `rg_nm` column is dropped
+- AND all other columns and data are intact
+- AND endpoints that do not reference `rg_nm` continue to work
+
+#### Scenario I.3 — New batch after migration: rg_nm stored
+
+- GIVEN the migration is applied and a new batch is submitted
+- WHEN the batch task stores results
+- THEN new `FraktalBatchImage` rows have `rg_nm` populated (non-null for successful images)
+- AND old rows (pre-migration) still have `rg_nm = NULL`
+
+<!-- Last sync: 2026-05-03 from change fraktal-batch-distributions-and-entry -->
