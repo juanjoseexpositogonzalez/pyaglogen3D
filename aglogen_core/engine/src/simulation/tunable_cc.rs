@@ -1806,6 +1806,250 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Comprehensive seed type edge cases (T3.4)
+    // ---------------------------------------------------------------
+
+    /// T3.4 — Monomers default: N=10 → 10 individual monomers.
+    #[test]
+    fn test_seed_monomers_default() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 10,
+            seed_type: SeedType::Monomers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+
+        assert_eq!(clusters.len(), 10, "Monomers N=10 → 10 clusters");
+        for (i, c) in clusters.iter().enumerate() {
+            assert_eq!(c.n_particles(), 1, "Cluster {i} must be a monomer");
+        }
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 10);
+    }
+
+    /// T3.4 — N=1 all modes → 1 monomer each.
+    #[test]
+    fn test_seed_n_1_all_modes() {
+        use crate::common::rng::create_rng;
+
+        for seed_type in [SeedType::Monomers, SeedType::Dimers, SeedType::Trimers] {
+            let mut rng = create_rng(42);
+            let params = TunableCcParams {
+                n_particles: 1,
+                seed_type,
+                ..Default::default()
+            };
+            let clusters = initialize_seed_clusters(&params, &mut rng);
+
+            assert_eq!(clusters.len(), 1, "N=1 with {seed_type:?} → 1 cluster");
+            assert_eq!(
+                clusters[0].n_particles(),
+                1,
+                "N=1 with {seed_type:?} → 1 monomer"
+            );
+        }
+    }
+
+    /// T3.4 — N=2 Dimers → 1 dimer.
+    #[test]
+    fn test_seed_n_2_dimers_via_params() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 2,
+            seed_type: SeedType::Dimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "Dimers N=2 → 1 dimer");
+        assert_eq!(clusters[0].n_particles(), 2);
+    }
+
+    /// T3.4 — N=2 Trimers → 1 dimer (fallback).
+    #[test]
+    fn test_seed_n_2_trimers_via_params() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 2,
+            seed_type: SeedType::Trimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "Trimers N=2 → 1 dimer (fallback)");
+        assert_eq!(clusters[0].n_particles(), 2);
+    }
+
+    /// T3.4 — N=4 all modes.
+    #[test]
+    fn test_seed_n_4_all_modes() {
+        use crate::common::rng::create_rng;
+
+        // Monomers: 4 monomers
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 4,
+            seed_type: SeedType::Monomers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 4, "Monomers N=4 → 4 clusters");
+        assert!(clusters.iter().all(|c| c.n_particles() == 1));
+
+        // Dimers: 2 dimers
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 4,
+            seed_type: SeedType::Dimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 2, "Dimers N=4 → 2 dimers");
+        assert!(clusters.iter().all(|c| c.n_particles() == 2));
+
+        // Trimers: 1 trimer + 1 monomer
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 4,
+            seed_type: SeedType::Trimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 2, "Trimers N=4 → 1 trimer + 1 monomer");
+        assert_eq!(clusters[0].n_particles(), 3);
+        assert_eq!(clusters[1].n_particles(), 1);
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 4);
+    }
+
+    /// T3.4 — N=7 all modes.
+    #[test]
+    fn test_seed_n_7_all_modes() {
+        use crate::common::rng::create_rng;
+
+        // Monomers: 7 monomers
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 7,
+            seed_type: SeedType::Monomers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 7);
+        assert!(clusters.iter().all(|c| c.n_particles() == 1));
+
+        // Dimers: 3 dimers + 1 monomer
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 7,
+            seed_type: SeedType::Dimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 4, "Dimers N=7 → 3 dimers + 1 monomer");
+        for i in 0..3 {
+            assert_eq!(clusters[i].n_particles(), 2);
+        }
+        assert_eq!(clusters[3].n_particles(), 1);
+
+        // Trimers: 2 trimers + 1 monomer
+        let mut rng = create_rng(42);
+        let params = TunableCcParams {
+            n_particles: 7,
+            seed_type: SeedType::Trimers,
+            ..Default::default()
+        };
+        let clusters = initialize_seed_clusters(&params, &mut rng);
+        assert_eq!(clusters.len(), 3, "Trimers N=7 → 2 trimers + 1 monomer");
+        assert_eq!(clusters[0].n_particles(), 3);
+        assert_eq!(clusters[1].n_particles(), 3);
+        assert_eq!(clusters[2].n_particles(), 1);
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 7);
+    }
+
+    /// T3.4 — Regression: Monomers behavior unchanged (backward compat R6).
+    /// Verify that default params still produce all monomers in the same way.
+    #[test]
+    fn test_monomers_backward_compat_regression() {
+        use crate::common::rng::create_rng;
+
+        let mut rng1 = create_rng(42);
+        let params_default = TunableCcParams {
+            n_particles: 20,
+            ..Default::default()
+        };
+        let clusters_default = initialize_seed_clusters(&params_default, &mut rng1);
+
+        let mut rng2 = create_rng(42);
+        let params_explicit = TunableCcParams {
+            n_particles: 20,
+            seed_type: SeedType::Monomers,
+            ..Default::default()
+        };
+        let clusters_explicit = initialize_seed_clusters(&params_explicit, &mut rng2);
+
+        assert_eq!(clusters_default.len(), clusters_explicit.len());
+        assert_eq!(clusters_default.len(), 20);
+
+        // Both should produce identical monomer clusters (same RNG seed)
+        for (i, (c1, c2)) in clusters_default
+            .iter()
+            .zip(clusters_explicit.iter())
+            .enumerate()
+        {
+            assert_eq!(
+                c1.n_particles(),
+                c2.n_particles(),
+                "Cluster {i} size mismatch"
+            );
+            assert_eq!(c1.n_particles(), 1, "Must be monomer");
+        }
+    }
+
+    /// T3.4 — Dimer particles are within reasonable bounds (not at infinity).
+    #[test]
+    fn test_seed_dimers_particles_bounded() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_dimers(10, rp, &mut rng);
+
+        for (i, c) in clusters.iter().enumerate() {
+            for (j, p) in c.particles.iter().enumerate() {
+                let dist_from_origin = p.center.length();
+                assert!(
+                    dist_from_origin <= 4.0 * rp + 1e-10,
+                    "Dimer {i} particle {j} too far from origin: {dist_from_origin}"
+                );
+            }
+        }
+    }
+
+    /// T3.4 — Trimer particles are within reasonable bounds.
+    #[test]
+    fn test_seed_trimers_particles_bounded() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_trimers(9, rp, &mut rng);
+
+        for (i, c) in clusters.iter().enumerate() {
+            for (j, p) in c.particles.iter().enumerate() {
+                let dist_from_origin = p.center.length();
+                assert!(
+                    dist_from_origin <= 4.0 * rp + 1e-10,
+                    "Trimer {i} particle {j} too far from origin: {dist_from_origin}"
+                );
+            }
+        }
+    }
+
+    // ---------------------------------------------------------------
     // COM-distance formula tests (R1 of cc-tunable-aggregation spec)
     // ---------------------------------------------------------------
 
