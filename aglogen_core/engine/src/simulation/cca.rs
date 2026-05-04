@@ -355,6 +355,9 @@ pub fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
         acylindricity: inertia.acylindricity,
         principal_moments: inertia.principal_moments,
         principal_axes: inertia.principal_axes,
+        tunable_merges: 0,
+        ballistic_merges: 0,
+        max_retries_per_merge: 0,
     }
 }
 

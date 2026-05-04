@@ -527,6 +527,9 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
             acylindricity: 0.0,
             principal_moments: [0.0, 0.0, 0.0],
             principal_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            tunable_merges: 0,
+            ballistic_merges: 0,
+            max_retries_per_merge: 0,
         };
     }
 
@@ -609,6 +612,9 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
         acylindricity: inertia.acylindricity,
         principal_moments: inertia.principal_moments,
         principal_axes: inertia.principal_axes,
+        tunable_merges: 0,
+        ballistic_merges: 0,
+        max_retries_per_merge: 0,
     }
 }
 

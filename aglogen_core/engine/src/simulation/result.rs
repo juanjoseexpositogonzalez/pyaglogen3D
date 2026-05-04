@@ -1,9 +1,7 @@
 //! Simulation result types.
 
-
 /// Python wrapper for simulation results.
 #[derive(Clone)]
-
 
 /// Internal simulation result (before conversion to Python).
 pub struct SimulationResult {
@@ -24,7 +22,13 @@ pub struct SimulationResult {
     pub acylindricity: f64,
     pub principal_moments: [f64; 3],
     pub principal_axes: [[f64; 3]; 3],
+    // CC-tunable diagnostic metadata (R7 spec)
+    /// Count of merge steps completed via tunable geometry.
+    pub tunable_merges: usize,
+    /// Count of merge steps that fell back to ballistic.
+    pub ballistic_merges: usize,
+    /// Highest retry count observed across all merge steps.
+    pub max_retries_per_merge: usize,
 }
 
-impl SimulationResult {
-}
+impl SimulationResult {}

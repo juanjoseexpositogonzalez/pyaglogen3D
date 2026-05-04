@@ -11,8 +11,8 @@
 
 - [x] T2.1 — Replace single-axis rotation with uniform spherical sampling (azimuth φ∈[0,2π), elevation θ=arcsin(U(−1,1))) for initial CoM direction in `position_clusters_for_contact` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [x] T2.2 — Add `max_merge_retries` field (default 100) to `CcTunableConfig` / `TunableCcParams` struct (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
-- [ ] T2.3 — Refactor merge loop: retry with new pair on geometric failure, ballistic fallback only after exhaustion of retries (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
-- [ ] T2.4 — Track and log retry statistics in result metadata: `tunable_merges`, `ballistic_merges`, `max_retries_per_merge` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T2.3 — Refactor merge loop: retry with new pair on geometric failure, ballistic fallback only after exhaustion of retries (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T2.4 — Track and log retry statistics in result metadata: `tunable_merges`, `ballistic_merges`, `max_retries_per_merge` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [ ] T2.5 — Cargo tests: rotation isotropy (chi² test on 10k samples), retry counter verification, ballistic fallback after exhaustion (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 
 ## Phase 3 — Engine: seed types Monomers/Dimers/Trimers

@@ -394,6 +394,9 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         acylindricity: inertia.acylindricity,
         principal_moments: inertia.principal_moments,
         principal_axes: inertia.principal_axes,
+        tunable_merges: 0,
+        ballistic_merges: 0,
+        max_retries_per_merge: 0,
     }
 }
 
