@@ -147,3 +147,129 @@ fn smoke_cc_tunable_moderate_df() {
         result.fractal_dimension, result.prefactor, result.tunable_merges, result.ballistic_merges,
     );
 }
+
+/// Diagnostic: does seed_type=Dimers help at low Df targets?
+///
+/// Frente 10 P6 finding: Monomers seed at target Df=1.6 stays near ballistic
+/// limit (~Df=2.0) because the merge loop rejects most tunable attempts.
+/// FZR canonical uses pre-built dimers/trimers as initial sub-clusters,
+/// which gives the algorithm more geometric flexibility from step 1.
+///
+/// This test runs 5 seeds at target=(Df=1.6, kf=1.7, N=350) with seed_type=
+/// Dimers, prints results, and only asserts non-degenerate output (sanity).
+/// If mean Df converges within ±10% of target, we know the workaround for
+/// low-Df targets is to use Dimers; if not, the geometry constraint is
+/// deeper and unrelated to seed type.
+#[test]
+fn diagnostic_dimers_at_low_df_target() {
+    let target_df = 1.6;
+    let target_kf = 1.7;
+    let n_particles = 350;
+
+    let mut df_results = Vec::new();
+    let mut kf_results = Vec::new();
+
+    eprintln!(
+        "\n=== DIAGNOSTIC: seed_type=Dimers at Df={} kf={} N={} ===",
+        target_df, target_kf, n_particles
+    );
+
+    for seed in 0..5u64 {
+        let params = TunableCcParams {
+            n_particles,
+            target_df,
+            target_kf,
+            radius_min: 12.5,
+            radius_max: 12.5,
+            seed_type: SeedType::Dimers,
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, seed, None);
+
+        eprintln!(
+            "  seed {}: Df={:.3}, kf={:.3} (tunable={}, ballistic={})",
+            seed,
+            result.fractal_dimension,
+            result.prefactor,
+            result.tunable_merges,
+            result.ballistic_merges,
+        );
+
+        df_results.push(result.fractal_dimension);
+        kf_results.push(result.prefactor);
+    }
+
+    let mean_df: f64 = df_results.iter().sum::<f64>() / 5.0;
+    let mean_kf: f64 = kf_results.iter().sum::<f64>() / 5.0;
+    let df_error = (mean_df - target_df).abs() / target_df;
+    let kf_error = (mean_kf - target_kf).abs() / target_kf;
+
+    eprintln!(
+        "Dimers @ Df=1.6: mean Df={:.3} (err {:.1}%), mean kf={:.3} (err {:.1}%)",
+        mean_df,
+        df_error * 100.0,
+        mean_kf,
+        kf_error * 100.0,
+    );
+
+    // Sanity only — no convergence claim.
+    assert!(mean_df > 1.0 && mean_df < 3.0, "Df sanity range");
+}
+
+/// Diagnostic: same as above but with seed_type=Trimers.
+#[test]
+fn diagnostic_trimers_at_low_df_target() {
+    let target_df = 1.6;
+    let target_kf = 1.7;
+    let n_particles = 350;
+
+    let mut df_results = Vec::new();
+    let mut kf_results = Vec::new();
+
+    eprintln!(
+        "\n=== DIAGNOSTIC: seed_type=Trimers at Df={} kf={} N={} ===",
+        target_df, target_kf, n_particles
+    );
+
+    for seed in 0..5u64 {
+        let params = TunableCcParams {
+            n_particles,
+            target_df,
+            target_kf,
+            radius_min: 12.5,
+            radius_max: 12.5,
+            seed_type: SeedType::Trimers,
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, seed, None);
+
+        eprintln!(
+            "  seed {}: Df={:.3}, kf={:.3} (tunable={}, ballistic={})",
+            seed,
+            result.fractal_dimension,
+            result.prefactor,
+            result.tunable_merges,
+            result.ballistic_merges,
+        );
+
+        df_results.push(result.fractal_dimension);
+        kf_results.push(result.prefactor);
+    }
+
+    let mean_df: f64 = df_results.iter().sum::<f64>() / 5.0;
+    let mean_kf: f64 = kf_results.iter().sum::<f64>() / 5.0;
+    let df_error = (mean_df - target_df).abs() / target_df;
+    let kf_error = (mean_kf - target_kf).abs() / target_kf;
+
+    eprintln!(
+        "Trimers @ Df=1.6: mean Df={:.3} (err {:.1}%), mean kf={:.3} (err {:.1}%)",
+        mean_df,
+        df_error * 100.0,
+        mean_kf,
+        kf_error * 100.0,
+    );
+
+    assert!(mean_df > 1.0 && mean_df < 3.0, "Df sanity range");
+}

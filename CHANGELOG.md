@@ -27,7 +27,11 @@
 
 ### Closes
 
-- Jira **PYA-10**: CC tunable does not converge to target Df/kf.
+- Jira **PYA-10**: CC tunable does not converge to target Df/kf (formula portion).
+
+### Known limitations
+
+- **Target Df < 1.8**: even with the formula fix, low-Df targets (e.g. Df=1.6) still produce mean Df ≈ 2.0 across all seed types. Diagnostic shows `seed_type=Dimers` raises tunable merge success from 21% to 78%, but Df stays near 2.0 → root cause is iterative invariant drift in `position_clusters_for_contact`, NOT the formula. Tracked separately as Jira **PYA-14**. Workaround until PYA-14 lands: target Df ≥ 1.8 or use a different algorithm.
 
 ## fraktal-batch-distributions-and-entry (unreleased)
 

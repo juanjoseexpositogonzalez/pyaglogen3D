@@ -100,11 +100,34 @@ An integration test (`integration_cc_tunable.rs`) includes:
 
 ## Known limitations
 
-The CC tunable algorithm converges well for Df ≥ 1.8 but struggles at
-lower Df targets (e.g. 1.6) where the required COM distance exceeds
-the sum of bounding radii for most cluster pairs, forcing excessive
-ballistic fallback.  The formula fix is mathematically correct (all
-unit tests pass, PC cross-validation holds), but the merge loop
-geometry constraints need further algorithmic improvement — either
-adaptive bounding-sphere expansion, cluster splitting heuristics, or
-progressive target relaxation.
+The CC tunable algorithm converges well for Df ≥ 1.8 but **does not
+converge to targets Df < 1.8** even after this fix.  Diagnostic
+results from the integration tests (`integration_cc_tunable.rs`):
+
+| Seed type | Target Df=1.6 result | Tunable merges | Ballistic |
+| --------- | -------------------- | -------------- | --------- |
+| Monomers  | mean Df ≈ 2.03 (27% err) | ~21%       | ~80%      |
+| Dimers    | mean Df ≈ 1.96 (23% err) | ~78%       | ~22%      |
+| Trimers   | mean Df ≈ 2.08 (30% err) | ~58%       | ~42%      |
+
+Note: `seed_type=Dimers` raises tunable merge success from ~21% to
+~78%, confirming the formula fix works.  But the resulting Df stays
+near 2.0.  This means the issue is **not** the ballistic fallback
+alone — the merge process itself does not preserve the target Df
+invariant across iterative cluster merges.
+
+Hypothesis: `position_clusters_for_contact` computes the correct
+COM distance per merge step, but the iterative process drifts because
+each merge recomputes from the partial aggregate's measured Rg
+instead of enforcing a global invariant on the final aggregate.
+
+This is tracked as a follow-up Jira issue (PYA-14) for a separate
+SDD cycle.  The formula fix here is mathematically correct (all
+unit tests pass, PC cross-validation holds) and provides clear
+diagnostic visibility (`tunable_merges`, `ballistic_merges`,
+`max_retries_per_merge` in the simulation result) to help debug
+the remaining algorithmic issue.
+
+**Recommended workaround for users targeting Df < 1.8**: until
+PYA-14 is resolved, set the target Df to ≥ 1.8 OR use a different
+algorithm (e.g. ballistic CC with manually tuned parameters).
