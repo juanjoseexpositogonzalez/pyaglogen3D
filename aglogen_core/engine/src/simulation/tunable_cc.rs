@@ -1685,6 +1685,127 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Trimers initialization (R4 scenarios 4.4, 4.5)
+    // ---------------------------------------------------------------
+
+    /// T3.3 — Trimers N=9: 3 trimers, each size 3, total 9 particles.
+    #[test]
+    fn test_seed_trimers_n_div3() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_trimers(9, rp, &mut rng);
+
+        assert_eq!(clusters.len(), 3, "N=9 trimers → 3 clusters");
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 9, "Total particles must be 9");
+
+        for (i, c) in clusters.iter().enumerate() {
+            assert_eq!(c.n_particles(), 3, "Cluster {i} must be a trimer (size 3)");
+            // Verify collinear: particles at 0, 2·rp, 4·rp along same direction
+            let d01 = c.particles[0].center.distance_to(&c.particles[1].center);
+            let d12 = c.particles[1].center.distance_to(&c.particles[2].center);
+            let d02 = c.particles[0].center.distance_to(&c.particles[2].center);
+            assert!(
+                (d01 - 2.0 * rp).abs() < 1e-10,
+                "Trimer {i}: d(0,1)={d01:.10}, expected {}",
+                2.0 * rp
+            );
+            assert!(
+                (d12 - 2.0 * rp).abs() < 1e-10,
+                "Trimer {i}: d(1,2)={d12:.10}, expected {}",
+                2.0 * rp
+            );
+            assert!(
+                (d02 - 4.0 * rp).abs() < 1e-10,
+                "Trimer {i}: d(0,2)={d02:.10}, expected {} (collinear check)",
+                4.0 * rp
+            );
+        }
+    }
+
+    /// T3.3 — Trimers N=7: 2 trimers + 1 monomer.
+    #[test]
+    fn test_seed_trimers_n_mod3_1() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters = build_trimers(7, 1.0, &mut rng);
+
+        assert_eq!(
+            clusters.len(),
+            3,
+            "N=7 trimers → 2 trimers + 1 monomer = 3 clusters"
+        );
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 7);
+
+        assert_eq!(clusters[0].n_particles(), 3, "First cluster is a trimer");
+        assert_eq!(clusters[1].n_particles(), 3, "Second cluster is a trimer");
+        assert_eq!(
+            clusters[2].n_particles(),
+            1,
+            "Third cluster is a monomer (leftover)"
+        );
+    }
+
+    /// T3.3 — Trimers N=8: 2 trimers + 1 dimer.
+    #[test]
+    fn test_seed_trimers_n_mod3_2() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_trimers(8, rp, &mut rng);
+
+        assert_eq!(
+            clusters.len(),
+            3,
+            "N=8 trimers → 2 trimers + 1 dimer = 3 clusters"
+        );
+        let total: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total, 8);
+
+        assert_eq!(clusters[0].n_particles(), 3, "First cluster is a trimer");
+        assert_eq!(clusters[1].n_particles(), 3, "Second cluster is a trimer");
+        assert_eq!(
+            clusters[2].n_particles(),
+            2,
+            "Third cluster is a dimer (leftover 2)"
+        );
+
+        // Verify leftover dimer has touching particles
+        let dimer = &clusters[2];
+        let dist = dimer.particles[0]
+            .center
+            .distance_to(&dimer.particles[1].center);
+        assert!(
+            (dist - 2.0 * rp).abs() < 1e-10,
+            "Leftover dimer distance should be 2·rp, got {dist}"
+        );
+    }
+
+    /// T3.3 — Trimers N=2: fallback to 1 dimer (locked decision #3).
+    #[test]
+    fn test_seed_trimers_n_2_fallback() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters = build_trimers(2, 1.0, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "N=2 trimers → 1 dimer (fallback)");
+        assert_eq!(clusters[0].n_particles(), 2);
+    }
+
+    /// T3.3 — Trimers N=1: fallback to 1 monomer.
+    #[test]
+    fn test_seed_trimers_n_1() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters = build_trimers(1, 1.0, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "N=1 trimers → 1 monomer");
+        assert_eq!(clusters[0].n_particles(), 1);
+    }
+
+    // ---------------------------------------------------------------
     // COM-distance formula tests (R1 of cc-tunable-aggregation spec)
     // ---------------------------------------------------------------
 
