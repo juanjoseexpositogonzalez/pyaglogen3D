@@ -1160,9 +1160,28 @@ fn run_tunable(
     Ok(result.into())
 }
 
+/// Parse a Python string into the engine `SeedType` enum.
+///
+/// Accepts "monomers" (default / None), "dimers", "trimers".
+/// Returns `Err(String)` for unrecognized values.
+fn parse_seed_type(
+    value: Option<&str>,
+) -> Result<aglogen_engine::simulation::tunable_cc::SeedType, String> {
+    use aglogen_engine::simulation::tunable_cc::SeedType;
+    match value {
+        None | Some("monomers") => Ok(SeedType::Monomers),
+        Some("dimers") => Ok(SeedType::Dimers),
+        Some("trimers") => Ok(SeedType::Trimers),
+        Some(other) => Err(format!(
+            "invalid seed_type: '{}'. Must be one of: monomers, dimers, trimers",
+            other
+        )),
+    }
+}
+
 // Tunable CC
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None))]
 fn run_tunable_cc(
     py: Python<'_>,
     n_particles: usize,
@@ -1178,6 +1197,7 @@ fn run_tunable_cc(
     sintering_max: f64,
     sintering_std: f64,
     seed: Option<u64>,
+    seed_type: Option<&str>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
@@ -1188,6 +1208,16 @@ fn run_tunable_cc(
         sintering_max,
         sintering_std,
     );
+
+    // Parse seed_type string → SeedType enum. The new `seed_type` parameter
+    // is the canonical way to control the initial particle pool. The legacy
+    // `seed_cluster_size → SeedStrategy::TunablePc` path is preserved for
+    // backward compatibility: callers that omit `seed_type` (or pass None)
+    // default to Monomers, matching existing behavior.
+    let seed_type_enum =
+        parse_seed_type(seed_type).map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    #[allow(deprecated)]
     let seed_strategy = match seed_cluster_size {
         Some(size) if size > 1 => {
             aglogen_engine::simulation::tunable_cc::SeedStrategy::TunablePc { cluster_size: size }
@@ -1201,6 +1231,7 @@ fn run_tunable_cc(
         radius_min,
         radius_max,
         seed_strategy,
+        seed_type: seed_type_enum,
         max_rotation_attempts,
         sintering,
         ..Default::default()
@@ -1871,6 +1902,42 @@ mod tests {
         assert_eq!(output.results.len(), 2);
         assert!(output.results[0].rg_nm.is_some(), "good → Some");
         assert!(output.results[1].rg_nm.is_none(), "blank → None");
+    }
+
+    // ── T4.3: parse_seed_type string→enum conversion ─────────────
+    #[test]
+    fn test_parse_seed_type_none_returns_monomers() {
+        use aglogen_engine::simulation::tunable_cc::SeedType;
+        let result = super::parse_seed_type(None).unwrap();
+        assert_eq!(result, SeedType::Monomers);
+    }
+
+    #[test]
+    fn test_parse_seed_type_monomers() {
+        use aglogen_engine::simulation::tunable_cc::SeedType;
+        let result = super::parse_seed_type(Some("monomers")).unwrap();
+        assert_eq!(result, SeedType::Monomers);
+    }
+
+    #[test]
+    fn test_parse_seed_type_dimers() {
+        use aglogen_engine::simulation::tunable_cc::SeedType;
+        let result = super::parse_seed_type(Some("dimers")).unwrap();
+        assert_eq!(result, SeedType::Dimers);
+    }
+
+    #[test]
+    fn test_parse_seed_type_trimers() {
+        use aglogen_engine::simulation::tunable_cc::SeedType;
+        let result = super::parse_seed_type(Some("trimers")).unwrap();
+        assert_eq!(result, SeedType::Trimers);
+    }
+
+    #[test]
+    fn test_parse_seed_type_invalid_returns_error() {
+        let result = super::parse_seed_type(Some("quadrimers"));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid seed_type"));
     }
 
     // ── T3.3: legacy broadcast backward compat ────────────────────

@@ -1362,6 +1362,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             )
         elif algorithm == "tunable_cc":
             # Tunable CC with controllable fractal dimension (cluster-cluster)
+            # seed_type: read from the model field (set via API/serializer).
+            # The binding accepts None (→ monomers default) for backward compat.
+            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),
                 target_df=params.get("target_df", 1.8),
@@ -1376,6 +1379,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 sintering_max=sintering_max,
                 sintering_std=sintering_std,
                 seed=seed,
+                seed_type=sim_seed_type,
             )
         elif algorithm == "fracval":
             # FracVAL algorithm (Morán et al. 2019) - polydisperse cluster-cluster
