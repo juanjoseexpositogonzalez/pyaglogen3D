@@ -54,6 +54,10 @@ pub struct TunableCcParams {
     pub seed_strategy: SeedStrategy,
     pub max_rotation_attempts: usize,
     pub max_particle_selection_attempts: usize,
+    /// Maximum number of retry attempts per merge step before falling back
+    /// to ballistic merge. Each retry selects a new random sub-cluster pair
+    /// and samples fresh azimuth + elevation (spec R3).
+    pub max_merge_retries: usize,
     pub sintering: SinteringDistribution,
 }
 
@@ -68,6 +72,7 @@ impl Default for TunableCcParams {
             seed_strategy: SeedStrategy::Monomers,
             max_rotation_attempts: 50,
             max_particle_selection_attempts: 25,
+            max_merge_retries: 100,
             sintering: SinteringDistribution::default(),
         }
     }
@@ -301,6 +306,23 @@ fn calculate_com_distance(
     Some(d_sq.sqrt())
 }
 
+/// Sample a uniformly-distributed random direction on the unit sphere.
+///
+/// Uses the recommended two-parameter scheme:
+///   - `φ = U(0, 2π)` — azimuth
+///   - `cos θ = U(−1, 1)` — guarantees uniform solid-angle sampling
+///
+/// Returns `(dx, dy, dz)` on the unit sphere.
+fn sample_merge_direction<R: Rng>(rng: &mut R) -> (f64, f64, f64) {
+    let phi = rng.gen_range(0.0..std::f64::consts::TAU); // azimuth [0, 2π)
+    let cos_theta = rng.gen_range(-1.0_f64..=1.0); // u ~ U(-1, 1)
+    let sin_theta = (1.0 - cos_theta * cos_theta).sqrt();
+    let dx = sin_theta * phi.cos();
+    let dy = sin_theta * phi.sin();
+    let dz = cos_theta;
+    (dx, dy, dz)
+}
+
 /// Check if two clusters can potentially connect at the required distance.
 /// Connection is possible if sum of bounding radii >= required distance.
 fn can_clusters_connect(
@@ -478,8 +500,16 @@ fn select_contact_particles<R: Rng>(
 
 /// Position cluster2 relative to cluster1 at the required CoM distance,
 /// with particles m1 and m2 in contact (with sintering).
+///
+/// Uses **two-rotation uniform spherical** positioning (R2):
+///   1. Sample a merge direction via `sample_merge_direction` (azimuth + elevation).
+///   2. Apply a random rotation to cluster1 around its CoM before selecting
+///      the contact geometry — this doubles the geometric freedom for finding
+///      valid placements and reduces ballistic fallback.
+///   3. Position cluster2's CoM at `required_distance` along the sampled direction.
+///   4. Rotate cluster2 to bring particle m2 into contact with p1.
 fn position_clusters_for_contact<R: Rng>(
-    cluster1: &TunableCluster,
+    cluster1: &mut TunableCluster,
     cluster2: &mut TunableCluster,
     m1: usize,
     m2: usize,
@@ -487,24 +517,19 @@ fn position_clusters_for_contact<R: Rng>(
     sintering_coeff: f64,
     rng: &mut R,
 ) -> bool {
+    // --- Rotation 1: Rotate impacted cluster (cluster1) around its CoM ---
+    // This aligns m1 toward a random gap zone, per thesis two-rotation scheme.
+    let (r1x, r1y, r1z) = sample_merge_direction(rng);
+    let rot1_axis = Vector3::new(r1x, r1y, r1z);
+    let rot1_angle = rng.gen_range(0.0..std::f64::consts::TAU);
+    cluster1.rotate_around_axis(rot1_axis, rot1_angle, cluster1.center_of_mass);
+
     let p1 = &cluster1.particles[m1];
     let p2_original = &cluster2.particles[m2];
     let contact_dist = sintered_contact_distance(p1.radius, p2_original.radius, sintering_coeff);
 
-    // Vector from cluster1 CoM to particle m1
-    let r_cm1_to_p1 = p1.center - cluster1.center_of_mass;
-    let d1 = r_cm1_to_p1.length();
-
-    // Vector from cluster2 CoM to particle m2 (before positioning)
-    let r_cm2_to_p2 = p2_original.center - cluster2.center_of_mass;
-    let d2 = r_cm2_to_p2.length();
-
-    // We need to find where to place cluster2's CoM such that:
-    // 1. Distance between CoMs = required_distance
-    // 2. Particles m1 and m2 are in contact (distance = contact_dist)
-
-    // Generate random direction for initial placement
-    let (dx, dy, dz) = random_point_on_sphere(rng);
+    // --- Rotation 2: Place impactor along uniform spherical direction ---
+    let (dx, dy, dz) = sample_merge_direction(rng);
     let base_direction = Vector3::new(dx, dy, dz);
 
     // Position cluster2 CoM at required_distance from cluster1 CoM
@@ -512,10 +537,7 @@ fn position_clusters_for_contact<R: Rng>(
     let translation = target_com2_pos - cluster2.center_of_mass;
     cluster2.translate(translation);
 
-    // Now we need to rotate cluster2 so that particle m2 is in contact with p1
-    // This requires computing the rotation that aligns p2 with the contact point
-
-    // The contact point on p1's surface toward where p2 should be
+    // Rotate cluster2 so that particle m2 is in contact with p1
     let p2_current = &cluster2.particles[m2];
     let current_p2_pos = p2_current.center;
 
@@ -528,7 +550,6 @@ fn position_clusters_for_contact<R: Rng>(
     // Vector from cluster2 CoM to target p2 position
     let target_r_cm2_to_p2 = target_p2_pos - cluster2.center_of_mass;
 
-    // We need to rotate cluster2 so that r_cm2_to_p2 aligns with target_r_cm2_to_p2
     let r_cm2_to_p2_current = cluster2.particles[m2].center - cluster2.center_of_mass;
 
     // Compute rotation axis and angle
@@ -732,7 +753,7 @@ pub fn run_tunable_cc_internal(
                 (idx2, idx1)
             };
 
-        let impacted = clusters[impacted_idx].clone();
+        let mut impacted = clusters[impacted_idx].clone();
         let mut impactor = clusters[impactor_idx].clone();
 
         let sintering_coeff = params.sintering.sample(&mut rng);
@@ -767,7 +788,7 @@ pub fn run_tunable_cc_internal(
                         &mut rng,
                     ) {
                         let positioned = position_clusters_for_contact(
-                            &impacted,
+                            &mut impacted,
                             &mut impactor,
                             m1,
                             m2,
@@ -1168,6 +1189,122 @@ mod tests {
             "CC should produce a real fit, not the default (2.0, 1.0) sentinel. Got Df={:.3}, kf={:.3}",
             result.fractal_dimension, result.prefactor
         );
+    }
+
+    // ---------------------------------------------------------------
+    // max_merge_retries config (R3 spec)
+    // ---------------------------------------------------------------
+
+    /// T2.2 — Default `max_merge_retries` is 100.
+    #[test]
+    fn test_default_max_merge_retries_is_100() {
+        let params = TunableCcParams::default();
+        assert_eq!(
+            params.max_merge_retries, 100,
+            "Default max_merge_retries must be 100 per spec R3"
+        );
+    }
+
+    /// T2.2 — `max_merge_retries` is configurable (scenario 3.4).
+    #[test]
+    fn test_max_merge_retries_configurable() {
+        let params = TunableCcParams {
+            max_merge_retries: 50,
+            ..Default::default()
+        };
+        assert_eq!(params.max_merge_retries, 50);
+    }
+
+    // ---------------------------------------------------------------
+    // Two-rotation uniform spherical isotropy (R2 spec)
+    // ---------------------------------------------------------------
+
+    /// T2.1 — Isotropy test: sample_merge_direction must produce uniform
+    /// distribution over the unit sphere (octant chi² test).
+    #[test]
+    fn test_merge_direction_isotropy_octants() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(12345);
+        let n = 10_000usize;
+        let mut octant_counts = [0u32; 8];
+
+        for _ in 0..n {
+            let (dx, dy, dz) = sample_merge_direction(&mut rng);
+            // Verify unit vector
+            let r = (dx * dx + dy * dy + dz * dz).sqrt();
+            assert!((r - 1.0).abs() < 1e-9, "Direction must be unit vector");
+
+            // Classify into octant by signs of (x, y, z)
+            let octant = ((if dx >= 0.0 { 0 } else { 1 }) << 2)
+                | ((if dy >= 0.0 { 0 } else { 1 }) << 1)
+                | (if dz >= 0.0 { 0 } else { 1 });
+            octant_counts[octant] += 1;
+        }
+
+        // Expected: n/8 = 1250 per octant.
+        // Use chi² goodness-of-fit: Σ (O-E)²/E. For 7 dof at α=0.001 → critical ~24.3
+        let expected = n as f64 / 8.0;
+        let chi_sq: f64 = octant_counts
+            .iter()
+            .map(|&o| {
+                let diff = o as f64 - expected;
+                diff * diff / expected
+            })
+            .sum();
+
+        assert!(
+            chi_sq < 24.3,
+            "Isotropy chi² test failed: χ²={chi_sq:.2}, threshold=24.3, counts={octant_counts:?}"
+        );
+    }
+
+    /// T2.1 — Each component (x,y,z) of uniform sphere samples should have
+    /// mean ≈ 0 and variance ≈ 1/3.
+    #[test]
+    fn test_merge_direction_component_statistics() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(99999);
+        let n = 10_000usize;
+        let mut sum_x = 0.0_f64;
+        let mut sum_y = 0.0_f64;
+        let mut sum_z = 0.0_f64;
+        let mut sum_x2 = 0.0_f64;
+        let mut sum_y2 = 0.0_f64;
+        let mut sum_z2 = 0.0_f64;
+
+        for _ in 0..n {
+            let (dx, dy, dz) = sample_merge_direction(&mut rng);
+            sum_x += dx;
+            sum_y += dy;
+            sum_z += dz;
+            sum_x2 += dx * dx;
+            sum_y2 += dy * dy;
+            sum_z2 += dz * dz;
+        }
+
+        let nf = n as f64;
+        let mean_x = sum_x / nf;
+        let mean_y = sum_y / nf;
+        let mean_z = sum_z / nf;
+        let var_x = sum_x2 / nf - mean_x * mean_x;
+        let var_y = sum_y2 / nf - mean_y * mean_y;
+        let var_z = sum_z2 / nf - mean_z * mean_z;
+
+        // Spec R2 scenario 2.2: mean ∈ (-0.05, 0.05), variance ∈ (0.28, 0.39)
+        for (label, mean, var) in [
+            ("x", mean_x, var_x),
+            ("y", mean_y, var_y),
+            ("z", mean_z, var_z),
+        ] {
+            assert!(
+                mean.abs() < 0.05,
+                "Component {label}: mean={mean:.4}, expected in (-0.05, 0.05)"
+            );
+            assert!(
+                (0.28..=0.39).contains(&var),
+                "Component {label}: var={var:.4}, expected in [0.28, 0.39]"
+            );
+        }
     }
 
     // ---------------------------------------------------------------
