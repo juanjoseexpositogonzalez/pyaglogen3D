@@ -13,7 +13,7 @@
 - [x] T2.2 — Add `max_merge_retries` field (default 100) to `CcTunableConfig` / `TunableCcParams` struct (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [x] T2.3 — Refactor merge loop: retry with new pair on geometric failure, ballistic fallback only after exhaustion of retries (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [x] T2.4 — Track and log retry statistics in result metadata: `tunable_merges`, `ballistic_merges`, `max_retries_per_merge` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
-- [ ] T2.5 — Cargo tests: rotation isotropy (chi² test on 10k samples), retry counter verification, ballistic fallback after exhaustion (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T2.5 — Cargo tests covered inline by T2.1-T2.4 commits: chi² isotropy (commit 66a119f), retry counter + ballistic fallback (commit 3d4559a). 213 engine tests passing (was 206 at P1 close, +7 new in P2).
 
 ## Phase 3 — Engine: seed types Monomers/Dimers/Trimers
 
