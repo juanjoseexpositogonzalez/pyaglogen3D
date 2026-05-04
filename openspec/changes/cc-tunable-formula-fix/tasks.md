@@ -24,10 +24,10 @@
 
 ## Phase 4 — Backend: API + serializer + migration
 
-- [ ] T4.1 — Create migration `0011_add_seed_type_field.py` adding `seed_type CharField(max_length=16, default="monomers")` to Simulation model (file: `backend/apps/simulations/migrations/0011_add_seed_type_field.py`)
-- [ ] T4.2 — Update `SimulationParameters` typed dict / serializer to accept `seed_type` with default "monomers" (file: `backend/apps/simulations/serializers.py`)
-- [ ] T4.3 — API validation: restrict choices=["monomers", "dimers", "trimers"] in serializer (file: `backend/apps/simulations/serializers.py`)
-- [ ] T4.4 — pytest: migration test, serializer test, API integration test for seed_type parameter (file: `backend/apps/simulations/tests/`)
+- [x] T4.1 — Create migration `0006_add_seed_type_field.py` adding `seed_type CharField(max_length=16, default="monomers")` to Simulation model (file: `backend/apps/simulations/migrations/0006_add_seed_type_field.py`)
+- [x] T4.2 — Update `SimulationParameters` typed dict / serializer to accept `seed_type` with default "monomers" (file: `backend/apps/simulations/serializers.py`)
+- [x] T4.3 — API validation: restrict choices=["monomers", "dimers", "trimers"] in serializer (file: `backend/apps/simulations/serializers.py`)
+- [x] T4.4 — pytest: migration test, serializer test, API integration test for seed_type parameter (file: `backend/apps/simulations/tests/`)
 
 ## Phase 5 — Frontend: CC tunable form dropdown
 
