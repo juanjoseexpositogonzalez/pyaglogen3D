@@ -705,6 +705,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
+      algorithmParams.seed_type = params.seed_type
     } else if (algorithm === 'fracval') {
       algorithmParams.target_df = params.target_df
       algorithmParams.target_kf = params.target_kf

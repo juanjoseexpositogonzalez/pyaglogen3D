@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, fireEvent, within } from "@testing-library/react";
+import { render, screen, fireEvent, within, waitFor } from "@testing-library/react";
 import { SimulationForm } from "../SimulationForm";
 
 // --------------------------------------------------------------------------
-// Seed Type dropdown tests for CC tunable simulation form (T5.1 / T5.3)
+// Seed Type dropdown tests for CC tunable simulation form (T5.1 / T5.2 / T5.3)
 // --------------------------------------------------------------------------
 
 /**
@@ -67,5 +67,52 @@ describe("SimulationForm — Seed Type dropdown (T5.1)", () => {
     expect(
       screen.getByText(/initial particle grouping/i)
     ).toBeDefined();
+  });
+});
+
+describe("SimulationForm — seed_type state + API payload (T5.2)", () => {
+  it("updates seed_type when user selects dimers", () => {
+    renderWithAlgorithm("tunable_cc");
+
+    const seedSelect = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    expect(seedSelect.value).toBe("monomers");
+
+    fireEvent.change(seedSelect, { target: { value: "dimers" } });
+    expect(seedSelect.value).toBe("dimers");
+  });
+
+  it("includes seed_type in payload when algorithm is tunable_cc", async () => {
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+
+    // Change seed_type to dimers
+    const seedSelect = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    fireEvent.change(seedSelect, { target: { value: "dimers" } });
+
+    // Submit the form
+    const submitBtn = screen.getByRole("button", { name: /run simulation/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.algorithm).toBe("tunable_cc");
+    expect(payload.parameters.seed_type).toBe("dimers");
+  });
+
+  it("does NOT include seed_type in payload for ballistic algorithm", async () => {
+    const { onSubmit } = renderWithAlgorithm("ballistic");
+
+    const submitBtn = screen.getByRole("button", { name: /run simulation/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.algorithm).toBe("ballistic");
+    expect(payload.parameters.seed_type).toBeUndefined();
   });
 });

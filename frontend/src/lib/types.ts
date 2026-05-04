@@ -88,6 +88,7 @@ export interface TunableParams {
 export interface TunableCcParams extends TunableParams {
   seed_cluster_size?: number
   max_rotation_attempts?: number
+  seed_type?: 'monomers' | 'dimers' | 'trimers'
 }
 
 export type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
