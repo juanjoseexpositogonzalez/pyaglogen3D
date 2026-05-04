@@ -232,22 +232,25 @@ impl TunableCluster {
 ///
 /// # Derivation
 ///
-/// Starting from the parallel-axis theorem applied to two merging
-/// sub-clusters:
+/// Start from the radius-of-gyration definition `Rg² = (1/n) · Σ rᵢ²`
+/// (sum over squared distances from center of mass). When two sub-clusters
+/// with `n_po1` and `n_po2` particles merge at COM separation `d`, the
+/// parallel-axis theorem gives:
 ///
 /// ```text
 /// Rg² · n_po = Rg1² · n_po1 + Rg2² · n_po2
-///            + (n_po1 · n_po2 / n_po) · d²
+///            + (n_po1 · n_po2 / n_po) · d²        [1]
 /// ```
 ///
-/// Substituting `Rg² = rp² · (n / kf)^(2/Df)` for each cluster and
-/// solving for `d²`:
+/// The target power-law `N = kf · (Rg / rp)^Df` implies
+/// `Rg² = rp² · (N / kf)^(2/Df)`.  Substituting into [1] for all
+/// three clusters and solving for `d²`:
 ///
 /// ```text
 /// d² = (n_po · rp²) / (n_po1 · n_po2)
 ///      · [ n_po  · (n_po  / kf)^(2/Df)
 ///        − n_po1 · (n_po1 / kf)^(2/Df)
-///        − n_po2 · (n_po2 / kf)^(2/Df) ]
+///        − n_po2 · (n_po2 / kf)^(2/Df) ]          [2]
 /// ```
 ///
 /// # Thesis-typo note
