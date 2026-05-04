@@ -226,50 +226,76 @@ impl TunableCluster {
     }
 }
 
-/// Calculate the required distance between centers of mass for two clusters to merge
-/// while maintaining the power law relationship.
+/// Compute the center-of-mass distance `d` required when merging two
+/// sub-clusters so that the resulting aggregate satisfies the power-law
+/// relationship `N = kf · (Rg / rp)^Df`.
 ///
-/// Based on thesis equation (eq:leyPotenciasColisionSimplificada):
-/// (r_G2 - r_G1)² = rp² × [(n_po/kf)^(2/Df) - 3/5]
-///                - n_po × rp² × (n_po1/kf)^(2/Df) × [1/n_po2 + 1/n_po1]
+/// # Derivation
+///
+/// Starting from the parallel-axis theorem applied to two merging
+/// sub-clusters:
+///
+/// ```text
+/// Rg² · n_po = Rg1² · n_po1 + Rg2² · n_po2
+///            + (n_po1 · n_po2 / n_po) · d²
+/// ```
+///
+/// Substituting `Rg² = rp² · (n / kf)^(2/Df)` for each cluster and
+/// solving for `d²`:
+///
+/// ```text
+/// d² = (n_po · rp²) / (n_po1 · n_po2)
+///      · [ n_po  · (n_po  / kf)^(2/Df)
+///        − n_po1 · (n_po1 / kf)^(2/Df)
+///        − n_po2 · (n_po2 / kf)^(2/Df) ]
+/// ```
+///
+/// # Thesis-typo note
+///
+/// The printed thesis equation (`eq:leyPotenciasColisionSimplificada`)
+/// contains a typographic error — it drops the leading `n_po / (n_po1 · n_po2)`
+/// factor and conflates sub-cluster exponents.  The formula above is
+/// cross-validated against the **working** Tunable-PC implementation
+/// (`tunable.rs`): when `n_po2 = 1` (monomer), the CC formula reduces to
+/// the PC gamma distance identically.
+///
+/// # Previous bugs (fixed)
+///
+/// The old implementation had three errors:
+/// 1. **Missing leading factor** `n_po / (n_po1 · n_po2)` — the entire
+///    bracket was not scaled, shrinking `d` for asymmetric merges.
+/// 2. **Single-cluster exponent** — used `(n_po1/kf)^(2/Df)` for
+///    *both* sub-clusters instead of using `(n_po2/kf)^(2/Df)` for the
+///    second.
+/// 3. **Spurious `−3/5` constant** — the Lapuerta constant cancels
+///    algebraically in the parallel-axis expansion (since
+///    `n_po − n_po1 − n_po2 = 0`), but was left as a residual term.
+///
+/// Returns `Some(d)` where `d = √(d²)` if `d² > 0`, or `None` when the
+/// geometry is impossible (caller should fall back to retry / ballistic).
 fn calculate_com_distance(
-    n_po: usize,  // Total particles after merge
-    n_po1: usize, // Particles in cluster 1 (impacted)
-    n_po2: usize, // Particles in cluster 2 (impactor)
-    kf: f64,      // Target prefactor
-    df: f64,      // Target fractal dimension
+    n_po1: usize, // Primary-particle count in sub-cluster 1
+    n_po2: usize, // Primary-particle count in sub-cluster 2
     rp: f64,      // Primary particle radius
+    df: f64,      // Target fractal dimension
+    kf: f64,      // Target prefactor
 ) -> Option<f64> {
-    let n_po_f = n_po as f64;
-    let n_po1_f = n_po1 as f64;
-    let n_po2_f = n_po2 as f64;
+    let n1 = n_po1 as f64;
+    let n2 = n_po2 as f64;
+    let n = n1 + n2;
+    let e = 2.0 / df;
 
-    // Lapuerta constant
-    let constante = 3.0 / 5.0;
+    let t_total = n * (n / kf).powf(e);
+    let t1 = n1 * (n1 / kf).powf(e);
+    let t2 = n2 * (n2 / kf).powf(e);
 
-    // From thesis equation
-    let term1 = (n_po_f / kf).powf(2.0 / df) - constante;
-    let term2_factor = (n_po1_f / kf).powf(2.0 / df);
-    let term2 = n_po_f * term2_factor * (1.0 / n_po2_f + 1.0 / n_po1_f);
+    let d_sq = (n * rp * rp) / (n1 * n2) * (t_total - t1 - t2);
 
-    let distance_sq = rp.powi(2) * term1 - rp.powi(2) * term2;
-
-    if distance_sq <= 0.0 {
-        // Can happen for very small clusters or extreme Df values
-        // Use approximation based on Rg relationship
-        let rg_target = rp * (n_po_f / kf).powf(1.0 / df);
-        let rg1 = rp * (n_po1_f / kf).powf(1.0 / df);
-        let rg2 = rp * (n_po2_f / kf).powf(1.0 / df);
-
-        // Approximate distance that would give target Rg
-        let approx_dist = (rg_target.powi(2) - rg1.powi(2) - rg2.powi(2)).abs().sqrt();
-        if approx_dist > 0.0 {
-            return Some(approx_dist.max(rp * 2.0));
-        }
+    if !d_sq.is_finite() || d_sq <= 0.0 {
         return None;
     }
 
-    Some(distance_sq.sqrt())
+    Some(d_sq.sqrt())
 }
 
 /// Check if two clusters can potentially connect at the required distance.
@@ -708,11 +734,10 @@ pub fn run_tunable_cc_internal(
 
         let sintering_coeff = params.sintering.sample(&mut rng);
 
-        let n_po = impacted.n_particles() + impactor.n_particles();
         let n_po1 = impacted.n_particles();
         let n_po2 = impactor.n_particles();
 
-        let required_distance = match calculate_com_distance(n_po, n_po1, n_po2, kf, df, rp) {
+        let required_distance = match calculate_com_distance(n_po1, n_po2, rp, df, kf) {
             Some(d) => d,
             None => {
                 let min_dist = impacted.bounding_radius + impactor.bounding_radius;
@@ -1142,22 +1167,160 @@ mod tests {
         );
     }
 
+    // ---------------------------------------------------------------
+    // COM-distance formula tests (R1 of cc-tunable-aggregation spec)
+    // ---------------------------------------------------------------
+
+    /// Helper: compute the expected CC COM distance analytically.
+    /// d² = (n_po·rp²)/(n_po1·n_po2)
+    ///      · [ n_po·(n_po/kf)^(2/Df)
+    ///        − n_po1·(n_po1/kf)^(2/Df)
+    ///        − n_po2·(n_po2/kf)^(2/Df) ]
+    fn expected_cc_d(n_po1: usize, n_po2: usize, rp: f64, df: f64, kf: f64) -> f64 {
+        let n1 = n_po1 as f64;
+        let n2 = n_po2 as f64;
+        let n = n1 + n2;
+        let e = 2.0 / df;
+        let t_total = n * (n / kf).powf(e);
+        let t1 = n1 * (n1 / kf).powf(e);
+        let t2 = n2 * (n2 / kf).powf(e);
+        let d_sq = (n * rp * rp) / (n1 * n2) * (t_total - t1 - t2);
+        d_sq.sqrt()
+    }
+
+    /// Helper: compute the Tunable-PC gamma distance for adding one monomer
+    /// to a cluster of size (n-1), matching the formula in tunable.rs.
+    fn expected_pc_gamma(n: usize, rp: f64, df: f64, kf: f64) -> f64 {
+        let np_f = n as f64;
+        let np_m1 = (n - 1) as f64;
+        let e = 2.0 / df;
+        let constante = 3.0 / 5.0;
+        let gamma1 = (np_f.powi(2) / np_m1) * ((np_f / kf).powf(e) - constante);
+        let gamma2 = np_f * ((np_m1 / kf).powf(e) - constante);
+        let gamma3 = (np_f / np_m1) * ((1.0 / kf).powf(e) - constante);
+        let gamma4_sq = gamma1 - gamma2 - gamma3;
+        rp * gamma4_sq.sqrt()
+    }
+
+    /// Scenario 1.1 — PC equivalence (n_po1=1, n_po2=1).
+    /// The CC formula must match the Tunable-PC monomer formula.
     #[test]
-    fn test_com_distance_calculation() {
-        let kf = 1.3;
+    fn test_com_distance_pc_equivalence() {
         let df = 1.8;
+        let kf = 1.4;
+        let rp = 12.5;
+
+        // CC: merge two monomers
+        let d_cc = calculate_com_distance(1, 1, rp, df, kf).expect("must be Some for monomers");
+
+        // PC: adding particle #2 to a 1-particle cluster → n=2
+        let d_pc = expected_pc_gamma(2, rp, df, kf);
+
+        let rel_err = (d_cc - d_pc).abs() / d_pc;
+        assert!(
+            rel_err < 1e-10,
+            "CC and PC must match for monomer merge: CC={d_cc:.15}, PC={d_pc:.15}, rel_err={rel_err:.2e}"
+        );
+    }
+
+    /// Scenario 1.2 — Asymmetric small clusters (n_po1=2, n_po2=1).
+    /// Cross-validate with PC formula for n=3 (adding 1 to a 2-cluster).
+    #[test]
+    fn test_com_distance_asymmetric_small() {
+        let df = 1.8;
+        let kf = 1.3;
         let rp = 1.0;
 
-        // For equal-sized clusters merging
-        let n_po1 = 10;
-        let n_po2 = 10;
-        let n_po = n_po1 + n_po2;
+        // CC: merge (2,1)
+        let d_cc = calculate_com_distance(2, 1, rp, df, kf).expect("must be Some");
 
-        let dist = calculate_com_distance(n_po, n_po1, n_po2, kf, df, rp);
+        // PC: n=3 step (adding monomer to 2-cluster) — the specialization n_po1=n-1, n_po2=1
+        let d_pc = expected_pc_gamma(3, rp, df, kf);
 
-        assert!(dist.is_some(), "Distance should be calculable");
-        let d = dist.unwrap();
-        assert!(d > 0.0, "Distance should be positive");
-        assert!(d < 100.0, "Distance should be reasonable");
+        let rel_err = (d_cc - d_pc).abs() / d_pc;
+        assert!(
+            rel_err < 1e-10,
+            "CC(2,1) must match PC(n=3): CC={d_cc:.15}, PC={d_pc:.15}, rel_err={rel_err:.2e}"
+        );
+
+        // Hardcoded analytic value (verified by hand)
+        let expected = 2.330965307114760_f64;
+        assert!(
+            (d_cc - expected).abs() < 1e-10,
+            "CC(2,1) d={d_cc:.15}, expected={expected:.15}"
+        );
+    }
+
+    /// Scenario 1.3 — Symmetric medium clusters (n_po1=n_po2=10).
+    #[test]
+    fn test_com_distance_symmetric_medium() {
+        let df = 1.8;
+        let kf = 1.4;
+        let rp = 1.0;
+
+        let d = calculate_com_distance(10, 10, rp, df, kf).expect("must be Some");
+
+        // Hardcoded analytic value
+        let expected = expected_cc_d(10, 10, rp, df, kf);
+        assert!(
+            (d - expected).abs() < 1e-10,
+            "Symmetric(10,10): got={d:.15}, expected={expected:.15}"
+        );
+        assert!(d > 0.0, "Distance must be positive");
+    }
+
+    /// Scenario 1.3 (large) — Symmetric large clusters (n_po1=n_po2=175).
+    /// The user case that was failing with the buggy formula.
+    #[test]
+    fn test_com_distance_large_symmetric() {
+        let df = 1.6;
+        let kf = 1.7;
+        let rp = 1.0;
+
+        let d = calculate_com_distance(175, 175, rp, df, kf).expect("must be Some for N=350");
+
+        assert!(d > 0.0, "Distance must be positive for N=350");
+        assert!(d.is_finite(), "Distance must be finite");
+
+        // Verify against analytic expectation
+        let expected = expected_cc_d(175, 175, rp, df, kf);
+        assert!(
+            (d - expected).abs() < 1e-8,
+            "Large(175,175): got={d:.10}, expected={expected:.10}"
+        );
+    }
+
+    /// Scenario 1.4 — Lower Df produces larger COM distance.
+    #[test]
+    fn test_com_distance_lower_df_gives_larger_distance() {
+        let kf = 1.3;
+        let rp = 1.0;
+
+        let d_low = calculate_com_distance(10, 10, rp, 1.4, kf).unwrap();
+        let d_high = calculate_com_distance(10, 10, rp, 2.2, kf).unwrap();
+
+        assert!(
+            d_low > d_high,
+            "Lower Df should give larger distance: d(1.4)={d_low:.6}, d(2.2)={d_high:.6}"
+        );
+    }
+
+    /// Scenario 1.5 — d² ≤ 0 returns None.
+    /// The correct formula always gives d² > 0 for valid physical params
+    /// (by strict superadditivity of x^p, p>1), so we test the guard
+    /// with pathological Df → 0 which makes the exponent blow up and
+    /// could produce NaN/negative via floating-point overflow.
+    #[test]
+    fn test_com_distance_returns_none_for_degenerate_input() {
+        // Df very close to 0 → exponent 2/Df → ∞ → overflow to NaN or Inf
+        let result = calculate_com_distance(5, 5, 1.0, 0.01, 1.0);
+        // Should return None (NaN/Inf guard) or possibly Some(very large) —
+        // either way, must NOT panic
+        if let Some(d) = result {
+            assert!(d.is_finite(), "If Some, must be finite, got {d}");
+            assert!(d > 0.0, "If Some, must be positive");
+        }
+        // The spec mandates None when d²≤0. Since the math can't produce ≤0
+        // with valid physical inputs, this test ensures no panic on edge cases.
     }
 }

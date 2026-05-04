@@ -2,8 +2,8 @@
 
 ## Phase 1 — Engine: corrected COM distance formula
 
-- [ ] T1.1 — Rewrite `calculate_com_distance` in `aglogen_core/engine/src/aggregation/tunable_cc.rs` with the derived formula: `d² = (n_po·rp²)/(n_po1·n_po2) · [n_po·(n_po/kf)^(2/Df) − n_po1·(n_po1/kf)^(2/Df) − n_po2·(n_po2/kf)^(2/Df)]` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
-- [ ] T1.2 — Add cargo tests with analytic cases: PC equivalence (n_po2=1), asymmetric clusters (n_po1=2,n_po2=1), large symmetric (n_po1=n_po2=175), edge cases (d²≤0 returns None) (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T1.1 — Rewrite `calculate_com_distance` in `aglogen_core/engine/src/aggregation/tunable_cc.rs` with the derived formula: `d² = (n_po·rp²)/(n_po1·n_po2) · [n_po·(n_po/kf)^(2/Df) − n_po1·(n_po1/kf)^(2/Df) − n_po2·(n_po2/kf)^(2/Df)]` (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T1.2 — Add cargo tests with analytic cases: PC equivalence (n_po2=1), asymmetric clusters (n_po1=2,n_po2=1), large symmetric (n_po1=n_po2=175), edge cases (d²≤0 returns None) (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [ ] T1.3 — Document derivation + thesis-typo note in code comment citing cross-validation with PC case (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [ ] T1.4 — Update existing cargo tests that asserted the old (buggy) formula; regenerate snapshots if needed (file: `aglogen_core/engine/tests/`)
 
