@@ -1607,6 +1607,84 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
+    // Dimers initialization (R4 scenarios 4.2, 4.3)
+    // ---------------------------------------------------------------
+
+    /// T3.2 — Dimers N=10: 5 dimers, each size 2, total 10 particles.
+    #[test]
+    fn test_seed_dimers_n_even() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_dimers(10, rp, &mut rng);
+
+        assert_eq!(clusters.len(), 5, "N=10 dimers should produce 5 clusters");
+        let total_particles: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total_particles, 10, "Total particles must be 10");
+
+        for (i, c) in clusters.iter().enumerate() {
+            assert_eq!(c.n_particles(), 2, "Cluster {i} must be a dimer (size 2)");
+            // Verify inter-particle distance ≈ 2·rp (touching)
+            let dist = c.particles[0].center.distance_to(&c.particles[1].center);
+            assert!(
+                (dist - 2.0 * rp).abs() < 1e-10,
+                "Dimer {i} inter-particle distance should be 2·rp={}, got {dist}",
+                2.0 * rp
+            );
+        }
+    }
+
+    /// T3.2 — Dimers N=11: 5 dimers + 1 monomer = 6 clusters.
+    #[test]
+    fn test_seed_dimers_n_odd() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let clusters = build_dimers(11, rp, &mut rng);
+
+        assert_eq!(
+            clusters.len(),
+            6,
+            "N=11 dimers should produce 6 clusters (5 dimers + 1 monomer)"
+        );
+        let total_particles: usize = clusters.iter().map(|c| c.n_particles()).sum();
+        assert_eq!(total_particles, 11, "Total particles must be 11");
+
+        // First 5 are dimers
+        for i in 0..5 {
+            assert_eq!(clusters[i].n_particles(), 2, "Cluster {i} must be a dimer");
+        }
+        // Last is monomer
+        assert_eq!(
+            clusters[5].n_particles(),
+            1,
+            "Last cluster must be a monomer"
+        );
+    }
+
+    /// T3.2 — Dimers N=1: edge case → single monomer.
+    #[test]
+    fn test_seed_dimers_n_1() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters = build_dimers(1, 1.0, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "N=1 dimers → 1 monomer");
+        assert_eq!(clusters[0].n_particles(), 1);
+    }
+
+    /// T3.2 — Dimers N=2: 1 dimer.
+    #[test]
+    fn test_seed_dimers_n_2() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters = build_dimers(2, 1.0, &mut rng);
+
+        assert_eq!(clusters.len(), 1, "N=2 dimers → 1 dimer");
+        assert_eq!(clusters[0].n_particles(), 2);
+    }
+
+    // ---------------------------------------------------------------
     // COM-distance formula tests (R1 of cc-tunable-aggregation spec)
     // ---------------------------------------------------------------
 
