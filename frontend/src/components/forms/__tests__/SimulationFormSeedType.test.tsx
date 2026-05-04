@@ -116,3 +116,78 @@ describe("SimulationForm — seed_type state + API payload (T5.2)", () => {
     expect(payload.parameters.seed_type).toBeUndefined();
   });
 });
+
+describe("SimulationForm — Comprehensive seed_type tests (T5.3)", () => {
+  // 1. Visibility — CC tunable (covered in T5.1 but explicit here for T5.3)
+  it("shows seed_type dropdown with all 3 options for tunable_cc", () => {
+    renderWithAlgorithm("tunable_cc");
+
+    const seedSelect = screen.getByLabelText(/seed type/i);
+    const options = within(seedSelect as HTMLElement).getAllByRole("option");
+    expect(options).toHaveLength(3);
+
+    const values = options.map((o) => (o as HTMLOptionElement).value);
+    expect(values).toEqual(["monomers", "dimers", "trimers"]);
+  });
+
+  // 2. Visibility — other algorithm (DLA)
+  it("does NOT show seed_type dropdown for DLA algorithm", () => {
+    renderWithAlgorithm("dla");
+    expect(screen.queryByLabelText(/seed type/i)).toBeNull();
+  });
+
+  // 3. Default monomers on initial render
+  it("default seed_type is monomers on initial tunable_cc render", () => {
+    renderWithAlgorithm("tunable_cc");
+    const seedSelect = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    expect(seedSelect.value).toBe("monomers");
+  });
+
+  // 4. User selects trimers
+  it("updates to trimers when user selects trimers", () => {
+    renderWithAlgorithm("tunable_cc");
+    const seedSelect = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+
+    fireEvent.change(seedSelect, { target: { value: "trimers" } });
+    expect(seedSelect.value).toBe("trimers");
+  });
+
+  // 5. API payload includes seed_type=monomers (default) for tunable_cc
+  it("includes seed_type=monomers in payload when left at default", async () => {
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+
+    const submitBtn = screen.getByRole("button", { name: /run simulation/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.parameters.seed_type).toBe("monomers");
+  });
+
+  // 6. API payload omits seed_type for non-tunable (DLA)
+  it("does NOT include seed_type in payload for DLA algorithm", async () => {
+    const { onSubmit } = renderWithAlgorithm("dla");
+
+    const submitBtn = screen.getByRole("button", { name: /run simulation/i });
+    fireEvent.click(submitBtn);
+
+    await waitFor(() => {
+      expect(onSubmit).toHaveBeenCalledTimes(1);
+    });
+
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.parameters.seed_type).toBeUndefined();
+  });
+
+  // 7. Helper text rendered
+  it("displays helper text about initial particle grouping", () => {
+    renderWithAlgorithm("tunable_cc");
+
+    const helperText = screen.getByText(/initial particle grouping/i);
+    expect(helperText.textContent).toContain("dimers/trimers");
+    expect(helperText.textContent).toContain("FZR");
+  });
+});
