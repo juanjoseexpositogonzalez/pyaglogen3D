@@ -1,4 +1,5 @@
 """Simulation models."""
+
 import uuid
 
 from django.db import models
@@ -51,9 +52,7 @@ class Simulation(models.Model):
     parameters = models.JSONField(
         help_text="Algorithm-specific parameters (n_particles, sticking_probability, etc.)"
     )
-    seed = models.BigIntegerField(
-        help_text="Random seed for reproducibility"
-    )
+    seed = models.BigIntegerField(help_text="Random seed for reproducibility")
     status = models.CharField(
         max_length=20,
         choices=SimulationStatus.choices,
@@ -77,6 +76,16 @@ class Simulation(models.Model):
     is_batch = models.BooleanField(
         default=False,
         help_text="True if created as part of a parametric study (batch simulation)",
+    )
+    seed_type = models.CharField(
+        max_length=16,
+        default="monomers",
+        choices=[
+            ("monomers", "Monomers"),
+            ("dimers", "Dimers"),
+            ("trimers", "Trimers"),
+        ],
+        verbose_name="Seed type for CC tunable",
     )
     created_at = models.DateTimeField(auto_now_add=True)
     started_at = models.DateTimeField(null=True, blank=True)
@@ -112,9 +121,7 @@ class ParametricStudy(models.Model):
         max_length=20,
         choices=SimulationAlgorithm.choices,
     )
-    base_parameters = models.JSONField(
-        help_text="Fixed parameters for all simulations"
-    )
+    base_parameters = models.JSONField(help_text="Fixed parameters for all simulations")
     parameter_grid = models.JSONField(
         help_text="Parameters to vary: {param_name: [values]}"
     )
