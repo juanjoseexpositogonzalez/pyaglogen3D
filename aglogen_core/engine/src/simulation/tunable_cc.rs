@@ -26,17 +26,41 @@ use super::sintering::{sintered_contact_distance, SinteringDistribution};
 // Note: TunablePc seed strategy with Python context is not available in pure engine.
 // The seed cluster generation falls back to monomers when py is None.
 
+/// Seed type mode for initial particle pool (R4 spec).
+///
+/// Controls how the N primary particles are grouped before the CC merge loop
+/// begins.  `Monomers` is the default and preserves existing behavior.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SeedType {
+    /// N independent monomers (default — backward compatible).
+    #[default]
+    Monomers,
+    /// ⌊N/2⌋ touching pairs; leftover monomer when N is odd.
+    Dimers,
+    /// ⌊N/3⌋ linear trimers; leftover handling for N mod 3 ≠ 0.
+    Trimers,
+}
+
 /// Seed cluster generation strategy.
+///
+/// **Prefer [`SeedType`]** for new code.  `SeedStrategy` is retained only for
+/// backward compatibility with the Python binding's `seed_cluster_size` parameter.
 #[derive(Debug, Clone)]
+#[deprecated(
+    since = "0.5.0",
+    note = "Use `SeedType` on `TunableCcParams` instead. `TunablePc` falls back to Monomers in pure engine."
+)]
 pub enum SeedStrategy {
     /// All monomers (like standard Ballistic CC)
     Monomers,
-    /// Generate seed clusters using Tunable PC with specified size
+    /// Generate seed clusters using Tunable PC with specified size.
+    /// Falls back to Monomers in the pure-engine crate.
     TunablePc { cluster_size: usize },
     /// Custom distribution of cluster sizes (not yet implemented)
     Custom { sizes: Vec<usize> },
 }
 
+#[allow(deprecated)]
 impl Default for SeedStrategy {
     fn default() -> Self {
         SeedStrategy::Monomers
@@ -51,7 +75,12 @@ pub struct TunableCcParams {
     pub target_kf: f64,
     pub radius_min: f64,
     pub radius_max: f64,
+    #[allow(deprecated)]
     pub seed_strategy: SeedStrategy,
+    /// Seed type mode controlling the initial particle pool (R4 spec).
+    /// When set, this takes precedence over `seed_strategy` for initial pool
+    /// generation.  Default: `Monomers`.
+    pub seed_type: SeedType,
     pub max_rotation_attempts: usize,
     pub max_particle_selection_attempts: usize,
     /// Maximum number of retry attempts per merge step before falling back
@@ -62,6 +91,7 @@ pub struct TunableCcParams {
 }
 
 impl Default for TunableCcParams {
+    #[allow(deprecated)]
     fn default() -> Self {
         Self {
             n_particles: 1000,
@@ -70,6 +100,7 @@ impl Default for TunableCcParams {
             radius_min: 1.0,
             radius_max: 1.0,
             seed_strategy: SeedStrategy::Monomers,
+            seed_type: SeedType::default(),
             max_rotation_attempts: 50,
             max_particle_selection_attempts: 25,
             max_merge_retries: 100,
@@ -675,29 +706,112 @@ fn merge_ballistic<R: Rng>(
     false
 }
 
-/// Initialize seed clusters. In the pure engine crate, TunablePc falls back to monomers
-/// since we cannot call the Python-bound run_tunable.
+/// Initialize seed clusters based on `seed_type` (R4 spec).
+///
+/// Falls back to the legacy `seed_strategy` only when `seed_type` is `Monomers`
+/// AND `seed_strategy` is `Custom` (preserving backward compat for that path).
+#[allow(deprecated)]
 fn initialize_seed_clusters<R: Rng>(params: &TunableCcParams, rng: &mut R) -> Vec<TunableCluster> {
-    match &params.seed_strategy {
-        SeedStrategy::Monomers | SeedStrategy::TunablePc { .. } => {
-            // All individual particles (TunablePc falls back to monomers without Python)
-            (0..params.n_particles)
-                .map(|_| {
-                    let r = params.random_radius(rng);
-                    TunableCluster::new(Sphere::new(Vector3::zero(), r))
-                })
-                .collect()
+    // New seed_type takes precedence unless it's Monomers AND legacy Custom is set
+    match params.seed_type {
+        SeedType::Monomers => {
+            // Check legacy seed_strategy for backward compat
+            match &params.seed_strategy {
+                SeedStrategy::Custom { sizes } => sizes
+                    .iter()
+                    .map(|&size| {
+                        let particles: Vec<Sphere> = (0..size)
+                            .map(|_| Sphere::new(Vector3::zero(), params.random_radius(rng)))
+                            .collect();
+                        TunableCluster::from_particles(particles)
+                    })
+                    .collect(),
+                _ => build_monomers(params.n_particles, params, rng),
+            }
         }
-        SeedStrategy::Custom { sizes } => sizes
-            .iter()
-            .map(|&size| {
-                let particles: Vec<Sphere> = (0..size)
-                    .map(|_| Sphere::new(Vector3::zero(), params.random_radius(rng)))
-                    .collect();
-                TunableCluster::from_particles(particles)
-            })
-            .collect(),
+        SeedType::Dimers => build_dimers(params.n_particles, params.mean_radius(), rng),
+        SeedType::Trimers => build_trimers(params.n_particles, params.mean_radius(), rng),
     }
+}
+
+/// Build N independent monomer clusters.
+fn build_monomers<R: Rng>(n: usize, params: &TunableCcParams, rng: &mut R) -> Vec<TunableCluster> {
+    (0..n)
+        .map(|_| {
+            let r = params.random_radius(rng);
+            TunableCluster::new(Sphere::new(Vector3::zero(), r))
+        })
+        .collect()
+}
+
+/// Build ⌊N/2⌋ touching dimer pairs + 1 leftover monomer when N is odd.
+///
+/// Each dimer consists of 2 monomers with centers separated by `2·rp` along
+/// a random spherical direction.
+fn build_dimers<R: Rng>(n: usize, rp: f64, rng: &mut R) -> Vec<TunableCluster> {
+    if n <= 1 {
+        // Edge case: N=1 → single monomer regardless of mode
+        return vec![TunableCluster::new(Sphere::new(Vector3::zero(), rp))];
+    }
+
+    let n_dimers = n / 2;
+    let leftover = n % 2;
+    let mut clusters = Vec::with_capacity(n_dimers + leftover);
+
+    for _ in 0..n_dimers {
+        let (dx, dy, dz) = sample_merge_direction(rng);
+        let dir = Vector3::new(dx, dy, dz);
+        let p1 = Sphere::new(Vector3::zero(), rp);
+        let p2 = Sphere::new(dir * (2.0 * rp), rp);
+        clusters.push(TunableCluster::from_particles(vec![p1, p2]));
+    }
+
+    if leftover == 1 {
+        clusters.push(TunableCluster::new(Sphere::new(Vector3::zero(), rp)));
+    }
+
+    clusters
+}
+
+/// Build ⌊N/3⌋ linear trimers + leftover handling.
+///
+/// Each trimer is 3 collinear monomers at positions `[0, 2·rp, 4·rp]` along
+/// a random spherical direction.  Leftovers:
+/// - N mod 3 == 1 → 1 extra monomer
+/// - N mod 3 == 2 → 1 extra dimer
+/// - N < 3 → fall back to dimer logic (N=2 → 1 dimer, N=1 → 1 monomer)
+fn build_trimers<R: Rng>(n: usize, rp: f64, rng: &mut R) -> Vec<TunableCluster> {
+    if n < 3 {
+        // Fall back: N=1 → monomer, N=2 → dimer (locked decision #3)
+        return build_dimers(n, rp, rng);
+    }
+
+    let n_trimers = n / 3;
+    let leftover = n % 3;
+    let mut clusters = Vec::with_capacity(n_trimers + if leftover > 0 { 1 } else { 0 });
+
+    for _ in 0..n_trimers {
+        let (dx, dy, dz) = sample_merge_direction(rng);
+        let dir = Vector3::new(dx, dy, dz);
+        let p1 = Sphere::new(Vector3::zero(), rp);
+        let p2 = Sphere::new(dir * (2.0 * rp), rp);
+        let p3 = Sphere::new(dir * (4.0 * rp), rp);
+        clusters.push(TunableCluster::from_particles(vec![p1, p2, p3]));
+    }
+
+    match leftover {
+        1 => clusters.push(TunableCluster::new(Sphere::new(Vector3::zero(), rp))),
+        2 => {
+            let (dx, dy, dz) = sample_merge_direction(rng);
+            let dir = Vector3::new(dx, dy, dz);
+            let p1 = Sphere::new(Vector3::zero(), rp);
+            let p2 = Sphere::new(dir * (2.0 * rp), rp);
+            clusters.push(TunableCluster::from_particles(vec![p1, p2]));
+        }
+        _ => {}
+    }
+
+    clusters
 }
 
 /// Internal Tunable CC implementation following thesis Chapter 6.
@@ -1455,6 +1569,41 @@ mod tests {
                 "Component {label}: var={var:.4}, expected in [0.28, 0.39]"
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // Seed type enum (R4 of cc-tunable-aggregation spec)
+    // ---------------------------------------------------------------
+
+    /// T3.1 — SeedType::default() must be Monomers (backward compat, R6).
+    #[test]
+    fn test_seed_type_default_is_monomers() {
+        let seed_type = SeedType::default();
+        assert_eq!(
+            seed_type,
+            SeedType::Monomers,
+            "Default SeedType must be Monomers"
+        );
+    }
+
+    /// T3.1 — TunableCcParams must have a seed_type field defaulting to Monomers.
+    #[test]
+    fn test_tunable_cc_params_seed_type_defaults_to_monomers() {
+        let params = TunableCcParams::default();
+        assert_eq!(
+            params.seed_type,
+            SeedType::Monomers,
+            "TunableCcParams.seed_type must default to Monomers"
+        );
+    }
+
+    /// T3.1 — SeedType enum has all three variants.
+    #[test]
+    fn test_seed_type_enum_variants() {
+        let _m = SeedType::Monomers;
+        let _d = SeedType::Dimers;
+        let _t = SeedType::Trimers;
+        // If this compiles and runs, the enum has all three variants.
     }
 
     // ---------------------------------------------------------------
