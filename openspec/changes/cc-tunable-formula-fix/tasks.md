@@ -31,9 +31,9 @@
 
 ## Phase 5 — Frontend: CC tunable form dropdown
 
-- [ ] T5.1 — Add "Seed type" dropdown in CC tunable simulation form; grep form file location in `frontend/src/components/forms/` (file: `frontend/src/components/forms/SimulationForm.tsx`)
-- [ ] T5.2 — Set default selection: Monomers; add tooltip explaining FZR origin (file: `frontend/src/components/forms/SimulationForm.tsx`)
-- [ ] T5.3 — Send `seed_type` field in API call; vitest: form renders 3 options, default selected, payload includes field (file: `frontend/src/components/forms/SimulationForm.tsx`, `frontend/src/components/forms/__tests__/`)
+- [x] T5.1 — Add "Seed type" dropdown in CC tunable simulation form; grep form file location in `frontend/src/components/forms/` (file: `frontend/src/components/forms/SimulationForm.tsx`)
+- [x] T5.2 — Set default selection: Monomers; add tooltip explaining FZR origin (file: `frontend/src/components/forms/SimulationForm.tsx`)
+- [x] T5.3 — Send `seed_type` field in API call; vitest: form renders 3 options, default selected, payload includes field (file: `frontend/src/components/forms/SimulationForm.tsx`, `frontend/src/components/forms/__tests__/`)
 
 ## Phase 6 — Tests integration + docs + Jira PYA-10 close
 
