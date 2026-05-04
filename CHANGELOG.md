@@ -1,3 +1,34 @@
+## cc-tunable-formula-fix (unreleased)
+
+### Fixed
+
+- **CC tunable Df/kf convergence**: corrected 3 bugs in `calculate_com_distance` (wrong leading factor, single-cluster term, spurious 3/5 constant) that caused systematic bias toward the ballistic limit (Df≈1.91 regardless of target). Empirical pre-fix: target Df=1.6 produced Df 1.87-2.07. Post-fix: convergence within ±5% Df / ±10% kf for Df≥1.8 targets; low-Df targets (1.6) still affected by excessive ballistic fallback (known limitation, needs algorithmic follow-up).
+
+### Added
+
+- **`seed_type` field on Simulation model** with choices `monomers` (default), `dimers`, `trimers`. Configurable via simulation creation form and API.
+- **Two-rotation positioning** in CC tunable algorithm (uniform spherical sampling, was single-axis).
+- **Retry policy** for geometric merge failures: up to `max_merge_retries` attempts (default 100) with new sub-cluster pair selection per retry; ballistic fallback only after exhaustion.
+- **Diagnostic metadata** in simulation result: `tunable_merges`, `ballistic_merges`, `max_retries_per_merge`.
+
+### Changed
+
+- `SeedStrategy::TunablePc` marked `#[deprecated]` (preserved for backward compat with legacy `seed_cluster_size` Python binding callers; new code should use `seed_type` directly).
+
+### Migration
+
+- Run `python manage.py migrate simulations 0006` after deploy. Additive nullable, reversible.
+
+### Backward compatibility
+
+- Existing simulations untouched.
+- Legacy API callers without `seed_type` default to `monomers`.
+- Legacy Python binding callers via `seed_cluster_size` still work (mapped to `Monomers` via deprecated path).
+
+### Closes
+
+- Jira **PYA-10**: CC tunable does not converge to target Df/kf.
+
 ## fraktal-batch-distributions-and-entry (unreleased)
 
 ### Added
