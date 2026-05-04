@@ -20,7 +20,7 @@
 - [x] T3.1 — Add `SeedType` enum (Monomers, Dimers, Trimers); grep for `SeedStrategy::TunablePc` and remove if no external refs exist (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [x] T3.2 — Implement Dimers initialization: N/2 touching pairs, leftover monomer if N is odd; inter-particle distance = 2·rp (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 - [x] T3.3 — Implement Trimers initialization: N/3 linear triplets (3 collinear monomers at 2·rp spacing), leftover handling for N % 3 ≠ 0 (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
-- [ ] T3.4 — Cargo tests: each seed type produces correct initial state, edge cases N=1, N=2, N=4, N=7 (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
+- [x] T3.4 — Cargo tests: each seed type produces correct initial state, edge cases N=1, N=2, N=4, N=7 (file: `aglogen_core/engine/src/aggregation/tunable_cc.rs`)
 
 ## Phase 4 — Backend: API + serializer + migration
 
