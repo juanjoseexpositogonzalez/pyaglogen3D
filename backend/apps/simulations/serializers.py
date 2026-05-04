@@ -37,6 +37,16 @@ class SimulationSerializer(serializers.ModelSerializer):
         write_only=True,
         help_text="Base64-encoded CSV data with x, y, z, radius columns (for 'imported' algorithm)",
     )
+    seed_type = serializers.ChoiceField(
+        choices=[
+            ("monomers", "Monomers"),
+            ("dimers", "Dimers"),
+            ("trimers", "Trimers"),
+        ],
+        default="monomers",
+        required=False,
+        help_text="Seed type for CC tunable: monomers (default), dimers, or trimers.",
+    )
 
     class Meta:
         model = Simulation
@@ -47,6 +57,7 @@ class SimulationSerializer(serializers.ModelSerializer):
             "algorithm",
             "parameters",
             "seed",
+            "seed_type",
             "status",
             "metrics",
             "execution_time_ms",
