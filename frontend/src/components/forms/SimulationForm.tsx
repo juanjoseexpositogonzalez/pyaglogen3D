@@ -116,9 +116,16 @@ const packingOptions3D: { value: PackingType; label: string; description: string
   { value: 'CCC', label: 'CCC', description: 'Face-Centered Cubic' },
 ]
 
+type SeedType = 'monomers' | 'dimers' | 'trimers'
 type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
 type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
 type BoxRfaConnectivityMethod = 'random_walk' | 'nearest_neighbor'
+
+const seedTypeOptions: { value: SeedType; label: string }[] = [
+  { value: 'monomers', label: 'Monomers (default)' },
+  { value: 'dimers', label: 'Dimers' },
+  { value: 'trimers', label: 'Trimers' },
+]
 
 interface FormParams {
   n_particles: number
@@ -134,6 +141,7 @@ interface FormParams {
   // Tunable CC specific
   seed_cluster_size: number | null  // null = use monomers
   max_rotation_attempts: number
+  seed_type: SeedType
   // FracVAL specific (polydisperse CC)
   geometric_mean: number      // Geometric mean radius for lognormal distribution
   geometric_std: number       // Geometric std dev (1.0 = monodisperse)
@@ -176,6 +184,7 @@ const defaultParams: FormParams = {
   target_kf: 1.3,
   seed_cluster_size: null,  // null = start with monomers
   max_rotation_attempts: 50,
+  seed_type: 'monomers',
   geometric_mean: 1.0,    // FracVAL: geometric mean radius
   geometric_std: 1.0,     // FracVAL: 1.0 = monodisperse
   // GCCA defaults
@@ -1238,6 +1247,19 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   Number of rotation attempts to resolve overlaps (10-200)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="seed_type">Seed Type</Label>
+                <Select
+                  id="seed_type"
+                  value={params.seed_type}
+                  onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
+                  options={seedTypeOptions}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
                 </p>
               </div>
             </>
