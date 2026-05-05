@@ -312,13 +312,25 @@ impl TunableCluster {
 ///
 /// Returns `Some(d)` where `d = √(d²)` if `d² > 0`, or `None` when the
 /// geometry is impossible (caller should fall back to retry / ballistic).
+///
+/// # Sintering
+///
+/// `sintering_coeff` scales the primary-particle radius before it enters
+/// the formula: `rp_eff = rp * sintering_coeff`.  This represents the
+/// effective contact radius after sintering compaction.  At `coeff = 1.0`
+/// the formula is identical to the pre-sintering baseline.  Because `rp`
+/// only appears in the leading `rp²` factor, the COM distance scales
+/// linearly with `sintering_coeff`: `d_sintered = coeff · d_unsintered`.
 fn calculate_com_distance(
-    n_po1: usize, // Primary-particle count in sub-cluster 1
-    n_po2: usize, // Primary-particle count in sub-cluster 2
-    rp: f64,      // Primary particle radius
-    df: f64,      // Target fractal dimension
-    kf: f64,      // Target prefactor
+    n_po1: usize,         // Primary-particle count in sub-cluster 1
+    n_po2: usize,         // Primary-particle count in sub-cluster 2
+    rp: f64,              // Primary particle radius
+    df: f64,              // Target fractal dimension
+    kf: f64,              // Target prefactor
+    sintering_coeff: f64, // Sintering coefficient (1.0 = no sintering)
 ) -> Option<f64> {
+    let rp_eff = rp * sintering_coeff;
+
     let n1 = n_po1 as f64;
     let n2 = n_po2 as f64;
     let n = n1 + n2;
@@ -328,7 +340,7 @@ fn calculate_com_distance(
     let t1 = n1 * (n1 / kf).powf(e);
     let t2 = n2 * (n2 / kf).powf(e);
 
-    let d_sq = (n * rp * rp) / (n1 * n2) * (t_total - t1 - t2);
+    let d_sq = (n * rp_eff * rp_eff) / (n1 * n2) * (t_total - t1 - t2);
 
     if !d_sq.is_finite() || d_sq <= 0.0 {
         return None;
@@ -885,13 +897,14 @@ pub fn run_tunable_cc_internal(
             let n_po1 = impacted.n_particles();
             let n_po2 = impactor.n_particles();
 
-            let required_distance = match calculate_com_distance(n_po1, n_po2, rp, df, kf) {
-                Some(d) => d,
-                None => {
-                    retries_this_merge = attempt;
-                    continue; // retry with new pair
-                }
-            };
+            let required_distance =
+                match calculate_com_distance(n_po1, n_po2, rp, df, kf, sintering_coeff) {
+                    Some(d) => d,
+                    None => {
+                        retries_this_merge = attempt;
+                        continue; // retry with new pair
+                    }
+                };
 
             let can_connect = can_clusters_connect(&impacted, &impactor, required_distance);
             if !can_connect {
@@ -2093,7 +2106,8 @@ mod tests {
         let rp = 12.5;
 
         // CC: merge two monomers
-        let d_cc = calculate_com_distance(1, 1, rp, df, kf).expect("must be Some for monomers");
+        let d_cc =
+            calculate_com_distance(1, 1, rp, df, kf, 1.0).expect("must be Some for monomers");
 
         // PC: adding particle #2 to a 1-particle cluster → n=2
         let d_pc = expected_pc_gamma(2, rp, df, kf);
@@ -2114,7 +2128,7 @@ mod tests {
         let rp = 1.0;
 
         // CC: merge (2,1)
-        let d_cc = calculate_com_distance(2, 1, rp, df, kf).expect("must be Some");
+        let d_cc = calculate_com_distance(2, 1, rp, df, kf, 1.0).expect("must be Some");
 
         // PC: n=3 step (adding monomer to 2-cluster) — the specialization n_po1=n-1, n_po2=1
         let d_pc = expected_pc_gamma(3, rp, df, kf);
@@ -2140,7 +2154,7 @@ mod tests {
         let kf = 1.4;
         let rp = 1.0;
 
-        let d = calculate_com_distance(10, 10, rp, df, kf).expect("must be Some");
+        let d = calculate_com_distance(10, 10, rp, df, kf, 1.0).expect("must be Some");
 
         // Hardcoded analytic value
         let expected = expected_cc_d(10, 10, rp, df, kf);
@@ -2159,7 +2173,7 @@ mod tests {
         let kf = 1.7;
         let rp = 1.0;
 
-        let d = calculate_com_distance(175, 175, rp, df, kf).expect("must be Some for N=350");
+        let d = calculate_com_distance(175, 175, rp, df, kf, 1.0).expect("must be Some for N=350");
 
         assert!(d > 0.0, "Distance must be positive for N=350");
         assert!(d.is_finite(), "Distance must be finite");
@@ -2178,8 +2192,8 @@ mod tests {
         let kf = 1.3;
         let rp = 1.0;
 
-        let d_low = calculate_com_distance(10, 10, rp, 1.4, kf).unwrap();
-        let d_high = calculate_com_distance(10, 10, rp, 2.2, kf).unwrap();
+        let d_low = calculate_com_distance(10, 10, rp, 1.4, kf, 1.0).unwrap();
+        let d_high = calculate_com_distance(10, 10, rp, 2.2, kf, 1.0).unwrap();
 
         assert!(
             d_low > d_high,
@@ -2195,7 +2209,7 @@ mod tests {
     #[test]
     fn test_com_distance_returns_none_for_degenerate_input() {
         // Df very close to 0 → exponent 2/Df → ∞ → overflow to NaN or Inf
-        let result = calculate_com_distance(5, 5, 1.0, 0.01, 1.0);
+        let result = calculate_com_distance(5, 5, 1.0, 0.01, 1.0, 1.0);
         // Should return None (NaN/Inf guard) or possibly Some(very large) —
         // either way, must NOT panic
         if let Some(d) = result {
