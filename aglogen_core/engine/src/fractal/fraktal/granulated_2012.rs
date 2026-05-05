@@ -21,6 +21,9 @@ use super::result::{AnalysisQuality, FailureReason};
 /// Soot density in fg/nm³
 const SOOT_DENSITY: f64 = 1.85e-06;
 
+/// Default max iterations for the bisection solver (used for IterationLimit detection).
+const BISECTION_MAX_ITERATIONS: usize = 100;
+
 /// Residual threshold below which a result is considered fully converged.
 /// Matches the bisection CONVERGENCE_THRESHOLD (0.1).
 pub const APPROXIMATE_RESIDUAL_THRESHOLD: f64 = 0.1;
@@ -288,6 +291,14 @@ pub fn analyze_granulated_2012(
     let tolerance = 0.0001;
     let max_outer_iterations = 50;
 
+    // Track the last bisection result for diagnostic surfacing (PYA-13).
+    // Even when bisection "fails", we preserve diagnostic data for the user.
+    let mut last_bisection_iterations: usize = 0;
+    let mut last_bisection_residual: f64 = 0.0;
+    let mut last_bisection_bracket_found: bool = false;
+    let mut last_bisection_df: f64 = 0.0;
+    let mut last_bisection_kf: f64 = 0.0;
+
     'outer_search: for npo_initial in initial_estimates.iter().copied() {
         let mut npo_estimate = npo_initial;
 
@@ -328,6 +339,13 @@ pub fn analyze_granulated_2012(
             let solver = BisectionSolver::default();
             let result = solver.solve(objective, df_search_min, 3.0);
 
+            // Capture diagnostic data from every bisection attempt (PYA-13)
+            last_bisection_iterations = result.iterations;
+            last_bisection_residual = result.function_value;
+            last_bisection_bracket_found = result.bracket_found;
+            last_bisection_df = result.df;
+            last_bisection_kf = result.kf;
+
             // Check for invalid result (bisection failed or kf negative)
             if result.df == 0.0 || !result.converged || result.kf <= 0.0 {
                 break; // Try next initial estimate
@@ -358,6 +376,31 @@ pub fn analyze_granulated_2012(
 
     // Check for valid solution
     if df_result == 0.0 || !converged {
+        // Derive failure_reason from last bisection attempt (PYA-13)
+        let failure_reason =
+            if !last_bisection_bracket_found && !converged && last_bisection_iterations > 0 {
+                Some(FailureReason::NoSignChange)
+            } else if last_bisection_kf <= 0.0 && last_bisection_iterations > 0 {
+                Some(FailureReason::KfNegative)
+            } else if last_bisection_iterations == BISECTION_MAX_ITERATIONS && !converged {
+                Some(FailureReason::IterationLimit)
+            } else {
+                None
+            };
+
+        let quality = if last_bisection_iterations > 0 {
+            classify_quality(last_bisection_residual, failure_reason)
+        } else {
+            AnalysisQuality::Failed
+        };
+
+        // Surface df_estimate when bisection produced a non-zero result
+        let df_estimate = if last_bisection_df > 0.0 {
+            Some(last_bisection_df)
+        } else {
+            None
+        };
+
         return FraktalResult {
             rg,
             ap,
@@ -370,6 +413,11 @@ pub fn analyze_granulated_2012(
             },
             execution_time_ms: start_time.elapsed().as_millis() as u64,
             model: "granulated_2012".to_string(),
+            bisection_iterations: Some(last_bisection_iterations),
+            bisection_residual: Some(last_bisection_residual.abs()),
+            failure_reason,
+            df_estimate,
+            quality,
             ..Default::default()
         };
     }
@@ -398,6 +446,11 @@ pub fn analyze_granulated_2012(
             status: FraktalStatus::NpoTooSmall,
             execution_time_ms: start_time.elapsed().as_millis() as u64,
             model: "granulated_2012".to_string(),
+            bisection_iterations: Some(last_bisection_iterations),
+            bisection_residual: Some(last_bisection_residual.abs()),
+            failure_reason: None,
+            df_estimate: Some(df_result),
+            quality: classify_quality(last_bisection_residual, None),
             ..Default::default()
         };
     }
@@ -428,6 +481,9 @@ pub fn analyze_granulated_2012(
     };
     let npo_aligned = npo_ratio >= 0.5 && npo_ratio <= 2.0;
 
+    // Classify quality on success path (PYA-13)
+    let quality = classify_quality(last_bisection_residual, None);
+
     FraktalResult {
         rg,
         ap,
@@ -446,7 +502,11 @@ pub fn analyze_granulated_2012(
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "granulated_2012".to_string(),
-        ..Default::default()
+        bisection_iterations: Some(last_bisection_iterations),
+        bisection_residual: Some(last_bisection_residual.abs()),
+        failure_reason: None,
+        df_estimate: Some(df_result),
+        quality,
     }
 }
 
