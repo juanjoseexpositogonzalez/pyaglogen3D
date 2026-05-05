@@ -28,6 +28,7 @@
 //! Df >= 1.8 (where ballistic fallback is less frequent), but Df=1.6 remains
 //! unsolved.
 
+use aglogen_engine::simulation::sintering::SinteringDistribution;
 use aglogen_engine::simulation::tunable_cc::{run_tunable_cc_internal, SeedType, TunableCcParams};
 
 /// Full 5-run convergence test at target Df=1.6, kf=1.7, N=350.
@@ -272,4 +273,131 @@ fn diagnostic_trimers_at_low_df_target() {
     );
 
     assert!(mean_df > 1.0 && mean_df < 3.0, "Df sanity range");
+}
+
+// ── PYA-11 sintering integration tests ──────────────────────────────────
+
+/// PYA-11 integration (small-N fast variant): 5 seeded runs with sintering
+/// must NOT collapse to a single monomer. Each run must produce N=20 particles.
+///
+/// This is the always-run guard for the PYA-11 fix: aggregate must never
+/// collapse when sintering_coeff < 1.0. Small N keeps runtime tractable.
+#[test]
+fn sintering_no_collapse_small_n() {
+    let target_df = 2.0;
+    let target_kf = 1.0;
+    let n_particles = 20;
+    let sintering_coeff = 0.9;
+
+    for seed in 0..5u64 {
+        let params = TunableCcParams {
+            n_particles,
+            target_df,
+            target_kf,
+            radius_min: 12.5,
+            radius_max: 12.5,
+            seed_type: SeedType::Monomers,
+            sintering: SinteringDistribution::Fixed(sintering_coeff),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, seed, None);
+
+        eprintln!(
+            "  sintering_small seed {}: Df={:.3}, kf={:.3}, n={} (tunable={}, ballistic={})",
+            seed,
+            result.fractal_dimension,
+            result.prefactor,
+            result.coordinates.len(),
+            result.tunable_merges,
+            result.ballistic_merges,
+        );
+
+        assert_eq!(
+            result.coordinates.len(),
+            n_particles,
+            "Run {}: aggregate has {} particles, expected {} — PYA-11 collapse detected",
+            seed,
+            result.coordinates.len(),
+            n_particles
+        );
+    }
+}
+
+/// PYA-11 integration: 5 seeded runs with sintering must NOT collapse
+/// to a single monomer. Each run must produce N=350 particles.
+///
+/// Convergence to target Df=2.0/kf=1.0 is NOT enforced strictly here
+/// because the inner geometry of CC tunable is also subject to
+/// PYA-14's iterative-drift caveats. The hard requirement is the
+/// PYA-11 fix: aggregate is not collapsed.
+///
+/// NOTE: This test runs with N=350 + sintering=0.9 which can exceed
+/// 60 seconds. Marked #[ignore] if runtime is prohibitive — the
+/// small-N variant (`sintering_no_collapse_small_n`) covers the same
+/// hard requirement on a tractable size.
+#[test]
+fn convergence_5_runs_with_sintering() {
+    let target_df = 2.0;
+    let target_kf = 1.0;
+    let n_particles = 350;
+    let sintering_coeff = 0.9;
+
+    let mut df_results = Vec::new();
+    let mut kf_results = Vec::new();
+    let mut sizes = Vec::new();
+
+    for seed in 0..5u64 {
+        let params = TunableCcParams {
+            n_particles,
+            target_df,
+            target_kf,
+            radius_min: 12.5,
+            radius_max: 12.5,
+            seed_type: SeedType::Monomers,
+            sintering: SinteringDistribution::Fixed(sintering_coeff),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, seed, None);
+
+        eprintln!(
+            "  seed {}: Df={:.3}, kf={:.3}, n={} (tunable={}, ballistic={})",
+            seed,
+            result.fractal_dimension,
+            result.prefactor,
+            result.coordinates.len(),
+            result.tunable_merges,
+            result.ballistic_merges,
+        );
+
+        sizes.push(result.coordinates.len());
+        df_results.push(result.fractal_dimension);
+        kf_results.push(result.prefactor);
+    }
+
+    // Hard requirement (PYA-11): no collapse.
+    for (i, &size) in sizes.iter().enumerate() {
+        assert_eq!(
+            size, n_particles,
+            "Run {}: aggregate has {} particles, expected {} — PYA-11 collapse detected",
+            i, size, n_particles
+        );
+    }
+
+    // Soft requirement: at Df=2 the algorithm should converge close to target.
+    let mean_df = df_results.iter().sum::<f64>() / 5.0;
+    let mean_kf = kf_results.iter().sum::<f64>() / 5.0;
+    eprintln!(
+        "Mean Df={:.3} (target {}, error {:.1}%)",
+        mean_df,
+        target_df,
+        (mean_df - target_df).abs() / target_df * 100.0
+    );
+    eprintln!(
+        "Mean kf={:.3} (target {}, error {:.1}%)",
+        mean_kf,
+        target_kf,
+        (mean_kf - target_kf).abs() / target_kf * 100.0
+    );
 }
