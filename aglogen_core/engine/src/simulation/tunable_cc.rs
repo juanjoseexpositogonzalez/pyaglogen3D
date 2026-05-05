@@ -667,12 +667,41 @@ fn merge_ballistic<R: Rng>(
 
         // March toward cluster1
         let trajectory = (cluster1.center_of_mass - cluster2.center_of_mass).normalize();
-        let step = cluster2
+        // PYA-11 fix: the snap window in the contact check below is
+        // `[contact_dist * 0.9, contact_dist * 1.01]` — i.e. width
+        // `contact_dist * 0.11`. With sintering_coeff < 1, contact_dist
+        // shrinks (e.g. 1.8 instead of 2.0 for rp=1) so the window
+        // narrows. The march step MUST be smaller than the window
+        // width or the marching cluster skips past the contact zone
+        // without ever entering the snap window. Cap at half-window
+        // (~0.055 * contact_dist) and clamp to a minimum of `min_radius
+        // * 0.05` to avoid pathologically slow marches for tiny
+        // primaries.
+        //
+        // At coeff=1.0 this is identical-or-finer than the previous
+        // `min_radius * 0.5` step (window 1.8..2.02 with rp=1 gives
+        // step ~0.11 vs old 0.5 — finer, no regression risk).
+        let min_radius = cluster2
             .particles
             .iter()
             .map(|p| p.radius)
-            .fold(f64::INFINITY, f64::min)
-            * 0.5;
+            .fold(f64::INFINITY, f64::min);
+        let min_contact_dist = {
+            let mut min_cd = f64::INFINITY;
+            for p1 in &cluster1.particles {
+                for p2 in &cluster2.particles {
+                    let cd = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
+                    if cd < min_cd {
+                        min_cd = cd;
+                    }
+                }
+            }
+            min_cd
+        };
+        // Window width = contact_dist * (1.01 - 0.9) = contact_dist * 0.11
+        // Half-window ensures we always sample inside the snap zone.
+        let snap_half_window = min_contact_dist * 0.055;
+        let step = snap_half_window.max(min_radius * 0.05);
 
         for _ in 0..(launch_dist * 4.0 / step) as usize {
             // Check for near-contact (any particle pair within coarse window).
