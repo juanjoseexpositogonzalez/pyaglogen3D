@@ -1966,4 +1966,133 @@ mod tests {
             );
         }
     }
+
+    // ── PYA-13 T2.4: diagnostic fields in batch results ───────────
+
+    #[test]
+    fn test_failure_reason_as_str() {
+        use aglogen_engine::fractal::fraktal::result::FailureReason;
+        assert_eq!(FailureReason::NoSignChange.as_str(), "no_sign_change");
+        assert_eq!(FailureReason::KfNegative.as_str(), "kf_negative");
+        assert_eq!(FailureReason::IterationLimit.as_str(), "iteration_limit");
+    }
+
+    #[test]
+    fn test_analysis_quality_as_str() {
+        use aglogen_engine::fractal::fraktal::result::AnalysisQuality;
+        assert_eq!(AnalysisQuality::Converged.as_str(), "converged");
+        assert_eq!(AnalysisQuality::Approximate.as_str(), "approximate");
+        assert_eq!(AnalysisQuality::Excluded.as_str(), "excluded");
+        assert_eq!(AnalysisQuality::Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn batch_result_has_quality_field() {
+        // Successful images must have quality = Some("converged"|"approximate"|...).
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let output =
+            analyze_batch_broadcast(vec![img], 50.0, false, 25.0, BatchAlgorithm::Granulated2012)
+                .expect("batch must succeed");
+
+        assert_eq!(output.results.len(), 1);
+        let r = &output.results[0];
+        assert!(
+            r.quality.is_some(),
+            "quality must be populated for every result"
+        );
+        let q = r.quality.as_deref().unwrap();
+        assert!(
+            ["converged", "approximate", "excluded", "failed"].contains(&q),
+            "quality must be one of the 4 valid values, got '{}'",
+            q
+        );
+    }
+
+    #[test]
+    fn batch_result_has_bisection_diagnostic_fields() {
+        // T2.4: verify BatchImageResult carries all 5 diagnostic fields
+        // so the binding can surface them.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let output =
+            analyze_batch_broadcast(vec![img], 50.0, false, 25.0, BatchAlgorithm::Granulated2012)
+                .expect("batch must succeed");
+
+        let r = &output.results[0];
+        // quality is always populated
+        assert!(r.quality.is_some());
+        // On a successful analysis, df_estimate should be Some
+        // bisection_iterations and bisection_residual may be Some or None
+        // depending on algorithm path — we just verify they're accessible
+        let _iters = r.bisection_iterations;
+        let _residual = r.bisection_residual;
+        let _failure = &r.failure_reason;
+        let _df_est = r.df_estimate;
+    }
+
+    #[test]
+    fn batch_failed_image_still_has_quality() {
+        // A blank image errors before bisection, so quality is default
+        // "converged" (the Default impl). The key assertion is that
+        // quality is always Some — never missing — even on error images.
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+
+        let output = analyze_batch_broadcast(
+            vec![blank],
+            50.0,
+            false,
+            25.0,
+            BatchAlgorithm::Granulated2012,
+        )
+        .expect("batch must succeed even with failed images");
+
+        assert_eq!(output.results.len(), 1);
+        let r = &output.results[0];
+        assert!(r.error.is_some(), "blank image should produce an error");
+        assert!(
+            r.quality.is_some(),
+            "quality must be populated even for error images"
+        );
+    }
+
+    #[test]
+    fn per_image_scale_batch_has_diagnostic_fields() {
+        // T2.4: verify per-image-scale batch results also carry diagnostic fields
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let input = BatchInput {
+            images: vec![img.clone(), img],
+            pixels_per_100nm: vec![40.0, 60.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let output = analyze_batch(input).expect("per-image scale batch must succeed");
+
+        for r in &output.results {
+            assert!(
+                r.quality.is_some(),
+                "quality must be populated for image {}",
+                r.index
+            );
+            let q = r.quality.as_deref().unwrap();
+            assert!(
+                ["converged", "approximate", "excluded", "failed"].contains(&q),
+                "quality must be valid, got '{}' for image {}",
+                q,
+                r.index
+            );
+        }
+    }
 }
