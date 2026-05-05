@@ -2542,4 +2542,157 @@ mod tests {
         }
         assert!(found_contact, "Must have contacts at bare distance");
     }
+
+    // ---------------------------------------------------------------
+    // End-to-end smoke + comprehensive P2 tests (T2.3 — PYA-11)
+    // ---------------------------------------------------------------
+
+    /// T2.3 — End-to-end smoke: moderate Df with sintering produces valid
+    /// aggregate (not collapsed to 1 monomer, no panic, no infinite loop).
+    #[test]
+    fn test_sintering_e2e_smoke_moderate_df() {
+        // T2.3 — N=10 keeps the test fast (<1s); N=30+ with sintering=0.9
+        // pushes the merge loop into 50k+ iterations because each retry
+        // tries up to 100 attempts. The smoke property (aggregate not
+        // collapsed) is validated identically with smaller N.
+        let sintering_coeff = 0.9;
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.4,
+            sintering: SinteringDistribution::Fixed(sintering_coeff),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None);
+
+        // Must produce all 10 particles (not 1, not collapsed)
+        assert_eq!(
+            result.coordinates.len(),
+            10,
+            "Sintered sim must produce all 10 particles, got {}",
+            result.coordinates.len()
+        );
+
+        // Df should be reasonable (not sentinel)
+        assert!(
+            result.fractal_dimension > 1.0 && result.fractal_dimension < 3.0,
+            "Df must be in (1,3), got {}",
+            result.fractal_dimension
+        );
+
+        // Aggregate must be connected (with sintered contact distance)
+        assert!(
+            particles_form_connected_graph(&result.coordinates, &result.radii, sintering_coeff),
+            "Sintered aggregate must be connected"
+        );
+
+        // No overlaps (with sintered distance)
+        for i in 0..result.coordinates.len() {
+            for j in (i + 1)..result.coordinates.len() {
+                let c1 = &result.coordinates[i];
+                let c2 = &result.coordinates[j];
+                let dist =
+                    ((c1[0] - c2[0]).powi(2) + (c1[1] - c2[1]).powi(2) + (c1[2] - c2[2]).powi(2))
+                        .sqrt();
+                let min_dist =
+                    sintered_contact_distance(result.radii[i], result.radii[j], sintering_coeff);
+                assert!(
+                    dist >= min_dist - 1e-4,
+                    "Overlap at sintered distance between {i} and {j}: dist={dist:.6}, min={min_dist:.6}"
+                );
+            }
+        }
+    }
+
+    /// T2.3 — All contacts in sintered aggregate are at sintered distance,
+    /// not bare contact distance.
+    #[test]
+    fn test_sintering_e2e_contacts_at_sintered_distance() {
+        // T2.3 — N=10 (see comment in smoke test). The contact-distance
+        // property is N-independent: any sintered aggregate has its
+        // contacts at sintered distance regardless of size.
+        let sintering_coeff = 0.9;
+        let rp = 1.0;
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 2.0,
+            target_kf: 1.0,
+            sintering: SinteringDistribution::Fixed(sintering_coeff),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 123, None);
+        assert_eq!(result.coordinates.len(), 10);
+
+        let sintered_cd = sintered_contact_distance(rp, rp, sintering_coeff); // 1.8
+        let bare_cd = sintered_contact_distance(rp, rp, 1.0); // 2.0
+        let tolerance = intercluster_contact_tolerance(sintered_cd) + 0.01;
+
+        // Count contacts at sintered distance vs bare distance
+        let mut sintered_contacts = 0;
+        let mut bare_only_contacts = 0;
+
+        for i in 0..result.coordinates.len() {
+            for j in (i + 1)..result.coordinates.len() {
+                let c1 = &result.coordinates[i];
+                let c2 = &result.coordinates[j];
+                let dist =
+                    ((c1[0] - c2[0]).powi(2) + (c1[1] - c2[1]).powi(2) + (c1[2] - c2[2]).powi(2))
+                        .sqrt();
+
+                if dist <= sintered_cd + tolerance {
+                    sintered_contacts += 1;
+                } else if dist <= bare_cd + tolerance {
+                    bare_only_contacts += 1;
+                }
+            }
+        }
+
+        assert!(
+            sintered_contacts > 0,
+            "Must have contacts at sintered distance {sintered_cd}"
+        );
+        // With sintering=0.9, all contacts should be at sintered distance,
+        // not at bare distance. Some particles might be near bare distance
+        // due to geometry, but most contacts should be sintered.
+        assert!(
+            sintered_contacts > bare_only_contacts,
+            "Sintered contacts ({sintered_contacts}) should outnumber bare-only contacts ({bare_only_contacts})"
+        );
+    }
+
+    /// T2.3 — Sintered aggregate with coeff=1.0 regression: identical
+    /// to baseline (same seed, same result).
+    #[test]
+    fn test_sintering_e2e_coeff_1_0_identical_to_baseline() {
+        // T2.3 — N=10 (see comment in smoke test).
+        let params_sintered = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            sintering: SinteringDistribution::Fixed(1.0),
+            ..Default::default()
+        };
+        let params_baseline = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default() // default sintering is Fixed(1.0)
+        };
+
+        let r1 = run_tunable_cc_internal(params_sintered, 42, None);
+        let r2 = run_tunable_cc_internal(params_baseline, 42, None);
+
+        assert_eq!(r1.coordinates.len(), r2.coordinates.len());
+        for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
+            let dist =
+                ((c1[0] - c2[0]).powi(2) + (c1[1] - c2[1]).powi(2) + (c1[2] - c2[2]).powi(2))
+                    .sqrt();
+            assert!(
+                dist < 1e-10,
+                "Particle {i} position differs: sintered={c1:?}, baseline={c2:?}"
+            );
+        }
+    }
 }

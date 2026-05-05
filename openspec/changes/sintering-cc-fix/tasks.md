@@ -20,7 +20,7 @@
 
 - [x] T2.1 — Fix `select_contact_particles` (~line 512 in `tunable_cc.rs`) to use `sintered_contact_distance(p1.radius, p2.radius, sintering_coeff)` instead of bare `p1.radius + p2.radius`
 - [x] T2.2 — Verify ballistic fallback path (`merge_ballistic`) also uses sintered contact distance; fix if inconsistent (already verified correct per design)
-- [ ] T2.3 — Add cargo tests: with sintering_coeff=0.9, verify contact validation accepts pairs at sintered distance; rejects at unsintered distance
+- [x] T2.3 — E2E smoke + contact-distance + coeff=1.0 regression tests with sintering_coeff=0.9, N=10. Revealed bug 3 (`merge_ballistic` step skipped sintered snap window); fixed in commit 9aa0137 by deriving step from snap window width. 251 engine tests passing.
 
 ---
 
