@@ -24,7 +24,7 @@ use ndarray::Array2;
 
 use super::image_processing::{estimate_particles_and_dpo, smart_segment};
 use super::params::{Granulated2012Params, Voxel2018Params};
-use super::result::FraktalStatus;
+use super::result::{FraktalResult, FraktalStatus};
 use super::{analyze_granulated_2012, analyze_voxel_2018};
 
 /// Whether the input image is a presentation PNG (with AA halo) or a
@@ -125,6 +125,17 @@ pub struct BatchImageResult {
     /// `None` when the image failed analysis.
     pub rg_nm: Option<f64>,
     pub error: Option<String>,
+    // ── Bisection diagnostic fields (PYA-13 fraktal-bisection-ux) ──
+    /// Quality classification of the analysis result. Always populated.
+    pub quality: Option<String>,
+    /// Number of bisection iterations performed.
+    pub bisection_iterations: Option<usize>,
+    /// Final bisection residual |f(Df)|.
+    pub bisection_residual: Option<f64>,
+    /// Categorized failure reason (None when analysis succeeded).
+    pub failure_reason: Option<String>,
+    /// Best Df estimate even when not converged.
+    pub df_estimate: Option<f64>,
 }
 
 /// Full batch output.
@@ -276,6 +287,37 @@ fn try_autocalibrate(
     Ok(dpo)
 }
 
+/// Build a BatchImageResult from a FraktalResult, populating diagnostic
+/// fields on both success and failure paths (PYA-13).
+fn build_batch_image_result(
+    index: usize,
+    r: &FraktalResult,
+    dpo: f64,
+    pixels_per_100nm: f64,
+) -> BatchImageResult {
+    let is_success = r.status == FraktalStatus::Success;
+    BatchImageResult {
+        index,
+        fractal_dimension: if is_success { Some(r.df) } else { None },
+        prefactor: if is_success { Some(r.kf) } else { None },
+        r_squared: None,
+        n_particles_counted: if is_success { Some(r.npo_visual) } else { None },
+        dpo_used: dpo,
+        pixels_per_100nm_used: pixels_per_100nm,
+        rg_nm: if is_success { Some(r.rg) } else { None },
+        error: if is_success {
+            None
+        } else {
+            Some(r.status.message())
+        },
+        quality: Some(r.quality.as_str().to_string()),
+        bisection_iterations: r.bisection_iterations,
+        bisection_residual: r.bisection_residual,
+        failure_reason: r.failure_reason.map(|fr| fr.as_str().to_string()),
+        df_estimate: r.df_estimate,
+    }
+}
+
 /// Run a single image through the selected analyzer, capturing per-image
 /// errors in the result rather than propagating them.
 fn run_one_image(
@@ -308,30 +350,7 @@ fn run_one_image(
                 ..Granulated2012Params::default()
             };
             let r = analyze_granulated_2012(image.view(), &params);
-            match r.status {
-                FraktalStatus::Success => BatchImageResult {
-                    index,
-                    fractal_dimension: Some(r.df),
-                    prefactor: Some(r.kf),
-                    r_squared: None,
-                    n_particles_counted: Some(r.npo_visual),
-                    dpo_used: dpo,
-                    pixels_per_100nm_used: pixels_per_100nm,
-                    rg_nm: Some(r.rg),
-                    error: None,
-                },
-                ref status => BatchImageResult {
-                    index,
-                    fractal_dimension: None,
-                    prefactor: None,
-                    r_squared: None,
-                    n_particles_counted: None,
-                    dpo_used: dpo,
-                    pixels_per_100nm_used: pixels_per_100nm,
-                    rg_nm: None,
-                    error: Some(status.message()),
-                },
-            }
+            build_batch_image_result(index, &r, dpo, pixels_per_100nm)
         }
         BatchAlgorithm::Voxel2018 => {
             let params = Voxel2018Params {
@@ -342,32 +361,7 @@ fn run_one_image(
                 ..Voxel2018Params::default()
             };
             let r = analyze_voxel_2018(image.view(), &params);
-            match r.status {
-                FraktalStatus::Success => BatchImageResult {
-                    index,
-                    fractal_dimension: Some(r.df),
-                    prefactor: Some(r.kf),
-                    r_squared: None,
-                    // Voxel model does not populate npo_visual (always 0);
-                    // expose it anyway so the shape stays stable.
-                    n_particles_counted: Some(r.npo_visual),
-                    dpo_used: dpo,
-                    pixels_per_100nm_used: pixels_per_100nm,
-                    rg_nm: Some(r.rg),
-                    error: None,
-                },
-                ref status => BatchImageResult {
-                    index,
-                    fractal_dimension: None,
-                    prefactor: None,
-                    r_squared: None,
-                    n_particles_counted: None,
-                    dpo_used: dpo,
-                    pixels_per_100nm_used: pixels_per_100nm,
-                    rg_nm: None,
-                    error: Some(status.message()),
-                },
-            }
+            build_batch_image_result(index, &r, dpo, pixels_per_100nm)
         }
     }
 }
@@ -419,6 +413,11 @@ mod tests {
             pixels_per_100nm_used: 0.0,
             error: None,
             rg_nm: None,
+            quality: None,
+            bisection_iterations: None,
+            bisection_residual: None,
+            failure_reason: None,
+            df_estimate: None,
         };
         assert!(result.rg_nm.is_none(), "default rg_nm must be None");
     }
@@ -484,6 +483,59 @@ mod tests {
             out.results[1].rg_nm.is_none(),
             "failed image must have rg_nm = None"
         );
+    }
+
+    // ── PYA-13: diagnostic fields in BatchImageResult ──────────────
+
+    #[test]
+    fn test_successful_batch_has_quality_converged() {
+        // A successful analysis should produce quality = "converged"
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        let r = &out.results[0];
+        assert!(r.fractal_dimension.is_some(), "analysis must succeed");
+        assert_eq!(
+            r.quality.as_deref(),
+            Some("converged"),
+            "successful analysis should be converged"
+        );
+        assert!(
+            r.bisection_iterations.is_some(),
+            "iterations must be surfaced"
+        );
+        assert!(r.bisection_residual.is_some(), "residual must be surfaced");
+        assert!(r.df_estimate.is_some(), "df_estimate must be surfaced");
+        assert!(r.failure_reason.is_none(), "no failure_reason on success");
+    }
+
+    #[test]
+    fn test_failed_batch_has_quality_and_diagnostics() {
+        // A blank image (no object) → failure path, but diagnostics populated
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+        let input = BatchInput {
+            images: vec![blank],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed even with failed images");
+        let r = &out.results[0];
+        assert!(r.error.is_some(), "blank image should produce error");
+        // Quality must be populated even on failure
+        assert!(r.quality.is_some(), "quality must be populated on failure");
     }
 
     // ── Phase 2 (P2): ImageInputVariant + scientific PNG input ─────
