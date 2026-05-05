@@ -1,3 +1,35 @@
+## sintering-cc-fix (unreleased)
+
+### Fixed
+
+- **CC tunable + sintering collapse**: when sintering_coeff < 1.0, the CC tunable algorithm produced single-monomer aggregates (`n_particles=1`, `Rg=0`) regardless of the requested `n_particles`. Three bugs were responsible:
+  - `calculate_com_distance` (introduced by frente 10) ignored `sintering_coeff`, so the fractal-law required position fell outside the sintered contact zone and every tunable merge was rejected.
+  - `select_contact_particles` used bare contact distance (`r1 + r2`) for validation, applying the same incorrect threshold.
+  - `merge_ballistic`'s march step (hardcoded `min_radius * 0.5`) was tuned for the bare contact window and skipped through the narrower sintered snap window — 0/200 ballistic merges succeeded at coeff=0.9.
+- All three fixes share the same principle: `rp_eff = rp · sintering_coeff` (linear scaling of contact distance).
+
+### Changed
+
+- `calculate_com_distance` signature gains `sintering_coeff: f64`. Math identity at coeff=1.0 (bitwise-equivalent regression test).
+- `merge_ballistic` march step now derives from the snap window width: `step = max(contact_dist · 0.055, min_radius · 0.05)`. Strictly finer than the old 0.5 at coeff=1.0 (no regression).
+
+### Migration
+
+- No DB migration required. `sintering_coeff` was already wired through `Simulation` model and serializer prior to this cycle.
+
+### Backward compatibility
+
+- Aggregates generated with `sintering_coeff=1.0` are bitwise-identical to the frente 10 baseline (verified by `test_sintering_e2e_coeff_1_0_identical_to_baseline` regression test).
+- All existing simulation results remain valid.
+
+### Closes
+
+- Jira **PYA-11**: CC tunable + sintering collapses to single sphere.
+
+### Known limitations
+
+- For target Df < 1.8, the iterative-drift caveat from PYA-14 still applies regardless of sintering. This fix only addresses the sintering-specific bug.
+
 ## cc-tunable-formula-fix (unreleased)
 
 ### Fixed

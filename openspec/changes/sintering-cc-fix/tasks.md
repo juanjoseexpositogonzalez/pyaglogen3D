@@ -34,9 +34,9 @@
 
 ## Phase 4 — Docs + CHANGELOG + Jira PYA-11 close
 
-- [ ] T4.1 — Documentation: create `pyaglogen3D/docs/sintering-cc-fix.md` (~50-70 lines): why (frente 10 regression), what changed (rp_eff in formula + select_contact), backward compat at coeff=1.0, validation
-- [ ] T4.2 — CHANGELOG entry under `sintering-cc-fix (unreleased)` with Fixed/Migration (none)/Backward compat sections
-- [ ] T4.3 — Close Jira PYA-11 with comment summarizing fix + commit range; transition to "Finalizada"
+- [x] T4.1 — Documentation: create `pyaglogen3D/docs/sintering-cc-fix.md` (~50-70 lines): why (frente 10 regression), what changed (rp_eff in formula + select_contact), backward compat at coeff=1.0, validation
+- [x] T4.2 — CHANGELOG entry under `sintering-cc-fix (unreleased)` with Fixed/Migration (none)/Backward compat sections
+- [x] T4.3 — Close Jira PYA-11 with comment summarizing fix + commit range; transition to "Finalizada"
 
 ---
 
