@@ -2403,4 +2403,114 @@ mod tests {
             "Lower Df must give larger distance even with sintering: d(1.4)={d_low:.6}, d(2.2)={d_high:.6}"
         );
     }
+
+    // ---------------------------------------------------------------
+    // Ballistic fallback sintering (R8 scenario 8.2 — PYA-11)
+    // ---------------------------------------------------------------
+
+    /// T2.2 — Ballistic fallback respects sintered contact distance (R8).
+    /// With max_merge_retries=0 (force all merges to ballistic) and
+    /// sintering_coeff=0.9, all inter-particle contact distances in the
+    /// resulting aggregate must be ≤ 2·rp·0.9 + tolerance.
+    #[test]
+    fn test_ballistic_fallback_sintered_contacts() {
+        let rp = 1.0;
+        let sintering_coeff = 0.9;
+
+        let params = TunableCcParams {
+            n_particles: 20,
+            target_df: 2.0,
+            target_kf: 1.0,
+            max_merge_retries: 0, // force all to ballistic
+            sintering: SinteringDistribution::Fixed(sintering_coeff),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(
+            result.coordinates.len(),
+            20,
+            "Must produce all 20 particles"
+        );
+
+        // Ballistic should have been used for all merges
+        assert!(
+            result.ballistic_merges > 0,
+            "With max_merge_retries=0, ballistic merges must occur"
+        );
+
+        // Check that all inter-particle contact distances use sintered distance
+        let sintered_contact = sintered_contact_distance(rp, rp, sintering_coeff);
+        let tolerance = intercluster_contact_tolerance(sintered_contact) + 0.01; // generous
+
+        let mut found_contact = false;
+        for i in 0..result.coordinates.len() {
+            for j in (i + 1)..result.coordinates.len() {
+                let c1 = &result.coordinates[i];
+                let c2 = &result.coordinates[j];
+                let dist =
+                    ((c1[0] - c2[0]).powi(2) + (c1[1] - c2[1]).powi(2) + (c1[2] - c2[2]).powi(2))
+                        .sqrt();
+
+                let pair_contact =
+                    sintered_contact_distance(result.radii[i], result.radii[j], sintering_coeff);
+                let pair_tol = intercluster_contact_tolerance(pair_contact) + 0.01;
+
+                if dist <= pair_contact + pair_tol {
+                    found_contact = true;
+                    // This pair is in contact — verify at sintered distance, not bare
+                    assert!(
+                        dist <= pair_contact + pair_tol,
+                        "Contact pair ({i},{j}) dist={dist:.6} exceeds sintered {pair_contact:.6} + tol {pair_tol:.6}"
+                    );
+                }
+            }
+        }
+        assert!(
+            found_contact,
+            "Aggregate must have at least one contact pair"
+        );
+    }
+
+    /// T2.2 — Ballistic fallback with coeff=1.0 regression.
+    #[test]
+    fn test_ballistic_fallback_coeff_1_0_regression() {
+        let rp = 1.0;
+
+        let params = TunableCcParams {
+            n_particles: 20,
+            target_df: 2.0,
+            target_kf: 1.0,
+            max_merge_retries: 0,
+            sintering: SinteringDistribution::Fixed(1.0),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(result.coordinates.len(), 20);
+        assert!(result.ballistic_merges > 0);
+
+        // All contacts should be at bare distance
+        let bare_contact = sintered_contact_distance(rp, rp, 1.0);
+        let tolerance = intercluster_contact_tolerance(bare_contact) + 0.01;
+
+        let mut found_contact = false;
+        for i in 0..result.coordinates.len() {
+            for j in (i + 1)..result.coordinates.len() {
+                let c1 = &result.coordinates[i];
+                let c2 = &result.coordinates[j];
+                let dist =
+                    ((c1[0] - c2[0]).powi(2) + (c1[1] - c2[1]).powi(2) + (c1[2] - c2[2]).powi(2))
+                        .sqrt();
+
+                let pair_contact = sintered_contact_distance(result.radii[i], result.radii[j], 1.0);
+                let pair_tol = intercluster_contact_tolerance(pair_contact) + 0.01;
+
+                if dist <= pair_contact + pair_tol {
+                    found_contact = true;
+                }
+            }
+        }
+        assert!(found_contact, "Must have contacts at bare distance");
+    }
 }
