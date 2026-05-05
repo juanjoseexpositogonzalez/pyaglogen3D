@@ -410,6 +410,7 @@ pub fn analyze_granulated_2012(
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "granulated_2012".to_string(),
+        ..Default::default()
     }
 }
 

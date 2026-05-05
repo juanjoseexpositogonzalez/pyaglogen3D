@@ -131,6 +131,17 @@ pub struct FraktalResult {
     pub npo_aligned: bool,
     /// Estimated dpo from visual particle analysis (nm)
     pub dpo_estimated: f64,
+    // ── Bisection diagnostic fields (PYA-13 fraktal-bisection-ux) ──
+    /// Number of bisection iterations performed (None if not surfaced).
+    pub bisection_iterations: Option<usize>,
+    /// Final bisection residual |f(Df)| (None if not surfaced).
+    pub bisection_residual: Option<f64>,
+    /// Categorized failure reason (None when analysis succeeded).
+    pub failure_reason: Option<FailureReason>,
+    /// Best Df estimate even when not converged (None when no estimate computable).
+    pub df_estimate: Option<f64>,
+    /// Quality classification of this analysis result.
+    pub quality: AnalysisQuality,
 }
 
 impl Default for FraktalResult {
@@ -153,6 +164,11 @@ impl Default for FraktalResult {
             npo_ratio: 0.0,
             npo_aligned: false,
             dpo_estimated: 0.0,
+            bisection_iterations: None,
+            bisection_residual: None,
+            failure_reason: None,
+            df_estimate: None,
+            quality: AnalysisQuality::Converged,
         }
     }
 }
@@ -198,5 +214,32 @@ mod tests {
         let c = a.clone();
         assert_eq!(a, b);
         assert_eq!(b, c);
+    }
+
+    #[test]
+    fn test_fraktal_result_diagnostic_fields_default() {
+        let r = FraktalResult::default();
+        assert_eq!(r.bisection_iterations, None);
+        assert_eq!(r.bisection_residual, None);
+        assert_eq!(r.failure_reason, None);
+        assert_eq!(r.df_estimate, None);
+        assert_eq!(r.quality, AnalysisQuality::Converged);
+    }
+
+    #[test]
+    fn test_fraktal_result_diagnostic_fields_populated() {
+        let r = FraktalResult {
+            bisection_iterations: Some(42),
+            bisection_residual: Some(0.05),
+            failure_reason: Some(FailureReason::IterationLimit),
+            df_estimate: Some(1.82),
+            quality: AnalysisQuality::Approximate,
+            ..Default::default()
+        };
+        assert_eq!(r.bisection_iterations, Some(42));
+        assert_eq!(r.bisection_residual, Some(0.05));
+        assert_eq!(r.failure_reason, Some(FailureReason::IterationLimit));
+        assert_eq!(r.df_estimate, Some(1.82));
+        assert_eq!(r.quality, AnalysisQuality::Approximate);
     }
 }

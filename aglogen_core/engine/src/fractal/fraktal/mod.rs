@@ -21,5 +21,5 @@ pub use batch::{
 };
 pub use granulated_2012::analyze_granulated_2012;
 pub use params::{Granulated2012Params, Voxel2018Params};
-pub use result::FraktalResult;
+pub use result::{AnalysisQuality, FailureReason, FraktalResult};
 pub use voxel_2018::analyze_voxel_2018;

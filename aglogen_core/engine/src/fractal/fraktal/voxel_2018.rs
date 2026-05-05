@@ -186,6 +186,7 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "voxel_2018".to_string(),
+        ..Default::default()
     }
 }
 
