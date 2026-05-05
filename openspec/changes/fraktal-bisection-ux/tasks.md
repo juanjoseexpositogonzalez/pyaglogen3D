@@ -13,10 +13,10 @@
 
 ## Phase P2 — Python binding: expose new fields
 
-- [ ] T2.1 — Update result dict construction in `analyze_fraktal_batch` to include all 5 new fields: `quality`, `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate` (file: `aglogen_core/python/src/lib.rs`)
-- [ ] T2.2 — Update result dict construction in `analyze_fraktal_batch_per_image_scale` to include all 5 new fields (file: `aglogen_core/python/src/lib.rs`)
-- [ ] T2.3 — Add `as_str()` helper methods on `FailureReason` and `AnalysisQuality` enums for Python consumption (file: `aglogen_core/python/src/lib.rs`)
-- [ ] T2.4 — Run cargo build + binding tests to verify new fields propagate correctly to Python (file: `aglogen_core/`)
+- [x] T2.1 — Update result dict construction in `analyze_fraktal_batch` to include all 5 new fields: `quality`, `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate` (file: `aglogen_core/python/src/lib.rs`) (commit f88483f)
+- [x] T2.2 — Update result dict construction in `analyze_fraktal_batch_per_image_scale` to include all 5 new fields (file: `aglogen_core/python/src/lib.rs`) (commit f88483f)
+- [x] T2.3 — `as_str()` helper methods already exist from P1 on `FailureReason` and `AnalysisQuality` enums — no-op (verified in result.rs lines 16-25, 44-54)
+- [x] T2.4 — Cargo tests: 6 new tests added (as_str helpers, quality field, diagnostic fields, error image quality, per-image-scale diagnostics) — 22 python-crate tests passing (commit 0d7f92c)
 
 ## Phase P3 — Backend: migration + model + serializers + per-batch counters + stats
 
