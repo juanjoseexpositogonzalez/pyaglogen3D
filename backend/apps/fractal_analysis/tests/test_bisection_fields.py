@@ -354,3 +354,232 @@ class TestDrillDownBisectionFields:
         assert data["bisection_residual"] is None
         assert data["failure_reason"] is None
         assert data["df_estimate"] is None
+
+
+# ============================================================================
+# T3.5 + T3.6 + T3.7 — Per-batch counters, mean_df_inclusive, semantic shift
+# ============================================================================
+
+
+def _create_mixed_quality_batch(project, user):
+    """Create batch with 10 images: 6 converged, 2 approximate, 1 excluded, 1 failed.
+
+    Converged Df values: 1.80, 1.78, 1.82, 1.79, 1.81, 1.80 → mean = 1.80
+    Approximate df_estimate: 1.70, 1.72 → mean = 1.71
+    """
+    batch = _make_batch(project, user)
+    converged_dfs = [1.80, 1.78, 1.82, 1.79, 1.81, 1.80]
+    approx_dfs = [1.70, 1.72]
+
+    for i, df in enumerate(converged_dfs):
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=i,
+            filename=f"c_{i}.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+            fractal_dimension=df,
+            quality="converged",
+            bisection_iterations=10 + i,
+            bisection_residual=0.01 * i,
+            failure_reason="none",
+            df_estimate=df,
+        )
+    for j, df in enumerate(approx_dfs):
+        idx = len(converged_dfs) + j
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=idx,
+            filename=f"a_{j}.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+            fractal_dimension=None,
+            quality="approximate",
+            bisection_iterations=50,
+            bisection_residual=0.5 + 0.1 * j,
+            failure_reason="iteration_limit",
+            df_estimate=df,
+        )
+    FraktalBatchImage.objects.create(
+        batch=batch,
+        index=8,
+        filename="excluded.png",
+        dpo_used=25.0,
+        image_png=_make_png(),
+        fractal_dimension=None,
+        quality="excluded",
+        failure_reason="no_sign_change",
+    )
+    FraktalBatchImage.objects.create(
+        batch=batch,
+        index=9,
+        filename="failed.png",
+        dpo_used=25.0,
+        image_png=_make_png(),
+        fractal_dimension=None,
+        quality="failed",
+        failure_reason="kf_negative",
+    )
+    batch.n_images = 10
+    batch.n_successful = 6
+    batch.save(update_fields=["n_images", "n_successful"])
+    return batch
+
+
+@pytest.mark.django_db
+class TestBatchDetailQualityCounters:
+    """T3.5: batch_detail_view stats include quality counters."""
+
+    def test_mixed_batch_counters_correct(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _create_mixed_quality_batch(project, user)
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        assert resp.status_code == 200
+        stats = resp.json()["stats"]
+
+        assert stats["n_converged"] == 6
+        assert stats["n_approximate"] == 2
+        assert stats["n_excluded"] == 1
+        assert stats["n_failed"] == 1
+
+    def test_all_converged_counters(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        for i in range(5):
+            FraktalBatchImage.objects.create(
+                batch=batch,
+                index=i,
+                filename=f"c_{i}.png",
+                dpo_used=25.0,
+                image_png=_make_png(),
+                fractal_dimension=1.80,
+                quality="converged",
+            )
+        batch.n_images = 5
+        batch.n_successful = 5
+        batch.save(update_fields=["n_images", "n_successful"])
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        stats = resp.json()["stats"]
+        assert stats["n_converged"] == 5
+        assert stats["n_approximate"] == 0
+        assert stats["n_excluded"] == 0
+        assert stats["n_failed"] == 0
+
+
+@pytest.mark.django_db
+class TestMeanDfSemanticShift:
+    """T3.6/T3.7: mean_df is converged-only, mean_df_inclusive includes approximate."""
+
+    def test_all_converged_means_equal(self) -> None:
+        """Scenario 7.1: all converged → mean_df == mean_df_inclusive."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        dfs = [1.80, 1.78, 1.82]
+        for i, df in enumerate(dfs):
+            FraktalBatchImage.objects.create(
+                batch=batch,
+                index=i,
+                filename=f"c_{i}.png",
+                dpo_used=25.0,
+                image_png=_make_png(),
+                fractal_dimension=df,
+                quality="converged",
+                df_estimate=df,
+            )
+        batch.n_images = 3
+        batch.n_successful = 3
+        batch.save(update_fields=["n_images", "n_successful"])
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        stats = resp.json()["stats"]
+
+        expected = float(np.mean(dfs))
+        assert stats["mean_df"] == pytest.approx(expected)
+        assert stats["mean_df_inclusive"] == pytest.approx(expected)
+
+    def test_mixed_batch_means_differ(self) -> None:
+        """Scenario 7.2: mixed → mean_df ≠ mean_df_inclusive."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _create_mixed_quality_batch(project, user)
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        stats = resp.json()["stats"]
+
+        converged_dfs = [1.80, 1.78, 1.82, 1.79, 1.81, 1.80]
+        approx_dfs = [1.70, 1.72]
+
+        assert stats["mean_df"] == pytest.approx(float(np.mean(converged_dfs)))
+        assert stats["mean_df_inclusive"] == pytest.approx(
+            float(np.mean(converged_dfs + approx_dfs))
+        )
+        assert stats["mean_df"] != stats["mean_df_inclusive"]
+
+    def test_all_failed_means_null(self) -> None:
+        """Scenario 7.3: all failed → both means null."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        for i in range(3):
+            FraktalBatchImage.objects.create(
+                batch=batch,
+                index=i,
+                filename=f"f_{i}.png",
+                dpo_used=25.0,
+                image_png=_make_png(),
+                fractal_dimension=None,
+                quality="failed",
+            )
+        batch.n_images = 3
+        batch.n_successful = 0
+        batch.save(update_fields=["n_images", "n_successful"])
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        stats = resp.json()["stats"]
+
+        assert stats["mean_df"] is None
+        assert stats["mean_df_inclusive"] is None
+
+    def test_all_approximate_mean_df_null_inclusive_present(self) -> None:
+        """Scenario 7.5: all approximate → mean_df null, inclusive has value."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        approx_dfs = [1.70, 1.72, 1.68, 1.73, 1.71]
+        for i, df in enumerate(approx_dfs):
+            FraktalBatchImage.objects.create(
+                batch=batch,
+                index=i,
+                filename=f"a_{i}.png",
+                dpo_used=25.0,
+                image_png=_make_png(),
+                fractal_dimension=None,
+                quality="approximate",
+                df_estimate=df,
+            )
+        batch.n_images = 5
+        batch.n_successful = 0
+        batch.save(update_fields=["n_images", "n_successful"])
+        client = _authed_client(user)
+
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        resp = client.get(url)
+        stats = resp.json()["stats"]
+
+        assert stats["mean_df"] is None  # no converged
+        assert stats["mean_df_inclusive"] == pytest.approx(float(np.mean(approx_dfs)))

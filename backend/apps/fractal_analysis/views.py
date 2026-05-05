@@ -983,10 +983,41 @@ def batch_detail_view(
         for img in images
     ]
 
+    # PYA-13 T3.5: per-quality counters.
+    n_converged = batch.images.filter(quality="converged").count()
+    n_approximate = batch.images.filter(quality="approximate").count()
+    n_excluded = batch.images.filter(quality="excluded").count()
+    n_failed = batch.images.filter(quality="failed").count()
+
+    # PYA-13 T3.6/T3.7: mean_df semantic shift.
+    # Previously: mean_df was computed over all non-null fractal_dimension.
+    # Now: mean_df is converged-only; mean_df_inclusive is converged + approximate.
+    converged_df_values = list(
+        batch.images.filter(quality="converged")
+        .exclude(fractal_dimension__isnull=True)
+        .values_list("fractal_dimension", flat=True)
+    )
+    approximate_df_values = list(
+        batch.images.filter(quality="approximate")
+        .exclude(df_estimate__isnull=True)
+        .values_list("df_estimate", flat=True)
+    )
+
+    if converged_df_values:
+        mean_df = float(np.mean(converged_df_values))
+    else:
+        mean_df = None
+
+    inclusive_values = converged_df_values + approximate_df_values
+    if inclusive_values:
+        mean_df_inclusive = float(np.mean(inclusive_values))
+    else:
+        mean_df_inclusive = None
+
     stats = {
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
-        "mean_df": batch.mean_df,
+        "mean_df": mean_df,
         "std_df": batch.std_df,
         "median_df": batch.median_df,
         "min_df": batch.min_df,
@@ -994,9 +1025,16 @@ def batch_detail_view(
         "kf": compute_metric_stats(images_data, "prefactor"),
         "rg": compute_metric_stats(images_data, "rg_nm"),
         "npo": compute_metric_stats(images_data, "n_particles_counted"),
+        # PYA-13 T3.5: quality counters.
+        "n_converged": n_converged,
+        "n_approximate": n_approximate,
+        "n_excluded": n_excluded,
+        "n_failed": n_failed,
+        # PYA-13 T3.6: mean_df_inclusive (converged + approximate).
+        "mean_df_inclusive": mean_df_inclusive,
     }
 
-    comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)
+    comparison = build_comparison_data(batch.sim_id, mean_df, batch.std_df)
 
     calibration = {
         "source": batch.calibration_source,
