@@ -16,8 +16,44 @@ use super::image_processing::{
 use super::params::Granulated2012Params;
 use super::result::{FraktalResult, FraktalStatus};
 
+use super::result::{AnalysisQuality, FailureReason};
+
 /// Soot density in fg/nm³
 const SOOT_DENSITY: f64 = 1.85e-06;
+
+/// Residual threshold below which a result is considered fully converged.
+/// Matches the bisection CONVERGENCE_THRESHOLD (0.1).
+pub const APPROXIMATE_RESIDUAL_THRESHOLD: f64 = 0.1;
+
+/// Residual threshold above which a result is excluded from statistics.
+/// Configurable constant per locked design decision.
+pub const EXCLUDED_RESIDUAL_THRESHOLD: f64 = 1.0;
+
+/// Classify a bisection result into one of 4 quality tiers.
+///
+/// Logic:
+/// - `Failed`: kf_negative failure always → Failed
+/// - `Converged`: |residual| < 0.1
+/// - `Approximate`: 0.1 ≤ |residual| ≤ 1.0
+/// - `Excluded`: |residual| > 1.0 OR no_sign_change failure
+pub fn classify_quality(residual: f64, failure_reason: Option<FailureReason>) -> AnalysisQuality {
+    // KfNegative always means Failed
+    if failure_reason == Some(FailureReason::KfNegative) {
+        return AnalysisQuality::Failed;
+    }
+    // NoSignChange always means Excluded (regardless of residual)
+    if failure_reason == Some(FailureReason::NoSignChange) {
+        return AnalysisQuality::Excluded;
+    }
+    let abs_residual = residual.abs();
+    if abs_residual < APPROXIMATE_RESIDUAL_THRESHOLD {
+        AnalysisQuality::Converged
+    } else if abs_residual <= EXCLUDED_RESIDUAL_THRESHOLD {
+        AnalysisQuality::Approximate
+    } else {
+        AnalysisQuality::Excluded
+    }
+}
 
 /// Constants for coordination index Jf calculation.
 const JF_A: f64 = 1.85;
@@ -462,5 +498,70 @@ mod tests {
         let zp = calculate_zp_granulated(100.0, 1.8, 1.95);
         // zp should be positive and reasonable
         assert!(zp > 0.0 && zp < 3.0);
+    }
+
+    // ── classify_quality tests (T1.5) ─────────────────────────────
+
+    #[test]
+    fn test_classify_quality_converged() {
+        // residual 0.04 < 0.1 threshold, no failure
+        let q = classify_quality(0.04, None);
+        assert_eq!(q, AnalysisQuality::Converged);
+    }
+
+    #[test]
+    fn test_classify_quality_converged_boundary() {
+        // residual exactly at 0.099 → still converged (< 0.1)
+        let q = classify_quality(0.099, None);
+        assert_eq!(q, AnalysisQuality::Converged);
+    }
+
+    #[test]
+    fn test_classify_quality_approximate() {
+        // residual 0.5 is between 0.1 and 1.0
+        let q = classify_quality(0.5, None);
+        assert_eq!(q, AnalysisQuality::Approximate);
+    }
+
+    #[test]
+    fn test_classify_quality_approximate_with_iteration_limit() {
+        // residual 0.5, iteration_limit failure → Approximate (not Failed)
+        let q = classify_quality(0.5, Some(FailureReason::IterationLimit));
+        assert_eq!(q, AnalysisQuality::Approximate);
+    }
+
+    #[test]
+    fn test_classify_quality_excluded_high_residual() {
+        // residual 2.5 > 1.0 → excluded
+        let q = classify_quality(2.5, None);
+        assert_eq!(q, AnalysisQuality::Excluded);
+    }
+
+    #[test]
+    fn test_classify_quality_excluded_no_sign_change() {
+        // NoSignChange always → Excluded regardless of residual
+        let q = classify_quality(0.01, Some(FailureReason::NoSignChange));
+        assert_eq!(q, AnalysisQuality::Excluded);
+    }
+
+    #[test]
+    fn test_classify_quality_failed_kf_negative() {
+        // KfNegative always → Failed regardless of residual
+        let q = classify_quality(0.01, Some(FailureReason::KfNegative));
+        assert_eq!(q, AnalysisQuality::Failed);
+    }
+
+    #[test]
+    fn test_classify_quality_boundary_at_1_0() {
+        // residual exactly 1.0 → Approximate (≤ threshold)
+        let q = classify_quality(1.0, None);
+        assert_eq!(q, AnalysisQuality::Approximate);
+    }
+
+    #[test]
+    fn test_classify_quality_boundary_just_above_1_0() {
+        // residual 1.001 → Excluded (> threshold)
+        let q = classify_quality(1.001, None);
+        assert_eq!(q, AnalysisQuality::Excluded);
     }
 }
