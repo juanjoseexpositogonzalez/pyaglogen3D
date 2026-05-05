@@ -564,6 +564,12 @@ def _build_batch_response(
                 "n_particles_counted": r.get("n_particles_counted"),
                 "rg_nm": r.get("rg_nm"),
                 "error": r.get("error"),
+                # PYA-13: bisection diagnostic fields from engine result.
+                "quality": r.get("quality"),
+                "bisection_iterations": r.get("bisection_iterations"),
+                "bisection_residual": r.get("bisection_residual"),
+                "failure_reason": r.get("failure_reason"),
+                "df_estimate": r.get("df_estimate"),
             }
         )
 
@@ -854,14 +860,35 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
             "n_particles_counted": img.n_particles_counted,
             "rg_nm": img.rg_nm,
             "error": img.error or None,
+            # PYA-13: bisection diagnostic fields.
+            "quality": img.quality,
+            "bisection_iterations": img.bisection_iterations,
+            "bisection_residual": img.bisection_residual,
+            "failure_reason": img.failure_reason,
+            "df_estimate": img.df_estimate,
         }
         for img in images
     ]
 
+    # PYA-13: per-quality counters + mean_df semantic shift.
+    converged_df_values = list(
+        batch.images.filter(quality="converged")
+        .exclude(fractal_dimension__isnull=True)
+        .values_list("fractal_dimension", flat=True)
+    )
+    approximate_df_values = list(
+        batch.images.filter(quality="approximate")
+        .exclude(df_estimate__isnull=True)
+        .values_list("df_estimate", flat=True)
+    )
+    mean_df = float(np.mean(converged_df_values)) if converged_df_values else None
+    inclusive_values = converged_df_values + approximate_df_values
+    mean_df_inclusive = float(np.mean(inclusive_values)) if inclusive_values else None
+
     stats = {
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
-        "mean_df": batch.mean_df,
+        "mean_df": mean_df,
         "std_df": batch.std_df,
         "median_df": batch.median_df,
         "min_df": batch.min_df,
@@ -869,9 +896,14 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         "kf": compute_metric_stats(images_out, "prefactor"),
         "rg": compute_metric_stats(images_out, "rg_nm"),
         "npo": compute_metric_stats(images_out, "n_particles_counted"),
+        "n_converged": batch.images.filter(quality="converged").count(),
+        "n_approximate": batch.images.filter(quality="approximate").count(),
+        "n_excluded": batch.images.filter(quality="excluded").count(),
+        "n_failed": batch.images.filter(quality="failed").count(),
+        "mean_df_inclusive": mean_df_inclusive,
     }
 
-    comparison = build_comparison_data(batch.sim_id, batch.mean_df, batch.std_df)
+    comparison = build_comparison_data(batch.sim_id, mean_df, batch.std_df)
 
     calibration = {
         "source": batch.calibration_source,

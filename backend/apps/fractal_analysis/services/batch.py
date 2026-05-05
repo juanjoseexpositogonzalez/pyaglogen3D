@@ -474,7 +474,7 @@ def persist_batch_results(
         # Engine Default impl returns quality="converged" even for blank/error
         # images that fail BEFORE bisection runs. Override to "failed" when
         # the engine surfaced an error string.
-        engine_quality = result.get("quality", "converged")
+        engine_quality = result.get("quality") or "converged"
         engine_error = result.get("error")
         if engine_error:
             quality = "failed"
