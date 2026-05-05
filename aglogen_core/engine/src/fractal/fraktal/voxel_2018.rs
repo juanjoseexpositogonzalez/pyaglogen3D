@@ -9,9 +9,10 @@ use std::time::Instant;
 use ndarray::ArrayView2;
 
 use super::bisection::BisectionSolver;
+use super::granulated_2012::classify_quality;
 use super::image_processing::{apply_3d_correction_voxel, calculate_geometry, smart_segment};
 use super::params::Voxel2018Params;
-use super::result::{FraktalResult, FraktalStatus};
+use super::result::{AnalysisQuality, FailureReason, FraktalResult, FraktalStatus};
 
 /// Calculate prefactor coefficients for voxel model.
 ///
@@ -69,12 +70,16 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
     let geometry = match calculate_geometry(binary.view(), params.npix, params.escala) {
         Some(g) => g,
         None => {
+            // PYA-13: pre-bisection failure → quality=Failed (engine-level
+            // error, not a bisection diagnostic). No bisection ran, so
+            // diagnostic fields are None.
             return FraktalResult {
                 status: FraktalStatus::Error("No object pixels found".to_string()),
                 execution_time_ms: start_time.elapsed().as_millis() as u64,
                 model: "voxel_2018".to_string(),
+                quality: AnalysisQuality::Failed,
                 ..Default::default()
-            }
+            };
         }
     };
 
@@ -99,6 +104,14 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
     let tolerance = 0.0001;
     let max_outer_iterations = 50;
 
+    // PYA-13: track diagnostic data from the last bisection attempt so we
+    // can surface it on failure (instead of discarding when the loop
+    // exits with !converged).
+    let mut last_iterations: Option<usize> = None;
+    let mut last_residual: Option<f64> = None;
+    let mut last_df_estimate: Option<f64> = None;
+    let mut failure_reason: Option<FailureReason> = None;
+
     for outer_iter in 0..max_outer_iterations {
         let (akf, bkf, ckf) = calculate_prefactor_coefficients_voxel(nvox_estimate);
 
@@ -116,7 +129,22 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
         let solver = BisectionSolver::default();
         let result = solver.solve(objective, 1.0, 3.0);
 
+        // Always capture diagnostic data from the most recent attempt.
+        last_iterations = Some(result.iterations);
+        last_residual = Some(result.function_value);
+        last_df_estimate = Some(result.df);
+
         if result.df == 0.0 || !result.converged {
+            // Derive failure_reason from the bisection diagnostics.
+            failure_reason = Some(if !result.bracket_found && !result.converged {
+                FailureReason::NoSignChange
+            } else if result.kf <= 0.0 {
+                FailureReason::KfNegative
+            } else if result.iterations >= 100 && !result.converged {
+                FailureReason::IterationLimit
+            } else {
+                FailureReason::NoSignChange
+            });
             break;
         }
 
@@ -139,6 +167,12 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
 
     // Check for valid solution
     if df_result == 0.0 || !converged {
+        // PYA-13: classify quality from the last residual + populate
+        // diagnostic fields so the failure path carries useful info to
+        // the user instead of returning empty.
+        let residual_for_quality = last_residual.unwrap_or(f64::INFINITY);
+        let quality = classify_quality(residual_for_quality, failure_reason);
+
         return FraktalResult {
             rg,
             ap,
@@ -149,6 +183,11 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
             },
             execution_time_ms: start_time.elapsed().as_millis() as u64,
             model: "voxel_2018".to_string(),
+            bisection_iterations: last_iterations,
+            bisection_residual: last_residual,
+            failure_reason,
+            df_estimate: last_df_estimate,
+            quality,
             ..Default::default()
         };
     }
@@ -168,6 +207,9 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
     // Surface area = nvox * 4*lvox² (approximate)
     let surface_area = nvox_estimate * 4.0 * lvox.powi(2);
 
+    // PYA-13: success path → quality=Converged + diagnostic fields from
+    // the LAST bisection attempt (when the outer loop converged). Even on
+    // success the iterations/residual are useful for users to inspect.
     FraktalResult {
         rg,
         ap,
@@ -186,6 +228,11 @@ pub fn analyze_voxel_2018(image: ArrayView2<u8>, params: &Voxel2018Params) -> Fr
         status: FraktalStatus::Success,
         execution_time_ms: start_time.elapsed().as_millis() as u64,
         model: "voxel_2018".to_string(),
+        bisection_iterations: last_iterations,
+        bisection_residual: last_residual,
+        failure_reason: None,
+        df_estimate: Some(df_result),
+        quality: AnalysisQuality::Converged,
         ..Default::default()
     }
 }

@@ -2,14 +2,14 @@
 
 ## Phase P1 — Engine: surface BisectionResult fields + quality classification + failure_reason detection
 
-- [ ] T1.1 — Add `bracket_found: bool` to `BisectionResult` struct in `aglogen_core/engine/src/fractal/fraktal/bisection.rs`; set to `true` in `solve()` and `false` in `fallback_optimization()` (file: `aglogen_core/engine/src/fractal/fraktal/bisection.rs`)
-- [ ] T1.2 — Define `FailureReason` enum (`NoSignChange`, `KfNegative`, `IterationLimit`) in `aglogen_core/engine/src/fractal/fraktal/result.rs` (file: `aglogen_core/engine/src/fractal/fraktal/result.rs`)
-- [ ] T1.3 — Define `AnalysisQuality` enum (`Converged`, `Approximate`, `Excluded`, `Failed`) in `aglogen_core/engine/src/fractal/fraktal/result.rs` (file: `aglogen_core/engine/src/fractal/fraktal/result.rs`)
-- [ ] T1.4 — Add 5 diagnostic fields to `FraktalResult` struct: `bisection_iterations: Option<u32>`, `bisection_residual: Option<f64>`, `failure_reason: Option<FailureReason>`, `df_estimate: Option<f64>`, `quality: Option<AnalysisQuality>` (file: `aglogen_core/engine/src/fractal/fraktal/result.rs`)
-- [ ] T1.5 — Modify `granulated_2012.rs` line ~296: replace discard logic with quality classification using `classify_quality()` helper; surface all diagnostic fields on both success and failure paths (file: `aglogen_core/engine/src/fractal/fraktal/granulated_2012.rs`)
-- [ ] T1.6 — Add `classify_quality()` helper with `EXCLUDED_RESIDUAL_THRESHOLD = 1.0` constant; implement heuristic per design spec (4 states) (file: `aglogen_core/engine/src/fractal/fraktal/granulated_2012.rs`)
-- [ ] T1.7 — Add `batch.rs` modifications: add 5 `Option` fields to `BatchImageResult` and populate from `FraktalResult` on both success/failure paths (file: `aglogen_core/engine/src/fractal/fraktal/batch.rs`)
-- [ ] T1.8 — Write `cargo test` in `aglogen_core/engine/tests/test_bisection_quality.rs` covering all 4 quality states with synthetic objective functions (file: `aglogen_core/engine/tests/test_bisection_quality.rs`)
+- [x] T1.1 — `bracket_found: bool` added to `BisectionResult` (commit d911207)
+- [x] T1.2 — `FailureReason` enum (NoSignChange, KfNegative, IterationLimit) (commit b90706a)
+- [x] T1.3 — `AnalysisQuality` enum (Converged, Approximate, Excluded, Failed) (commit 59b05c1)
+- [x] T1.4 — 5 diagnostic fields in `FraktalResult` (commit b3fb3f9)
+- [x] T1.5 — `granulated_2012.rs:296` discard point now surfaces diagnostic data on both paths (commit 691d170)
+- [x] T1.6 — `classify_quality()` helper with `EXCLUDED_RESIDUAL_THRESHOLD = 1.0` constant (commit 6bcc144)
+- [x] T1.7 — `BatchImageResult` gains 5 diagnostic fields populated from FraktalResult (commit b540d3a). Voxel 2018 also patched for parity (orchestrator inline; see follow-up commit).
+- [x] T1.8 — Cargo tests integrated in unit modules: 13 tests across bisection.rs, granulated_2012.rs, result.rs covering classification, failure_reason mapping, bracket_found, diagnostic field population. 273 engine tests passing (was 269 baseline, +4).
 
 ## Phase P2 — Python binding: expose new fields
 
