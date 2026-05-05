@@ -285,3 +285,72 @@ class TestPersistBatchQualityOverride:
         img = FraktalBatchImage.objects.get(batch=batch, index=0)
         assert img.quality == "excluded"
         assert img.failure_reason == "no_sign_change"
+
+
+# ============================================================================
+# T3.4 — batch_image_detail_view includes 5 new fields
+# ============================================================================
+
+from rest_framework.test import APIClient
+
+
+def _authed_client(user: User) -> APIClient:
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@pytest.mark.django_db
+class TestDrillDownBisectionFields:
+    """T3.4: batch_image_detail_view includes 5 bisection fields."""
+
+    def test_converged_image_detail_has_all_fields(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="img_000.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+            fractal_dimension=1.82,
+            quality="converged",
+            bisection_iterations=12,
+            bisection_residual=0.04,
+            failure_reason="none",
+            df_estimate=1.82,
+        )
+        client = _authed_client(user)
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/images/0/"
+        resp = client.get(url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quality"] == "converged"
+        assert data["bisection_iterations"] == 12
+        assert data["bisection_residual"] == pytest.approx(0.04)
+        assert data["failure_reason"] == "none"
+        assert data["df_estimate"] == pytest.approx(1.82)
+
+    def test_null_fields_returned_as_json_null(self) -> None:
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=0,
+            filename="legacy.png",
+            dpo_used=25.0,
+            image_png=_make_png(),
+            # no bisection fields set → defaults
+        )
+        client = _authed_client(user)
+        url = f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/images/0/"
+        resp = client.get(url)
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["quality"] == "converged"  # default
+        assert data["bisection_iterations"] is None
+        assert data["bisection_residual"] is None
+        assert data["failure_reason"] is None
+        assert data["df_estimate"] is None

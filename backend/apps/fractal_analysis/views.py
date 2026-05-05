@@ -1077,6 +1077,12 @@ def batch_image_detail_view(
             "dpo_used": img.dpo_used,
             "pixels_per_100nm": batch.pixels_per_100nm,
             "autocalibrate_source": batch.autocalibrate_source,
+            # PYA-13 T3.4: bisection diagnostic fields in drill-down.
+            "quality": img.quality,
+            "bisection_iterations": img.bisection_iterations,
+            "bisection_residual": img.bisection_residual,
+            "failure_reason": img.failure_reason,
+            "df_estimate": img.df_estimate,
             "prev_index": prev_index,
             "next_index": next_index,
             "total_count": total,
