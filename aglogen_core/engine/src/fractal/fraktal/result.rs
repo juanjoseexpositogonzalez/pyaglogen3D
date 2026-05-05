@@ -1,5 +1,29 @@
 //! FRAKTAL analysis result types (pure Rust, no PyO3).
 
+/// Reason why bisection analysis failed to produce a valid result.
+///
+/// Used to classify the specific failure mode for user-facing diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FailureReason {
+    /// No sign change found in objective function — golden section fallback used.
+    NoSignChange,
+    /// Prefactor kf was negative at the solution point.
+    KfNegative,
+    /// Maximum iterations reached without convergence.
+    IterationLimit,
+}
+
+impl FailureReason {
+    /// Stable string tag for serialization / Python / JSON payloads.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::NoSignChange => "no_sign_change",
+            Self::KfNegative => "kf_negative",
+            Self::IterationLimit => "iteration_limit",
+        }
+    }
+}
+
 /// Status of FRAKTAL analysis.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FraktalStatus {
@@ -101,5 +125,26 @@ impl Default for FraktalResult {
             npo_aligned: false,
             dpo_estimated: 0.0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_failure_reason_as_str() {
+        assert_eq!(FailureReason::NoSignChange.as_str(), "no_sign_change");
+        assert_eq!(FailureReason::KfNegative.as_str(), "kf_negative");
+        assert_eq!(FailureReason::IterationLimit.as_str(), "iteration_limit");
+    }
+
+    #[test]
+    fn test_failure_reason_eq_and_clone() {
+        let a = FailureReason::NoSignChange;
+        let b = a; // Copy
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
     }
 }
