@@ -499,12 +499,16 @@ fn create_orthogonal_basis(dir: Vector3) -> (Vector3, Vector3) {
 
 /// Select two particles that can form a contact at the required distance.
 /// Returns (idx1, idx2) indices into cluster1 and cluster2 particles.
+///
+/// Uses `sintered_contact_distance` so the triangle-inequality checks
+/// respect sintering overlap (R8 — sintering-cc-fix / PYA-11).
 fn select_contact_particles<R: Rng>(
     cluster1: &TunableCluster,
     cluster2: &TunableCluster,
     la1: &[usize],
     la2: &[usize],
     required_distance: f64,
+    sintering_coeff: f64,
     rng: &mut R,
 ) -> Option<(usize, usize)> {
     // Shuffle candidates for randomness
@@ -521,13 +525,9 @@ fn select_contact_particles<R: Rng>(
             // Check triangle criterion from thesis
             let d1 = p1.center.distance_to(&cluster1.center_of_mass);
             let d2 = p2.center.distance_to(&cluster2.center_of_mass);
-            let contact_dist = p1.radius + p2.radius;
+            let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
 
             // Can these particles form a contact when clusters are at required_distance apart?
-            // Triangle inequality: the three lengths (d1, d2, required_distance-contact_dist)
-            // must be able to form a triangle, meaning each side < sum of other two
-            let effective_gap = (required_distance - contact_dist).abs();
-
             // Check if particles can reach each other
             if d1 + d2 + contact_dist >= required_distance - 1e-6 {
                 // Additional check: can actually touch
@@ -929,6 +929,7 @@ pub fn run_tunable_cc_internal(
                     &la1,
                     &la2,
                     required_distance,
+                    sintering_coeff,
                     &mut rng,
                 ) {
                     let positioned = position_clusters_for_contact(
@@ -2303,6 +2304,88 @@ mod tests {
                 "d_sintered must equal {coeff}·d_unsintered for ({n1},{n2}): got={d_sint:.15}, expected={expected:.15}, rel_err={rel_err:.2e}"
             );
         }
+    }
+
+    // ---------------------------------------------------------------
+    // select_contact_particles sintering (R8 — sintering-cc-fix / PYA-11)
+    // ---------------------------------------------------------------
+
+    /// T2.1 — select_contact_particles must use sintered contact distance.
+    /// Two monomers at distance 1.9·rp: with bare contact (2.0) they pass,
+    /// but with sintered contact (coeff=0.9 → 1.8) they must fail because
+    /// contact_dist=1.8 < required_distance=1.9.
+    #[test]
+    fn test_select_contact_particles_sintering_rejects_beyond_sintered_dist() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+        let sintering_coeff = 0.9;
+
+        // Two monomer clusters
+        let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
+        let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
+
+        let la1 = vec![0usize];
+        let la2 = vec![0usize];
+
+        // required_distance = 1.9: sintered contact_dist = 1.8 < 1.9 → must reject
+        let result = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &la1,
+            &la2,
+            1.9,
+            sintering_coeff,
+            &mut rng,
+        );
+        assert!(
+            result.is_none(),
+            "With sintered contact_dist=1.8 and required_distance=1.9, must reject"
+        );
+    }
+
+    /// T2.1 — select_contact_particles with coeff=1.0 (regression): bare contact
+    /// distance 2.0 >= required_distance 1.9 → must accept.
+    #[test]
+    fn test_select_contact_particles_coeff_1_0_regression() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+
+        let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
+        let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
+
+        let la1 = vec![0usize];
+        let la2 = vec![0usize];
+
+        // required_distance = 1.9: bare contact_dist = 2.0 >= 1.9 → must accept
+        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.9, 1.0, &mut rng);
+        assert!(
+            result.is_some(),
+            "With bare contact_dist=2.0 and required_distance=1.9, must accept"
+        );
+    }
+
+    /// T2.1 — select_contact_particles with coeff=0.9: sintered contact
+    /// distance 1.8 >= required_distance 1.7 → must accept.
+    #[test]
+    fn test_select_contact_particles_sintering_accepts_within_sintered_dist() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let rp = 1.0;
+
+        let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
+        let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
+
+        let la1 = vec![0usize];
+        let la2 = vec![0usize];
+
+        // required_distance = 1.7: sintered contact_dist = 1.8 >= 1.7 → must accept
+        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.7, 0.9, &mut rng);
+        assert!(
+            result.is_some(),
+            "With sintered contact_dist=1.8 and required_distance=1.7, must accept"
+        );
     }
 
     /// T1.3e — Lower Df invariant preserved with sintering (delta scenario 1.7).

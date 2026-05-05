@@ -18,7 +18,7 @@
 
 ## Phase 2 — Engine: `select_contact_particles` + ballistic fallback consistency
 
-- [ ] T2.1 — Fix `select_contact_particles` (~line 512 in `tunable_cc.rs`) to use `sintered_contact_distance(p1.radius, p2.radius, sintering_coeff)` instead of bare `p1.radius + p2.radius`
+- [x] T2.1 — Fix `select_contact_particles` (~line 512 in `tunable_cc.rs`) to use `sintered_contact_distance(p1.radius, p2.radius, sintering_coeff)` instead of bare `p1.radius + p2.radius`
 - [ ] T2.2 — Verify ballistic fallback path (`merge_ballistic`) also uses sintered contact distance; fix if inconsistent (already verified correct per design)
 - [ ] T2.3 — Add cargo tests: with sintering_coeff=0.9, verify contact validation accepts pairs at sintered distance; rejects at unsintered distance
 
