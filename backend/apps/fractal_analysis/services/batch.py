@@ -469,6 +469,18 @@ def persist_batch_results(
         variant = "presentation"
         if input_variants is not None and i < len(input_variants):
             variant = input_variants[i]
+
+        # PYA-13 T3.3: quality override safety net.
+        # Engine Default impl returns quality="converged" even for blank/error
+        # images that fail BEFORE bisection runs. Override to "failed" when
+        # the engine surfaced an error string.
+        engine_quality = result.get("quality", "converged")
+        engine_error = result.get("error")
+        if engine_error:
+            quality = "failed"
+        else:
+            quality = engine_quality
+
         rows.append(
             FraktalBatchImage(
                 batch=batch,
@@ -482,10 +494,15 @@ def persist_batch_results(
                 n_particles_counted=result.get("n_particles_counted"),
                 rg_nm=result.get("rg_nm"),
                 dpo_used=dpo_used,
-                error=result.get("error") or "",
+                error=engine_error or "",
                 image_png=png_bytes,
                 png_scientific_bytes=sci_bytes,
                 analysis_input_variant=variant,
+                bisection_iterations=result.get("bisection_iterations"),
+                bisection_residual=result.get("bisection_residual"),
+                failure_reason=result.get("failure_reason"),
+                df_estimate=result.get("df_estimate"),
+                quality=quality,
             )
         )
     FraktalBatchImage.objects.bulk_create(rows)

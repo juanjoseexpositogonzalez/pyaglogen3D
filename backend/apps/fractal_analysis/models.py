@@ -332,6 +332,20 @@ class FraktalBatchImage(models.Model):
     Stores the rasterized PNG and per-image fractal metrics.
     """
 
+    # PYA-13 T3.2: Quality classification choices.
+    QUALITY_CHOICES = [
+        ("converged", "Converged"),
+        ("approximate", "Approximate"),
+        ("excluded", "Excluded"),
+        ("failed", "Failed"),
+    ]
+
+    FAILURE_REASON_CHOICES = [
+        ("no_sign_change", "No sign change"),
+        ("kf_negative", "kf negative"),
+        ("iteration_limit", "Iteration limit"),
+    ]
+
     batch = models.ForeignKey(
         FraktalBatch,
         on_delete=models.CASCADE,
@@ -374,6 +388,29 @@ class FraktalBatchImage(models.Model):
         max_length=16,
         default="presentation",
         verbose_name="Analysis input variant",
+    )
+
+    # PYA-13 T3.2: Bisection diagnostic fields.
+    bisection_iterations = models.IntegerField(
+        null=True, blank=True, verbose_name="Bisection iterations"
+    )
+    bisection_residual = models.FloatField(
+        null=True, blank=True, verbose_name="Bisection residual"
+    )
+    failure_reason = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        choices=FAILURE_REASON_CHOICES,
+    )
+    df_estimate = models.FloatField(
+        null=True, blank=True, verbose_name="Df best estimate"
+    )
+    quality = models.CharField(
+        max_length=12,
+        default="converged",
+        choices=QUALITY_CHOICES,
+        verbose_name="Analysis quality",
     )
 
     class Meta:
