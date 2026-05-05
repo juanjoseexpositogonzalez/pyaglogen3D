@@ -24,6 +24,35 @@ impl FailureReason {
     }
 }
 
+/// Quality classification of a bisection analysis result.
+///
+/// Replaces the binary success/failure distinction with a 4-tier system
+/// based on convergence residual and failure mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AnalysisQuality {
+    /// Residual < APPROXIMATE_RESIDUAL_THRESHOLD (0.1) — fully converged.
+    #[default]
+    Converged,
+    /// 0.1 ≤ residual ≤ EXCLUDED_RESIDUAL_THRESHOLD (1.0) — usable approximation.
+    Approximate,
+    /// Residual > 1.0 OR no_sign_change — excluded from statistics.
+    Excluded,
+    /// kf_negative OR engine error — analysis failed entirely.
+    Failed,
+}
+
+impl AnalysisQuality {
+    /// Stable string tag for serialization / Python / JSON payloads.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Converged => "converged",
+            Self::Approximate => "approximate",
+            Self::Excluded => "excluded",
+            Self::Failed => "failed",
+        }
+    }
+}
+
 /// Status of FRAKTAL analysis.
 #[derive(Debug, Clone, PartialEq)]
 pub enum FraktalStatus {
@@ -142,6 +171,29 @@ mod tests {
     #[test]
     fn test_failure_reason_eq_and_clone() {
         let a = FailureReason::NoSignChange;
+        let b = a; // Copy
+        let c = a.clone();
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+    }
+
+    #[test]
+    fn test_analysis_quality_as_str() {
+        assert_eq!(AnalysisQuality::Converged.as_str(), "converged");
+        assert_eq!(AnalysisQuality::Approximate.as_str(), "approximate");
+        assert_eq!(AnalysisQuality::Excluded.as_str(), "excluded");
+        assert_eq!(AnalysisQuality::Failed.as_str(), "failed");
+    }
+
+    #[test]
+    fn test_analysis_quality_default_is_converged() {
+        let q = AnalysisQuality::default();
+        assert_eq!(q, AnalysisQuality::Converged);
+    }
+
+    #[test]
+    fn test_analysis_quality_eq_and_clone() {
+        let a = AnalysisQuality::Approximate;
         let b = a; // Copy
         let c = a.clone();
         assert_eq!(a, b);
