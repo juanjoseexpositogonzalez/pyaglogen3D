@@ -9,10 +9,10 @@
 
 ## Phase 1 — Engine: `calculate_com_distance` accepts `sintering_coeff`
 
-- [ ] T1.1 — Add `sintering_coeff: f64` parameter to `calculate_com_distance` function signature (`aglogen_core/engine/src/simulation/tunable_cc.rs`)
-- [ ] T1.2 — Implement `rp_effective = rp * sintering_coeff` in the formula; update all `rp` usages to `rp_eff` within the d² computation
-- [ ] T1.3 — Add cargo tests for regression at coeff=1.0 (snapshot match frente-10), coeff=0.9 PC case (d_sintered = 0.9·d_unsintered), coeff=0.5 extreme (d > 0), coeff=0.0 degenerate (returns None)
-- [ ] T1.4 — Update existing call sites in `tunable_cc.rs` to pass `params.sintering.sample(rng)` or 1.0 where struct doesn't have it yet
+- [x] T1.1 — Add `sintering_coeff: f64` parameter to `calculate_com_distance` function signature (`aglogen_core/engine/src/simulation/tunable_cc.rs`)
+- [x] T1.2 — Implement `rp_effective = rp * sintering_coeff` in the formula; update all `rp` usages to `rp_eff` within the d² computation
+- [x] T1.3 — Add cargo tests for regression at coeff=1.0 (snapshot match frente-10), coeff=0.9 PC case (d_sintered = 0.9·d_unsintered), coeff=0.5 extreme (d > 0), coeff=0.0 degenerate (returns None)
+- [x] T1.4 — Update existing call sites in `tunable_cc.rs` to pass `params.sintering.sample(rng)` or 1.0 where struct doesn't have it yet
 
 ---
 
