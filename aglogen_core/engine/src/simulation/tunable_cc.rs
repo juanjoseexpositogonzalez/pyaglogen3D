@@ -2205,4 +2205,105 @@ mod tests {
         // The spec mandates None when d²≤0. Since the math can't produce ≤0
         // with valid physical inputs, this test ensures no panic on edge cases.
     }
+
+    // ---------------------------------------------------------------
+    // Sintering coeff tests (R1 delta — sintering-cc-fix / PYA-11)
+    // ---------------------------------------------------------------
+
+    /// T1.2 — Regression snapshot: coeff=1.0 must exactly match frente-10 baseline.
+    /// Snapshot value computed from the pre-sintering formula with
+    /// (n_po1=2, n_po2=1, rp=12.5, df=1.8, kf=1.4).
+    #[test]
+    fn test_sintering_coeff_1_0_regression_snapshot() {
+        let baseline = 27.961820478437158_f64; // frente-10 snapshot
+
+        let d =
+            calculate_com_distance(2, 1, 12.5, 1.8, 1.4, 1.0).expect("must be Some at coeff=1.0");
+
+        let rel_err = (d - baseline).abs() / baseline;
+        assert!(
+            rel_err < 1e-10,
+            "coeff=1.0 must match frente-10 baseline: got={d:.15}, expected={baseline:.15}, rel_err={rel_err:.2e}"
+        );
+    }
+
+    /// T1.3a — coeff=0.9 PC case: d_sintered = 0.9 · d_unsintered.
+    /// Because rp_eff only appears in the leading rp² factor, d scales
+    /// linearly with sintering_coeff.
+    #[test]
+    fn test_sintering_coeff_0_9_linear_scaling() {
+        let d_base =
+            calculate_com_distance(1, 1, 12.5, 1.8, 1.4, 1.0).expect("must be Some at coeff=1.0");
+        let d_sintered =
+            calculate_com_distance(1, 1, 12.5, 1.8, 1.4, 0.9).expect("must be Some at coeff=0.9");
+
+        let expected = 0.9 * d_base;
+        let rel_err = (d_sintered - expected).abs() / expected;
+        assert!(
+            rel_err < 1e-10,
+            "d_sintered must equal 0.9 · d_unsintered: got={d_sintered:.15}, expected={expected:.15}, rel_err={rel_err:.2e}"
+        );
+    }
+
+    /// T1.3b — coeff=0.5 extreme: formula still produces positive d for valid params.
+    #[test]
+    fn test_sintering_coeff_0_5_positive() {
+        let d = calculate_com_distance(1, 1, 1.0, 2.0, 1.0, 0.5)
+            .expect("must be Some at coeff=0.5 with valid params");
+        assert!(d > 0.0, "d must be positive, got {d}");
+        assert!(d.is_finite(), "d must be finite, got {d}");
+    }
+
+    /// T1.3c — coeff=0.0 degenerate: rp_eff=0 → d²=0 → returns None.
+    #[test]
+    fn test_sintering_coeff_0_0_returns_none() {
+        let result = calculate_com_distance(2, 1, 12.5, 1.8, 1.4, 0.0);
+        assert!(
+            result.is_none(),
+            "coeff=0.0 must return None (rp_eff=0 → d²=0), got {:?}",
+            result
+        );
+    }
+
+    /// T1.3d — Math proof: d_sintered = coeff · d_unsintered for any valid params.
+    /// The rp² factor scales as coeff², so d = sqrt(coeff² · d_unsint²) = coeff · d_unsint.
+    #[test]
+    fn test_sintering_coeff_math_proof_linear() {
+        let cases: &[(usize, usize, f64, f64, f64, f64)] = &[
+            (2, 1, 12.5, 1.8, 1.4, 0.9),
+            (5, 3, 1.0, 2.0, 1.0, 0.7),
+            (10, 10, 2.5, 1.6, 1.3, 0.85),
+            (1, 1, 1.0, 1.8, 1.3, 0.5),
+        ];
+
+        for &(n1, n2, rp, df, kf, coeff) in cases {
+            let d_base = calculate_com_distance(n1, n2, rp, df, kf, 1.0)
+                .unwrap_or_else(|| panic!("base must be Some for ({n1},{n2})"));
+            let d_sint = calculate_com_distance(n1, n2, rp, df, kf, coeff)
+                .unwrap_or_else(|| panic!("sintered must be Some for ({n1},{n2},coeff={coeff})"));
+
+            let expected = coeff * d_base;
+            let rel_err = (d_sint - expected).abs() / expected;
+            assert!(
+                rel_err < 1e-10,
+                "d_sintered must equal {coeff}·d_unsintered for ({n1},{n2}): got={d_sint:.15}, expected={expected:.15}, rel_err={rel_err:.2e}"
+            );
+        }
+    }
+
+    /// T1.3e — Lower Df invariant preserved with sintering (delta scenario 1.7).
+    #[test]
+    fn test_sintering_lower_df_larger_distance_invariant() {
+        let coeff = 0.9;
+        let kf = 1.3;
+        let rp = 1.0;
+
+        let d_low = calculate_com_distance(10, 10, rp, 1.4, kf, coeff).unwrap();
+        let d_high = calculate_com_distance(10, 10, rp, 2.2, kf, coeff).unwrap();
+
+        assert!(
+            d_low > d_high,
+            "Lower Df must give larger distance even with sintering: d(1.4)={d_low:.6}, d(2.2)={d_high:.6}"
+        );
+    }
 }
