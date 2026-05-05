@@ -59,6 +59,9 @@ pub struct BisectionResult {
     pub function_value: f64,
     /// Whether a valid solution was found within tolerance
     pub converged: bool,
+    /// Whether Phase 1 (bracket search) found a sign change before
+    /// falling back to golden section optimization.
+    pub bracket_found: bool,
 }
 
 impl BisectionSolver {
@@ -160,6 +163,7 @@ impl BisectionSolver {
             iterations,
             function_value: final_value,
             converged: final_value.abs() < CONVERGENCE_THRESHOLD,
+            bracket_found: true,
         }
     }
 
@@ -224,6 +228,7 @@ impl BisectionSolver {
             iterations,
             function_value: fun_value,
             converged: valid && fun_value.abs() < CONVERGENCE_THRESHOLD,
+            bracket_found: false,
         }
     }
 }
@@ -256,5 +261,28 @@ mod tests {
 
         assert!(result.converged);
         assert!((result.df - 2.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_bracket_found_true_when_sign_change_exists() {
+        // Objective f(x) = x - 2 has sign change in [1, 3]
+        let solver = BisectionSolver::default();
+        let result = solver.solve(|x| (x - 2.0, x), 1.0, 3.0);
+        assert!(
+            result.bracket_found,
+            "bracket must be found for f(x) = x - 2 in [1,3]"
+        );
+        assert!(result.converged);
+    }
+
+    #[test]
+    fn test_bracket_found_false_when_no_sign_change() {
+        // Objective f(x) = x² + 1 is always positive — no sign change
+        let solver = BisectionSolver::default();
+        let result = solver.solve(|x| (x * x + 1.0, x), 1.0, 3.0);
+        assert!(
+            !result.bracket_found,
+            "no bracket for always-positive function"
+        );
     }
 }
