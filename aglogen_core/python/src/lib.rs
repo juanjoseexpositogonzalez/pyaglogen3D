@@ -1497,6 +1497,12 @@ fn analyze_fraktal_batch<'py>(
         item.set_item("dpo_used", r.dpo_used)?;
         item.set_item("rg_nm", r.rg_nm)?;
         item.set_item("error", r.error.clone())?;
+        // PYA-13: bisection diagnostic fields
+        item.set_item("bisection_iterations", r.bisection_iterations)?;
+        item.set_item("bisection_residual", r.bisection_residual)?;
+        item.set_item("failure_reason", r.failure_reason.clone())?;
+        item.set_item("df_estimate", r.df_estimate)?;
+        item.set_item("quality", r.quality.clone())?;
         results_list.append(item)?;
     }
     dict.set_item("results", results_list)?;
@@ -1630,6 +1636,12 @@ fn analyze_fraktal_batch_per_image_scale<'py>(
         item.set_item("pixels_per_100nm_used", r.pixels_per_100nm_used)?;
         item.set_item("rg_nm", r.rg_nm)?;
         item.set_item("error", r.error.clone())?;
+        // PYA-13: bisection diagnostic fields
+        item.set_item("bisection_iterations", r.bisection_iterations)?;
+        item.set_item("bisection_residual", r.bisection_residual)?;
+        item.set_item("failure_reason", r.failure_reason.clone())?;
+        item.set_item("df_estimate", r.df_estimate)?;
+        item.set_item("quality", r.quality.clone())?;
         results_list.append(item)?;
     }
     dict.set_item("results", results_list)?;
