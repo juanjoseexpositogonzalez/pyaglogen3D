@@ -26,9 +26,9 @@
 
 ## Phase 3 — Integration test + backend verification
 
-- [ ] T3.1 — Create cross-cutting integration test in `aglogen_core/engine/tests/integration_cc_tunable.rs`: 5 runs with target Df=2, kf=1, N=350, sintering_coeff=0.9. Assert `result.coordinates.len() == 350` (NOT 1), Df within ±5% of 2.0, kf within ±10% of 1.0
-- [ ] T3.2 — Verify backend `tasks.py` already passes `sintering_coeff` to `aglogen_core` call (read `backend/apps/simulations/tasks.py` lines ~1282-1303 to confirm)
-- [ ] T3.3 — Verify frontend already has sintering UI control (read `frontend/src/...` to confirm sintering slider/control exists; likely no-op)
+- [x] T3.1 — Create cross-cutting integration test in `aglogen_core/engine/tests/integration_cc_tunable.rs`: 5 runs with target Df=2, kf=1, N=350, sintering_coeff=0.9. Assert `result.coordinates.len() == 350` (NOT 1), Df within ±5% of 2.0, kf within ±10% of 1.0
+- [x] T3.2 — Verify backend `tasks.py` already passes `sintering_coeff` to `aglogen_core` call (read `backend/apps/simulations/tasks.py` lines ~1282-1303 to confirm)
+- [x] T3.3 — Verify frontend already has sintering UI control (read `frontend/src/...` to confirm sintering slider/control exists; likely no-op)
 
 ---
 
