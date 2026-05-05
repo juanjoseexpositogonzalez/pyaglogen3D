@@ -20,14 +20,14 @@
 
 ## Phase P3 — Backend: migration + model + serializers + per-batch counters + stats
 
-- [ ] T3.1 — Create migration `0011_add_bisection_diagnostic_fields.py` adding 5 nullable fields: `quality`, `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate` to `FraktalBatchImage` (file: `backend/apps/fractal_analysis/migrations/0011_add_bisection_diagnostic_fields.py`)
-- [ ] T3.2 — Add 5 nullable fields to `FraktalBatchImage` model with appropriate null defaults (file: `backend/apps/fractal_analysis/models.py`)
-- [ ] T3.3 — Update `persist_batch_results` in `services/batch.py` to extract and store new fields from engine result dict (file: `backend/apps/fractal_analysis/services/batch.py`)
-- [ ] T3.4 — Update `batch_image_detail_view` in `views.py` to include new fields in drill-down response (file: `backend/apps/fractal_analysis/views.py`)
-- [ ] T3.5 — Update `batch_detail_view` in `views.py` to compute per-quality counters (`n_converged`, `n_approximate`, `n_excluded`, `n_failed`) and `mean_df_inclusive` (file: `backend/apps/fractal_analysis/views.py`)
-- [ ] T3.6 — Update serializers to expose new fields + computed counters + `mean_df_inclusive` (file: `backend/apps/fractal_analysis/serializers.py`)
-- [ ] T3.7 — Document `mean_df` semantic shift in code comments (now converged-only; `mean_df_inclusive` includes approximate) (file: `backend/apps/fractal_analysis/views.py`)
-- [ ] T3.8 — Write pytest: migration test, persistence test per quality state, response shape, stats correctness (file: `backend/apps/fractal_analysis/tests/`)
+- [x] T3.1 — Create migration `0011_add_bisection_diagnostic_fields.py` adding 5 nullable fields: `quality`, `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate` to `FraktalBatchImage` (file: `backend/apps/fractal_analysis/migrations/0011_add_bisection_diagnostic_fields.py`) (commit ed7607c)
+- [x] T3.2 — Add 5 nullable fields to `FraktalBatchImage` model with appropriate null defaults (file: `backend/apps/fractal_analysis/models.py`) (commit ed7607c)
+- [x] T3.3 — Update `persist_batch_results` in `services/batch.py` to extract and store new fields from engine result dict (file: `backend/apps/fractal_analysis/services/batch.py`) (commit ed7607c)
+- [x] T3.4 — Update `batch_image_detail_view` in `views.py` to include new fields in drill-down response (file: `backend/apps/fractal_analysis/views.py`) (commit 7b2dd66)
+- [x] T3.5 — Update `batch_detail_view` in `views.py` to compute per-quality counters (`n_converged`, `n_approximate`, `n_excluded`, `n_failed`) and `mean_df_inclusive` (file: `backend/apps/fractal_analysis/views.py`) (commit 287d7ae)
+- [x] T3.6 — mean_df semantic shift (converged-only) + mean_df_inclusive (converged + approximate) in batch_detail_view stats block (commit 287d7ae)
+- [x] T3.7 — Document `mean_df` semantic shift in code comments (now converged-only; `mean_df_inclusive` includes approximate) (file: `backend/apps/fractal_analysis/views.py`) (commit 287d7ae)
+- [x] T3.8 — Write pytest: migration test, persistence test per quality state, response shape, stats correctness (file: `backend/apps/fractal_analysis/tests/`) (commit c1a4654)
 
 ## Phase P4 — Backend: CSV export with new columns
 
