@@ -637,6 +637,8 @@ pub fn run_fracval_internal(
         tunable_merges: 0,
         ballistic_merges: 0,
         max_retries_per_merge: 0,
+        dpo_used: None,
+        target_kf_used: None,
     }
 }
 

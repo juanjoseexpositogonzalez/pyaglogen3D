@@ -29,6 +29,15 @@ pub struct SimulationResult {
     pub ballistic_merges: usize,
     /// Highest retry count observed across all merge steps.
     pub max_retries_per_merge: usize,
+    // Parametric distribution results (R14 — parametric-values-dpo-and-kf / PYA-15)
+    /// Effective primary particle diameter used in this run.
+    /// `Some(v)` for CC-tunable (sampled from `dpo_distribution`);
+    /// `None` for algorithms that don't use distribution sampling.
+    pub dpo_used: Option<f64>,
+    /// Effective fractal prefactor used in this run.
+    /// `Some(v)` for CC-tunable (sampled from `target_kf_distribution`);
+    /// `None` for algorithms without kf distribution support.
+    pub target_kf_used: Option<f64>,
 }
 
 impl SimulationResult {}

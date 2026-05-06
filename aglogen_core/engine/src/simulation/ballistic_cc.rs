@@ -386,6 +386,8 @@ pub fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simula
         tunable_merges: 0,
         ballistic_merges: 0,
         max_retries_per_merge: 0,
+        dpo_used: None,
+        target_kf_used: None,
     }
 }
 

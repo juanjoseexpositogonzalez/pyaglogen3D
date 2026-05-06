@@ -234,6 +234,8 @@ pub fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationR
         tunable_merges: 0,
         ballistic_merges: 0,
         max_retries_per_merge: 0,
+        dpo_used: None,
+        target_kf_used: None,
     }
 }
 

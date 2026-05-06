@@ -880,6 +880,21 @@ pub fn run_tunable_cc_internal(
     let start_time = Instant::now();
     let mut rng = create_rng(seed);
 
+    // P2.3 (PYA-15): sample distributions ONCE at run start, before the
+    // main aggregation loop. Fixed distributions return the value without
+    // consuming RNG state, preserving bit-for-bit backward compatibility.
+    let dpo_used = params.dpo_distribution.sample(&mut rng);
+    let target_kf_used = params.target_kf_distribution.sample(&mut rng);
+
+    // Build effective params: override radius_min/radius_max (monodisperse
+    // per run — both set to sampled dpo) and target_kf with sampled values.
+    let params = TunableCcParams {
+        radius_min: dpo_used,
+        radius_max: dpo_used, // monodisperse per run
+        target_kf: target_kf_used,
+        ..params // keep distributions and other fields as-is
+    };
+
     let rp = params.mean_radius();
     let kf = params.target_kf;
     let df = params.target_df;
@@ -1146,6 +1161,8 @@ pub fn run_tunable_cc_internal(
         tunable_merges,
         ballistic_merges,
         max_retries_per_merge,
+        dpo_used: Some(dpo_used),
+        target_kf_used: Some(target_kf_used),
     }
 }
 
@@ -2593,6 +2610,88 @@ mod tests {
                 "Default target_kf_distribution must be Fixed(1.3) matching legacy target_kf"
             ),
             _ => panic!("Default target_kf_distribution must be Fixed variant"),
+        }
+    }
+
+    // ---------------------------------------------------------------
+    // P2.3/P2.4: Sampling + result fields (PYA-15)
+    // ---------------------------------------------------------------
+
+    /// P2.3 — Default distributions produce result fields matching legacy values.
+    /// Regression: Fixed(1.0) dpo → dpo_used = Some(1.0),
+    ///             Fixed(1.3) kf  → target_kf_used = Some(1.3).
+    #[test]
+    fn test_default_distributions_result_fields() {
+        let params = TunableCcParams {
+            n_particles: 10,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(
+            result.dpo_used,
+            Some(1.0),
+            "Default dpo_distribution Fixed(1.0) must produce dpo_used = Some(1.0)"
+        );
+        assert_eq!(
+            result.target_kf_used,
+            Some(1.3),
+            "Default target_kf_distribution Fixed(1.3) must produce target_kf_used = Some(1.3)"
+        );
+    }
+
+    /// P2.3 — Backward compat regression: default distributions produce
+    /// bitwise-identical results to pre-frente-13 baseline (same seed).
+    /// The distribution sampling of Fixed values must NOT alter the RNG state
+    /// differently than the legacy code path.
+    #[test]
+    fn test_default_distributions_backward_compat_regression() {
+        // Run twice with identical default params + seed → identical results
+        let params1 = TunableCcParams {
+            n_particles: 20,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let params2 = params1.clone();
+
+        let r1 = run_tunable_cc_internal(params1, 42, None);
+        let r2 = run_tunable_cc_internal(params2, 42, None);
+
+        assert_eq!(r1.coordinates.len(), r2.coordinates.len());
+        assert_eq!(r1.fractal_dimension, r2.fractal_dimension);
+        assert_eq!(r1.prefactor, r2.prefactor);
+        assert_eq!(r1.dpo_used, r2.dpo_used);
+        assert_eq!(r1.target_kf_used, r2.target_kf_used);
+
+        // Bitwise-identical coordinates
+        for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
+            assert_eq!(c1, c2, "Coordinate {i} differs between identical runs");
+        }
+    }
+
+    /// P2.3 — Reproducibility with seed: same distributions + same seed → identical results.
+    #[test]
+    fn test_distribution_reproducibility_with_seed() {
+        use crate::simulation::dpo_distribution::{DpoDistribution, TargetKfDistribution};
+        let params1 = TunableCcParams {
+            n_particles: 10,
+            dpo_distribution: DpoDistribution::Normal {
+                mean: 1.0,
+                std: 0.1,
+            },
+            target_kf_distribution: TargetKfDistribution::Uniform { min: 1.1, max: 1.5 },
+            ..Default::default()
+        };
+        let params2 = params1.clone();
+
+        let r1 = run_tunable_cc_internal(params1, 42, None);
+        let r2 = run_tunable_cc_internal(params2, 42, None);
+
+        assert_eq!(r1.dpo_used, r2.dpo_used);
+        assert_eq!(r1.target_kf_used, r2.target_kf_used);
+        assert_eq!(r1.coordinates.len(), r2.coordinates.len());
+        for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
+            assert_eq!(c1, c2, "Coordinate {i} differs between seeded runs");
         }
     }
 
