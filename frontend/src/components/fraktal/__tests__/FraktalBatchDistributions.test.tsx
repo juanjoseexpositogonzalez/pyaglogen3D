@@ -26,14 +26,21 @@ vi.mock('next/dynamic', () => ({
 
 vi.mock('react-plotly.js', () => ({
   default: (props: Record<string, unknown>) => {
-    const data = (props.data as unknown[]) || []
+    const data = (props.data as Array<{ marker?: { color?: string } }>) || []
     const layout =
-      (props.layout as { title?: { text?: string } } | undefined) ?? {}
+      (props.layout as {
+        title?: { text?: string }
+        barmode?: string
+      } | undefined) ?? {}
+    // Expose trace marker colors so tests can assert overlay traces
+    const traceColors = data.map((t) => t.marker?.color ?? '').join(',')
     return (
       <div
         data-testid="plotly"
         data-trace-count={String(data.length)}
         data-title={layout.title?.text ?? ''}
+        data-trace-colors={traceColors}
+        data-barmode={layout.barmode ?? ''}
       />
     )
   },
@@ -214,6 +221,102 @@ describe('<FraktalBatchDistributions>', () => {
       const plots = screen.getAllByTestId('plotly')
       expect(plots).toHaveLength(1)
       expect(plots[0].getAttribute('data-title')).toContain('Df')
+    })
+  })
+
+  describe('Df yellow overlay (T5.4)', () => {
+    it('mixed batch: Df histogram has 2 traces (converged blue + approximate yellow)', () => {
+      // 5 converged + 2 approximate (all with valid Df-related values)
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 5 }, (_, i) =>
+          makeImage(i, { quality: 'converged' }),
+        ),
+        ...Array.from({ length: 2 }, (_, i) =>
+          makeImage(5 + i, {
+            quality: 'approximate',
+            fractal_dimension: 1.90 + i * 0.01,
+          }),
+        ),
+      ]
+      render(<FraktalBatchDistributions images={images} />)
+      const plots = screen.getAllByTestId('plotly')
+      // Find the Df plot
+      const dfPlot = plots.find((p) =>
+        (p.getAttribute('data-title') ?? '').includes('Df'),
+      )
+      expect(dfPlot).toBeTruthy()
+      // Df should have 2 traces (converged + approximate)
+      expect(dfPlot!.getAttribute('data-trace-count')).toBe('2')
+      // Trace colors: first blue (#3b82f6), second yellow (#eab308)
+      const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
+      expect(colors).toContain('#3b82f6')
+      expect(colors).toContain('#eab308')
+      // barmode overlay
+      expect(dfPlot!.getAttribute('data-barmode')).toBe('overlay')
+    })
+
+    it('all-converged batch: Df histogram has 1 trace (no overlay)', () => {
+      const images: FraktalBatchImageResult[] = Array.from(
+        { length: 8 },
+        (_, i) => makeImage(i, { quality: 'converged' }),
+      )
+      render(<FraktalBatchDistributions images={images} />)
+      const plots = screen.getAllByTestId('plotly')
+      const dfPlot = plots.find((p) =>
+        (p.getAttribute('data-title') ?? '').includes('Df'),
+      )
+      expect(dfPlot).toBeTruthy()
+      expect(dfPlot!.getAttribute('data-trace-count')).toBe('1')
+      // Only blue trace
+      const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
+      expect(colors).toContain('#3b82f6')
+      expect(colors).not.toContain('#eab308')
+    })
+
+    it('all-approximate batch: Df histogram has 1 trace (yellow only)', () => {
+      const images: FraktalBatchImageResult[] = Array.from(
+        { length: 6 },
+        (_, i) =>
+          makeImage(i, {
+            quality: 'approximate',
+            fractal_dimension: 1.85 + i * 0.01,
+          }),
+      )
+      render(<FraktalBatchDistributions images={images} />)
+      const plots = screen.getAllByTestId('plotly')
+      const dfPlot = plots.find((p) =>
+        (p.getAttribute('data-title') ?? '').includes('Df'),
+      )
+      expect(dfPlot).toBeTruthy()
+      expect(dfPlot!.getAttribute('data-trace-count')).toBe('1')
+      // Only yellow trace, no blue
+      const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
+      expect(colors).toContain('#eab308')
+      expect(colors).not.toContain('#3b82f6')
+    })
+
+    it('non-Df metrics unaffected: always 1 trace regardless of quality', () => {
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 5 }, (_, i) =>
+          makeImage(i, { quality: 'converged' }),
+        ),
+        ...Array.from({ length: 2 }, (_, i) =>
+          makeImage(5 + i, {
+            quality: 'approximate',
+            fractal_dimension: 1.90 + i * 0.01,
+          }),
+        ),
+      ]
+      render(<FraktalBatchDistributions images={images} />)
+      const plots = screen.getAllByTestId('plotly')
+      // kf, rg, npo should each have 1 trace
+      const nonDfPlots = plots.filter(
+        (p) => !(p.getAttribute('data-title') ?? '').includes('Df'),
+      )
+      expect(nonDfPlots.length).toBe(3)
+      nonDfPlots.forEach((p) => {
+        expect(p.getAttribute('data-trace-count')).toBe('1')
+      })
     })
   })
 })

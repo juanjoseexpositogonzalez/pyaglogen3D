@@ -132,15 +132,33 @@ export function FraktalBatchDistributions({
   // Pluck successful values per metric. "Successful" = error == null AND
   // metric value is not null. Each metric is filtered independently because
   // a row may succeed overall but lack a specific field (defensive).
+  //
+  // For Df specifically: split by quality (converged vs approximate) so the
+  // histogram can render a yellow overlay for approximate values (T5.4).
   const perMetric = useMemo(() => {
     return METRICS.map((spec) => {
-      const values = images
-        .filter((img) => img.error == null)
+      const successful = images.filter((img) => img.error == null)
+      const values = successful
         .map(spec.extract)
         .filter((v): v is number => v != null && Number.isFinite(v))
       const fallbackStats =
         stats && stats[spec.key] ? stats[spec.key]! : computeMetricStats(values)
-      return { spec, values, stats: fallbackStats }
+
+      // Quality-split for Df only (bisection-specific overlay)
+      let convergedValues: number[] | undefined
+      let approximateValues: number[] | undefined
+      if (spec.key === 'df') {
+        convergedValues = images
+          .filter((img) => img.quality === 'converged')
+          .map(spec.extract)
+          .filter((v): v is number => v != null && Number.isFinite(v))
+        approximateValues = images
+          .filter((img) => img.quality === 'approximate')
+          .map(spec.extract)
+          .filter((v): v is number => v != null && Number.isFinite(v))
+      }
+
+      return { spec, values, stats: fallbackStats, convergedValues, approximateValues }
     })
   }, [images, stats])
 
@@ -170,13 +188,15 @@ export function FraktalBatchDistributions({
       }
       data-testid="fraktal-batch-distributions"
     >
-      {perMetric.map(({ spec, values, stats: metricStats }) => (
+      {perMetric.map(({ spec, values, stats: metricStats, convergedValues, approximateValues }) => (
         <DistributionCard
           key={spec.key}
           spec={spec}
           values={values}
           stats={metricStats}
           totalImages={totalImages}
+          convergedValues={convergedValues}
+          approximateValues={approximateValues}
         />
       ))}
     </div>
@@ -192,13 +212,24 @@ interface DistributionCardProps {
   values: number[]
   stats: FraktalMetricStats
   totalImages: number
+  /** Df-only: converged values for blue primary trace. */
+  convergedValues?: number[]
+  /** Df-only: approximate values for yellow overlay trace. */
+  approximateValues?: number[]
 }
+
+/** Primary trace color (blue-500). */
+const COLOR_CONVERGED = '#3b82f6'
+/** Overlay trace color (yellow-500). */
+const COLOR_APPROXIMATE = '#eab308'
 
 function DistributionCard({
   spec,
   values,
   stats,
   totalImages,
+  convergedValues,
+  approximateValues,
 }: DistributionCardProps) {
   const nSucc = values.length
   const title = `${spec.label} (${nSucc} succ / ${totalImages} total)`
@@ -220,16 +251,53 @@ function DistributionCard({
 
   const nBuckets = sturgesBuckets(nSucc)
 
-  const data: PlotParams['data'] = [
-    {
-      x: values,
-      type: 'histogram',
-      // @ts-expect-error nbinsx is a valid Plotly histogram prop but missing
-      // from the @types/plotly.js Partial<PlotData> definition.
-      nbinsx: nBuckets,
-      marker: { color: '#3b82f6', line: { color: '#1e40af', width: 1 } },
-    },
-  ]
+  // Build traces. For Df with quality data: split into converged (blue) +
+  // approximate (yellow) overlay. For all other metrics: single trace.
+  const hasDfQualitySplit =
+    spec.key === 'df' &&
+    convergedValues !== undefined &&
+    approximateValues !== undefined &&
+    (convergedValues.length > 0 || approximateValues.length > 0)
+
+  let data: PlotParams['data']
+  let useOverlay = false
+
+  if (hasDfQualitySplit) {
+    const traces: PlotParams['data'] = []
+    if (convergedValues!.length > 0) {
+      traces.push({
+        x: convergedValues!,
+        type: 'histogram',
+        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
+        nbinsx: nBuckets,
+        marker: { color: COLOR_CONVERGED, line: { color: '#1e40af', width: 1 } },
+        name: 'Converged',
+      })
+    }
+    if (approximateValues!.length > 0) {
+      traces.push({
+        x: approximateValues!,
+        type: 'histogram',
+        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
+        nbinsx: nBuckets,
+        marker: { color: COLOR_APPROXIMATE, line: { color: '#a16207', width: 1 } },
+        name: 'Approximate',
+        opacity: 0.7,
+      })
+    }
+    data = traces
+    useOverlay = traces.length > 1
+  } else {
+    data = [
+      {
+        x: values,
+        type: 'histogram',
+        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
+        nbinsx: nBuckets,
+        marker: { color: COLOR_CONVERGED, line: { color: '#1e40af', width: 1 } },
+      },
+    ]
+  }
 
   const layout: PlotParams['layout'] = {
     autosize: true,
@@ -238,7 +306,8 @@ function DistributionCard({
     title: { text: title, font: { size: 13 } },
     xaxis: { title: { text: spec.axisTitle } },
     yaxis: { title: { text: 'count' } },
-    showlegend: false,
+    showlegend: hasDfQualitySplit && data.length > 1,
+    ...(useOverlay ? { barmode: 'overlay' as const } : {}),
   }
 
   return (

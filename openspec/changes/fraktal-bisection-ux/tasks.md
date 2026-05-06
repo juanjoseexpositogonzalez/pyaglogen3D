@@ -37,13 +37,13 @@
 
 ## Phase P5 — Frontend: drill-down distinguished UI + results table badge column + distributions yellow overlay
 
-- [ ] T5.1 — Create reusable `<QualityBadge quality={...} />` component with 4 states and colors (green=converged, yellow=approximate, gray=excluded, red=failed) (file: `frontend/src/components/fraktal/QualityBadge.tsx`)
-- [ ] T5.2 — Update `FraktalBatchImageDetail.tsx`: replace single error card with category-specific UI (4 distinct visual states + diagnostic info per category) (file: `frontend/src/components/fraktal/FraktalBatchImageDetail.tsx`)
-- [ ] T5.3 — Update `FraktalBatchResultsView.tsx`: add Quality column with QualityBadge (sortable) (file: `frontend/src/components/fraktal/FraktalBatchResultsView.tsx`)
-- [ ] T5.4 — Update `FraktalBatchDistributions.tsx`: render approximate as yellow overlay alongside converged main bars (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
+- [x] T5.1 — Create reusable `<QualityBadge quality={...} />` component with 4 states and colors (green=converged, yellow=approximate, gray=excluded, red=failed) (file: `frontend/src/components/common/QualityBadge.tsx`) (commit 12c024b)
+- [x] T5.2 — Update `FraktalBatchImageDetail.tsx`: replace single error card with category-specific UI (4 distinct visual states + diagnostic info per category) (file: `frontend/src/components/fraktal/FraktalBatchImageDetail.tsx`) (commit 1cec065)
+- [x] T5.3 — Update `FraktalBatchResultsView.tsx`: add Quality column with QualityBadge (sortable) (file: `frontend/src/components/fraktal/FraktalBatchResultsView.tsx`) (commit 3cb7e4b)
+- [x] T5.4 — Update `FraktalBatchDistributions.tsx`: render approximate as yellow overlay alongside converged main bars (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
 - [ ] T5.5 — Update mean stats display: show both `mean_df` (primary) and `mean_df_inclusive` (secondary) in stats panel (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
 - [ ] T5.6 — Update tooltip on histograms: show count breakdown by quality (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
-- [ ] T5.7 — Update `frontend/src/lib/api.ts` to extend `FraktalBatchImageDetail` interface + batch summary types with new fields (file: `frontend/src/lib/api.ts`)
+- [x] T5.7 — Update `frontend/src/lib/api.ts` to extend `FraktalBatchImageDetail` interface + batch summary types with new fields (file: `frontend/src/lib/api.ts`) (commit 8b37e84)
 - [ ] T5.8 — Write vitest: QualityBadge rendering, drill-down per state, table badge column, histogram dual-color, mean dual-display (file: `frontend/src/components/fraktal/__tests__/`)
 
 ## Phase P6 — Tests integration + docs + CHANGELOG + Jira PYA-13 close
