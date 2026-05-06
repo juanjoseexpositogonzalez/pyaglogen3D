@@ -17,6 +17,7 @@ use rand::Rng;
 use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_point_on_sphere};
 
+use super::dpo_distribution::{DpoDistribution, TargetKfDistribution};
 use super::metrics::{
     calculate_coordination, calculate_inertia_tensor, calculate_porosity,
     calculate_radius_of_gyration,
@@ -88,6 +89,18 @@ pub struct TunableCcParams {
     /// and samples fresh azimuth + elevation (spec R3).
     pub max_merge_retries: usize,
     pub sintering: SinteringDistribution,
+    /// Distribution for primary particle diameter (`dpo`).
+    ///
+    /// Controls how `radius_min`/`radius_max` are sampled at run start.
+    /// Default: `Fixed(1.0)` — matches legacy scalar `radius_min`.
+    /// See R12 in the parametric-values-dpo-and-kf delta spec.
+    pub dpo_distribution: DpoDistribution,
+    /// Distribution for fractal prefactor (`target_kf`).
+    ///
+    /// Controls how `target_kf` is sampled at run start.
+    /// Default: `Fixed(1.3)` — matches legacy scalar `target_kf`.
+    /// See R11 in the parametric-values-dpo-and-kf delta spec.
+    pub target_kf_distribution: TargetKfDistribution,
 }
 
 impl Default for TunableCcParams {
@@ -105,6 +118,8 @@ impl Default for TunableCcParams {
             max_particle_selection_attempts: 25,
             max_merge_retries: 100,
             sintering: SinteringDistribution::default(),
+            dpo_distribution: DpoDistribution::default(),
+            target_kf_distribution: TargetKfDistribution::default(),
         }
     }
 }
@@ -2546,6 +2561,68 @@ mod tests {
     // ---------------------------------------------------------------
     // End-to-end smoke + comprehensive P2 tests (T2.3 — PYA-11)
     // ---------------------------------------------------------------
+
+    // ---------------------------------------------------------------
+    // P2.1/P2.2: TunableCcParams distribution fields (PYA-15)
+    // ---------------------------------------------------------------
+
+    /// P2.1 — TunableCcParams has dpo_distribution field.
+    #[test]
+    fn test_tunable_cc_params_has_dpo_distribution() {
+        use crate::simulation::dpo_distribution::DpoDistribution;
+        let params = TunableCcParams::default();
+        // Default must be Fixed(1.0) — matching legacy radius_min
+        match params.dpo_distribution {
+            DpoDistribution::Fixed { value } => assert_eq!(
+                value, 1.0,
+                "Default dpo_distribution must be Fixed(1.0) matching legacy radius_min"
+            ),
+            _ => panic!("Default dpo_distribution must be Fixed variant"),
+        }
+    }
+
+    /// P2.1 — TunableCcParams has target_kf_distribution field.
+    #[test]
+    fn test_tunable_cc_params_has_target_kf_distribution() {
+        use crate::simulation::dpo_distribution::TargetKfDistribution;
+        let params = TunableCcParams::default();
+        // Default must be Fixed(1.3) — matching legacy target_kf
+        match params.target_kf_distribution {
+            TargetKfDistribution::Fixed { value } => assert_eq!(
+                value, 1.3,
+                "Default target_kf_distribution must be Fixed(1.3) matching legacy target_kf"
+            ),
+            _ => panic!("Default target_kf_distribution must be Fixed variant"),
+        }
+    }
+
+    /// P2.1 — Distribution fields are settable via struct init.
+    #[test]
+    fn test_tunable_cc_params_custom_distributions() {
+        use crate::simulation::dpo_distribution::{DpoDistribution, TargetKfDistribution};
+        let params = TunableCcParams {
+            dpo_distribution: DpoDistribution::Normal {
+                mean: 12.5,
+                std: 1.5,
+            },
+            target_kf_distribution: TargetKfDistribution::Uniform { min: 1.1, max: 1.5 },
+            ..Default::default()
+        };
+        match params.dpo_distribution {
+            DpoDistribution::Normal { mean, std } => {
+                assert_eq!(mean, 12.5);
+                assert_eq!(std, 1.5);
+            }
+            _ => panic!("Expected Normal variant"),
+        }
+        match params.target_kf_distribution {
+            TargetKfDistribution::Uniform { min, max } => {
+                assert_eq!(min, 1.1);
+                assert_eq!(max, 1.5);
+            }
+            _ => panic!("Expected Uniform variant"),
+        }
+    }
 
     /// T2.3 — End-to-end smoke: moderate Df with sintering produces valid
     /// aggregate (not collapsed to 1 monomer, no panic, no infinite loop).
