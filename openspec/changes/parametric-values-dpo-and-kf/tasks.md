@@ -33,11 +33,11 @@
 
 ## Phase P4 — Backend: serializer + tasks plumbing (~5 tasks)
 
-- [ ] P4.1 — Add `DistributionField` (DRF custom field) to validate distribution config dict with mode in [fixed, normal, uniform], required keys per mode, value > 0, std > 0, max > min (file: `backend/apps/simulations/serializers.py`)
-- [ ] P4.2 — Update `SimulationSerializer` to accept `dpo_distribution` and `target_kf_distribution` fields as optional, falling back to legacy scalar when absent (file: `backend/apps/simulations/serializers.py`)
-- [ ] P4.3 — Update `tasks.py::run_tunable_cc_simulation` (or equivalent) to read the distribution config from params and expand to the 12 engine kwargs (file: `backend/apps/simulations/tasks.py`)
-- [ ] P4.4 — Write pytest: each mode validation, plumbing assertion, backward compat with no distribution config (file: `backend/apps/simulations/tests/test_serializer.py`)
-- [ ] P4.5 — Run backend test suite: `cd backend && pytest` — confirm 0 regressions (file: `backend/`)
+- [x] P4.1 — Add `DistributionField` (DRF custom field) to validate distribution config dict with mode in [fixed, normal, uniform], required keys per mode, value > 0, std > 0, max > min (file: `backend/apps/simulations/fields.py`)
+- [x] P4.2 — Update `SimulationSerializer` to accept `dpo_distribution` and `target_kf_distribution` fields as optional, falling back to legacy scalar when absent (file: `backend/apps/simulations/serializers.py`)
+- [x] P4.3 — Update `tasks.py::run_simulation_task` tunable_cc branch to read the distribution config from params and expand to the 12 engine kwargs (file: `backend/apps/simulations/tasks.py`)
+- [x] P4.4 — Write pytest: each mode validation, plumbing assertion, backward compat with no distribution config (file: `backend/apps/simulations/tests/test_distribution_*.py`)
+- [x] P4.5 — Run backend test suite: `cd backend && pytest` — confirm 0 regressions: 246 passed (file: `backend/`)
 
 ---
 
