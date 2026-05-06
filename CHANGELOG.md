@@ -1,3 +1,40 @@
+## parametric-values-dpo-and-kf (unreleased)
+
+### Added
+
+- **Polidispersión de `dpo` y `target_kf`**: cada uno acepta 3 modos independientes — Determinista (valor fijo, comportamiento actual), Normal (μ, σ con truncado a ±3σ), Uniforme [min, max].
+- **`DistributionSelector` reusable component** en frontend con dropdown de modo + inputs condicionales.
+- **`DistributionField` DRF custom field** en backend con validación per-mode.
+- **`expand_distribution_kwargs` helper** en tasks.py para expandir config de distribución a kwargs del engine.
+- **`DpoDistribution` y `TargetKfDistribution` enums** en engine Rust con `.sample(&mut Rng)` method (truncated Normal, retries, mean fallback).
+- **Result fields `dpo_used` y `target_kf_used`** propagados engine → binding → backend → API → CSV. Útil para estudios paramétricos.
+
+### Changed
+
+- **`run_tunable_cc` Python binding** acepta 12 nuevos kwargs opcionales (6 por param: mode, value, mean, std, min, max). Cuando ausentes, fallback a scalar legacy.
+- **`SimulationSerializer`** acepta `dpo_distribution` y `target_kf_distribution` (opcionales). Validación per-mode.
+- **`TunableCcParams`** gana fields `dpo_distribution` y `target_kf_distribution` (Default Fixed con valores legacy → backward compat).
+- **`run_tunable_cc_internal`** samples ONCE al inicio del run usando el seeded RNG (reproducibilidad garantizada).
+
+### Migration
+
+No DB migration. Distribution configs viven dentro del JSONField `parameters` de Simulation.
+
+### Backward compatibility
+
+- Payload sin `dpo_distribution` / `target_kf_distribution` → scalar fallback (legacy).
+- `mode=fixed` produce resultados bit-for-bit identical al pre-frente-13.
+- Result fields `dpo_used` / `target_kf_used` son siempre populated en CC tunable.
+
+### Closes
+
+- Jira **PYA-15**: feature pedido por el usuario para estudios paramétricos.
+
+### Known limitations
+
+- Per-particle polydispersity NO implementada — sampling es monodisperse-per-run (un valor por simulación).
+- Polidispersión solo en CC tunable. Otros algoritmos (ballistic, DLA, etc.) que usan radii mantienen dpo determinista.
+
 ## fraktal-bisection-ux (unreleased)
 
 ### Added

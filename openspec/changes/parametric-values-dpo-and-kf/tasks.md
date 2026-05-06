@@ -53,7 +53,7 @@
 
 ## Phase P6 — Tests + docs + CHANGELOG + Jira PYA-15 close (~4 tasks)
 
-- [ ] P6.1 — Cross-cutting integration test: form submit Normal mode → backend serializer validates → tasks.py plumbs → engine samples → result has dpo_used within [μ-3σ, μ+3σ] (file: `backend/apps/simulations/tests/test_integration.py` or similar)
-- [ ] P6.2 — Create `docs/parametric-values-dpo-and-kf.md` (~80 lines): why this feature, 3 modes table, sampling timing, reproducibility, backward compat, validation rules (file: `docs/parametric-values-dpo-and-kf.md`)
-- [ ] P6.3 — Add CHANGELOG entry under `parametric-values-dpo-and-kf (unreleased)` describing the feature and affected layers (file: `CHANGELOG.md`)
-- [ ] P6.4 — Close Jira PYA-15 with comment summarizing completed work and transition to Finalizada (file: Jira PYA-15)
+- [x] P6.1 — Cross-cutting integration test: form submit Normal mode → backend serializer validates → tasks.py plumbs → engine samples → result has dpo_used within [μ-3σ, μ+3σ] (file: `backend/tests/integration/test_parametric_values_pipeline.py`)
+- [x] P6.2 — Create `docs/parametric-values-dpo-and-kf.md` (~80 lines): why this feature, 3 modes table, sampling timing, reproducibility, backward compat, validation rules (file: `docs/parametric-values-dpo-and-kf.md`)
+- [x] P6.3 — Add CHANGELOG entry under `parametric-values-dpo-and-kf (unreleased)` describing the feature and affected layers (file: `CHANGELOG.md`)
+- [x] P6.4 — Close Jira PYA-15 with comment summarizing completed work and transition to Finalizada (file: Jira PYA-15)
