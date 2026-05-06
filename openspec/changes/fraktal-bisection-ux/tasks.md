@@ -48,7 +48,7 @@
 
 ## Phase P6 — Tests integration + docs + CHANGELOG + Jira PYA-13 close
 
-- [ ] T6.1 — Cross-cutting integration test: synthetic batch with mix of quality states; assert each tier propagates correctly engine→backend→frontend (or engine→backend with mocks) (file: `backend/apps/fractal_analysis/tests/test_bisection_integration.py`)
-- [ ] T6.2 — Documentation: `docs/fraktal-bisection-ux.md` (~80-100 lines) covering Why/Categories/Threshold rationale/Migration/Backward compat/Validation (file: `docs/fraktal-bisection-ux.md`)
-- [ ] T6.3 — CHANGELOG entry under `fraktal-bisection-ux (unreleased)` describing all changes (file: `CHANGELOG.md`)
-- [ ] T6.4 — Close Jira PYA-13 with comment summarizing fix + commit range; transition to "Finalizada" using jira_transition_issue (file: Jira issue PYA-13)
+- [x] T6.1 — 15 integration tests at `backend/tests/integration/test_fraktal_bisection_quality.py` covering persist→DB→serialize→API→CSV pipeline for 4 quality states (commit 5225aac)
+- [x] T6.2 — Documentation `docs/fraktal-bisection-ux.md` (140 lines) with Why/Categories/Failure reasons/Stats shift/CSV/Migration/Backward compat/Validation/Threshold tuning/Known limitations
+- [x] T6.3 — CHANGELOG entry under `fraktal-bisection-ux (unreleased)` con Added/Changed/Migration/Backward compat/Closes/Known limitations
+- [x] T6.4 — Jira PYA-13 = **Finalizada** (comment 10133 + transition 31)

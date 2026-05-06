@@ -1,3 +1,47 @@
+## fraktal-bisection-ux (unreleased)
+
+### Added
+
+- **3 distinguishable failure categories** for FRAKTAL bisection: `no_sign_change` (limitación física del modelo Granulated 2012), `kf_negative` (resultado no físico), `iteration_limit` (ruido o calidad de imagen).
+- **4 quality states** per analyzed image: `converged` 🟢, `approximate` 🟡 (residual 0.1-1.0, Df reportado con warning), `excluded` ⚪ (residual >1.0 o no_sign_change), `failed` 🔴.
+- **Per-image diagnostic data** persisted on `FraktalBatchImage`: `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate`, `quality`.
+- **Per-batch quality counters**: `n_converged`, `n_approximate`, `n_excluded`, `n_failed` in batch detail response.
+- **`mean_df_inclusive`** (and equivalents para kf, rg, npo) — mean computed over converged + approximate.
+- **5 new columns in CSV exports** (single-image and batch): `quality`, `bisection_iterations`, `bisection_residual`, `failure_reason`, `df_estimate`. Appended at end (backwards-compatible with parsers that ignore unknown columns). Locale-aware formatting for floats.
+- **Frontend `<QualityBadge>`** reusable component (4 colored states).
+- **Distinguished drill-down UI** per quality category con mensajes específicos.
+- **Quality column** sortable en results table.
+- **Yellow overlay** para approximate values en distribution histograms.
+- **Dual-mean display**: muestra `mean_df` (primary) + `mean_df_inclusive` (secondary) cuando difieren.
+- **Quality count subtitle** en histograms ("X converged · Y approximate").
+
+### Changed
+
+- **`mean_df` semantic shift** (BREAKING para consumidores externos): ahora cuenta SOLO converged. Antes contaba todos los exitosos (lo que ahora sería converged + approximate). Para el comportamiento legacy usar `mean_df_inclusive`.
+- **Drill-down detail response** gains 5 new diagnostic fields.
+- **Voxel 2018** algorithm también recibe el surfacing pattern (parity con granulated_2012).
+
+### Migration
+
+- `python manage.py migrate fractal_analysis 0011` después del deploy. Additive nullable, reversible. Legacy rows default a `quality="converged"` (asunción optimista).
+
+### Backward compatibility
+
+- Legacy `FraktalBatchImage` rows: 5 nuevos campos NULL/default; CSV exporta vacíos; frontend renderiza como `converged` (sin badge).
+- External CSV parsers que ignoran columnas desconocidas siguen funcionando (5 columnas appended at end).
+- Engine results sin los 5 campos manejados por backend safety net (`error → quality=failed` override en `persist_batch_results`).
+
+### Closes
+
+- Jira **PYA-13**: FRAKTAL bisección UX (cycle B post-PYA-9). Distinguishes failure categories, allows graceful degradation, exposes diagnostic data.
+
+### Known limitations
+
+- Algorithmic improvements (search range expansion para `no_sign_change` cases) deferred a un futuro cycle.
+- Geometric domain limitation del modelo Granulated 2012 permanece: vistas extremas de aggregates planares fundamentalmente fuera del dominio solvable.
+- `EXCLUDED_RESIDUAL_THRESHOLD = 1.0` es teórico; puede necesitar tuning empírico post-deploy.
+- Per-bucket quality split en histograms implementado a nivel chart-level (subtitle), no per-bucket.
+
 ## sintering-cc-fix (unreleased)
 
 ### Fixed
