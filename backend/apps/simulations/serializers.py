@@ -5,6 +5,7 @@ import random
 
 from rest_framework import serializers
 
+from .fields import DistributionField
 from .models import ParametricStudy, Simulation
 from .services.params import (
     PARAM_KEY_DIAMETER,
@@ -47,6 +48,16 @@ class SimulationSerializer(serializers.ModelSerializer):
         required=False,
         help_text="Seed type for CC tunable: monomers (default), dimers, or trimers.",
     )
+    dpo_distribution = DistributionField(
+        required=False,
+        allow_null=True,
+        help_text="Distribution config for dpo (CC tunable only): {mode, value/mean/std/min/max}",
+    )
+    target_kf_distribution = DistributionField(
+        required=False,
+        allow_null=True,
+        help_text="Distribution config for target_kf (CC tunable only): {mode, value/mean/std/min/max}",
+    )
 
     class Meta:
         model = Simulation
@@ -67,6 +78,8 @@ class SimulationSerializer(serializers.ModelSerializer):
             "started_at",
             "completed_at",
             "csv_data",
+            "dpo_distribution",
+            "target_kf_distribution",
         ]
         read_only_fields = [
             "id",
@@ -85,6 +98,20 @@ class SimulationSerializer(serializers.ModelSerializer):
         """Auto-generate name and stamp the v2 parameter schema."""
         # Remove csv_data from validated_data before creating (it's handled in the view)
         validated_data.pop("csv_data", None)
+
+        # Merge distribution configs into parameters JSONField (PYA-15).
+        # These are not model fields — they live inside the params dict.
+        dpo_dist = validated_data.pop("dpo_distribution", None)
+        kf_dist = validated_data.pop("target_kf_distribution", None)
+        if dpo_dist is not None or kf_dist is not None:
+            params = validated_data.get("parameters")
+            if isinstance(params, dict):
+                params = dict(params)
+                if dpo_dist is not None:
+                    params["dpo_distribution"] = dpo_dist
+                if kf_dist is not None:
+                    params["target_kf_distribution"] = kf_dist
+                validated_data["parameters"] = params
 
         if not validated_data.get("name"):
             validated_data["name"] = generate_simulation_name(
