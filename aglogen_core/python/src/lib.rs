@@ -307,6 +307,10 @@ pub struct PySimulationResult {
     pub rg_evolution_data: Vec<f64>,
     pub principal_moments_data: [f64; 3],
     pub principal_axes_data: [[f64; 3]; 3],
+    #[pyo3(get)]
+    pub dpo_used: Option<f64>,
+    #[pyo3(get)]
+    pub target_kf_used: Option<f64>,
 }
 
 #[pymethods]
@@ -378,6 +382,8 @@ impl From<SimulationResult> for PySimulationResult {
             rg_evolution_data: r.rg_evolution,
             principal_moments_data: r.principal_moments,
             principal_axes_data: r.principal_axes,
+            dpo_used: r.dpo_used,
+            target_kf_used: r.target_kf_used,
         }
     }
 }
@@ -1263,7 +1269,7 @@ fn parse_seed_type(
 
 // Tunable CC
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None, dpo_mode=None, dpo_value=None, dpo_mean=None, dpo_std=None, dpo_min=None, dpo_max=None, kf_mode=None, kf_value=None, kf_mean=None, kf_std=None, kf_min=None, kf_max=None))]
 fn run_tunable_cc(
     py: Python<'_>,
     n_particles: usize,
@@ -1280,6 +1286,20 @@ fn run_tunable_cc(
     sintering_std: f64,
     seed: Option<u64>,
     seed_type: Option<&str>,
+    // Distribution kwargs for dpo (primary particle diameter)
+    dpo_mode: Option<String>,
+    dpo_value: Option<f64>,
+    dpo_mean: Option<f64>,
+    dpo_std: Option<f64>,
+    dpo_min: Option<f64>,
+    dpo_max: Option<f64>,
+    // Distribution kwargs for target_kf (fractal prefactor)
+    kf_mode: Option<String>,
+    kf_value: Option<f64>,
+    kf_mean: Option<f64>,
+    kf_std: Option<f64>,
+    kf_min: Option<f64>,
+    kf_max: Option<f64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
@@ -1299,6 +1319,18 @@ fn run_tunable_cc(
     let seed_type_enum =
         parse_seed_type(seed_type).map_err(pyo3::exceptions::PyValueError::new_err)?;
 
+    // Parse distribution kwargs → engine enums (R15).
+    // Legacy fallback: when mode is None and value is None, use existing scalar.
+    let dpo_distribution = parse_dpo_distribution(
+        dpo_mode, dpo_value, dpo_mean, dpo_std, dpo_min, dpo_max, radius_min,
+    )
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
+    let target_kf_distribution = parse_target_kf_distribution(
+        kf_mode, kf_value, kf_mean, kf_std, kf_min, kf_max, target_kf,
+    )
+    .map_err(pyo3::exceptions::PyValueError::new_err)?;
+
     #[allow(deprecated)]
     let seed_strategy = match seed_cluster_size {
         Some(size) if size > 1 => {
@@ -1316,6 +1348,8 @@ fn run_tunable_cc(
         seed_type: seed_type_enum,
         max_rotation_attempts,
         sintering,
+        dpo_distribution,
+        target_kf_distribution,
         ..Default::default()
     };
     let result = py.allow_threads(|| {
