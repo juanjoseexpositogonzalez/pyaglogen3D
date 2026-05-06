@@ -12,6 +12,38 @@ from django.utils import timezone
 logger = logging.getLogger(__name__)
 
 
+def expand_distribution_kwargs(prefix: str, dist_config: dict | None) -> dict:
+    """Expand a distribution config dict into engine keyword arguments.
+
+    Args:
+        prefix: Parameter prefix — "dpo" or "kf"
+        dist_config: Distribution config dict from parameters JSONField,
+            or None for legacy scalar fallback.
+
+    Returns:
+        Dict of engine kwargs, e.g. {"dpo_mode": "fixed", "dpo_value": 12.5}.
+        Empty dict when dist_config is None or has unknown mode.
+    """
+    if dist_config is None:
+        return {}
+    mode = dist_config.get("mode")
+    if mode == "fixed":
+        return {f"{prefix}_mode": "fixed", f"{prefix}_value": dist_config["value"]}
+    if mode == "normal":
+        return {
+            f"{prefix}_mode": "normal",
+            f"{prefix}_mean": dist_config["mean"],
+            f"{prefix}_std": dist_config["std"],
+        }
+    if mode == "uniform":
+        return {
+            f"{prefix}_mode": "uniform",
+            f"{prefix}_min": dist_config["min"],
+            f"{prefix}_max": dist_config["max"],
+        }
+    return {}
+
+
 def create_simulation_notification(simulation, success: bool = True) -> None:
     """Create a notification for simulation completion.
 
@@ -1365,6 +1397,16 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             # seed_type: read from the model field (set via API/serializer).
             # The binding accepts None (→ monomers default) for backward compat.
             sim_seed_type: str | None = getattr(simulation, "seed_type", None)
+
+            # PYA-15: expand distribution configs into engine kwargs.
+            # When absent, empty dict → engine uses legacy scalars.
+            dpo_kwargs = expand_distribution_kwargs(
+                "dpo", params.get("dpo_distribution")
+            )
+            kf_kwargs = expand_distribution_kwargs(
+                "kf", params.get("target_kf_distribution")
+            )
+
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),
                 target_df=params.get("target_df", 1.8),
@@ -1380,6 +1422,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 sintering_std=sintering_std,
                 seed=seed,
                 seed_type=sim_seed_type,
+                **dpo_kwargs,
+                **kf_kwargs,
             )
         elif algorithm == "fracval":
             # FracVAL algorithm (Morán et al. 2019) - polydisperse cluster-cluster
