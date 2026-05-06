@@ -11,6 +11,95 @@
 //! NOT performed here. Enums are simple data carriers; validation belongs
 //! at the integration layer (P4 backend serializer).
 
+use rand::Rng;
+use rand_distr::{Distribution, StandardNormal};
+
+/// Distribution for the primary particle diameter (`dpo`).
+///
+/// Controls how `radius_min`/`radius_max` are sampled at the start of each
+/// CC-tunable run. See R12 in the delta spec.
+#[derive(Debug, Clone, Copy)]
+pub enum DpoDistribution {
+    /// Deterministic — always returns `value`.
+    Fixed { value: f64 },
+    /// Truncated Gaussian N(mean, std) bounded to [mean - 3*std, mean + 3*std].
+    Normal { mean: f64, std: f64 },
+    /// Uniform sample over [min, max].
+    Uniform { min: f64, max: f64 },
+}
+
+/// Distribution for the fractal prefactor (`target_kf`).
+///
+/// Controls how `target_kf` is sampled at the start of each CC-tunable run.
+/// See R11 in the delta spec.
+#[derive(Debug, Clone, Copy)]
+pub enum TargetKfDistribution {
+    /// Deterministic — always returns `value`.
+    Fixed { value: f64 },
+    /// Truncated Gaussian N(mean, std) bounded to [mean - 3*std, mean + 3*std].
+    Normal { mean: f64, std: f64 },
+    /// Uniform sample over [min, max].
+    Uniform { min: f64, max: f64 },
+}
+
+impl Default for DpoDistribution {
+    fn default() -> Self {
+        DpoDistribution::Fixed { value: 1.0 }
+    }
+}
+
+impl Default for TargetKfDistribution {
+    fn default() -> Self {
+        TargetKfDistribution::Fixed { value: 1.3 }
+    }
+}
+
+/// Sample from a truncated Normal bounded to [mean - 3*std, mean + 3*std].
+///
+/// Draws from StandardNormal, scales by `std` and shifts by `mean`.
+/// If the sample falls outside bounds, re-draws up to 10 times.
+/// After 10 failed attempts, returns `mean` as a safe fallback.
+fn sample_truncated_normal<R: Rng>(rng: &mut R, mean: f64, std: f64) -> f64 {
+    let lower = mean - 3.0 * std;
+    let upper = mean + 3.0 * std;
+    for _ in 0..10 {
+        let z: f64 = StandardNormal.sample(rng);
+        let x = mean + std * z;
+        if x >= lower && x <= upper {
+            return x;
+        }
+    }
+    mean
+}
+
+impl DpoDistribution {
+    /// Sample a `dpo` value from this distribution.
+    ///
+    /// Accepts an external RNG for reproducibility — same seed yields the
+    /// same sample sequence.
+    pub fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+        match self {
+            Self::Fixed { value } => *value,
+            Self::Normal { mean, std } => sample_truncated_normal(rng, *mean, *std),
+            Self::Uniform { min, max } => rng.gen_range(*min..=*max),
+        }
+    }
+}
+
+impl TargetKfDistribution {
+    /// Sample a `target_kf` value from this distribution.
+    ///
+    /// Accepts an external RNG for reproducibility — same seed yields the
+    /// same sample sequence.
+    pub fn sample<R: Rng>(&self, rng: &mut R) -> f64 {
+        match self {
+            Self::Fixed { value } => *value,
+            Self::Normal { mean, std } => sample_truncated_normal(rng, *mean, *std),
+            Self::Uniform { min, max } => rng.gen_range(*min..=*max),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
