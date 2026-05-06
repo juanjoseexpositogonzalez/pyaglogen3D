@@ -4,11 +4,11 @@
 
 ## Phase P1 — Engine: enums + sampling helpers (~5 tasks)
 
-- [ ] P1.1 — Define `DpoDistribution` enum in new file `aglogen_core/engine/src/simulation/dpo_distribution.rs` following `SinteringDistribution` pattern at `sintering.rs:17-24` with variants: `Fixed { value: f64 }`, `Normal { mean: f64, std: f64 }`, `Uniform { min: f64, max: f64 }` (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
-- [ ] P1.2 — Define `TargetKfDistribution` enum in the same file with the same three variants (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
-- [ ] P1.3 — Implement `sample<R: Rng>(&self, rng: &mut R) -> f64` for both enums: Fixed returns value; Normal truncates to [μ-3σ, μ+3σ] with max 10 retries falling back to μ; Uniform uses `Uniform::new_inclusive` (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
-- [ ] P1.4 — Add `Default` impls for both enums: `DpoDistribution::Fixed { value: 1.0 }` and `TargetKfDistribution::Fixed { value: 1.3 }` to match legacy scalar defaults (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
-- [ ] P1.5 — Write cargo tests covering 22 scenarios from spec: Fixed returns exact value, Normal samples within ±3σ bounds, Uniform within [min, max], reproducibility with fixed seed, validation rejects invalid params (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
+- [x] P1.1 — Define `DpoDistribution` enum in new file `aglogen_core/engine/src/simulation/dpo_distribution.rs` following `SinteringDistribution` pattern at `sintering.rs:17-24` with variants: `Fixed { value: f64 }`, `Normal { mean: f64, std: f64 }`, `Uniform { min: f64, max: f64 }` (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
+- [x] P1.2 — Define `TargetKfDistribution` enum in the same file with the same three variants (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
+- [x] P1.3 — Implement `sample<R: Rng>(&self, rng: &mut R) -> f64` for both enums: Fixed returns value; Normal truncates to [μ-3σ, μ+3σ] with max 10 retries falling back to μ; Uniform uses `Uniform::new_inclusive` (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
+- [x] P1.4 — Add `Default` impls for both enums: `DpoDistribution::Fixed { value: 1.0 }` and `TargetKfDistribution::Fixed { value: 1.3 }` to match legacy scalar defaults (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
+- [x] P1.5 — Write cargo tests covering 22 scenarios from spec: Fixed returns exact value, Normal samples within ±3σ bounds, Uniform within [min, max], reproducibility with fixed seed, validation rejects invalid params (file: `aglogen_core/engine/src/simulation/dpo_distribution.rs`)
 
 ---
 
