@@ -15,6 +15,7 @@ import {
   simulationAlgorithmDescriptions,
 } from '@/lib/simulation-algorithms'
 import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
+import { DistributionSelector, type DistributionValue } from './DistributionSelector'
 
 /**
  * Get complete hexagonal counts: 1, 7, 19, 37, 61, 91, 127, 169, ...
@@ -578,6 +579,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [csvError, setCsvError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dpoDistribution, setDpoDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.0 })
+  const [targetKfDistribution, setTargetKfDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.3 })
 
   const handleAlgorithmChange = (value: SimulationAlgorithm) => {
     setAlgorithm(value)
@@ -706,6 +709,17 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
       algorithmParams.seed_type = params.seed_type
+      // Distribution configs (PYA-15)
+      ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
+      ;(algorithmParams as Record<string, unknown>).target_kf_distribution = targetKfDistribution
+      // Backward compat: include scalar fields when mode is fixed
+      if (dpoDistribution.mode === 'fixed') {
+        algorithmParams.radius_min = dpoDistribution.value
+        algorithmParams.radius_max = dpoDistribution.value
+      }
+      if (targetKfDistribution.mode === 'fixed') {
+        algorithmParams.target_kf = targetKfDistribution.value
+      }
     } else if (algorithm === 'fracval') {
       algorithmParams.target_df = params.target_df
       algorithmParams.target_kf = params.target_kf
@@ -1263,6 +1277,18 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
                 </p>
               </div>
+
+              {/* Distribution selectors for dpo and target_kf (PYA-15) */}
+              <DistributionSelector
+                label="dpo"
+                value={dpoDistribution}
+                onChange={setDpoDistribution}
+              />
+              <DistributionSelector
+                label="target_kf"
+                value={targetKfDistribution}
+                onChange={setTargetKfDistribution}
+              />
             </>
           )}
 
