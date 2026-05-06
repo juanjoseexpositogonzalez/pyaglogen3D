@@ -24,10 +24,10 @@
 
 ## Phase P3 — Python binding + maturin rebuild (~4 tasks)
 
-- [ ] P3.1 — Add 12 new kwargs to `run_tunable_cc` in `lib.rs`: `dpo_mode, dpo_value, dpo_mean, dpo_std, dpo_min, dpo_max` and the same 6 for kf. All Optional with None defaults (file: `aglogen_core/python/src/lib.rs:1185`)
-- [ ] P3.2 — Implement `parse_dpo_distribution()` and `parse_kf_distribution()` helpers following `parse_sintering` pattern at `lib.rs:550-562`. When mode is None or "fixed", fall back to existing scalar param (file: `aglogen_core/python/src/lib.rs`)
-- [ ] P3.3 — Add `dpo_used` and `target_kf_used` fields to `PySimulationResult` struct with `From<SimulationResult>` impl (file: `aglogen_core/python/src/lib.rs`)
-- [ ] P3.4 — Maturin rebuild into backend venv: `source backend/.venv/bin/activate && cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release` (file: `aglogen_core/`)
+- [x] P3.1 — Add 12 new kwargs to `run_tunable_cc` in `lib.rs`: `dpo_mode, dpo_value, dpo_mean, dpo_std, dpo_min, dpo_max` and the same 6 for kf. All Optional with None defaults (file: `aglogen_core/python/src/lib.rs:1185`)
+- [x] P3.2 — Implement `parse_dpo_distribution()` and `parse_kf_distribution()` helpers following `parse_sintering` pattern at `lib.rs:550-562`. When mode is None or "fixed", fall back to existing scalar param (file: `aglogen_core/python/src/lib.rs`)
+- [x] P3.3 — Add `dpo_used` and `target_kf_used` fields to `PySimulationResult` struct with `From<SimulationResult>` impl (file: `aglogen_core/python/src/lib.rs`)
+- [x] P3.4 — Maturin rebuild into backend venv: `source backend/.venv/bin/activate && cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release` (file: `aglogen_core/`)
 
 ---
 
