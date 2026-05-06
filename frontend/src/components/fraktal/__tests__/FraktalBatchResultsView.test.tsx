@@ -305,6 +305,52 @@ describe('<FraktalBatchResultsView />', () => {
     })
   })
 
+  // T5.3 (fraktal-bisection-ux P5): Quality column in results table
+  describe('Quality column (T5.3)', () => {
+    it('renders the "Quality" header in the table', () => {
+      const result = makeResult()
+      result.images[0].quality = 'converged'
+      result.images[1].quality = 'approximate'
+      result.images[2].quality = 'excluded'
+      renderView({ images: result.images })
+      // Header text "Quality" must be visible
+      expect(screen.getByText('Quality')).toBeTruthy()
+    })
+
+    it('renders QualityBadge per row matching image quality', () => {
+      const result = makeResult()
+      result.images[0].quality = 'converged'
+      result.images[1].quality = 'approximate'
+      result.images[2].quality = 'failed'
+      renderView({ images: result.images })
+      expect(screen.getByText('Converged')).toBeTruthy()
+      expect(screen.getByText('Approximate')).toBeTruthy()
+      expect(screen.getByText('Failed')).toBeTruthy()
+    })
+
+    it('sorts by quality column when the Quality header is clicked', () => {
+      const result = makeResult()
+      result.images[0].quality = 'failed'
+      result.images[1].quality = 'approximate'
+      result.images[2].quality = 'converged'
+      renderView({ images: result.images })
+
+      const headers = screen.getAllByRole('columnheader')
+      const qualityHeader = headers.find(
+        (h) => (h.textContent ?? '').trim().startsWith('Quality')
+      )
+      expect(qualityHeader).toBeTruthy()
+      if (!qualityHeader) return
+
+      fireEvent.click(qualityHeader)
+      const rows = document.querySelectorAll('tbody tr')
+      // ascending alphabetical: approximate → converged → failed
+      expect(rows[0].textContent).toContain('Approximate')
+      expect(rows[1].textContent).toContain('Converged')
+      expect(rows[2].textContent).toContain('Failed')
+    })
+  })
+
   // Frente 9 P4: Rg column shown in the results table.
   describe('Rg column', () => {
     it('renders the "Rg (nm)" header in the table', () => {

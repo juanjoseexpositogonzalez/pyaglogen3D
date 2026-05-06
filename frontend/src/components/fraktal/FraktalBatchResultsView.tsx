@@ -30,6 +30,7 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { FraktalComparisonCard } from './FraktalComparisonCard'
+import { QualityBadge } from '@/components/common/QualityBadge'
 import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
@@ -48,6 +49,7 @@ type SortKey =
   | 'azimuth'
   | 'elevation'
   | 'fractal_dimension'
+  | 'quality'
   | 'prefactor'
   | 'rg_nm'
   | 'r_squared'
@@ -304,6 +306,9 @@ export function FraktalBatchResultsView({
                   <Th onClick={() => handleSort('fractal_dimension')}>
                     Df{sortIcon('fractal_dimension')}
                   </Th>
+                  <Th onClick={() => handleSort('quality')}>
+                    Quality{sortIcon('quality')}
+                  </Th>
                   <Th onClick={() => handleSort('prefactor')}>
                     kf{sortIcon('prefactor')}
                   </Th>
@@ -364,6 +369,18 @@ export function FraktalBatchResultsView({
                         className="block p-2 font-mono"
                       >
                         {fmt(img.fractal_dimension)}
+                      </Link>
+                    </td>
+                    <td className="p-0">
+                      <Link
+                        href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${img.index}`}
+                        className="block p-2"
+                      >
+                        {img.quality ? (
+                          <QualityBadge quality={img.quality} />
+                        ) : (
+                          '—'
+                        )}
                       </Link>
                     </td>
                     <td className="p-0">
