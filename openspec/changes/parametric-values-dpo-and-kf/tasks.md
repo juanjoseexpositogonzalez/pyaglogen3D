@@ -43,11 +43,11 @@
 
 ## Phase P5 — Frontend: form dropdown + conditional inputs (~5 tasks)
 
-- [ ] P5.1 — Create `DistributionSelector` reusable sub-component in `frontend/src/components/forms/DistributionSelector.tsx` mirroring sintering pattern at `SimulationForm.tsx:1006-1133` (file: `frontend/src/components/forms/DistributionSelector.tsx`)
-- [ ] P5.2 — In SimulationForm: add `<DistributionSelector>` for dpo (always shown for tunable_cc) and target_kf (only when algorithm is CC tunable). Default mode: deterministic/fixed (file: `frontend/src/components/forms/SimulationForm.tsx`)
-- [ ] P5.3 — Update form state to track `{mode, value/mean/std/min/max}` per parameter (file: `frontend/src/components/forms/SimulationForm.tsx`)
-- [ ] P5.4 — Update API payload builder to send distribution config when mode != deterministic, fallback to scalar otherwise (file: `frontend/src/lib/api.ts`)
-- [ ] P5.5 — Run vitest + tsc: `cd frontend && npm test && npm run type-check` — confirm 0 regressions (file: `frontend/`)
+- [x] P5.1 — Create `DistributionSelector` reusable sub-component in `frontend/src/components/forms/DistributionSelector.tsx` mirroring sintering pattern at `SimulationForm.tsx:1006-1133` (file: `frontend/src/components/forms/DistributionSelector.tsx`)
+- [x] P5.2 — In SimulationForm: add `<DistributionSelector>` for dpo (always shown for tunable_cc) and target_kf (only when algorithm is CC tunable). Default mode: deterministic/fixed (file: `frontend/src/components/forms/SimulationForm.tsx`)
+- [x] P5.3 — Update form state to track `{mode, value/mean/std/min/max}` per parameter (file: `frontend/src/components/forms/SimulationForm.tsx`)
+- [x] P5.4 — Update API payload builder to send distribution config when mode != deterministic, fallback to scalar otherwise (file: `frontend/src/lib/api.ts`)
+- [x] P5.5 — Run vitest + tsc: `cd frontend && npm test && npm run type-check` — confirm 0 regressions (file: `frontend/`)
 
 ---
 
