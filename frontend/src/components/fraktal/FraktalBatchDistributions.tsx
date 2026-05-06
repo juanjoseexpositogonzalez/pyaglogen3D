@@ -348,6 +348,17 @@ function DistributionCard({
             (inclusive: {batchStats.mean_df_inclusive.toFixed(2)})
           </div>
         )}
+      {/* Quality count subtitle (T5.6): overall breakdown for Df */}
+      {spec.key === 'df' && batchStats?.n_converged != null && (
+        <div
+          className="px-2 pb-1 text-xs text-muted-foreground/60"
+          data-testid={`distribution-${spec.key}-quality-counts`}
+        >
+          {batchStats.n_converged} converged
+          {(batchStats.n_approximate ?? 0) > 0 &&
+            ` · ${batchStats.n_approximate} approximate`}
+        </div>
+      )}
     </div>
   )
 }

@@ -424,6 +424,35 @@ describe('<FraktalBatchDistributions>', () => {
       expect(inclusive.textContent).toContain('1.74')
     })
 
+    it('no inclusive shown when mean_df_inclusive is null (legacy server)', () => {
+      const images = Array.from({ length: 6 }, (_, i) =>
+        makeImage(i, { quality: 'converged' }),
+      )
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 6,
+        n_successful: 6,
+        mean_df: 1.80,
+        std_df: 0.04,
+        median_df: 1.79,
+        q1_df: 1.76,
+        q3_df: 1.83,
+        min_df: 1.72,
+        max_df: 1.88,
+        // no n_converged, no mean_df_inclusive — legacy response
+        df: { mean: 1.80, std: 0.04, median: 1.79, min: 1.72, max: 1.88 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      expect(screen.queryByTestId('distribution-df-inclusive')).toBeNull()
+    })
+
     it('hidden when mean_df_inclusive equals mean_df', () => {
       const images = Array.from({ length: 6 }, (_, i) =>
         makeImage(i, { quality: 'converged' }),
@@ -453,6 +482,95 @@ describe('<FraktalBatchDistributions>', () => {
         />,
       )
       expect(screen.queryByTestId('distribution-df-inclusive')).toBeNull()
+    })
+  })
+
+  describe('Quality count subtitle (T5.6)', () => {
+    it('mixed batch: shows converged and approximate counts', () => {
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 10 }, (_, i) =>
+          makeImage(i, { quality: 'converged' }),
+        ),
+        ...Array.from({ length: 3 }, (_, i) =>
+          makeImage(10 + i, {
+            quality: 'approximate',
+            fractal_dimension: 1.90 + i * 0.01,
+          }),
+        ),
+      ]
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 13,
+        n_successful: 13,
+        mean_df: 1.80,
+        std_df: 0.05,
+        median_df: 1.79,
+        q1_df: 1.76,
+        q3_df: 1.83,
+        min_df: 1.72,
+        max_df: 1.95,
+        n_converged: 10,
+        n_approximate: 3,
+        n_excluded: 0,
+        n_failed: 0,
+        mean_df_inclusive: 1.76,
+        df: { mean: 1.80, std: 0.05, median: 1.79, min: 1.72, max: 1.95 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      const subtitle = screen.getByTestId('distribution-df-quality-counts')
+      expect(subtitle.textContent).toContain('10 converged')
+      expect(subtitle.textContent).toContain('3 approximate')
+    })
+
+    it('all-converged batch: shows only converged count, no approximate mention', () => {
+      const images = Array.from({ length: 8 }, (_, i) =>
+        makeImage(i, { quality: 'converged' }),
+      )
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 8,
+        n_successful: 8,
+        mean_df: 1.80,
+        std_df: 0.05,
+        median_df: 1.79,
+        q1_df: 1.76,
+        q3_df: 1.83,
+        min_df: 1.72,
+        max_df: 1.88,
+        n_converged: 8,
+        n_approximate: 0,
+        n_excluded: 0,
+        n_failed: 0,
+        mean_df_inclusive: 1.80,
+        df: { mean: 1.80, std: 0.05, median: 1.79, min: 1.72, max: 1.88 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      const subtitle = screen.getByTestId('distribution-df-quality-counts')
+      expect(subtitle.textContent).toContain('8 converged')
+      expect(subtitle.textContent).not.toContain('approximate')
+    })
+
+    it('no quality counts shown when batch stats lack quality counters (legacy)', () => {
+      const images = makeBatch(8, 0)
+      // No stats provided (legacy server — no quality counters)
+      render(<FraktalBatchDistributions images={images} />)
+      expect(
+        screen.queryByTestId('distribution-df-quality-counts'),
+      ).toBeNull()
     })
   })
 })
