@@ -428,11 +428,11 @@ class TestCsvByteEquivalence:
         # CSV uses \r\n line endings — normalize to \n for splitting
         lines = content.replace("\r\n", "\n").strip().split("\n")
 
-        # Header uses semicolons
+        # Header uses semicolons (PYA-13 P4: 5 bisection columns appended)
         header = lines[0]
         assert (
             header
-            == "index;filename;azimuth;elevation;fractal_dimension;prefactor;r_squared;n_particles_counted;error;dpo_used;autocalibrate_source;scale_factor_nm;pixels_per_100nm"
+            == "index;filename;azimuth;elevation;fractal_dimension;prefactor;r_squared;n_particles_counted;error;dpo_used;autocalibrate_source;scale_factor_nm;pixels_per_100nm;quality;bisection_iterations;bisection_residual;failure_reason;df_estimate"
         )
 
         # Data row 0: Df=1.75 → "1,75", azimuth=0.0 → "0,0"
@@ -499,11 +499,11 @@ class TestCsvByteEquivalence:
         content = resp.content.decode("utf-8")
         lines = content.replace("\r\n", "\n").strip().split("\n")
 
-        # Header uses commas
+        # Header uses commas (PYA-13 P4: 5 bisection columns appended)
         header = lines[0]
         assert (
             header
-            == "index,filename,azimuth,elevation,fractal_dimension,prefactor,r_squared,n_particles_counted,error,dpo_used,autocalibrate_source,scale_factor_nm,pixels_per_100nm"
+            == "index,filename,azimuth,elevation,fractal_dimension,prefactor,r_squared,n_particles_counted,error,dpo_used,autocalibrate_source,scale_factor_nm,pixels_per_100nm,quality,bisection_iterations,bisection_residual,failure_reason,df_estimate"
         )
 
         # Data row 0: Df=1.75

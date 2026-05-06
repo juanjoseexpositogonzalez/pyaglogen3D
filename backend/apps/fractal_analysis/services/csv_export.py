@@ -45,6 +45,12 @@ SINGLE_IMAGE_COLUMNS: list[str] = [
     "sim_target_df",
     "sim_box_counting_df",
     "calibration_source",
+    # PYA-13 P4: bisection diagnostic columns (appended for backwards compat).
+    "quality",
+    "bisection_iterations",
+    "bisection_residual",
+    "failure_reason",
+    "df_estimate",
 ]
 
 
@@ -99,6 +105,12 @@ def build_single_image_csv(
         sim_target_df,
         sim_box_counting_df,
         "",  # calibration_source — not stored on FraktalAnalysis
+        # PYA-13 P4: bisection diagnostic columns.
+        results.get("quality") or "",
+        results.get("bisection_iterations"),
+        results.get("bisection_residual"),
+        results.get("failure_reason") or "",
+        results.get("df_estimate"),
     ]
     write_localized_row(writer, row, decimal)
     return buf.getvalue()
@@ -122,6 +134,12 @@ BATCH_IMAGE_COLUMNS: list[str] = [
     "autocalibrate_source",
     "scale_factor_nm",
     "pixels_per_100nm",
+    # PYA-13 P4: bisection diagnostic columns (appended for backwards compat).
+    "quality",
+    "bisection_iterations",
+    "bisection_residual",
+    "failure_reason",
+    "df_estimate",
 ]
 
 
@@ -153,6 +171,12 @@ def build_batch_csv(
             if batch.pixels_per_100nm
             else None,  # scale_factor_nm
             batch.pixels_per_100nm,
+            # PYA-13 P4: bisection diagnostic columns.
+            img.quality or "",
+            img.bisection_iterations,
+            img.bisection_residual,
+            img.failure_reason or "",
+            img.df_estimate,
         ]
         write_localized_row(writer, row, decimal)
 
@@ -176,10 +200,25 @@ def build_batch_csv(
             pass
 
     # Pad summary row to match column count:
-    # SUMMARY, n_images, <skip 2>, mean_df, std_df, median_df, min_df, max_df, <empty>, <empty>, <empty>, <empty>
-    # Actually per spec: SUMMARY, n_images, mean_df, std_df, median_df, min_df, max_df,
-    #                    sim_id, sim_target_df, sim_box_counting_df
-    # We put SUMMARY in first col, then stats starting from col 2
+    # SUMMARY, n_images, mean_df, std_df, median_df, min_df, max_df,
+    # sim_id, sim_target_df, sim_box_counting_df,
+    # PYA-13 P4: n_converged, n_approximate, n_excluded, n_failed, mean_df_inclusive
+    n_converged = images.filter(quality="converged").count()
+    n_approximate = images.filter(quality="approximate").count()
+    n_excluded = images.filter(quality="excluded").count()
+    n_failed = images.filter(quality="failed").count()
+
+    # mean_df_inclusive: mean of converged + approximate Df values.
+    inclusive_dfs = [
+        img.fractal_dimension
+        for img in images
+        if img.quality in ("converged", "approximate")
+        and img.fractal_dimension is not None
+    ]
+    mean_df_inclusive = (
+        sum(inclusive_dfs) / len(inclusive_dfs) if inclusive_dfs else None
+    )
+
     summary_row: list = [
         "SUMMARY",
         batch.n_images,
@@ -191,6 +230,12 @@ def build_batch_csv(
         sim_id,
         sim_target_df,
         sim_box_counting_df,
+        # PYA-13 P4: quality counters + mean_df_inclusive.
+        n_converged,
+        n_approximate,
+        n_excluded,
+        n_failed,
+        mean_df_inclusive,
     ]
     write_localized_row(writer, summary_row, decimal)
 
