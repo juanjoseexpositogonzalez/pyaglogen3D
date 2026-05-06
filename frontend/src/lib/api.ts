@@ -657,6 +657,10 @@ export const comparisonApi = {
 // (mirrors the ``simulationsApi.exportProjections`` 200/202 + polling pattern)
 // -----------------------------------------------------------------------------
 
+// Quality classification types (fraktal-bisection-ux, P5)
+export type AnalysisQuality = 'converged' | 'approximate' | 'excluded' | 'failed'
+export type FailureReason = 'no_sign_change' | 'kf_negative' | 'iteration_limit' | null
+
 export type FraktalBatchAlgorithm = 'granulated_2012' | 'voxel_2018'
 
 export interface FraktalBatchRequest {
@@ -685,6 +689,13 @@ export interface FraktalBatchImageResult {
    *  Optional for backward compat with legacy server responses. */
   rg_nm?: number | null
   error: string | null
+  /** Quality classification (fraktal-bisection-ux P5). Optional for backward compat. */
+  quality?: AnalysisQuality
+  /** Bisection diagnostic fields (fraktal-bisection-ux P5). Optional for backward compat. */
+  bisection_iterations?: number | null
+  bisection_residual?: number | null
+  failure_reason?: FailureReason
+  df_estimate?: number | null
 }
 
 /** Aggregate stats for a single metric across a batch (excludes failed images). */
@@ -713,6 +724,12 @@ export interface FraktalBatchStats {
   kf?: FraktalMetricStats
   rg?: FraktalMetricStats
   npo?: FraktalMetricStats
+  // Quality counters (fraktal-bisection-ux P5). Optional for backward compat.
+  n_converged?: number
+  n_approximate?: number
+  n_excluded?: number
+  n_failed?: number
+  mean_df_inclusive?: number | null
 }
 
 export interface FraktalBatchHistogram {
@@ -810,6 +827,13 @@ export interface FraktalBatchImageDetail {
   analysis_input_variant?: 'presentation' | 'scientific'
   /** Batch origin: "simulation" (from sim results) or "external" (user upload). */
   batch_origin?: 'simulation' | 'external'
+  /** Quality classification (fraktal-bisection-ux P5). Optional for backward compat. */
+  quality?: AnalysisQuality
+  /** Bisection diagnostic fields (fraktal-bisection-ux P5). Optional for backward compat. */
+  bisection_iterations?: number | null
+  bisection_residual?: number | null
+  failure_reason?: FailureReason
+  df_estimate?: number | null
 }
 
 interface FraktalBatchStatusProcessing {
