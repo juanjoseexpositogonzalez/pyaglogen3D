@@ -3,13 +3,10 @@
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import type { DistributionMode, DistributionValue } from '@/lib/types'
 
-export type DistributionMode = 'fixed' | 'normal' | 'uniform'
-
-export type DistributionValue =
-  | { mode: 'fixed'; value: number }
-  | { mode: 'normal'; mean: number; std: number }
-  | { mode: 'uniform'; min: number; max: number }
+// Re-export for convenience — consumers can import from here or from types
+export type { DistributionMode, DistributionValue }
 
 interface Props {
   label: string

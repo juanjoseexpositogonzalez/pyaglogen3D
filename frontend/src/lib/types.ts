@@ -85,10 +85,20 @@ export interface TunableParams {
   sintering_std?: number
 }
 
+// Distribution value types for parametric dpo / target_kf (PYA-15)
+export type DistributionMode = 'fixed' | 'normal' | 'uniform'
+export type DistributionValue =
+  | { mode: 'fixed'; value: number }
+  | { mode: 'normal'; mean: number; std: number }
+  | { mode: 'uniform'; min: number; max: number }
+
 export interface TunableCcParams extends TunableParams {
   seed_cluster_size?: number
   max_rotation_attempts?: number
   seed_type?: 'monomers' | 'dimers' | 'trimers'
+  // Distribution configs for parametric values (PYA-15)
+  dpo_distribution?: DistributionValue
+  target_kf_distribution?: DistributionValue
 }
 
 export type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
