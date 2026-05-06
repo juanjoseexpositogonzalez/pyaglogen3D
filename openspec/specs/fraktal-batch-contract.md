@@ -140,47 +140,104 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 **THEN** each entry MUST contain exactly: `filename`, `azimuth`, `elevation`, `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted`, `calibration_used: {pixels_per_100nm, dpo_nm}`,
 **AND** `azimuth` / `elevation` are pulled from `metadata.directions[]` matched by filename when available, else `null`,
 **AND** `fractal_dimension`, `prefactor`, `r_squared`, `n_particles_counted` MAY be `null` when the analyzer cannot produce a value,
-**AND** entries are sourced from the DB-backed `FraktalBatchImage` rows persisted per `fraktal-batch-persistence` (no JSON-on-disk file is read or written).
+**AND** entries are sourced from the DB-backed `FraktalBatchImage` rows persisted per `fraktal-batch-persistence` (no JSON-on-disk file is read or written),
+**AND** each entry MUST additionally contain:
+- `quality: enum (converged | approximate | excluded | failed)` — NEVER null
+- `quality_score: float [0.0, 1.0]` — 0.0 for excluded/failed; derived from residual
+- `bisection_iterations: int | null` — null when engine did not surface the value
+- `bisection_residual: float | null` — null for failed/excluded images without residual data
+- `failure_reason: enum (no_sign_change | kf_negative | iteration_limit | none) | null` —
+  null for images where the engine crashed without categorizing the failure; `none` for converged
+- `df_estimate: float | null` — best Df approximation even if not converged; null when no
+  estimate is computable (e.g., no_sign_change)
 
-(Previously: results were assembled from a JSON file written to shared media; this delta keeps the wire shape and moves the source of truth to the DB.)
+Quality classification:
+- `converged`: residual < 0.1 (CONVERGENCE_THRESHOLD)
+- `approximate`: 0.1 ≤ residual ≤ EXCLUDED_RESIDUAL_THRESHOLD (1.0, configurable)
+- `excluded`: residual > 1.0 OR failure_reason = no_sign_change
+- `failed`: failure_reason = kf_negative OR engine crash
+
+`quality_score` is derived from residual: `max(0.0, 1.0 - residual / EXCLUDED_RESIDUAL_THRESHOLD)`,
+clamped to [0.0, 1.0]; always 0.0 for excluded/failed.
+
+(Previously: R6 did not include `quality`, `quality_score`, `bisection_iterations`,
+`bisection_residual`, `failure_reason`, or `df_estimate`. `fractal_dimension` was the only
+Df-related field.)
 
 #### Scenario 6.1 — Image matched to metadata direction
 - **Expected**: `azimuth` and `elevation` populated from `metadata.directions[i]`.
 
-#### Scenario 6.2 — Image with no metadata entry
-- **Input**: ZIP without `metadata.json`.
-- **Expected**: `azimuth = null`, `elevation = null`; analyzer fields still populated when analysis succeeds.
+#### Scenario 6.2 — Converged image fields
+- **Input**: converged image with residual 0.04, iterations 12, Df 1.82.
+- **Expected**: `quality = "converged"`, `quality_score ≈ 0.96`, `bisection_iterations = 12`,
+  `bisection_residual = 0.04`, `failure_reason = "none"`, `df_estimate = 1.82`.
 
-#### Scenario 6.3 — Analyzer returns null Df
-- **Expected**: Entry present with `fractal_dimension = null`; entry is flagged as unsuccessful for R7 aggregation.
+#### Scenario 6.3 — Approximate image (residual 0.5)
+- **Input**: image with residual 0.5 < 1.0 threshold.
+- **Expected**: `quality = "approximate"`, `quality_score = 0.5`, `bisection_residual = 0.5`,
+  `failure_reason = "iteration_limit"`, `df_estimate` is non-null, `fractal_dimension = null`.
 
-#### Scenario 6.4 — Storage source
-- **Expected**: For any sync or async batch, the entry is materialized from a `FraktalBatchImage` row; no JSON-on-disk artifact is created.
+#### Scenario 6.4 — Excluded image (no_sign_change)
+- **Input**: image where bisection failed with no_sign_change error.
+- **Expected**: `quality = "excluded"`, `quality_score = 0.0`, `failure_reason = "no_sign_change"`,
+  `df_estimate = null`, `fractal_dimension = null`, `bisection_residual = null`.
+
+#### Scenario 6.5 — Failed image (kf_negative)
+- **Input**: image where bisection raised kf_negative error.
+- **Expected**: `quality = "failed"`, `quality_score = 0.0`, `failure_reason = "kf_negative"`,
+  `df_estimate = null`, `fractal_dimension = null`.
+
+#### Scenario 6.6 — Engine crash (no category)
+- **Input**: image where the engine panicked or raised an uncategorized exception.
+- **Expected**: `quality = "failed"`, `failure_reason = null` (not `"none"` — null indicates
+  no category was surfaced by the engine).
 
 ### R7. Batch statistics
 
 **GIVEN** `N ≥ 1` per-image results,
 **WHEN** batch statistics are computed,
 **THEN** the response includes: `{n_images, n_successful, mean_df, std_df, median_df, q1_df, q3_df, min_df, max_df}`,
-**AND** statistics are computed only over entries with non-null `fractal_dimension`,
-**AND** if `n_successful = 0`, all Df statistics are `null`,
-**AND** if `n_successful = 1`, `std_df = 0`.
+**AND** `mean_df` is computed ONLY over entries with `quality = "converged"` (NOT approximate),
+**AND** the response MUST additionally include:
+- `n_converged: int` — count of images with `quality = "converged"`
+- `n_approximate: int` — count of images with `quality = "approximate"`
+- `n_excluded: int` — count of images with `quality = "excluded"`
+- `n_failed: int` — count of images with `quality = "failed"`
+- `mean_df_inclusive: float | null` — mean Df computed over `converged + approximate`
+  images; null when both counts are zero
+**AND** if `n_converged = 0`, `mean_df` is `null`,
+**AND** `mean_df_inclusive` is `null` when `n_converged + n_approximate = 0`,
+**AND** if `n_successful = 1` and that image is converged, `std_df = 0`.
 
-#### Scenario 7.1 — Single successful image
-- **Input**: `N=1`, analyzer succeeded.
-- **Expected**: `mean_df = df`, `std_df = 0`, `median_df = df`, `min_df = max_df = df`.
+(Previously: `mean_df` was computed over ALL entries with non-null `fractal_dimension`,
+including approximate results. This delta narrows `mean_df` to converged-only and
+introduces `mean_df_inclusive` for the broader aggregate.)
 
-#### Scenario 7.2 — All-successful batch
-- **Input**: `N=10`, all Df non-null.
-- **Expected**: All statistics populated; `n_successful = 10`.
+#### Scenario 7.1 — All-converged batch (N=10)
+- **Input**: 10 images all with `quality = "converged"`.
+- **Expected**: `n_converged = 10`, `n_approximate = 0`, `n_excluded = 0`, `n_failed = 0`,
+  `mean_df` computed over all 10, `mean_df_inclusive = mean_df` (same set).
 
-#### Scenario 7.3 — Partial failure
-- **Input**: `N=10`, 3 entries with `Df = null`.
-- **Expected**: `n_successful = 7`; statistics computed over the 7 successful values.
+#### Scenario 7.2 — Mixed quality batch
+- **Input**: batch of 10: 6 converged (mean Df 1.80), 2 approximate (mean Df 1.71), 1 excluded, 1 failed.
+- **Expected**: `n_converged = 6`, `n_approximate = 2`, `n_excluded = 1`, `n_failed = 1`,
+  `mean_df` is mean of the 6 converged values only,
+  `mean_df_inclusive` is mean of the 8 (converged + approximate) values,
+  `mean_df ≠ mean_df_inclusive`.
 
-#### Scenario 7.4 — All-failed batch
-- **Input**: `N=5`, every entry has `Df = null`.
-- **Expected**: `n_successful = 0`; `mean_df, std_df, median_df, q1_df, q3_df, min_df, max_df` all `null`.
+#### Scenario 7.3 — All-failed batch
+- **Input**: batch where all images have `quality = "failed"` or `"excluded"`.
+- **Expected**: `n_converged = 0`, `n_approximate = 0`, `mean_df = null`, `mean_df_inclusive = null`,
+  `n_excluded + n_failed = N`.
+
+#### Scenario 7.4 — Converged-only, single image
+- **Input**: N=1, one converged image with Df 1.75.
+- **Expected**: `mean_df = 1.75`, `std_df = 0`, `mean_df_inclusive = 1.75`.
+
+#### Scenario 7.5 — All-approximate batch
+- **Input**: batch of 5 images all with `quality = "approximate"`.
+- **Expected**: `n_converged = 0`, `n_approximate = 5`, `mean_df = null` (no converged),
+  `mean_df_inclusive` is mean of the 5 approximate df_estimate values.
 
 ### R8. Histogram data uses Freedman–Diaconis with Sturges fallback
 
@@ -572,4 +629,4 @@ the component MUST fall back to external mode and MUST NOT throw or show an erro
 - THEN the component does not recognize `origin="unknown_value"` as simulation-origin
 - AND operates in external mode (sim_id is ignored when origin is not "simulation")
 
-<!-- Last sync: 2026-05-03 from change fraktal-batch-distributions-and-entry -->
+<!-- Last sync: 2026-05-06 from change fraktal-bisection-ux -->

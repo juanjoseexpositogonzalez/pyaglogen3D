@@ -40,32 +40,89 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 **AND** `rg_nm` MUST be populated from the engine result when the analyzer returns a valid radius of gyration for that image,
 **AND** `rg_nm` MUST be stored as NULL when the analyzer does not produce an Rg value for that image (analysis failure, or engine version that does not output Rg),
 **AND** existing rows written before this migration have `rg_nm = NULL` and MUST remain fully accessible without error (additive field, no destructive migration),
-**AND** existing rows written before migration `0008` have `analysis_input_variant = "presentation"` as the migration default and MUST remain fully accessible without error (additive field).
+**AND** existing rows written before migration `0008` have `analysis_input_variant = "presentation"` as the migration default and MUST remain fully accessible without error (additive field),
+**AND** each row MUST additionally contain:
+- `quality: CharField max_length=12, default="converged"` —
+  choices: `converged | approximate | excluded | failed`
+- `bisection_iterations: IntegerField, null=True`
+- `bisection_residual: FloatField, null=True`
+- `failure_reason: CharField max_length=20, null=True` —
+  choices: `no_sign_change | kf_negative | iteration_limit | none | null`
+- `df_estimate: FloatField, null=True`
+**AND** existing rows written before migration `0011` have `quality = "converged"` (column
+default) and all four new nullable fields as NULL; they MUST remain fully accessible
+without error.
 
-(Previously: R2 did not include `analysis_input_variant` or `rg_nm`; which PNG variant was fed to the analyzer was not recorded anywhere, and per-image Rg values were not persisted.)
+(Previously: R2 did not include `quality`, `bisection_iterations`, `bisection_residual`,
+`failure_reason`, `df_estimate`, `analysis_input_variant` or `rg_nm`; which PNG variant was
+fed to the analyzer was not recorded anywhere, and per-image Rg values and bisection diagnostic
+data were not persisted.)
 
-#### Scenario 2.1 — New batch: scientific bytes used → variant recorded
+#### Scenario 2.1 — Converged image persistence
+
+- GIVEN an image whose bisection converged (residual 0.04, iterations 12, Df 1.82)
+- WHEN the batch task stores the result
+- THEN the row has `quality = "converged"`, `bisection_iterations = 12`,
+  `bisection_residual = 0.04`, `failure_reason = "none"`, `df_estimate = 1.82`,
+  `fractal_dimension = 1.82`
+
+#### Scenario 2.2 — Approximate image persistence
+
+- GIVEN an image where bisection reached iteration limit with residual 0.5 (< 1.0 threshold)
+- WHEN the batch task stores the result
+- THEN `quality = "approximate"`, `bisection_residual = 0.5`, `failure_reason = "iteration_limit"`,
+  `df_estimate` is set to the best Df approximation, `fractal_dimension = null`
+
+#### Scenario 2.3 — Excluded image persistence (no_sign_change)
+
+- GIVEN an image where bisection reported no_sign_change failure
+- WHEN the batch task stores the result
+- THEN `quality = "excluded"`, `failure_reason = "no_sign_change"`,
+  `df_estimate = null`, `bisection_residual = null`, `fractal_dimension = null`
+
+#### Scenario 2.4 — Failed image persistence (kf_negative)
+
+- GIVEN an image where bisection reported kf_negative failure
+- WHEN the batch task stores the result
+- THEN `quality = "failed"`, `failure_reason = "kf_negative"`,
+  `df_estimate = null`, `fractal_dimension = null`
+
+#### Scenario 2.5 — Engine crash persistence
+
+- GIVEN an image where the engine crashed without surfacing a bisection category
+- WHEN the batch task stores the result (catching the exception)
+- THEN `quality = "failed"`, `failure_reason = null` (not "none"),
+  `df_estimate = null`, `bisection_iterations = null`, `bisection_residual = null`
+
+#### Scenario 2.6 — Legacy row backward compatibility
+
+- GIVEN a `FraktalBatchImage` row created before migration `0011`
+- WHEN the drill-down or list endpoint is queried for this row
+- THEN HTTP 200; `quality = "converged"` (column default); all four new nullable fields are null
+- AND `fractal_dimension` and all other pre-migration fields serve correctly without error
+
+#### Scenario 2.7 — New batch: scientific bytes used → variant recorded
 
 - GIVEN a new-mode ZIP where direction `i` has both presentation and scientific PNGs
 - WHEN the batch task completes (sync or async)
 - THEN the `FraktalBatchImage` row for direction `i` has `png_scientific_bytes` non-NULL
 - AND `analysis_input_variant = "scientific"`
 
-#### Scenario 2.2 — Legacy batch: presentation used → variant recorded
+#### Scenario 2.8 — Legacy batch: presentation used → variant recorded
 
 - GIVEN a legacy ZIP with no `*.scientific.png` files
 - WHEN the batch task completes
 - THEN every `FraktalBatchImage` row has `png_scientific_bytes = NULL`
 - AND `analysis_input_variant = "presentation"`
 
-#### Scenario 2.3 — Pre-migration rows: default variant applied
+#### Scenario 2.9 — Pre-migration rows: default variant applied
 
 - GIVEN existing `FraktalBatchImage` rows written before migration `0008`
 - WHEN the drill-down endpoint is queried for any of these rows
 - THEN HTTP 200 is returned; `analysis_input_variant = "presentation"` (migration default)
 - AND `png_bytes` serves correctly; no error
 
-#### Scenario 2.4 — Index uniqueness unchanged
+#### Scenario 2.10 — Index uniqueness unchanged
 
 - GIVEN a new-mode batch
 - WHEN two rows with the same `(batch, index)` are attempted
@@ -418,4 +475,44 @@ pre-migration state without data loss in any other column.
 - THEN new `FraktalBatchImage` rows have `rg_nm` populated (non-null for successful images)
 - AND old rows (pre-migration) still have `rg_nm = NULL`
 
-<!-- Last sync: 2026-05-03 from change fraktal-batch-distributions-and-entry -->
+---
+
+### R-DELTA-K. Migration 0011 adds 5 bisection quality fields — additive, reversible
+
+**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
+**WHEN** migration `0011_add_bisection_quality_fields.py` is applied,
+**THEN** the following columns MUST be added to the `fractal_analysis_fraktalbatchimage` table:
+- `quality CharField(max_length=12, default="converged")` — NOT NULL with default
+- `bisection_iterations IntegerField(null=True)`
+- `bisection_residual FloatField(null=True)`
+- `failure_reason CharField(max_length=20, null=True)`
+- `df_estimate FloatField(null=True)`
+**AND** all existing rows MUST have `quality = "converged"` after migration (column default,
+no backfill of other fields — NULL is the correct sentinel for missing diagnostic data),
+**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
+**AND** migration MUST be reversible: the reverse drops only these 5 columns and restores
+the pre-migration table state without data loss in any other column.
+
+#### Scenario K.1 — Forward migration on production rows
+
+- GIVEN a database with 500 existing `FraktalBatchImage` rows
+- WHEN migration `0011` is applied
+- THEN all 500 rows gain `quality = "converged"` and four new null-valued fields
+- AND migration completes without error; all rows remain queryable
+- AND `fractal_dimension`, `png_bytes`, and all pre-migration fields are intact
+
+#### Scenario K.2 — Reverse migration
+
+- GIVEN migration `0011` has been applied
+- WHEN the reverse migration runs
+- THEN the 5 new columns are dropped; all other columns and data are intact
+- AND endpoints that do not reference the new fields continue to work
+
+#### Scenario K.3 — New batch after migration: fields explicitly set
+
+- GIVEN migration `0011` is applied and a new batch is submitted
+- WHEN the batch task stores results
+- THEN new rows have `quality` explicitly set (not relying on default); diagnostic fields populated
+- AND old pre-migration rows still have `quality = "converged"` (from column default)
+
+<!-- Last sync: 2026-05-06 from change fraktal-bisection-ux -->
