@@ -51,7 +51,7 @@ import {
   FraktalBatchDistributions,
   sturgesBuckets,
 } from '../FraktalBatchDistributions'
-import type { FraktalBatchImageResult } from '@/lib/api'
+import type { FraktalBatchImageResult, FraktalBatchStats } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -295,6 +295,26 @@ describe('<FraktalBatchDistributions>', () => {
       expect(colors).not.toContain('#3b82f6')
     })
 
+    it('excluded/failed images omitted from Df overlay (only converged+approximate)', () => {
+      // 5 converged + 1 approximate + 1 excluded + 1 failed = 8 total
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 5 }, (_, i) =>
+          makeImage(i, { quality: 'converged' }),
+        ),
+        makeImage(5, { quality: 'approximate', fractal_dimension: 1.92 }),
+        makeImage(6, { quality: 'excluded', fractal_dimension: null }),
+        makeImage(7, { quality: 'failed', fractal_dimension: null, error: 'fail' }),
+      ]
+      render(<FraktalBatchDistributions images={images} />)
+      const plots = screen.getAllByTestId('plotly')
+      const dfPlot = plots.find((p) =>
+        (p.getAttribute('data-title') ?? '').includes('Df'),
+      )
+      expect(dfPlot).toBeTruthy()
+      // 2 traces: converged (5 values) + approximate (1 value)
+      expect(dfPlot!.getAttribute('data-trace-count')).toBe('2')
+    })
+
     it('non-Df metrics unaffected: always 1 trace regardless of quality', () => {
       const images: FraktalBatchImageResult[] = [
         ...Array.from({ length: 5 }, (_, i) =>
@@ -317,6 +337,122 @@ describe('<FraktalBatchDistributions>', () => {
       nonDfPlots.forEach((p) => {
         expect(p.getAttribute('data-trace-count')).toBe('1')
       })
+    })
+  })
+
+  describe('Mean dual-display (T5.5)', () => {
+    it('all-converged: only primary mean shown, no inclusive line', () => {
+      const images = Array.from({ length: 8 }, (_, i) =>
+        makeImage(i, { quality: 'converged' }),
+      )
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 8,
+        n_successful: 8,
+        mean_df: 1.80,
+        std_df: 0.05,
+        median_df: 1.79,
+        q1_df: 1.76,
+        q3_df: 1.83,
+        min_df: 1.72,
+        max_df: 1.88,
+        n_converged: 8,
+        n_approximate: 0,
+        n_excluded: 0,
+        n_failed: 0,
+        mean_df_inclusive: 1.80,  // same as mean_df
+        df: { mean: 1.80, std: 0.05, median: 1.79, min: 1.72, max: 1.88 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      // Primary mean should be visible
+      const dfStats = screen.getByTestId('distribution-df-stats')
+      expect(dfStats.textContent).toContain('mean=1.80')
+      // No inclusive line (values are equal)
+      expect(screen.queryByTestId('distribution-df-inclusive')).toBeNull()
+    })
+
+    it('mixed batch: both primary and inclusive mean visible with different values', () => {
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 6 }, (_, i) =>
+          makeImage(i, { quality: 'converged', fractal_dimension: 1.80 }),
+        ),
+        ...Array.from({ length: 3 }, (_, i) =>
+          makeImage(6 + i, {
+            quality: 'approximate',
+            fractal_dimension: 1.60 + i * 0.01,
+          }),
+        ),
+      ]
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 9,
+        n_successful: 9,
+        mean_df: 1.80,
+        std_df: 0.03,
+        median_df: 1.80,
+        q1_df: 1.78,
+        q3_df: 1.82,
+        min_df: 1.72,
+        max_df: 1.88,
+        n_converged: 6,
+        n_approximate: 3,
+        n_excluded: 0,
+        n_failed: 0,
+        mean_df_inclusive: 1.74,  // different from mean_df
+        df: { mean: 1.80, std: 0.03, median: 1.80, min: 1.72, max: 1.88 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      // Primary mean visible
+      const dfStats = screen.getByTestId('distribution-df-stats')
+      expect(dfStats.textContent).toContain('mean=1.80')
+      // Inclusive line visible with different value
+      const inclusive = screen.getByTestId('distribution-df-inclusive')
+      expect(inclusive.textContent).toContain('1.74')
+    })
+
+    it('hidden when mean_df_inclusive equals mean_df', () => {
+      const images = Array.from({ length: 6 }, (_, i) =>
+        makeImage(i, { quality: 'converged' }),
+      )
+      const batchStats: Partial<FraktalBatchStats> = {
+        n_images: 6,
+        n_successful: 6,
+        mean_df: 1.80,
+        std_df: 0.04,
+        median_df: 1.79,
+        q1_df: 1.76,
+        q3_df: 1.83,
+        min_df: 1.72,
+        max_df: 1.88,
+        n_converged: 6,
+        n_approximate: 0,
+        mean_df_inclusive: 1.80,
+        df: { mean: 1.80, std: 0.04, median: 1.79, min: 1.72, max: 1.88 },
+        kf: { mean: 1.45, std: 0.1, median: 1.44, min: 1.3, max: 1.6 },
+        rg: { mean: 160, std: 10, median: 158, min: 140, max: 180 },
+        npo: { mean: 355, std: 5, median: 354, min: 350, max: 360 },
+      }
+      render(
+        <FraktalBatchDistributions
+          images={images}
+          stats={batchStats as FraktalBatchStats}
+        />,
+      )
+      expect(screen.queryByTestId('distribution-df-inclusive')).toBeNull()
     })
   })
 })

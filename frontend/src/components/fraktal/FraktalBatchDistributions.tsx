@@ -197,6 +197,7 @@ export function FraktalBatchDistributions({
           totalImages={totalImages}
           convergedValues={convergedValues}
           approximateValues={approximateValues}
+          batchStats={stats}
         />
       ))}
     </div>
@@ -216,6 +217,8 @@ interface DistributionCardProps {
   convergedValues?: number[]
   /** Df-only: approximate values for yellow overlay trace. */
   approximateValues?: number[]
+  /** Batch-level stats for mean_df_inclusive dual-display. */
+  batchStats?: FraktalBatchStats
 }
 
 /** Primary trace color (blue-500). */
@@ -230,6 +233,7 @@ function DistributionCard({
   totalImages,
   convergedValues,
   approximateValues,
+  batchStats,
 }: DistributionCardProps) {
   const nSucc = values.length
   const title = `${spec.label} (${nSucc} succ / ${totalImages} total)`
@@ -332,6 +336,18 @@ function DistributionCard({
           {stats.min?.toFixed(2)} · max={stats.max?.toFixed(2)}
         </div>
       )}
+      {/* Mean dual-display (T5.5): show inclusive mean when it differs from primary */}
+      {spec.key === 'df' &&
+        batchStats?.mean_df_inclusive != null &&
+        batchStats?.mean_df != null &&
+        batchStats.mean_df_inclusive !== batchStats.mean_df && (
+          <div
+            className="px-2 pb-1 text-xs text-muted-foreground/70"
+            data-testid={`distribution-${spec.key}-inclusive`}
+          >
+            (inclusive: {batchStats.mean_df_inclusive.toFixed(2)})
+          </div>
+        )}
     </div>
   )
 }
