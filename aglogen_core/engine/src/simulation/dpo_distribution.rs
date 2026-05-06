@@ -1,0 +1,180 @@
+//! Distribution types for `dpo` (primary particle diameter) and `target_kf` (fractal prefactor).
+//!
+//! Both parameters support three sampling modes following the same pattern
+//! as [`SinteringDistribution`](super::sintering::SinteringDistribution):
+//!
+//! - **Fixed**: deterministic, returns the same value every time.
+//! - **Normal**: truncated Gaussian bounded to [mean - 3*std, mean + 3*std].
+//! - **Uniform**: uniform sample over [min, max].
+//!
+//! Validation of parameter ranges (e.g. std > 0, max > min) is intentionally
+//! NOT performed here. Enums are simple data carriers; validation belongs
+//! at the integration layer (P4 backend serializer).
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::common::rng::create_rng;
+
+    // ── DpoDistribution tests ──────────────────────────────────────────
+
+    #[test]
+    fn test_dpo_fixed_returns_exact_value() {
+        let dist = DpoDistribution::Fixed { value: 12.5 };
+        let mut rng = create_rng(42);
+        assert_eq!(dist.sample(&mut rng), 12.5);
+        // Must return the same for any seed
+        let mut rng2 = create_rng(999);
+        assert_eq!(dist.sample(&mut rng2), 12.5);
+    }
+
+    #[test]
+    fn test_dpo_normal_within_bounds() {
+        let dist = DpoDistribution::Normal {
+            mean: 12.5,
+            std: 1.5,
+        };
+        let mut rng = create_rng(42);
+        let lower = 12.5 - 3.0 * 1.5; // 8.0
+        let upper = 12.5 + 3.0 * 1.5; // 17.0
+
+        for _ in 0..1000 {
+            let v = dist.sample(&mut rng);
+            assert!(
+                v >= lower && v <= upper,
+                "Sample {} outside [{}, {}]",
+                v,
+                lower,
+                upper
+            );
+        }
+    }
+
+    #[test]
+    fn test_dpo_normal_mean_within_tolerance() {
+        let mean = 12.5;
+        let dist = DpoDistribution::Normal { mean, std: 1.5 };
+        let mut rng = create_rng(42);
+
+        let sum: f64 = (0..1000).map(|_| dist.sample(&mut rng)).sum();
+        let sample_mean = sum / 1000.0;
+        assert!(
+            (sample_mean - mean).abs() < 0.2,
+            "Sample mean {} too far from {}",
+            sample_mean,
+            mean
+        );
+    }
+
+    #[test]
+    fn test_dpo_uniform_within_range() {
+        let dist = DpoDistribution::Uniform {
+            min: 10.0,
+            max: 15.0,
+        };
+        let mut rng = create_rng(42);
+
+        for _ in 0..1000 {
+            let v = dist.sample(&mut rng);
+            assert!(v >= 10.0 && v <= 15.0, "Sample {} outside [10, 15]", v);
+        }
+    }
+
+    #[test]
+    fn test_dpo_reproducibility() {
+        let dist = DpoDistribution::Normal {
+            mean: 12.5,
+            std: 1.5,
+        };
+        let mut rng1 = create_rng(42);
+        let mut rng2 = create_rng(42);
+        assert_eq!(dist.sample(&mut rng1), dist.sample(&mut rng2));
+    }
+
+    #[test]
+    fn test_default_dpo() {
+        let d = DpoDistribution::default();
+        match d {
+            DpoDistribution::Fixed { value } => assert_eq!(value, 1.0),
+            _ => panic!("Expected Fixed variant for default DpoDistribution"),
+        }
+    }
+
+    // ── TargetKfDistribution tests ─────────────────────────────────────
+
+    #[test]
+    fn test_kf_fixed_returns_exact_value() {
+        let dist = TargetKfDistribution::Fixed { value: 1.4 };
+        let mut rng = create_rng(42);
+        assert_eq!(dist.sample(&mut rng), 1.4);
+    }
+
+    #[test]
+    fn test_kf_normal_within_bounds() {
+        let dist = TargetKfDistribution::Normal {
+            mean: 1.3,
+            std: 0.1,
+        };
+        let mut rng = create_rng(42);
+        let lower = 1.3 - 3.0 * 0.1; // 1.0
+        let upper = 1.3 + 3.0 * 0.1; // 1.6
+
+        for _ in 0..1000 {
+            let v = dist.sample(&mut rng);
+            assert!(
+                v >= lower && v <= upper,
+                "Sample {} outside [{}, {}]",
+                v,
+                lower,
+                upper
+            );
+        }
+    }
+
+    #[test]
+    fn test_kf_normal_mean_within_tolerance() {
+        let mean = 1.3;
+        let dist = TargetKfDistribution::Normal { mean, std: 0.1 };
+        let mut rng = create_rng(42);
+
+        let sum: f64 = (0..1000).map(|_| dist.sample(&mut rng)).sum();
+        let sample_mean = sum / 1000.0;
+        assert!(
+            (sample_mean - mean).abs() < 0.05,
+            "Sample mean {} too far from {}",
+            sample_mean,
+            mean
+        );
+    }
+
+    #[test]
+    fn test_kf_uniform_within_range() {
+        let dist = TargetKfDistribution::Uniform { min: 1.1, max: 1.5 };
+        let mut rng = create_rng(42);
+
+        for _ in 0..1000 {
+            let v = dist.sample(&mut rng);
+            assert!(v >= 1.1 && v <= 1.5, "Sample {} outside [1.1, 1.5]", v);
+        }
+    }
+
+    #[test]
+    fn test_kf_reproducibility() {
+        let dist = TargetKfDistribution::Normal {
+            mean: 1.3,
+            std: 0.1,
+        };
+        let mut rng1 = create_rng(42);
+        let mut rng2 = create_rng(42);
+        assert_eq!(dist.sample(&mut rng1), dist.sample(&mut rng2));
+    }
+
+    #[test]
+    fn test_default_kf() {
+        let d = TargetKfDistribution::default();
+        match d {
+            TargetKfDistribution::Fixed { value } => assert_eq!(value, 1.3),
+            _ => panic!("Expected Fixed variant for default TargetKfDistribution"),
+        }
+    }
+}
