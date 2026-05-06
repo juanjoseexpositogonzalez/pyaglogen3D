@@ -767,4 +767,115 @@ describe('<FraktalBatchImageDetail />', () => {
       expect(mockRevokeObjectURL).toHaveBeenCalledWith(FAKE_BLOB_URL)
     })
   })
+
+  // --- T5.2 (fraktal-bisection-ux P5): Distinguished quality-based UI ---
+  describe('quality-based distinguished UI (T5.2)', () => {
+    it('shows existing converged UI (Fractal Metrics card) when quality=converged', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'converged',
+          bisection_iterations: 12,
+          bisection_residual: 0.04,
+          failure_reason: null,
+          df_estimate: 1.82,
+        })
+      )
+      renderComponent()
+      // Converged path: existing Fractal Metrics card
+      expect(await screen.findByText('Fractal Metrics')).toBeTruthy()
+      expect(screen.queryByText(/Df aproximado/i)).toBeNull()
+    })
+
+    it('shows yellow approximate card with df_estimate and residual when quality=approximate', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'approximate',
+          bisection_iterations: 50,
+          bisection_residual: 0.5,
+          failure_reason: 'iteration_limit',
+          df_estimate: 1.71,
+          fractal_dimension: null,
+          error: null,
+        })
+      )
+      renderComponent()
+      // "Df aproximado" appears in both the dt label and the warning paragraph
+      const matches = await screen.findAllByText(/Df aproximado/i)
+      expect(matches.length).toBeGreaterThanOrEqual(1)
+      expect(screen.getByText('1.710')).toBeTruthy()
+      expect(screen.getByText('0.500')).toBeTruthy()
+    })
+
+    it('shows gray excluded card with "Geometría no analizable" for no_sign_change', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'excluded',
+          bisection_iterations: null,
+          bisection_residual: null,
+          failure_reason: 'no_sign_change',
+          df_estimate: null,
+          fractal_dimension: null,
+          error: null,
+        })
+      )
+      renderComponent()
+      expect(
+        await screen.findByText(/Geometría no analizable/i)
+      ).toBeTruthy()
+    })
+
+    it('shows gray excluded card with "No convergió" for iteration_limit', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'excluded',
+          bisection_iterations: 50,
+          bisection_residual: 1.5,
+          failure_reason: 'iteration_limit',
+          df_estimate: null,
+          fractal_dimension: null,
+          error: null,
+        })
+      )
+      renderComponent()
+      expect(
+        await screen.findByText(/No convergió/i)
+      ).toBeTruthy()
+    })
+
+    it('shows red failed card with "Resultado no físico" for kf_negative', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'failed',
+          bisection_iterations: 12,
+          bisection_residual: 0.04,
+          failure_reason: 'kf_negative',
+          df_estimate: 1.82,
+          fractal_dimension: null,
+          error: null,
+        })
+      )
+      renderComponent()
+      expect(
+        await screen.findByText(/Resultado no físico/i)
+      ).toBeTruthy()
+    })
+
+    it('shows red failed card with raw error for null failure_reason (engine crash)', async () => {
+      mockGetBatchImage.mockResolvedValue(
+        makeImageDetail({
+          quality: 'failed',
+          bisection_iterations: null,
+          bisection_residual: null,
+          failure_reason: null,
+          df_estimate: null,
+          fractal_dimension: null,
+          error: 'Engine panic: internal error',
+        })
+      )
+      renderComponent()
+      expect(
+        await screen.findByText(/Engine panic: internal error/)
+      ).toBeTruthy()
+    })
+  })
 })

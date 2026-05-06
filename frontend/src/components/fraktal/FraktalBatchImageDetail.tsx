@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 
 import { fraktalApi, type FraktalBatchImageDetail as ImageDetailData } from '@/lib/api'
+import { QualityBadge } from '@/components/common/QualityBadge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 
@@ -360,103 +361,226 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
             </CardContent>
           </Card>
 
-          {/* Metrics or Error */}
+          {/* Metrics or Error — distinguished by quality when available */}
           <div className="space-y-4">
-            {data.error ? (
-              <>
-                <Card className="border-destructive">
-                  <CardHeader>
-                    <CardTitle className="text-destructive">Analysis Error</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-destructive">{data.error}</p>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Diagnostic Info</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                      <dt className="text-muted-foreground">DPO Used</dt>
-                      <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
-
-                      <dt className="text-muted-foreground">Azimuth</dt>
-                      <dd className="font-mono">
-                        {data.azimuth !== null ? data.azimuth.toFixed(1) : '—'}
-                      </dd>
-
-                      <dt className="text-muted-foreground">Elevation</dt>
-                      <dd className="font-mono">
-                        {data.elevation !== null ? data.elevation.toFixed(1) : '—'}
-                      </dd>
-
-                      <dt className="text-muted-foreground">px/100nm</dt>
-                      <dd className="font-mono">
-                        {data.pixels_per_100nm.toFixed(1)}
-                      </dd>
-
-                      <dt className="text-muted-foreground">Autocalibrate</dt>
-                      <dd className="font-mono">
-                        {data.autocalibrate_source ?? '—'}
-                      </dd>
-                    </dl>
-                  </CardContent>
-                </Card>
-              </>
-            ) : (
-              <>
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Fractal Metrics</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                      <dt className="text-muted-foreground">Df</dt>
-                      <dd className="font-mono">
-                        {data.fractal_dimension !== null
-                          ? data.fractal_dimension.toFixed(3)
-                          : '—'}
-                      </dd>
-
-                      <dt className="text-muted-foreground">kf</dt>
-                      <dd className="font-mono">
-                        {data.prefactor !== null
-                          ? data.prefactor.toFixed(3)
-                          : '—'}
-                      </dd>
-
-                      <dt className="text-muted-foreground">R²</dt>
-                      <dd className="font-mono">
-                        {data.r_squared !== null
-                          ? data.r_squared.toFixed(3)
-                          : '—'}
-                      </dd>
-
-                      <dt className="text-muted-foreground">Particles</dt>
-                      <dd className="font-mono">
-                        {data.n_particles_counted ?? '—'}
-                      </dd>
-                    </dl>
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader>
-                    <CardTitle>Calibration</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                      <dt className="text-muted-foreground">DPO Used</dt>
-                      <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
-                    </dl>
-                  </CardContent>
-                </Card>
-              </>
-            )}
+            <ImageDetailPanel data={data} />
           </div>
         </div>
       </div>
+  )
+}
+
+// ---------------------------------------------------------------------------
+// Quality-aware detail panel (T5.2 fraktal-bisection-ux)
+// ---------------------------------------------------------------------------
+
+/** Map failure_reason to user-facing explanation */
+const FAILURE_MESSAGES: Record<string, string> = {
+  no_sign_change:
+    'Geometría no analizable (modelo). La proyección está fuera del dominio de Granulated 2012.',
+  iteration_limit:
+    'No convergió (ruido o calidad de imagen).',
+  kf_negative: 'Resultado no físico (kf < 0).',
+}
+
+function ImageDetailPanel({ data }: { data: ImageDetailData }) {
+  const quality = data.quality
+
+  // Legacy path: no quality field → use old error/metrics split
+  if (!quality) {
+    return data.error ? (
+      <LegacyErrorPanel data={data} />
+    ) : (
+      <ConvergedMetricsPanel data={data} />
+    )
+  }
+
+  switch (quality) {
+    case 'converged':
+      return <ConvergedMetricsPanel data={data} />
+
+    case 'approximate':
+      return (
+        <>
+          {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
+          <Card className="border-yellow-300 bg-yellow-50">
+            <CardHeader>
+              <CardTitle className="text-yellow-800">Approximate Result</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+                <dt className="text-muted-foreground">Df aproximado</dt>
+                <dd className="font-mono">
+                  {data.df_estimate !== null && data.df_estimate !== undefined
+                    ? data.df_estimate.toFixed(3)
+                    : '—'}
+                </dd>
+                <dt className="text-muted-foreground">Residual</dt>
+                <dd className="font-mono">
+                  {data.bisection_residual !== null && data.bisection_residual !== undefined
+                    ? data.bisection_residual.toFixed(3)
+                    : '—'}
+                </dd>
+              </dl>
+              <p className="mt-3 text-sm text-yellow-800">
+                Df aproximado, residual{' '}
+                {data.bisection_residual !== null && data.bisection_residual !== undefined
+                  ? data.bisection_residual.toFixed(3)
+                  : '?'}
+                . Resultado de calidad limitada.
+              </p>
+            </CardContent>
+          </Card>
+          <DiagnosticInfoCard data={data} />
+        </>
+      )
+
+    case 'excluded':
+      return (
+        <>
+          {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
+          <Card className="border-gray-300 bg-gray-50">
+            <CardHeader>
+              <CardTitle className="text-gray-700">Excluded</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-gray-700">
+                {data.failure_reason
+                  ? FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason
+                  : 'Image excluded from analysis.'}
+              </p>
+            </CardContent>
+          </Card>
+          <DiagnosticInfoCard data={data} />
+        </>
+      )
+
+    case 'failed':
+      // kf_negative with categorized failure_reason
+      if (data.failure_reason && data.failure_reason !== null) {
+        return (
+          <>
+            {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
+            <Card className="border-destructive">
+              <CardHeader>
+                <CardTitle className="text-destructive">Analysis Failed</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <p className="text-sm text-destructive">
+                  {FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason}
+                </p>
+                {data.df_estimate !== null && data.df_estimate !== undefined && (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    Best Df estimate: {data.df_estimate.toFixed(3)}
+                  </p>
+                )}
+              </CardContent>
+            </Card>
+            <DiagnosticInfoCard data={data} />
+          </>
+        )
+      }
+      // Engine crash (null failure_reason) → show raw error
+      return <LegacyErrorPanel data={data} />
+
+    default:
+      return <LegacyErrorPanel data={data} />
+  }
+}
+
+function ConvergedMetricsPanel({ data }: { data: ImageDetailData }) {
+  return (
+    <>
+      <Card>
+        <CardHeader>
+          <CardTitle>Fractal Metrics</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <dt className="text-muted-foreground">Df</dt>
+            <dd className="font-mono">
+              {data.fractal_dimension !== null
+                ? data.fractal_dimension.toFixed(3)
+                : '—'}
+            </dd>
+
+            <dt className="text-muted-foreground">kf</dt>
+            <dd className="font-mono">
+              {data.prefactor !== null ? data.prefactor.toFixed(3) : '—'}
+            </dd>
+
+            <dt className="text-muted-foreground">R²</dt>
+            <dd className="font-mono">
+              {data.r_squared !== null ? data.r_squared.toFixed(3) : '—'}
+            </dd>
+
+            <dt className="text-muted-foreground">Particles</dt>
+            <dd className="font-mono">
+              {data.n_particles_counted ?? '—'}
+            </dd>
+          </dl>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Calibration</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+            <dt className="text-muted-foreground">DPO Used</dt>
+            <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
+          </dl>
+        </CardContent>
+      </Card>
+    </>
+  )
+}
+
+function LegacyErrorPanel({ data }: { data: ImageDetailData }) {
+  return (
+    <>
+      <Card className="border-destructive">
+        <CardHeader>
+          <CardTitle className="text-destructive">Analysis Error</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-destructive">{data.error}</p>
+        </CardContent>
+      </Card>
+      <DiagnosticInfoCard data={data} />
+    </>
+  )
+}
+
+function DiagnosticInfoCard({ data }: { data: ImageDetailData }) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Diagnostic Info</CardTitle>
+      </CardHeader>
+      <CardContent>
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
+          <dt className="text-muted-foreground">DPO Used</dt>
+          <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
+
+          <dt className="text-muted-foreground">Azimuth</dt>
+          <dd className="font-mono">
+            {data.azimuth !== null ? data.azimuth.toFixed(1) : '—'}
+          </dd>
+
+          <dt className="text-muted-foreground">Elevation</dt>
+          <dd className="font-mono">
+            {data.elevation !== null ? data.elevation.toFixed(1) : '—'}
+          </dd>
+
+          <dt className="text-muted-foreground">px/100nm</dt>
+          <dd className="font-mono">{data.pixels_per_100nm.toFixed(1)}</dd>
+
+          <dt className="text-muted-foreground">Autocalibrate</dt>
+          <dd className="font-mono">{data.autocalibrate_source ?? '—'}</dd>
+        </dl>
+      </CardContent>
+    </Card>
   )
 }
