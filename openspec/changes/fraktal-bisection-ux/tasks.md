@@ -31,9 +31,9 @@
 
 ## Phase P4 — Backend: CSV export with new columns
 
-- [ ] T4.1 — Update `services/csv_export.py`: add 5 columns appended at end of `BATCH_IMAGE_COLUMNS` and `SINGLE_IMAGE_COLUMNS` (quality, bisection_iterations, bisection_residual, failure_reason, df_estimate) (file: `backend/apps/fractal_analysis/services/csv_export.py`)
-- [ ] T4.2 — Implement locale-aware formatting for numeric fields (residual, df_estimate) using existing locale config (file: `backend/apps/fractal_analysis/services/csv_export.py`)
-- [ ] T4.3 — Write pytest byte-equivalence: legacy CSVs unchanged in pre-existing columns, new columns appended correctly (file: `backend/apps/fractal_analysis/tests/`)
+- [x] T4.1 — Update `services/csv_export.py`: add 5 columns appended at end of `BATCH_IMAGE_COLUMNS` and `SINGLE_IMAGE_COLUMNS` (quality, bisection_iterations, bisection_residual, failure_reason, df_estimate) (file: `backend/apps/fractal_analysis/services/csv_export.py`) (commit 29080f5)
+- [x] T4.2 — Implement locale-aware formatting for numeric fields (residual, df_estimate) using existing locale config (file: `backend/apps/fractal_analysis/services/csv_export.py`) (commit 29080f5)
+- [x] T4.3 — Write pytest byte-equivalence: legacy CSVs unchanged in pre-existing columns, new columns appended correctly (file: `backend/apps/fractal_analysis/tests/`) (commit 29080f5)
 
 ## Phase P5 — Frontend: drill-down distinguished UI + results table badge column + distributions yellow overlay
 
