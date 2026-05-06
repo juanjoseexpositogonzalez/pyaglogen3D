@@ -266,4 +266,67 @@ mod tests {
             _ => panic!("Expected Fixed variant for default TargetKfDistribution"),
         }
     }
+
+    // ── Shared / edge-case tests ───────────────────────────────────────
+
+    /// R13 scenario 13.3: truncated Normal fallback to mean after 10 failed draws.
+    ///
+    /// We cannot easily force all 10 standard-normal draws outside ±3σ since
+    /// that interval captures 99.7% of the mass. Instead, we verify the
+    /// helper function directly with std = 0 (degenerate), which forces every
+    /// candidate z * 0 + mean = mean, always within [mean, mean].
+    #[test]
+    fn test_truncated_normal_degenerate_returns_mean() {
+        let dist = DpoDistribution::Normal {
+            mean: 5.0,
+            std: 0.0,
+        };
+        let mut rng = create_rng(42);
+        // std=0 → lower == upper == mean, z*0 + mean == mean always
+        assert_eq!(dist.sample(&mut rng), 5.0);
+    }
+
+    /// Verify uniform distribution spans most of the range (not collapsed).
+    #[test]
+    fn test_uniform_spans_range() {
+        let dist = DpoDistribution::Uniform {
+            min: 10.0,
+            max: 15.0,
+        };
+        let mut rng = create_rng(42);
+        let mut min_seen = f64::MAX;
+        let mut max_seen = f64::MIN;
+
+        for _ in 0..1000 {
+            let v = dist.sample(&mut rng);
+            min_seen = min_seen.min(v);
+            max_seen = max_seen.max(v);
+        }
+        // Should span most of the [10, 15] range
+        assert!(min_seen < 10.1, "min_seen {} not near 10.0", min_seen);
+        assert!(max_seen > 14.9, "max_seen {} not near 15.0", max_seen);
+    }
+
+    /// Verify Uniform reproducibility (seed-deterministic).
+    #[test]
+    fn test_uniform_reproducibility() {
+        let dist = DpoDistribution::Uniform {
+            min: 10.0,
+            max: 15.0,
+        };
+        let mut rng1 = create_rng(42);
+        let mut rng2 = create_rng(42);
+        assert_eq!(dist.sample(&mut rng1), dist.sample(&mut rng2));
+    }
+
+    /// Fixed with different values to triangulate (not hardcoded to specific value).
+    #[test]
+    fn test_fixed_different_values() {
+        let mut rng = create_rng(42);
+        assert_eq!(DpoDistribution::Fixed { value: 0.5 }.sample(&mut rng), 0.5);
+        assert_eq!(
+            TargetKfDistribution::Fixed { value: 99.9 }.sample(&mut rng),
+            99.9
+        );
+    }
 }
