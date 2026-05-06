@@ -21,6 +21,8 @@ import zipfile
 import numpy as np
 from PIL import Image
 
+from .json_safe import json_safe_float
+
 # ---------------------------------------------------------------------------
 # R11 — Sorensen educational note (fixed text).
 # ---------------------------------------------------------------------------
@@ -488,20 +490,20 @@ def persist_batch_results(
                 filename=result.get("filename") or "",
                 azimuth=result.get("azimuth"),
                 elevation=result.get("elevation"),
-                fractal_dimension=result.get("fractal_dimension"),
-                prefactor=result.get("prefactor"),
-                r_squared=result.get("r_squared"),
+                fractal_dimension=json_safe_float(result.get("fractal_dimension")),
+                prefactor=json_safe_float(result.get("prefactor")),
+                r_squared=json_safe_float(result.get("r_squared")),
                 n_particles_counted=result.get("n_particles_counted"),
-                rg_nm=result.get("rg_nm"),
+                rg_nm=json_safe_float(result.get("rg_nm")),
                 dpo_used=dpo_used,
                 error=engine_error or "",
                 image_png=png_bytes,
                 png_scientific_bytes=sci_bytes,
                 analysis_input_variant=variant,
                 bisection_iterations=result.get("bisection_iterations"),
-                bisection_residual=result.get("bisection_residual"),
+                bisection_residual=json_safe_float(result.get("bisection_residual")),
                 failure_reason=result.get("failure_reason"),
-                df_estimate=result.get("df_estimate"),
+                df_estimate=json_safe_float(result.get("df_estimate")),
                 quality=quality,
             )
         )
