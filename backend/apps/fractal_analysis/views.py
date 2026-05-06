@@ -38,6 +38,7 @@ from .services.batch import (
     extract_scientific_png_map,
     extract_zip_images,
 )
+from .services.json_safe import json_safe_float
 from .tasks import (
     run_fractal_analysis_task,
     run_fraktal_analysis_task,
@@ -558,18 +559,18 @@ def _build_batch_response(
                 "filename": fname,
                 "azimuth": az,
                 "elevation": el,
-                "fractal_dimension": r.get("fractal_dimension"),
-                "prefactor": r.get("prefactor"),
-                "r_squared": r.get("r_squared"),
+                "fractal_dimension": json_safe_float(r.get("fractal_dimension")),
+                "prefactor": json_safe_float(r.get("prefactor")),
+                "r_squared": json_safe_float(r.get("r_squared")),
                 "n_particles_counted": r.get("n_particles_counted"),
-                "rg_nm": r.get("rg_nm"),
+                "rg_nm": json_safe_float(r.get("rg_nm")),
                 "error": r.get("error"),
                 # PYA-13: bisection diagnostic fields from engine result.
                 "quality": r.get("quality"),
                 "bisection_iterations": r.get("bisection_iterations"),
-                "bisection_residual": r.get("bisection_residual"),
+                "bisection_residual": json_safe_float(r.get("bisection_residual")),
                 "failure_reason": r.get("failure_reason"),
-                "df_estimate": r.get("df_estimate"),
+                "df_estimate": json_safe_float(r.get("df_estimate")),
             }
         )
 
@@ -854,18 +855,18 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
             "filename": img.filename,
             "azimuth": img.azimuth,
             "elevation": img.elevation,
-            "fractal_dimension": img.fractal_dimension,
-            "prefactor": img.prefactor,
-            "r_squared": img.r_squared,
+            "fractal_dimension": json_safe_float(img.fractal_dimension),
+            "prefactor": json_safe_float(img.prefactor),
+            "r_squared": json_safe_float(img.r_squared),
             "n_particles_counted": img.n_particles_counted,
-            "rg_nm": img.rg_nm,
+            "rg_nm": json_safe_float(img.rg_nm),
             "error": img.error or None,
             # PYA-13: bisection diagnostic fields.
             "quality": img.quality,
             "bisection_iterations": img.bisection_iterations,
-            "bisection_residual": img.bisection_residual,
+            "bisection_residual": json_safe_float(img.bisection_residual),
             "failure_reason": img.failure_reason,
-            "df_estimate": img.df_estimate,
+            "df_estimate": json_safe_float(img.df_estimate),
         }
         for img in images
     ]
@@ -881,18 +882,22 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         .exclude(df_estimate__isnull=True)
         .values_list("df_estimate", flat=True)
     )
-    mean_df = float(np.mean(converged_df_values)) if converged_df_values else None
+    mean_df = json_safe_float(
+        float(np.mean(converged_df_values)) if converged_df_values else None
+    )
     inclusive_values = converged_df_values + approximate_df_values
-    mean_df_inclusive = float(np.mean(inclusive_values)) if inclusive_values else None
+    mean_df_inclusive = json_safe_float(
+        float(np.mean(inclusive_values)) if inclusive_values else None
+    )
 
     stats = {
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
         "mean_df": mean_df,
-        "std_df": batch.std_df,
-        "median_df": batch.median_df,
-        "min_df": batch.min_df,
-        "max_df": batch.max_df,
+        "std_df": json_safe_float(batch.std_df),
+        "median_df": json_safe_float(batch.median_df),
+        "min_df": json_safe_float(batch.min_df),
+        "max_df": json_safe_float(batch.max_df),
         "kf": compute_metric_stats(images_out, "prefactor"),
         "rg": compute_metric_stats(images_out, "rg_nm"),
         "npo": compute_metric_stats(images_out, "n_particles_counted"),
@@ -964,11 +969,11 @@ def batch_list_view(request: Request, project_pk: uuid.UUID) -> Response:
             "autocalibrate_source": b.autocalibrate_source,
             "n_images": b.n_images,
             "n_successful": b.n_successful,
-            "mean_df": b.mean_df,
-            "std_df": b.std_df,
-            "median_df": b.median_df,
-            "min_df": b.min_df,
-            "max_df": b.max_df,
+            "mean_df": json_safe_float(b.mean_df),
+            "std_df": json_safe_float(b.std_df),
+            "median_df": json_safe_float(b.median_df),
+            "min_df": json_safe_float(b.min_df),
+            "max_df": json_safe_float(b.max_df),
             "original_zip_filename": b.original_zip_filename,
         }
         for b in page
@@ -1004,11 +1009,11 @@ def batch_detail_view(
             "filename": img.filename,
             "azimuth": img.azimuth,
             "elevation": img.elevation,
-            "fractal_dimension": img.fractal_dimension,
-            "prefactor": img.prefactor,
-            "r_squared": img.r_squared,
+            "fractal_dimension": json_safe_float(img.fractal_dimension),
+            "prefactor": json_safe_float(img.prefactor),
+            "r_squared": json_safe_float(img.r_squared),
             "n_particles_counted": img.n_particles_counted,
-            "rg_nm": img.rg_nm,
+            "rg_nm": json_safe_float(img.rg_nm),
             "error": img.error or None,
             "dpo_used": img.dpo_used,
         }
@@ -1036,13 +1041,13 @@ def batch_detail_view(
     )
 
     if converged_df_values:
-        mean_df = float(np.mean(converged_df_values))
+        mean_df = json_safe_float(float(np.mean(converged_df_values)))
     else:
         mean_df = None
 
     inclusive_values = converged_df_values + approximate_df_values
     if inclusive_values:
-        mean_df_inclusive = float(np.mean(inclusive_values))
+        mean_df_inclusive = json_safe_float(float(np.mean(inclusive_values)))
     else:
         mean_df_inclusive = None
 
@@ -1050,10 +1055,10 @@ def batch_detail_view(
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
         "mean_df": mean_df,
-        "std_df": batch.std_df,
-        "median_df": batch.median_df,
-        "min_df": batch.min_df,
-        "max_df": batch.max_df,
+        "std_df": json_safe_float(batch.std_df),
+        "median_df": json_safe_float(batch.median_df),
+        "min_df": json_safe_float(batch.min_df),
+        "max_df": json_safe_float(batch.max_df),
         "kf": compute_metric_stats(images_data, "prefactor"),
         "rg": compute_metric_stats(images_data, "rg_nm"),
         "npo": compute_metric_stats(images_data, "n_particles_counted"),
@@ -1138,11 +1143,11 @@ def batch_image_detail_view(
             "filename": img.filename,
             "azimuth": img.azimuth,
             "elevation": img.elevation,
-            "fractal_dimension": img.fractal_dimension,
-            "prefactor": img.prefactor,
-            "r_squared": img.r_squared,
+            "fractal_dimension": json_safe_float(img.fractal_dimension),
+            "prefactor": json_safe_float(img.prefactor),
+            "r_squared": json_safe_float(img.r_squared),
             "n_particles_counted": img.n_particles_counted,
-            "rg_nm": img.rg_nm,
+            "rg_nm": json_safe_float(img.rg_nm),
             "error": img.error or None,
             "dpo_used": img.dpo_used,
             "pixels_per_100nm": batch.pixels_per_100nm,
@@ -1150,9 +1155,9 @@ def batch_image_detail_view(
             # PYA-13 T3.4: bisection diagnostic fields in drill-down.
             "quality": img.quality,
             "bisection_iterations": img.bisection_iterations,
-            "bisection_residual": img.bisection_residual,
+            "bisection_residual": json_safe_float(img.bisection_residual),
             "failure_reason": img.failure_reason,
-            "df_estimate": img.df_estimate,
+            "df_estimate": json_safe_float(img.df_estimate),
             "prev_index": prev_index,
             "next_index": next_index,
             "total_count": total,
