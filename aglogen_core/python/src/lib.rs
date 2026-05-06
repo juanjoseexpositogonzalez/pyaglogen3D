@@ -45,6 +45,7 @@ use aglogen_engine::projection::directions::{
 use aglogen_engine::projection::{
     project_batch_internal, project_directions_internal, project_to_2d_internal, ProjectionResult,
 };
+use aglogen_engine::simulation::dpo_distribution::{DpoDistribution, TargetKfDistribution};
 use aglogen_engine::simulation::gcca::compute_structure_factor;
 use aglogen_engine::simulation::result::SimulationResult;
 use aglogen_engine::simulation::sintering::SinteringDistribution;
@@ -558,6 +559,87 @@ fn parse_sintering(
         "uniform" => SinteringDistribution::uniform(sintering_min, sintering_max),
         "normal" => SinteringDistribution::normal(sintering_coeff, sintering_std),
         _ => SinteringDistribution::fixed(sintering_coeff),
+    }
+}
+
+// ============================================================================
+// Helper: parse dpo distribution kwargs to enum
+// ============================================================================
+
+/// Convert Python kwargs for dpo distribution into the engine enum.
+///
+/// When `mode` is `None` or `"fixed"` and `value` is `None`, falls back to
+/// `legacy_radius` (the existing scalar `radius_min` param) for backward
+/// compatibility.
+///
+/// Returns `Result<..., String>` for testability without Python interpreter;
+/// call sites wrap with `map_err(PyValueError::new_err)`.
+fn parse_dpo_distribution(
+    mode: Option<String>,
+    value: Option<f64>,
+    mean: Option<f64>,
+    std: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    legacy_radius: f64,
+) -> Result<DpoDistribution, String> {
+    match mode.as_deref() {
+        None | Some("fixed") => {
+            let v = value.unwrap_or(legacy_radius);
+            Ok(DpoDistribution::Fixed { value: v })
+        }
+        Some("normal") => {
+            let m = mean.ok_or("dpo_mode='normal' requires dpo_mean")?;
+            let s = std.ok_or("dpo_mode='normal' requires dpo_std")?;
+            Ok(DpoDistribution::Normal { mean: m, std: s })
+        }
+        Some("uniform") => {
+            let lo = min.ok_or("dpo_mode='uniform' requires dpo_min")?;
+            let hi = max.ok_or("dpo_mode='uniform' requires dpo_max")?;
+            Ok(DpoDistribution::Uniform { min: lo, max: hi })
+        }
+        Some(other) => Err(format!(
+            "Invalid dpo_mode: '{}' (expected fixed/normal/uniform)",
+            other
+        )),
+    }
+}
+
+/// Convert Python kwargs for target_kf distribution into the engine enum.
+///
+/// When `mode` is `None` or `"fixed"` and `value` is `None`, falls back to
+/// `legacy_kf` (the existing scalar `target_kf` param) for backward compat.
+///
+/// Returns `Result<..., String>` for testability without Python interpreter;
+/// call sites wrap with `map_err(PyValueError::new_err)`.
+fn parse_target_kf_distribution(
+    mode: Option<String>,
+    value: Option<f64>,
+    mean: Option<f64>,
+    std: Option<f64>,
+    min: Option<f64>,
+    max: Option<f64>,
+    legacy_kf: f64,
+) -> Result<TargetKfDistribution, String> {
+    match mode.as_deref() {
+        None | Some("fixed") => {
+            let v = value.unwrap_or(legacy_kf);
+            Ok(TargetKfDistribution::Fixed { value: v })
+        }
+        Some("normal") => {
+            let m = mean.ok_or("kf_mode='normal' requires kf_mean")?;
+            let s = std.ok_or("kf_mode='normal' requires kf_std")?;
+            Ok(TargetKfDistribution::Normal { mean: m, std: s })
+        }
+        Some("uniform") => {
+            let lo = min.ok_or("kf_mode='uniform' requires kf_min")?;
+            let hi = max.ok_or("kf_mode='uniform' requires kf_max")?;
+            Ok(TargetKfDistribution::Uniform { min: lo, max: hi })
+        }
+        Some(other) => Err(format!(
+            "Invalid kf_mode: '{}' (expected fixed/normal/uniform)",
+            other
+        )),
     }
 }
 
@@ -2047,6 +2129,296 @@ mod tests {
         let _residual = r.bisection_residual;
         let _failure = &r.failure_reason;
         let _df_est = r.df_estimate;
+    }
+
+    // ── P3.1: parse_dpo_distribution helper tests ─────────────────
+    #[test]
+    fn parse_dpo_distribution_none_mode_falls_back_to_legacy() {
+        use aglogen_engine::simulation::dpo_distribution::DpoDistribution;
+        let result =
+            super::parse_dpo_distribution(None, None, None, None, None, None, 1.5).unwrap();
+        match result {
+            DpoDistribution::Fixed { value } => assert!((value - 1.5).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_dpo_distribution_fixed_with_value() {
+        use aglogen_engine::simulation::dpo_distribution::DpoDistribution;
+        let result = super::parse_dpo_distribution(
+            Some("fixed".to_string()),
+            Some(2.0),
+            None,
+            None,
+            None,
+            None,
+            1.0,
+        )
+        .unwrap();
+        match result {
+            DpoDistribution::Fixed { value } => assert!((value - 2.0).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_dpo_distribution_fixed_without_value_falls_back() {
+        use aglogen_engine::simulation::dpo_distribution::DpoDistribution;
+        let result = super::parse_dpo_distribution(
+            Some("fixed".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            3.0,
+        )
+        .unwrap();
+        match result {
+            DpoDistribution::Fixed { value } => assert!((value - 3.0).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_dpo_distribution_normal_mode() {
+        use aglogen_engine::simulation::dpo_distribution::DpoDistribution;
+        let result = super::parse_dpo_distribution(
+            Some("normal".to_string()),
+            None,
+            Some(1.0),
+            Some(0.1),
+            None,
+            None,
+            1.0,
+        )
+        .unwrap();
+        match result {
+            DpoDistribution::Normal { mean, std } => {
+                assert!((mean - 1.0).abs() < 1e-12);
+                assert!((std - 0.1).abs() < 1e-12);
+            }
+            _ => panic!("expected Normal, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_dpo_distribution_normal_missing_mean() {
+        let result = super::parse_dpo_distribution(
+            Some("normal".to_string()),
+            None,
+            None,
+            Some(0.1),
+            None,
+            None,
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_dpo_distribution_normal_missing_std() {
+        let result = super::parse_dpo_distribution(
+            Some("normal".to_string()),
+            None,
+            Some(1.0),
+            None,
+            None,
+            None,
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_dpo_distribution_uniform_mode() {
+        use aglogen_engine::simulation::dpo_distribution::DpoDistribution;
+        let result = super::parse_dpo_distribution(
+            Some("uniform".to_string()),
+            None,
+            None,
+            None,
+            Some(0.8),
+            Some(1.2),
+            1.0,
+        )
+        .unwrap();
+        match result {
+            DpoDistribution::Uniform { min, max } => {
+                assert!((min - 0.8).abs() < 1e-12);
+                assert!((max - 1.2).abs() < 1e-12);
+            }
+            _ => panic!("expected Uniform, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_dpo_distribution_uniform_missing_min() {
+        let result = super::parse_dpo_distribution(
+            Some("uniform".to_string()),
+            None,
+            None,
+            None,
+            None,
+            Some(1.2),
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_dpo_distribution_uniform_missing_max() {
+        let result = super::parse_dpo_distribution(
+            Some("uniform".to_string()),
+            None,
+            None,
+            None,
+            Some(0.8),
+            None,
+            1.0,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_dpo_distribution_invalid_mode() {
+        let result = super::parse_dpo_distribution(
+            Some("gaussian".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            1.0,
+        );
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Invalid dpo_mode"));
+    }
+
+    // ── P3.1: parse_target_kf_distribution helper tests ─────────────
+    #[test]
+    fn parse_kf_distribution_none_mode_falls_back_to_legacy() {
+        use aglogen_engine::simulation::dpo_distribution::TargetKfDistribution;
+        let result =
+            super::parse_target_kf_distribution(None, None, None, None, None, None, 1.3).unwrap();
+        match result {
+            TargetKfDistribution::Fixed { value } => assert!((value - 1.3).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_kf_distribution_fixed_with_value() {
+        use aglogen_engine::simulation::dpo_distribution::TargetKfDistribution;
+        let result = super::parse_target_kf_distribution(
+            Some("fixed".to_string()),
+            Some(1.5),
+            None,
+            None,
+            None,
+            None,
+            1.3,
+        )
+        .unwrap();
+        match result {
+            TargetKfDistribution::Fixed { value } => assert!((value - 1.5).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_kf_distribution_fixed_without_value_falls_back() {
+        use aglogen_engine::simulation::dpo_distribution::TargetKfDistribution;
+        let result = super::parse_target_kf_distribution(
+            Some("fixed".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            1.3,
+        )
+        .unwrap();
+        match result {
+            TargetKfDistribution::Fixed { value } => assert!((value - 1.3).abs() < 1e-12),
+            _ => panic!("expected Fixed, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_kf_distribution_normal_mode() {
+        use aglogen_engine::simulation::dpo_distribution::TargetKfDistribution;
+        let result = super::parse_target_kf_distribution(
+            Some("normal".to_string()),
+            None,
+            Some(1.3),
+            Some(0.1),
+            None,
+            None,
+            1.3,
+        )
+        .unwrap();
+        match result {
+            TargetKfDistribution::Normal { mean, std } => {
+                assert!((mean - 1.3).abs() < 1e-12);
+                assert!((std - 0.1).abs() < 1e-12);
+            }
+            _ => panic!("expected Normal, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_kf_distribution_normal_missing_mean() {
+        let result = super::parse_target_kf_distribution(
+            Some("normal".to_string()),
+            None,
+            None,
+            Some(0.1),
+            None,
+            None,
+            1.3,
+        );
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn parse_kf_distribution_uniform_mode() {
+        use aglogen_engine::simulation::dpo_distribution::TargetKfDistribution;
+        let result = super::parse_target_kf_distribution(
+            Some("uniform".to_string()),
+            None,
+            None,
+            None,
+            Some(1.1),
+            Some(1.5),
+            1.3,
+        )
+        .unwrap();
+        match result {
+            TargetKfDistribution::Uniform { min, max } => {
+                assert!((min - 1.1).abs() < 1e-12);
+                assert!((max - 1.5).abs() < 1e-12);
+            }
+            _ => panic!("expected Uniform, got {:?}", result),
+        }
+    }
+
+    #[test]
+    fn parse_kf_distribution_invalid_mode() {
+        let result = super::parse_target_kf_distribution(
+            Some("foo".to_string()),
+            None,
+            None,
+            None,
+            None,
+            None,
+            1.3,
+        );
+        assert!(result.is_err());
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(err_msg.contains("Invalid kf_mode"));
     }
 
     #[test]
