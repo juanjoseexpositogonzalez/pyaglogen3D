@@ -44,7 +44,7 @@
 - [x] T5.5 — Update mean stats display: show both `mean_df` (primary) and `mean_df_inclusive` (secondary) in stats panel (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
 - [x] T5.6 — Update tooltip on histograms: show count breakdown by quality (file: `frontend/src/components/fraktal/FraktalBatchDistributions.tsx`)
 - [x] T5.7 — Update `frontend/src/lib/api.ts` to extend `FraktalBatchImageDetail` interface + batch summary types with new fields (file: `frontend/src/lib/api.ts`) (commit 8b37e84)
-- [ ] T5.8 — Write vitest: QualityBadge rendering, drill-down per state, table badge column, histogram dual-color, mean dual-display (file: `frontend/src/components/fraktal/__tests__/`)
+- [x] T5.8 — Vitests integrated alongside T5.1-T5.6 commits: 91 tests passing across QualityBadge (4), FraktalBatchImageDetail (drill-down 5 states), FraktalBatchResultsView (Quality column + sort), FraktalBatchDistributions (overlay + mean dual + subtitle). Typecheck clean.
 
 ## Phase P6 — Tests integration + docs + CHANGELOG + Jira PYA-13 close
 
