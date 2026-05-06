@@ -16,8 +16,8 @@
 
 - [x] P2.1 — Add `dpo_distribution: DpoDistribution` and `target_kf_distribution: TargetKfDistribution` fields to `TunableCcParams` struct (file: `aglogen_core/engine/src/simulation/tunable_cc.rs`)
 - [x] P2.2 — Update `Default` impl for `TunableCcParams` to use `Fixed` of existing `radius_min` and `target_kf` values (backward compatibility) (file: `aglogen_core/engine/src/simulation/tunable_cc.rs`)
-- [ ] P2.3 — In `run_tunable_cc_internal`: at the start of each run, sample once from each distribution using the run's seeded RNG (`Rng::seed_from_u64(seed)`) and apply to effective_params (override radius_min/radius_max and target_kf) (file: `aglogen_core/engine/src/simulation/tunable_cc.rs`)
-- [ ] P2.4 — Add `dpo_used: f64` and `target_kf_used: Option<f64>` fields to `SimulationResult` struct (file: `aglogen_core/engine/src/simulation/result.rs`)
+- [x] P2.3 — In `run_tunable_cc_internal`: at the start of each run, sample once from each distribution using the run's seeded RNG (`Rng::seed_from_u64(seed)`) and apply to effective_params (override radius_min/radius_max and target_kf) (file: `aglogen_core/engine/src/simulation/tunable_cc.rs`)
+- [x] P2.4 — Add `dpo_used: Option<f64>` and `target_kf_used: Option<f64>` fields to `SimulationResult` struct (file: `aglogen_core/engine/src/simulation/result.rs`)
 - [ ] P2.5 — Write cargo regression tests: default (Fixed) produces bitwise identical results to baseline; Normal mode -> result.dpo_used within [μ-3σ, μ+3σ]; reproducibility with seed verified (file: `aglogen_core/engine/src/simulation/tunable_cc.rs`)
 
 ---

@@ -1387,29 +1387,47 @@ mod tests {
         );
     }
 
+    /// NOTE (PYA-15): Since `dpo_distribution` sampling overrides `radius_min`/`radius_max`
+    /// to the same sampled value (monodisperse per run), legacy per-particle polydispersity
+    /// requires a Uniform distribution. The test is updated to use `DpoDistribution::Uniform`.
+    /// Multiple runs with different seeds produce different per-run dpo values.
     #[test]
     fn test_tunable_cc_polydisperse() {
-        let params = TunableCcParams {
-            n_particles: 30,
-            radius_min: 0.8,
-            radius_max: 1.2,
-            ..Default::default()
-        };
+        use crate::simulation::dpo_distribution::DpoDistribution;
 
-        assert!(params.is_polydisperse());
+        // Run multiple seeds — each run is monodisperse (same radius for all
+        // particles), but across runs the dpo varies uniformly in [0.8, 1.2].
+        let mut dpo_values: Vec<f64> = Vec::new();
+        for seed in [789, 790, 791, 792, 793] {
+            let params = TunableCcParams {
+                n_particles: 10,
+                dpo_distribution: DpoDistribution::Uniform { min: 0.8, max: 1.2 },
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            let dpo = result.dpo_used.unwrap();
+            assert!(
+                dpo >= 0.8 - 1e-10 && dpo <= 1.2 + 1e-10,
+                "seed {seed}: dpo_used={dpo} outside [0.8, 1.2]"
+            );
+            dpo_values.push(dpo);
 
-        let result = run_tunable_cc_internal(params, 789, None);
+            // All radii in this run should equal the sampled dpo (monodisperse per run)
+            for (i, &r) in result.radii.iter().enumerate() {
+                assert!(
+                    (r - dpo).abs() < 1e-10,
+                    "seed {seed}: radius[{i}]={r} != dpo_used={dpo} (monodisperse per run)"
+                );
+            }
+        }
 
-        let min_r = result.radii.iter().cloned().fold(f64::INFINITY, f64::min);
-        let max_r = result
-            .radii
-            .iter()
-            .cloned()
-            .fold(f64::NEG_INFINITY, f64::max);
-
-        assert!(max_r > min_r, "Radii should vary");
-        assert!(min_r >= 0.8 - 1e-10);
-        assert!(max_r <= 1.2 + 1e-10);
+        // Across runs, dpo values should vary
+        let min_dpo = dpo_values.iter().cloned().fold(f64::INFINITY, f64::min);
+        let max_dpo = dpo_values.iter().cloned().fold(f64::NEG_INFINITY, f64::max);
+        assert!(
+            max_dpo > min_dpo,
+            "dpo_used should vary across seeds: min={min_dpo}, max={max_dpo}"
+        );
     }
 
     #[test]
@@ -2693,6 +2711,77 @@ mod tests {
         for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
             assert_eq!(c1, c2, "Coordinate {i} differs between seeded runs");
         }
+    }
+
+    /// P2.5 — Normal dpo_distribution: sampled dpo_used within ±3σ bounds.
+    /// Run 50 times with different seeds, assert all dpo_used in [μ-3σ, μ+3σ].
+    #[test]
+    fn test_normal_dpo_within_bounds() {
+        use crate::simulation::dpo_distribution::DpoDistribution;
+        let mean = 12.5;
+        let std_dev = 1.5;
+        let lower = mean - 3.0 * std_dev; // 8.0
+        let upper = mean + 3.0 * std_dev; // 17.0
+
+        for seed in 0..50 {
+            let params = TunableCcParams {
+                n_particles: 5, // small for speed
+                dpo_distribution: DpoDistribution::Normal { mean, std: std_dev },
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            let dpo = result.dpo_used.unwrap();
+            assert!(
+                dpo >= lower && dpo <= upper,
+                "seed {seed}: dpo_used={dpo} outside [{lower}, {upper}]"
+            );
+        }
+    }
+
+    /// P2.5 — Uniform target_kf_distribution: sampled target_kf_used within [min, max].
+    #[test]
+    fn test_uniform_kf_within_range() {
+        use crate::simulation::dpo_distribution::TargetKfDistribution;
+        let kf_min = 1.0;
+        let kf_max = 2.0;
+
+        for seed in 0..50 {
+            let params = TunableCcParams {
+                n_particles: 5,
+                target_kf_distribution: TargetKfDistribution::Uniform {
+                    min: kf_min,
+                    max: kf_max,
+                },
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            let kf = result.target_kf_used.unwrap();
+            assert!(
+                kf >= kf_min && kf <= kf_max,
+                "seed {seed}: target_kf_used={kf} outside [{kf_min}, {kf_max}]"
+            );
+        }
+    }
+
+    /// P2.5 — Other algorithms must have dpo_used=None and target_kf_used=None.
+    #[test]
+    fn test_other_algorithms_have_none_distribution_fields() {
+        use crate::simulation::ballistic::{run_ballistic_internal, BallisticParams};
+        let params = BallisticParams {
+            n_particles: 10,
+            sticking_probability: 1.0,
+            radius_min: 1.0,
+            radius_max: 1.0,
+            launch_distance_factor: 3.0,
+            max_ray_steps: 1000,
+            sintering: SinteringDistribution::default(),
+        };
+        let result = run_ballistic_internal(params, 42);
+        assert_eq!(result.dpo_used, None, "Ballistic must have dpo_used=None");
+        assert_eq!(
+            result.target_kf_used, None,
+            "Ballistic must have target_kf_used=None"
+        );
     }
 
     /// P2.1 — Distribution fields are settable via struct init.
