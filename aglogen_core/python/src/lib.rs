@@ -2583,6 +2583,74 @@ mod tests {
         );
     }
 
+    // ── T2.2: smoke test — real simulation produces valid trace ───────
+    #[test]
+    fn tunable_cc_simulation_produces_merge_trace_in_binding() {
+        // Run a real tunable_cc simulation with N=5 monomers.
+        // The engine should produce exactly 4 merge entries (N-1).
+        let params = aglogen_engine::simulation::tunable_cc::TunableCcParams {
+            n_particles: 5,
+            target_df: 2.0,
+            target_kf: 1.3,
+            radius_min: 1.0,
+            radius_max: 1.0,
+            ..Default::default()
+        };
+        let engine_result =
+            aglogen_engine::simulation::tunable_cc::run_tunable_cc_internal(params, 42, None);
+
+        // Convert to PySimulationResult (same path as the binding)
+        let py_result: super::PySimulationResult = engine_result.into();
+
+        // Must have exactly N-1 = 4 merge entries
+        assert_eq!(
+            py_result.merge_trace_data.len(),
+            4,
+            "N=5 monomers must produce 4 merges, got {}",
+            py_result.merge_trace_data.len()
+        );
+
+        // Each entry must have valid fields
+        for (i, entry) in py_result.merge_trace_data.iter().enumerate() {
+            assert_eq!(entry.step, i, "step must equal index");
+            assert!(
+                entry.merge_type == "tunable" || entry.merge_type == "ballistic",
+                "merge_type must be 'tunable' or 'ballistic', got '{}'",
+                entry.merge_type
+            );
+            assert!(entry.n1 >= 1, "n1 must be >= 1");
+            assert!(entry.n2 >= 1, "n2 must be >= 1");
+            assert!(
+                entry.required_distance >= 0.0,
+                "required_distance must be non-negative"
+            );
+            assert!(
+                entry.actual_distance >= 0.0,
+                "actual_distance must be non-negative"
+            );
+            assert!(entry.rg_after > 0.0, "rg_after must be positive");
+            assert!(entry.rg_target > 0.0, "rg_target must be positive");
+        }
+    }
+
+    #[test]
+    fn ballistic_simulation_produces_empty_merge_trace_in_binding() {
+        // Triangulation: non-CC algorithm (ballistic) → empty trace
+        let params = aglogen_engine::simulation::ballistic::BallisticParams {
+            n_particles: 5,
+            radius_min: 1.0,
+            radius_max: 1.0,
+            ..Default::default()
+        };
+        let engine_result =
+            aglogen_engine::simulation::ballistic::run_ballistic_internal(params, 42);
+        let py_result: super::PySimulationResult = engine_result.into();
+        assert!(
+            py_result.merge_trace_data.is_empty(),
+            "Ballistic (non-CC) must produce empty merge_trace"
+        );
+    }
+
     #[test]
     fn batch_failed_image_still_has_quality() {
         // A blank image errors before bisection, so quality is default
