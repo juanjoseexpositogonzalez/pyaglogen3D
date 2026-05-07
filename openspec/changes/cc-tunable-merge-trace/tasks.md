@@ -2,12 +2,12 @@
 
 ## Phase P1 — Engine: MergeTraceEntry struct + populate in main loop
 
-- [ ] T1.1 — Define `MergeTraceEntry` struct in `aglogen_core/engine/src/simulation/result.rs` (or sibling `merge_trace.rs`) with all 10 fields per spec R16. Derive `Debug, Clone, Serialize`.
-- [ ] T1.2 — Add `pub merge_trace: Vec<MergeTraceEntry>` field to `SimulationResult`. Default `Vec::new()`. Update Default impl.
-- [ ] T1.3 — Update all OTHER algorithms that construct `SimulationResult` (ballistic, DLA, CCA, fracval, gcca, box_rfa, voxel) to either use Default or explicitly set `merge_trace: Vec::new()`. They emit empty traces.
-- [ ] T1.4 — Instrument `run_tunable_cc_internal` in `aglogen_core/engine/src/simulation/tunable_cc.rs`: build local `merge_trace: Vec<MergeTraceEntry>`, push entry after each successful tunable merge AND each ballistic fallback merge. Capture all 10 fields per spec. Move into `SimulationResult` at end.
-- [ ] T1.5 — Cargo tests in `tunable_cc.rs::tests`: trace length matches merge count for monomers seed (R16.1), tunable merges produce `merge_type=tunable, bounding_check_passed=true` (R16.2), ballistic fallback flagged correctly (R16.3), `actual_distance` within 10% of `required_distance` (R16.4), `rg_after`/`rg_target` populated (R16.5), retries reflect actual attempts (R16.9).
-- [ ] T1.6 — Cargo test in another algorithm's test module (e.g. `dla.rs::tests`): non-CC simulation produces empty `merge_trace` (R16.6).
+- [x] T1.1 — Define `MergeTraceEntry` struct in `aglogen_core/engine/src/simulation/result.rs` (or sibling `merge_trace.rs`) with all 10 fields per spec R16. Derive `Debug, Clone, Serialize`.
+- [x] T1.2 — Add `pub merge_trace: Vec<MergeTraceEntry>` field to `SimulationResult`. Default `Vec::new()`. Update Default impl.
+- [x] T1.3 — Update all OTHER algorithms that construct `SimulationResult` (ballistic, DLA, CCA, fracval, gcca, box_rfa, voxel) to either use Default or explicitly set `merge_trace: Vec::new()`. They emit empty traces.
+- [x] T1.4 — Instrument `run_tunable_cc_internal` in `aglogen_core/engine/src/simulation/tunable_cc.rs`: build local `merge_trace: Vec<MergeTraceEntry>`, push entry after each successful tunable merge AND each ballistic fallback merge. Capture all 10 fields per spec. Move into `SimulationResult` at end.
+- [x] T1.5 — Cargo tests in `tunable_cc.rs::tests`: trace length matches merge count for monomers seed (R16.1), tunable merges produce `merge_type=tunable, bounding_check_passed=true` (R16.2), ballistic fallback flagged correctly (R16.3), `actual_distance` within 10% of `required_distance` (R16.4), `rg_after`/`rg_target` populated (R16.5), retries reflect actual attempts (R16.9).
+- [x] T1.6 — Cargo test in another algorithm's test module (e.g. `dla.rs::tests`): non-CC simulation produces empty `merge_trace` (R16.6).
 
 ## Phase P2 — Python binding: surface trace + maturin rebuild
 
