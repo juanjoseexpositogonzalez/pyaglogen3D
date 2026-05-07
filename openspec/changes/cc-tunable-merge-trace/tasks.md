@@ -17,9 +17,9 @@
 
 ## Phase P3 — Backend: persistence + drill-down
 
-- [ ] T3.1 — Verify `Simulation.result` JSONField persists `merge_trace` transparently when `tasks.py::_run_simulation_task` (or equivalent) writes the engine result dict. No code change expected; add a pytest if it's untested.
-- [ ] T3.2 — Verify `SimulationDetailView` (or equivalent drill-down) returns `merge_trace` in the response. If a serializer field whitelist excludes it, add it.
-- [ ] T3.3 — pytest: persist a CC tunable simulation with a small N (e.g. 5), assert API response includes `result.merge_trace` with N-1 entries.
+- [x] T3.1 — Verify `Simulation.metrics` JSONField persists `merge_trace` transparently. Added `merge_trace` extraction in `tasks.py::run_simulation_task` (line ~1722). 6 pytest tests covering model persistence, task wiring, and 10-field round-trip.
+- [x] T3.2 — Verify `SimulationDetailView` returns `merge_trace` in the response. Confirmed: `metrics` is a JSONField exposed as-is by `SimulationSerializer`/`SimulationDetailSerializer` — no whitelist blocks inner keys. Tested via API round-trip.
+- [x] T3.3 — Legacy backward compat: legacy `metrics` without `merge_trace` key serialises without error (200 OK). Also tested `metrics=None` (queued simulations).
 
 ## Phase P4 — Tests integration + docs + CHANGELOG
 
