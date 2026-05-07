@@ -256,6 +256,21 @@ mod tests {
         }
     }
 
+    /// R16.6 — Non-CC algorithm produces empty merge_trace.
+    #[test]
+    fn test_dla_merge_trace_empty() {
+        let params = DlaParams {
+            n_particles: 10,
+            ..Default::default()
+        };
+        let result = run_dla_internal(params, 42);
+        assert!(
+            result.merge_trace.is_empty(),
+            "DLA (non-CC) must produce empty merge_trace, got {} entries",
+            result.merge_trace.len()
+        );
+    }
+
     #[test]
     fn test_dla_fractal_dimension_range() {
         let params = DlaParams {
