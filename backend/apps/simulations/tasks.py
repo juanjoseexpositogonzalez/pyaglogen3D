@@ -1720,6 +1720,15 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "principal_moments": result.principal_moments.tolist(),
             "principal_axes": result.principal_axes.tolist(),
         }
+        # Persist per-merge diagnostic trace (R16.7). The attribute is
+        # always present on the binding (Vec<MergeTraceEntry> → PyList);
+        # non-CC algorithms return an empty list so the key is safe to
+        # include unconditionally. Legacy rows without the key are
+        # handled by the consumer (R16.8).
+        merge_trace = getattr(result, "merge_trace", None)
+        if merge_trace is not None:
+            simulation.metrics["merge_trace"] = list(merge_trace)
+
         simulation.execution_time_ms = result.execution_time_ms
         simulation.engine_version = aglogen_core.version()
 
