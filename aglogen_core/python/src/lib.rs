@@ -47,7 +47,7 @@ use aglogen_engine::projection::{
 };
 use aglogen_engine::simulation::dpo_distribution::{DpoDistribution, TargetKfDistribution};
 use aglogen_engine::simulation::gcca::compute_structure_factor;
-use aglogen_engine::simulation::result::SimulationResult;
+use aglogen_engine::simulation::result::{MergeTraceEntry, SimulationResult};
 use aglogen_engine::simulation::sintering::SinteringDistribution;
 
 // ============================================================================
@@ -311,6 +311,7 @@ pub struct PySimulationResult {
     pub dpo_used: Option<f64>,
     #[pyo3(get)]
     pub target_kf_used: Option<f64>,
+    pub merge_trace_data: Vec<MergeTraceEntry>,
 }
 
 #[pymethods]
@@ -350,6 +351,29 @@ impl PySimulationResult {
             .collect();
         PyArray2::from_vec2(py, &arr).unwrap()
     }
+    /// Per-merge diagnostic trace as a list of dicts (R16 spec).
+    /// Each dict has 10 fields: step, n1, n2, required_distance,
+    /// actual_distance, rg_after, rg_target, merge_type, retries,
+    /// bounding_check_passed. Empty list for non-CC algorithms.
+    #[getter]
+    fn merge_trace<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let trace_list = pyo3::types::PyList::empty(py);
+        for entry in &self.merge_trace_data {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("step", entry.step)?;
+            dict.set_item("n1", entry.n1)?;
+            dict.set_item("n2", entry.n2)?;
+            dict.set_item("required_distance", entry.required_distance)?;
+            dict.set_item("actual_distance", entry.actual_distance)?;
+            dict.set_item("rg_after", entry.rg_after)?;
+            dict.set_item("rg_target", entry.rg_target)?;
+            dict.set_item("merge_type", &entry.merge_type)?;
+            dict.set_item("retries", entry.retries)?;
+            dict.set_item("bounding_check_passed", entry.bounding_check_passed)?;
+            trace_list.append(dict)?;
+        }
+        Ok(trace_list)
+    }
 }
 
 impl From<SimulationResult> for PySimulationResult {
@@ -384,6 +408,7 @@ impl From<SimulationResult> for PySimulationResult {
             principal_axes_data: r.principal_axes,
             dpo_used: r.dpo_used,
             target_kf_used: r.target_kf_used,
+            merge_trace_data: r.merge_trace,
         }
     }
 }
@@ -2453,6 +2478,109 @@ mod tests {
         assert!(result.is_err());
         let err_msg = format!("{}", result.unwrap_err());
         assert!(err_msg.contains("Invalid kf_mode"));
+    }
+
+    // ── T2.1: merge_trace surfaces through PySimulationResult ────────
+    use aglogen_engine::simulation::result::MergeTraceEntry;
+
+    #[test]
+    fn merge_trace_preserved_in_py_simulation_result() {
+        // RED: PySimulationResult.merge_trace_data must carry the engine entries.
+        let trace = vec![
+            MergeTraceEntry {
+                step: 0,
+                n1: 1,
+                n2: 1,
+                required_distance: 2.0,
+                actual_distance: 1.98,
+                rg_after: 1.5,
+                rg_target: 1.4,
+                merge_type: "tunable".to_string(),
+                retries: 0,
+                bounding_check_passed: true,
+            },
+            MergeTraceEntry {
+                step: 1,
+                n1: 2,
+                n2: 1,
+                required_distance: 2.5,
+                actual_distance: 2.6,
+                rg_after: 2.1,
+                rg_target: 2.0,
+                merge_type: "ballistic".to_string(),
+                retries: 3,
+                bounding_check_passed: false,
+            },
+        ];
+        let sim_result = aglogen_engine::simulation::result::SimulationResult {
+            coordinates: vec![[0.0; 3]; 3],
+            radii: vec![1.0; 3],
+            rg_evolution: vec![1.0, 1.5, 2.0],
+            fractal_dimension: 1.8,
+            fractal_dimension_std: 0.1,
+            prefactor: 1.3,
+            porosity: 0.9,
+            coordination_mean: 2.0,
+            coordination_std: 0.5,
+            execution_time_ms: 100,
+            seed: 42,
+            anisotropy: 0.1,
+            asphericity: 0.05,
+            acylindricity: 0.02,
+            principal_moments: [1.0, 2.0, 3.0],
+            principal_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+            tunable_merges: 1,
+            ballistic_merges: 1,
+            max_retries_per_merge: 3,
+            dpo_used: Some(1.0),
+            target_kf_used: Some(1.3),
+            merge_trace: trace,
+        };
+        let py_result: super::PySimulationResult = sim_result.into();
+        // Must have 2 entries
+        assert_eq!(py_result.merge_trace_data.len(), 2);
+        // First entry: tunable
+        assert_eq!(py_result.merge_trace_data[0].step, 0);
+        assert_eq!(py_result.merge_trace_data[0].merge_type, "tunable");
+        assert_eq!(py_result.merge_trace_data[0].bounding_check_passed, true);
+        // Second entry: ballistic
+        assert_eq!(py_result.merge_trace_data[1].step, 1);
+        assert_eq!(py_result.merge_trace_data[1].merge_type, "ballistic");
+        assert_eq!(py_result.merge_trace_data[1].retries, 3);
+    }
+
+    #[test]
+    fn merge_trace_empty_for_non_cc_result() {
+        // Triangulation: non-CC result has empty trace.
+        let sim_result = aglogen_engine::simulation::result::SimulationResult {
+            coordinates: vec![[0.0; 3]],
+            radii: vec![1.0],
+            rg_evolution: vec![1.0],
+            fractal_dimension: 1.8,
+            fractal_dimension_std: 0.0,
+            prefactor: 1.0,
+            porosity: 0.0,
+            coordination_mean: 0.0,
+            coordination_std: 0.0,
+            execution_time_ms: 10,
+            seed: 1,
+            anisotropy: 0.0,
+            asphericity: 0.0,
+            acylindricity: 0.0,
+            principal_moments: [0.0; 3],
+            principal_axes: [[0.0; 3]; 3],
+            tunable_merges: 0,
+            ballistic_merges: 0,
+            max_retries_per_merge: 0,
+            dpo_used: None,
+            target_kf_used: None,
+            merge_trace: Vec::new(),
+        };
+        let py_result: super::PySimulationResult = sim_result.into();
+        assert!(
+            py_result.merge_trace_data.is_empty(),
+            "Non-CC sim must have empty merge_trace_data"
+        );
     }
 
     #[test]
