@@ -22,7 +22,7 @@ use super::metrics::{
     calculate_coordination, calculate_inertia_tensor, calculate_porosity,
     calculate_radius_of_gyration,
 };
-use super::result::SimulationResult;
+use super::result::{MergeTraceEntry, SimulationResult};
 use super::sintering::{sintered_contact_distance, SinteringDistribution};
 // Note: TunablePc seed strategy with Python context is not available in pure engine.
 // The seed cluster generation falls back to monomers when py is None.
@@ -919,6 +919,10 @@ pub fn run_tunable_cc_internal(
     let mut ballistic_merges: usize = 0;
     let mut max_retries_per_merge: usize = 0;
 
+    // Per-merge diagnostic trace (R16 — cc-tunable-merge-trace / PYA-14)
+    let mut merge_trace: Vec<MergeTraceEntry> = Vec::new();
+    let mut merge_count: usize = 0;
+
     // Step 2: Main aggregation loop with retry-then-ballistic policy (R3 spec).
     //
     // For each merge step:
@@ -1031,6 +1035,11 @@ pub fn run_tunable_cc_internal(
                 retries_this_merge = attempt;
                 tunable_merges += 1;
 
+                // R16: Measure actual COM-COM distance before merging clusters.
+                let actual_distance = impacted
+                    .center_of_mass
+                    .distance_to(&impactor.center_of_mass);
+
                 let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                     (impactor_idx, impacted_idx)
                 } else {
@@ -1042,6 +1051,23 @@ pub fn run_tunable_cc_internal(
 
                 let mut merged = impacted;
                 merged.merge_with(impactor);
+
+                // R16: Record merge trace entry after merge_with (which calls update_properties).
+                let n_total = (n_po1 + n_po2) as f64;
+                merge_trace.push(MergeTraceEntry {
+                    step: merge_count,
+                    n1: n_po1,
+                    n2: n_po2,
+                    required_distance,
+                    actual_distance,
+                    rg_after: merged.radius_of_gyration,
+                    rg_target: rp * (n_total / kf).powf(1.0 / df),
+                    merge_type: "tunable".to_string(),
+                    retries: retries_this_merge,
+                    bounding_check_passed: true,
+                });
+                merge_count += 1;
+
                 clusters.push(merged);
 
                 merge_success = true;
@@ -1069,8 +1095,16 @@ pub fn run_tunable_cc_internal(
             let impacted = clusters[impacted_idx].clone();
             let mut impactor = clusters[impactor_idx].clone();
 
+            let ballistic_n1 = impacted.n_particles();
+            let ballistic_n2 = impactor.n_particles();
+
             if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
                 ballistic_merges += 1;
+
+                // R16: Measure actual COM-COM distance for ballistic merge.
+                let actual_distance = impacted
+                    .center_of_mass
+                    .distance_to(&impactor.center_of_mass);
 
                 let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                     (impactor_idx, impacted_idx)
@@ -1083,6 +1117,24 @@ pub fn run_tunable_cc_internal(
 
                 let mut merged = impacted;
                 merged.merge_with(impactor);
+
+                // R16: Record ballistic merge trace entry.
+                // required_distance is 0.0 for ballistic merges (no power-law target).
+                let n_total = (ballistic_n1 + ballistic_n2) as f64;
+                merge_trace.push(MergeTraceEntry {
+                    step: merge_count,
+                    n1: ballistic_n1,
+                    n2: ballistic_n2,
+                    required_distance: 0.0,
+                    actual_distance,
+                    rg_after: merged.radius_of_gyration,
+                    rg_target: rp * (n_total / kf).powf(1.0 / df),
+                    merge_type: "ballistic".to_string(),
+                    retries: retries_this_merge,
+                    bounding_check_passed: false,
+                });
+                merge_count += 1;
+
                 clusters.push(merged);
 
                 merge_success = true;
@@ -1163,7 +1215,7 @@ pub fn run_tunable_cc_internal(
         max_retries_per_merge,
         dpo_used: Some(dpo_used),
         target_kf_used: Some(target_kf_used),
-        merge_trace: Vec::new(),
+        merge_trace,
     }
 }
 
@@ -2926,6 +2978,182 @@ mod tests {
             sintered_contacts > bare_only_contacts,
             "Sintered contacts ({sintered_contacts}) should outnumber bare-only contacts ({bare_only_contacts})"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Merge trace instrumentation (R16 — cc-tunable-merge-trace / PYA-14)
+    // ---------------------------------------------------------------
+
+    /// R16.1 — Trace length matches merge count for monomers.
+    #[test]
+    fn trace_length_matches_merge_count() {
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(result.coordinates.len(), 10);
+        // N monomers → N-1 merges
+        assert_eq!(
+            result.merge_trace.len(),
+            9,
+            "N=10 monomers must produce 9 merge trace entries, got {}",
+            result.merge_trace.len()
+        );
+    }
+
+    /// R16.2 — Tunable merges are discriminated from ballistic.
+    /// Tunable entries must have `merge_type == "tunable"` and `bounding_check_passed == true`.
+    #[test]
+    fn tunable_merges_discriminated() {
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert!(!result.merge_trace.is_empty(), "Trace must not be empty");
+
+        // At least some should be tunable
+        let tunable_entries: Vec<_> = result
+            .merge_trace
+            .iter()
+            .filter(|e| e.merge_type == "tunable")
+            .collect();
+
+        // With default retries (100) and Df=1.8, expect at least one tunable merge
+        assert!(
+            !tunable_entries.is_empty() || result.tunable_merges > 0,
+            "Expected at least one tunable merge with Df=1.8, N=10"
+        );
+
+        // Verify tunable entries have correct flags
+        for entry in &tunable_entries {
+            assert_eq!(entry.merge_type, "tunable");
+            assert!(
+                entry.bounding_check_passed,
+                "Tunable entries must have bounding_check_passed=true"
+            );
+        }
+
+        // Verify consistency: tunable count matches trace entries
+        let trace_tunable_count = result
+            .merge_trace
+            .iter()
+            .filter(|e| e.merge_type == "tunable")
+            .count();
+        let trace_ballistic_count = result
+            .merge_trace
+            .iter()
+            .filter(|e| e.merge_type == "ballistic")
+            .count();
+        assert_eq!(trace_tunable_count, result.tunable_merges);
+        assert_eq!(trace_ballistic_count, result.ballistic_merges);
+    }
+
+    /// R16.3 — Ballistic fallback flagged correctly.
+    #[test]
+    fn ballistic_fallback_flagged() {
+        // Use low Df + higher N + few retries to force some ballistic merges
+        let params = TunableCcParams {
+            n_particles: 50,
+            target_df: 1.4,
+            target_kf: 1.3,
+            max_merge_retries: 5,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert_eq!(result.coordinates.len(), 50);
+
+        let ballistic_entries: Vec<_> = result
+            .merge_trace
+            .iter()
+            .filter(|e| e.merge_type == "ballistic")
+            .collect();
+
+        assert!(
+            !ballistic_entries.is_empty(),
+            "With Df=1.4, N=50, max_retries=5, at least one ballistic fallback expected. \
+             Got {} tunable, {} ballistic",
+            result.tunable_merges,
+            result.ballistic_merges
+        );
+
+        for entry in &ballistic_entries {
+            assert!(
+                !entry.bounding_check_passed,
+                "Ballistic entries must have bounding_check_passed=false"
+            );
+        }
+    }
+
+    /// R16.9 — Retries recorded and within bounds.
+    #[test]
+    fn retries_recorded() {
+        let max_retries = 100;
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            max_merge_retries: max_retries,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        for (i, entry) in result.merge_trace.iter().enumerate() {
+            assert!(
+                entry.retries <= max_retries,
+                "Entry {i} retries={} exceeds max_merge_retries={}",
+                entry.retries,
+                max_retries
+            );
+        }
+    }
+
+    /// R16.5 — rg_after and rg_target populated.
+    #[test]
+    fn rg_fields_populated() {
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        assert!(!result.merge_trace.is_empty());
+        for (i, entry) in result.merge_trace.iter().enumerate() {
+            assert!(
+                entry.rg_after > 0.0,
+                "Entry {i}: rg_after must be > 0, got {}",
+                entry.rg_after
+            );
+            assert!(
+                entry.rg_target > 0.0,
+                "Entry {i}: rg_target must be > 0, got {}",
+                entry.rg_target
+            );
+        }
+    }
+
+    /// R16.1 — Step indices are sequential 0..N-2.
+    #[test]
+    fn trace_steps_sequential() {
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None);
+        for (i, entry) in result.merge_trace.iter().enumerate() {
+            assert_eq!(
+                entry.step, i,
+                "Entry {i} should have step={i}, got {}",
+                entry.step
+            );
+        }
     }
 
     /// T2.3 — Sintered aggregate with coeff=1.0 regression: identical
