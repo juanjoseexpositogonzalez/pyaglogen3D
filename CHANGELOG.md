@@ -1,3 +1,37 @@
+## cc-tunable-merge-trace (unreleased)
+
+### Added
+
+- **Per-step merge diagnostic trace** for CC tunable algorithm. `SimulationResult` and `Simulation.metrics` JSONField gain `merge_trace`: list of dicts with 10 fields per merge step (step, n1, n2, required_distance, actual_distance, rg_after, rg_target, merge_type tunable|ballistic, retries, bounding_check_passed).
+- **Drill-down API** returns merge_trace transparently when present (no serializer change needed — `metrics` is JSONField).
+- Foundation for PYA-14 Phase 2 (algorithmic fix). The trace lets us choose between Path B "adaptive d" and Path D "smart pair selection" with evidence.
+
+### Changed
+
+- `SimulationResult` (engine) gains `merge_trace: Vec<MergeTraceEntry>` field. Default empty for non-CC algorithms.
+- `tasks.py::run_simulation_task` extracts `merge_trace` from engine result into `Simulation.metrics`.
+- Python binding (`PySimulationResult`) exposes `merge_trace` as `PyList[PyDict]`.
+
+### Migration
+
+NO migration. Trace lives inside existing JSONField.
+
+### Backward compatibility
+
+- Legacy `Simulation` documents without `merge_trace` in metrics: API returns metrics dict without the key (treat as empty list).
+- Existing engine callers without trace handling: receive empty list (never None).
+- Storage: ~80 bytes per merge entry × N merges. Document as known overhead for large simulations.
+
+### NOT closed
+
+- Jira **PYA-14** stays OPEN. This cycle is Phase 1 (instrumentation). Phase 2 (algorithmic fix) is a separate cycle that will close the bug.
+
+### Known limitations
+
+- Trace not yet exposed in CSV export. Defer to follow-up.
+- No frontend visualisation. Defer to Phase 2.
+- For very large N (>1000), trace size grows linearly. Acceptable for current use cases.
+
 ## parametric-values-dpo-and-kf (unreleased)
 
 ### Added

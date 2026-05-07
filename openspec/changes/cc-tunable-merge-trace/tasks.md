@@ -23,6 +23,6 @@
 
 ## Phase P4 — Tests integration + docs + CHANGELOG
 
-- [ ] T4.1 — Cross-cutting integration test in `backend/tests/integration/test_merge_trace_pipeline.py`: run a CC tunable sim end-to-end (mock or real engine), fetch via API, assert trace structure correct (R16.7 + R16.8).
-- [ ] T4.2 — Documentation `docs/cc-tunable-merge-trace.md` (~50-80 lines): why (PYA-14 Phase 1), the 10 trace fields, how to consume programmatically, storage size note (~80 KB for N=1000), Phase 2 preview.
-- [ ] T4.3 — CHANGELOG entry under `cc-tunable-merge-trace (unreleased)`: Added trace, Changed `SimulationResult` shape (additive), Backward compat (legacy results emit `[]`), no Jira close (PYA-14 stays open for Phase 2).
+- [x] T4.1 — Cross-cutting integration test in `backend/tests/integration/test_merge_trace_pipeline.py`: run a CC tunable sim end-to-end (mock or real engine), fetch via API, assert trace structure correct (R16.7 + R16.8).
+- [x] T4.2 — Documentation `docs/cc-tunable-merge-trace.md` (~50-80 lines): why (PYA-14 Phase 1), the 10 trace fields, how to consume programmatically, storage size note (~80 KB for N=1000), Phase 2 preview.
+- [x] T4.3 — CHANGELOG entry under `cc-tunable-merge-trace (unreleased)`: Added trace, Changed `SimulationResult` shape (additive), Backward compat (legacy results emit `[]`), no Jira close (PYA-14 stays open for Phase 2).
