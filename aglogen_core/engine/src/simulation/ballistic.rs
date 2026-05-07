@@ -236,6 +236,7 @@ pub fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationR
         max_retries_per_merge: 0,
         dpo_used: None,
         target_kf_used: None,
+        merge_trace: Vec::new(),
     }
 }
 

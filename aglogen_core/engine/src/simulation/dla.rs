@@ -230,6 +230,7 @@ pub fn run_dla_internal(params: DlaParams, seed: u64) -> SimulationResult {
         max_retries_per_merge: 0,
         dpo_used: None,
         target_kf_used: None,
+        merge_trace: Vec::new(),
     }
 }
 

@@ -399,6 +399,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         max_retries_per_merge: 0,
         dpo_used: None,
         target_kf_used: None,
+        merge_trace: Vec::new(),
     }
 }
 

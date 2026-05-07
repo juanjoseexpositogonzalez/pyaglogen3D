@@ -66,6 +66,10 @@ pub struct SimulationResult {
     /// `Some(v)` for CC-tunable (sampled from `target_kf_distribution`);
     /// `None` for algorithms without kf distribution support.
     pub target_kf_used: Option<f64>,
+    // Per-merge diagnostic trace (R16 — cc-tunable-merge-trace / PYA-14)
+    /// Per-step merge diagnostic records. One entry per successful merge
+    /// (tunable OR ballistic fallback). Non-CC algorithms emit `Vec::new()`.
+    pub merge_trace: Vec<MergeTraceEntry>,
 }
 
 impl SimulationResult {}
@@ -87,6 +91,35 @@ mod tests {
         assert_eq!(e.merge_type, "");
         assert_eq!(e.retries, 0);
         assert_eq!(e.bounding_check_passed, false);
+    }
+
+    #[test]
+    fn simulation_result_merge_trace_defaults_empty() {
+        let r = SimulationResult {
+            coordinates: Vec::new(),
+            radii: Vec::new(),
+            rg_evolution: Vec::new(),
+            fractal_dimension: 0.0,
+            fractal_dimension_std: 0.0,
+            prefactor: 0.0,
+            porosity: 0.0,
+            coordination_mean: 0.0,
+            coordination_std: 0.0,
+            execution_time_ms: 0,
+            seed: 0,
+            anisotropy: 0.0,
+            asphericity: 0.0,
+            acylindricity: 0.0,
+            principal_moments: [0.0; 3],
+            principal_axes: [[0.0; 3]; 3],
+            tunable_merges: 0,
+            ballistic_merges: 0,
+            max_retries_per_merge: 0,
+            dpo_used: None,
+            target_kf_used: None,
+            merge_trace: Vec::new(),
+        };
+        assert!(r.merge_trace.is_empty());
     }
 
     #[test]

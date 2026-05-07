@@ -1163,6 +1163,7 @@ pub fn run_tunable_cc_internal(
         max_retries_per_merge,
         dpo_used: Some(dpo_used),
         target_kf_used: Some(target_kf_used),
+        merge_trace: Vec::new(),
     }
 }
 
