@@ -311,7 +311,8 @@ describe('<FraktalBatchImageDetail />', () => {
     it('calls reanalyzeBatchImage and navigates to the new analysis on click', async () => {
       mockGetBatchImage.mockResolvedValue(makeImageDetail())
       mockReanalyzeBatchImage.mockResolvedValue({
-        analysis_id: 'new-analysis-999',
+        id: 'new-analysis-999',
+        status: 'queued',
       })
       renderComponent()
 

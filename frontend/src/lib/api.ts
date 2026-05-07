@@ -1148,14 +1148,15 @@ export const fraktalApi = {
 
   /**
    * Re-analyze a batch image: POST creates a new FraktalAnalysis from the
-   * cached PNG + inherited dpo.
+   * cached PNG + inherited dpo. Returns { id, status } per backend contract
+   * (frente 6 batch_image_reanalyze_view).
    */
   reanalyzeBatchImage: (
     projectId: string,
     batchId: string,
     index: number
   ) =>
-    request<{ analysis_id: string }>(
+    request<{ id: string; status: string }>(
       `/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/reanalyze/`,
       { method: 'POST' }
     ),

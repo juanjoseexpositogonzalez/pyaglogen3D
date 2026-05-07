@@ -107,12 +107,13 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const handleReanalyze = useCallback(async () => {
     setReanalyzing(true)
     try {
-      const { analysis_id } = await fraktalApi.reanalyzeBatchImage(
+      // Backend returns { id, status } — frente 6 contract.
+      const { id } = await fraktalApi.reanalyzeBatchImage(
         projectId,
         batchId,
         index
       )
-      router.push(`/projects/${projectId}/fraktal/${analysis_id}`)
+      router.push(`/projects/${projectId}/fraktal/${id}`)
     } catch (err) {
       console.error('Re-analyze failed:', err)
     } finally {
