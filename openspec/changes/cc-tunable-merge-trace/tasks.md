@@ -13,7 +13,7 @@
 
 - [x] T2.1 — In `aglogen_core/python/src/lib.rs::result_to_pydict` (or wherever `SimulationResult` is converted to Python), add `merge_trace` as a `PyList<PyDict>` with the 10 fields per spec. Each `MergeTraceEntry` becomes one dict.
 - [x] T2.2 — Cargo test for the conversion (smoke test asserting dict structure).
-- [ ] T2.3 — Maturin rebuild into backend venv: `source backend/.venv/bin/activate && cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release`. Verify with `python -c "import aglogen_core; help(aglogen_core.run_tunable_cc)"` showing the new field in the result.
+- [x] T2.3 — Maturin rebuild into backend venv: `source backend/.venv/bin/activate && cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 maturin develop --release`. Verify with `python -c "import aglogen_core; help(aglogen_core.run_tunable_cc)"` showing the new field in the result.
 
 ## Phase P3 — Backend: persistence + drill-down
 
