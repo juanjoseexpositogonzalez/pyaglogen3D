@@ -370,6 +370,10 @@ impl PySimulationResult {
             dict.set_item("merge_type", &entry.merge_type)?;
             dict.set_item("retries", entry.retries)?;
             dict.set_item("bounding_check_passed", entry.bounding_check_passed)?;
+            // Phase 3 fields (optional — None skipped for backward compat)
+            if let Some(overshoot) = entry.overshoot_pct {
+                dict.set_item("overshoot_pct", overshoot)?;
+            }
             trace_list.append(dict)?;
         }
         Ok(trace_list)
@@ -2498,6 +2502,7 @@ mod tests {
                 merge_type: "tunable".to_string(),
                 retries: 0,
                 bounding_check_passed: true,
+                overshoot_pct: None,
             },
             MergeTraceEntry {
                 step: 1,
@@ -2510,6 +2515,7 @@ mod tests {
                 merge_type: "ballistic".to_string(),
                 retries: 3,
                 bounding_check_passed: false,
+                overshoot_pct: None,
             },
         ];
         let sim_result = aglogen_engine::simulation::result::SimulationResult {
@@ -2531,6 +2537,8 @@ mod tests {
             principal_axes: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
             tunable_merges: 1,
             ballistic_merges: 1,
+            adaptive_merges: 0,
+            no_feasible_pair_events: 0,
             max_retries_per_merge: 3,
             dpo_used: Some(1.0),
             target_kf_used: Some(1.3),
@@ -2571,6 +2579,8 @@ mod tests {
             principal_axes: [[0.0; 3]; 3],
             tunable_merges: 0,
             ballistic_merges: 0,
+            adaptive_merges: 0,
+            no_feasible_pair_events: 0,
             max_retries_per_merge: 0,
             dpo_used: None,
             target_kf_used: None,

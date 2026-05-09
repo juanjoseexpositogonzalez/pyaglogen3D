@@ -233,6 +233,8 @@ pub fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationR
         principal_axes: inertia.principal_axes,
         tunable_merges: 0,
         ballistic_merges: 0,
+        adaptive_merges: 0,
+        no_feasible_pair_events: 0,
         max_retries_per_merge: 0,
         dpo_used: None,
         target_kf_used: None,

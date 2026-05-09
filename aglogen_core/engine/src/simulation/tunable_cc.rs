@@ -1065,6 +1065,7 @@ pub fn run_tunable_cc_internal(
                     merge_type: "tunable".to_string(),
                     retries: retries_this_merge,
                     bounding_check_passed: true,
+                    overshoot_pct: None,
                 });
                 merge_count += 1;
 
@@ -1146,6 +1147,7 @@ pub fn run_tunable_cc_internal(
                     merge_type: "ballistic".to_string(),
                     retries: retries_this_merge,
                     bounding_check_passed: false,
+                    overshoot_pct: None,
                 });
                 merge_count += 1;
 
@@ -1226,6 +1228,8 @@ pub fn run_tunable_cc_internal(
         principal_axes: inertia.principal_axes,
         tunable_merges,
         ballistic_merges,
+        adaptive_merges: 0,
+        no_feasible_pair_events: 0,
         max_retries_per_merge,
         dpo_used: Some(dpo_used),
         target_kf_used: Some(target_kf_used),

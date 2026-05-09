@@ -20,12 +20,12 @@ Fix CC Tunable Df<2 non-convergence (mean Df=1.98 vs target 1.7, +16.4% bias) vi
 
 | ID | Task | Size | Stack |
 |----|------|------|-------|
-| T1.1 | RED: Write test for `MergeTraceEntry` with new optional fields `overshoot_pct: Option<f64>` and ability to represent `merge_type = "adaptive"`. Run `cargo test`, expect compile fail. | M | [engine] |
-| T1.2 | GREEN: Add the field + variant. Tests pass. | M | [engine] |
-| T1.3 | RED: Test `no_feasible_pair` event representation in trace (decide between extra optional field or separate event vec — design.md picked the former). | M | [engine] |
-| T1.4 | GREEN: Implement minimum. | M | [engine] |
-| T1.5 | REFACTOR: Tidy serde derives, ensure backward compat for missing fields (deserialize with defaults). | S | [engine] |
-| T1.6 | Verify Python binding (`PySimulationResult` in `aglogen_core/python/src/lib.rs` or wherever) exposes the new fields. Likely no change needed if it's pass-through JSON. | S | [engine] |
+| T1.1 | ~~RED: Write test for `MergeTraceEntry` with new optional fields~~ | M | [engine] | ✅ |
+| T1.2 | ~~GREEN: Add the field + variant. Tests pass.~~ | M | [engine] | ✅ |
+| T1.3 | ~~RED: Test `no_feasible_pair` event representation in trace~~ | M | [engine] | ✅ |
+| T1.4 | ~~GREEN: Implement minimum.~~ | M | [engine] | ✅ |
+| T1.5 | ~~REFACTOR: Tidy serde derives, ensure backward compat~~ | S | [engine] | ✅ |
+| T1.6 | ~~Verify Python binding exposes the new fields~~ | S | [engine] | ✅ |
 
 ---
 
