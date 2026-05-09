@@ -28,10 +28,12 @@ class AIProviderConfigSerializer(serializers.ModelSerializer):
             "model_name",
             "is_default",
             "is_active",
+            "available_models",
+            "models_refreshed_at",
             "created_at",
             "updated_at",
         ]
-        read_only_fields = ["id", "created_at", "updated_at"]
+        read_only_fields = ["id", "available_models", "models_refreshed_at", "created_at", "updated_at"]
 
     def create(self, validated_data: dict) -> AIProviderConfig:
         """Create a new provider config with encrypted API key."""
@@ -67,6 +69,8 @@ class AIProviderConfigListSerializer(serializers.ModelSerializer):
             "model_name",
             "is_default",
             "is_active",
+            "available_models",
+            "models_refreshed_at",
             "created_at",
             "updated_at",
         ]

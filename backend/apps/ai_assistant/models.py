@@ -92,6 +92,16 @@ class AIProviderConfig(models.Model):
         default=True,
         help_text="Whether this configuration is active",
     )
+    available_models = models.JSONField(
+        default=list,
+        blank=True,
+        help_text="Cached list of models available from this provider",
+    )
+    models_refreshed_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        help_text="When the model catalog was last refreshed",
+    )
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
