@@ -69,3 +69,6 @@ htmlcov/
 # Zone identifiers (WSL)
 *:Zone.Identifier
 frontend/tsconfig.tsbuildinfo
+
+# Local validation/automation scripts (not versioned)
+scripts/
