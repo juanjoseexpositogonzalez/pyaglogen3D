@@ -5,6 +5,7 @@ from typing import Any
 
 import anthropic
 import openai
+from django.utils import timezone
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
 from rest_framework.permissions import IsAuthenticated
@@ -25,6 +26,12 @@ from .serializers import (
 )
 from .services.ai_service import AIService
 from .services.encryption import get_encryption_service
+from .services.model_catalog import (
+    ProviderAuthError,
+    ProviderRateLimitError,
+    ProviderUnavailableError,
+    fetch_models,
+)
 from .services.providers import ProviderFactory, StopReason
 from .tools.context import ContextManager
 from .tools.executor import ToolExecutor
@@ -140,11 +147,37 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
                     status=status.HTTP_400_BAD_REQUEST,
                 )
 
-            return Response({
+            # Auth succeeded — attempt to fetch model catalog
+            models_list: list = []
+            models_error: str | None = None
+            try:
+                models_list = fetch_models(config.provider, api_key)
+                config.available_models = models_list
+                config.models_refreshed_at = timezone.now()
+                config.save(update_fields=["available_models", "models_refreshed_at"])
+            except Exception as catalog_exc:
+                # Catalog failure does NOT mask auth success
+                logger.warning(
+                    f"Model catalog fetch failed for config {config.id}: {catalog_exc}",
+                    extra={"user_id": request.user.id, "provider": config.provider},
+                )
+                models_error = str(catalog_exc)
+
+            resp_data = {
                 "success": True,
                 "message": f"Connected to {config.get_provider_display()} ({config.model_name})",
                 "response": response.text[:100] if response.text else "",
-            })
+                "models": models_list,
+                "refreshed_at": (
+                    config.models_refreshed_at.isoformat()
+                    if config.models_refreshed_at
+                    else None
+                ),
+            }
+            if models_error:
+                resp_data["models_error"] = models_error
+
+            return Response(resp_data)
 
         except anthropic.AuthenticationError:
             logger.warning(
@@ -238,6 +271,70 @@ class AIProviderConfigViewSet(viewsets.ModelViewSet):
         config.is_default = True
         config.save()
         return Response({"message": f"{config.get_provider_display()} set as default"})
+
+    @action(detail=True, methods=["post"])
+    def refresh_models(self, request: Request, pk=None) -> Response:
+        """Refresh the model catalog for a specific provider.
+
+        Decrypts the stored API key, fetches the latest model list
+        from the provider, and persists it.
+
+        Returns:
+            200 with models list on success.
+            401 if the API key is invalid.
+            429 if rate limited.
+            503 if the provider is unavailable.
+        """
+        config = self.get_object()
+
+        try:
+            encryption = get_encryption_service()
+            api_key = encryption.decrypt(config.api_key_encrypted)
+            models_list = fetch_models(config.provider, api_key)
+
+            config.available_models = models_list
+            config.models_refreshed_at = timezone.now()
+            config.save(update_fields=["available_models", "models_refreshed_at"])
+
+            return Response({
+                "success": True,
+                "models": models_list,
+                "refreshed_at": config.models_refreshed_at.isoformat(),
+            })
+
+        except ProviderAuthError as exc:
+            return Response(
+                {"success": False, "message": f"Invalid API key: {exc}"},
+                status=status.HTTP_401_UNAUTHORIZED,
+            )
+
+        except ProviderUnavailableError as exc:
+            return Response(
+                {"success": False, "message": f"Provider unavailable: {exc}"},
+                status=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        except ProviderRateLimitError as exc:
+            return Response(
+                {"success": False, "message": f"Rate limit exceeded: {exc}"},
+                status=status.HTTP_429_TOO_MANY_REQUESTS,
+            )
+
+        except ValueError as exc:
+            return Response(
+                {"success": False, "message": str(exc)},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        except Exception as exc:
+            logger.exception(
+                f"Unexpected error refreshing models for config {config.id}",
+                extra={"user_id": request.user.id, "provider": config.provider},
+            )
+            return Response(
+                {"success": False, "message": "An unexpected error occurred."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 
 class AIAccessCheckView(APIView):

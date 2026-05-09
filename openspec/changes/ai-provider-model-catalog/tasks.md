@@ -27,9 +27,9 @@
 
 ## Phase 3: View layer + API endpoints — backend integration
 
-- [ ] 3.1 **[backend, M]** Modify `test_connection` in `views.py`: on auth success, call `fetch_models(provider_name, api_key)`, persist to `available_models` + `models_refreshed_at`. On catalog failure: log warning, return `models: []` and `models_error` field — do NOT mask auth success. On auth failure: return 400 with no catalog mutation.
-- [ ] 3.2 **[backend, M]** Add `refresh_models` action to `AIProviderConfigViewSet`: `POST /api/v1/ai/providers/{id}/refresh-models/`. Decrypt stored key, call `fetch_models`, persist, return `{success, models, refreshed_at}`. Map exceptions: `ProviderAuthError`→401, `ProviderUnavailableError`→503, `ProviderRateLimitError`→429. Add `@action(detail=True, methods=["post"])`.
-- [ ] 3.3 **[backend, L]** Integration tests: mock `fetch_models` at the service level. Assert `test_connection` success path persists catalog and returns new fields. Assert `refresh_models` fetches fresh list. Assert error paths return correct HTTP status codes and do not mutate `available_models`. Run: `backend/.venv/bin/pytest backend/apps/ai_assistant/tests/ -v`.
+- [x] 3.1 **[backend, M]** Modify `test_connection` in `views.py`: on auth success, call `fetch_models(provider_name, api_key)`, persist to `available_models` + `models_refreshed_at`. On catalog failure: log warning, return `models: []` and `models_error` field — do NOT mask auth success. On auth failure: return 400 with no catalog mutation.
+- [x] 3.2 **[backend, M]** Add `refresh_models` action to `AIProviderConfigViewSet`: `POST /api/v1/ai/providers/{id}/refresh_models/`. Decrypt stored key, call `fetch_models`, persist, return `{success, models, refreshed_at}`. Map exceptions: `ProviderAuthError`→401, `ProviderUnavailableError`→503, `ProviderRateLimitError`→429. Add `@action(detail=True, methods=["post"])`.
+- [x] 3.3 **[backend, L]** Integration tests: mock `fetch_models` at the service level. Assert `test_connection` success path persists catalog and returns new fields. Assert `refresh_models` fetches fresh list. Assert error paths return correct HTTP status codes and do not mutate `available_models`. Run: `backend/.venv/bin/pytest backend/apps/ai_assistant/tests/ -v`.
 
 ---
 
