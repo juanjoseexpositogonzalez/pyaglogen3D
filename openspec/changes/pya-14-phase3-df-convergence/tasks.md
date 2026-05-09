@@ -51,11 +51,11 @@ Fix CC Tunable Df<2 non-convergence (mean Df=1.98 vs target 1.7, +16.4% bias) vi
 
 | ID | Task | Size | Stack |
 |----|------|------|-------|
-| T3.1 | RED: Test `emit_adaptive_merge(c1, c2, max_achievable, required, trace)` populates trace correctly (merge_type=adaptive, overshoot_pct correct, actual_distance >= required_distance) | M | [engine] |
-| T3.2 | GREEN: Implement | M | [engine] |
-| T3.3 | RED: Test no_feasible_pair event emission (trace gets event entry, no merge added to result) | M | [engine] |
-| T3.4 | GREEN: Implement | M | [engine] |
-| T3.5 | REFACTOR: Consolidate trace-emission code paths | S | [engine] |
+| T3.1 | ~~RED: Test `emit_adaptive_merge_entry` populates trace correctly~~ | M | [engine] | ✅ |
+| T3.2 | ~~GREEN: Implement~~ | M | [engine] | ✅ |
+| T3.3 | ~~RED: Test no_feasible_pair event emission~~ | M | [engine] | ✅ |
+| T3.4 | ~~GREEN: Implement~~ | M | [engine] | ✅ |
+| T3.5 | ~~REFACTOR: Consolidate trace-emission code paths~~ | S | [engine] | ✅ |
 
 ---
 

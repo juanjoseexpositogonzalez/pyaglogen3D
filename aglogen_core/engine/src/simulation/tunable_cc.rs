@@ -1418,6 +1418,64 @@ pub(crate) fn select_pair_smart<R: Rng>(
     }
 }
 
+/// Emit an adaptive merge trace entry.
+///
+/// Called when the adaptive fallback engages (no feasible pair or retries exhausted).
+/// Places cluster2's COM at `max_achievable_distance` from cluster1's COM along
+/// a random direction, recording the overshoot percentage.
+///
+/// Returns the trace entry for the caller to push into the trace vec.
+pub(crate) fn emit_adaptive_merge_entry(
+    step: usize,
+    n1: usize,
+    n2: usize,
+    max_achievable: f64,
+    required_distance: f64,
+    rg_after: f64,
+    rg_target: f64,
+    retries: usize,
+) -> MergeTraceEntry {
+    let actual_distance = max_achievable;
+    let overshoot_pct = if required_distance > 0.0 {
+        (actual_distance - required_distance) / required_distance
+    } else {
+        0.0
+    };
+    MergeTraceEntry {
+        step,
+        n1,
+        n2,
+        required_distance,
+        actual_distance,
+        rg_after,
+        rg_target,
+        merge_type: "adaptive".to_string(),
+        retries,
+        bounding_check_passed: false,
+        overshoot_pct: Some(overshoot_pct),
+    }
+}
+
+/// Emit a no_feasible_pair event trace entry.
+///
+/// This is a diagnostic-only entry indicating that at a given step no feasible
+/// pair could be found. No merge geometry is recorded.
+pub(crate) fn emit_no_feasible_pair_entry(step: usize, pool_size: usize) -> MergeTraceEntry {
+    MergeTraceEntry {
+        step,
+        n1: pool_size, // pool_size stored in n1 for this event type
+        n2: 0,
+        required_distance: 0.0,
+        actual_distance: 0.0,
+        rg_after: 0.0,
+        rg_target: 0.0,
+        merge_type: "no_feasible_pair".to_string(),
+        retries: 0,
+        bounding_check_passed: false,
+        overshoot_pct: None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3494,5 +3552,69 @@ mod tests {
                 panic!("Expected AllInfeasible for compact clusters at low Df");
             }
         }
+    }
+
+    // ── Phase 3: Adaptive Merge tests (PYA-14 Phase 3) ───────────────
+
+    /// T3.1 — emit_adaptive_merge_entry populates trace correctly.
+    #[test]
+    fn test_emit_adaptive_merge_entry_correct_fields() {
+        let entry = emit_adaptive_merge_entry(
+            10,    // step
+            5,     // n1
+            3,     // n2
+            6.0,   // max_achievable
+            5.0,   // required_distance
+            3.5,   // rg_after
+            3.2,   // rg_target
+            100,   // retries
+        );
+        assert_eq!(entry.merge_type, "adaptive");
+        assert_eq!(entry.step, 10);
+        assert_eq!(entry.n1, 5);
+        assert_eq!(entry.n2, 3);
+        assert_eq!(entry.actual_distance, 6.0);
+        assert_eq!(entry.required_distance, 5.0);
+        // overshoot_pct = (6.0 - 5.0) / 5.0 = 0.2
+        assert!((entry.overshoot_pct.unwrap() - 0.2).abs() < 1e-10);
+        assert!(entry.actual_distance >= entry.required_distance, "Overshoot contract");
+    }
+
+    /// T3.1 — Overshoot contract: actual >= required.
+    #[test]
+    fn test_emit_adaptive_merge_entry_overshoot_contract() {
+        let entry = emit_adaptive_merge_entry(0, 10, 10, 12.5, 10.0, 5.0, 4.8, 50);
+        assert!(entry.actual_distance >= entry.required_distance);
+        assert!(entry.overshoot_pct.unwrap() >= 0.0);
+    }
+
+    /// T3.1 — Zero required_distance edge case (no division by zero).
+    #[test]
+    fn test_emit_adaptive_merge_entry_zero_required() {
+        let entry = emit_adaptive_merge_entry(0, 1, 1, 2.0, 0.0, 1.0, 1.0, 0);
+        assert_eq!(entry.overshoot_pct, Some(0.0)); // 0 when required=0
+    }
+
+    /// T3.3 — emit_no_feasible_pair_entry has correct fields.
+    #[test]
+    fn test_emit_no_feasible_pair_entry() {
+        let entry = emit_no_feasible_pair_entry(42, 15);
+        assert_eq!(entry.merge_type, "no_feasible_pair");
+        assert_eq!(entry.step, 42);
+        assert_eq!(entry.n1, 15); // pool_size
+        assert_eq!(entry.n2, 0);
+        assert_eq!(entry.actual_distance, 0.0);
+        assert_eq!(entry.required_distance, 0.0);
+        assert_eq!(entry.overshoot_pct, None);
+    }
+
+    /// T3.3 — no_feasible_pair event does NOT have merge geometry.
+    #[test]
+    fn test_emit_no_feasible_pair_no_merge_geometry() {
+        let entry = emit_no_feasible_pair_entry(100, 3);
+        // No merge geometry means rg_after, rg_target, actual_distance all 0
+        assert_eq!(entry.rg_after, 0.0);
+        assert_eq!(entry.rg_target, 0.0);
+        assert_eq!(entry.actual_distance, 0.0);
     }
 }
