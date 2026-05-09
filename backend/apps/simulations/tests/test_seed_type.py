@@ -162,6 +162,105 @@ class TestSeedTypeSerializer:
         assert serializer.data["seed_type"] == "dimers"
 
 
+class TestSeedTypeNestedLift:
+    """PYA-14 Phase 2 — R17: seed_type nested inside parameters is lifted to model field.
+
+    The frontend sends seed_type inside the parameters dict (SimulationForm.tsx:711).
+    The serializer create() must pop it from parameters and set the model field.
+    Precedence: nested > top-level > default("monomers").
+    """
+
+    def test_create_lifts_nested_seed_type_to_model_field(
+        self, project: Project
+    ) -> None:
+        """R17: parameters.seed_type='dimers' is lifted to Simulation.seed_type
+        and removed from the persisted parameters JSON."""
+        serializer = SimulationSerializer(
+            data={
+                "algorithm": "tunable_cc",
+                "parameters": {"n_particles": 100, "seed_type": "dimers"},
+                "seed": 42,
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        sim = serializer.save(project=project)
+        sim.refresh_from_db()
+        assert sim.seed_type == "dimers"
+        assert "seed_type" not in sim.parameters
+
+    def test_create_top_level_seed_type_still_works_legacy(
+        self, project: Project
+    ) -> None:
+        """R17 backward compat: top-level seed_type='trimers' (no nested) is preserved."""
+        serializer = SimulationSerializer(
+            data={
+                "algorithm": "tunable_cc",
+                "parameters": {"n_particles": 100},
+                "seed": 42,
+                "seed_type": "trimers",
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        sim = serializer.save(project=project)
+        sim.refresh_from_db()
+        assert sim.seed_type == "trimers"
+
+    def test_create_nested_wins_over_top_level(self, project: Project) -> None:
+        """R17 precedence: nested seed_type='dimers' wins over top-level 'monomers'."""
+        serializer = SimulationSerializer(
+            data={
+                "algorithm": "tunable_cc",
+                "parameters": {"n_particles": 100, "seed_type": "dimers"},
+                "seed": 42,
+                "seed_type": "monomers",  # top-level — loses to nested
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        sim = serializer.save(project=project)
+        sim.refresh_from_db()
+        assert sim.seed_type == "dimers"
+        assert "seed_type" not in sim.parameters
+
+    def test_create_defaults_to_monomers_when_neither_present(
+        self, project: Project
+    ) -> None:
+        """R17 default: no seed_type anywhere → model defaults to 'monomers'."""
+        serializer = SimulationSerializer(
+            data={
+                "algorithm": "tunable_cc",
+                "parameters": {"n_particles": 100},
+                "seed": 42,
+            }
+        )
+        assert serializer.is_valid(), serializer.errors
+        sim = serializer.save(project=project)
+        sim.refresh_from_db()
+        assert sim.seed_type == "monomers"
+
+    def test_create_invalid_nested_seed_type_returns_400(
+        self, project: Project
+    ) -> None:
+        """R17.5: invalid nested seed_type='foo' → ValidationError at create(), no sim.
+
+        The nested value lives in the parameters JSON, so DRF's ChoiceField
+        validation doesn't catch it. The lift in create() MUST validate and
+        raise serializers.ValidationError for invalid values.
+        """
+        from rest_framework.exceptions import ValidationError
+
+        serializer = SimulationSerializer(
+            data={
+                "algorithm": "tunable_cc",
+                "parameters": {"n_particles": 100, "seed_type": "foo"},
+                "seed": 42,
+            }
+        )
+        assert serializer.is_valid(), serializer.errors  # JSON params pass field-level
+        with pytest.raises(ValidationError):
+            serializer.save(project=project)
+        assert Simulation.objects.filter(seed_type="foo").count() == 0
+
+
 def _fake_engine_result() -> SimpleNamespace:
     """Minimal stand-in for ``aglogen_core.run_tunable_cc`` return value."""
     coordinates = np.zeros((2, 3), dtype=np.float64)

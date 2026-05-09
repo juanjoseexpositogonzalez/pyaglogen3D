@@ -138,6 +138,26 @@ class SimulationSerializer(serializers.ModelSerializer):
                 # persist it going forward.
                 params.pop(PARAM_KEY_RADIUS_LEGACY, None)
             params[PARAM_KEY_SCHEMA_VERSION] = SCHEMA_VERSION_CURRENT
+
+            # PYA-14 Phase 2: lift seed_type from nested parameters.
+            # Frontend sends seed_type inside parameters (SimulationForm.tsx:711);
+            # legacy/scripted callers use top-level field. Nested wins (R17
+            # contract). pop() removes the key from the JSON blob to avoid a
+            # stale duplicate.
+            if "seed_type" in params:
+                nested_seed_type = params.pop("seed_type")
+                valid_choices = {
+                    c[0] for c in Simulation._meta.get_field("seed_type").choices
+                }
+                if nested_seed_type not in valid_choices:
+                    raise serializers.ValidationError(
+                        {
+                            "seed_type": f"'{nested_seed_type}' is not a valid seed type. "
+                            f"Choose from: {sorted(valid_choices)}."
+                        }
+                    )
+                validated_data["seed_type"] = nested_seed_type
+
             validated_data["parameters"] = params
 
         return super().create(validated_data)
