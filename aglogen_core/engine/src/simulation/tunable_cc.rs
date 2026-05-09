@@ -14,6 +14,20 @@ use std::time::Instant;
 use rand::seq::SliceRandom;
 use rand::Rng;
 
+/// Feature flag for Phase 3 algorithm (R20 spec).
+///
+/// Default: `true` (Phase 3 active — smart pair selection + adaptive fallback).
+/// Set env var `CC_TUNABLE_USE_PHASE3_ALGORITHM=false` to revert to Phase 2 behavior.
+/// Parsed once at simulation init, NOT at compile time.
+const USE_PHASE3_ALGORITHM_DEFAULT: bool = true;
+
+fn read_phase3_flag() -> bool {
+    match std::env::var("CC_TUNABLE_USE_PHASE3_ALGORITHM") {
+        Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => USE_PHASE3_ALGORITHM_DEFAULT,
+    }
+}
+
 use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_point_on_sphere};
 
@@ -914,9 +928,14 @@ pub fn run_tunable_cc_internal(
     let mut rg_evolution = Vec::new();
     let mut n_values = Vec::new();
 
+    // Feature flag: Phase 3 algorithm (R20 spec)
+    let use_phase3 = read_phase3_flag();
+
     // Diagnostic metadata counters (R7 spec)
     let mut tunable_merges: usize = 0;
     let mut ballistic_merges: usize = 0;
+    let mut adaptive_merges: usize = 0;
+    let mut no_feasible_pair_events: usize = 0;
     let mut max_retries_per_merge: usize = 0;
 
     // Per-merge diagnostic trace (R16 — cc-tunable-merge-trace / PYA-14)
@@ -926,9 +945,8 @@ pub fn run_tunable_cc_internal(
     // Step 2: Main aggregation loop with retry-then-ballistic policy (R3 spec).
     //
     // For each merge step:
-    //   1. Pick a random cluster pair and attempt tunable geometric merge.
-    //   2. On failure: pick a NEW random pair, re-sample direction, retry.
-    //   3. After `max_merge_retries` exhausted: ballistic fallback for this step.
+    //   [Phase 3 flag=true]: Smart pair selection + adaptive fallback
+    //   [Phase 3 flag=false]: Legacy random pair + retry + ballistic (Phase 2)
     let mut iterations = 0;
     let max_iterations = params.n_particles * 1000;
 
@@ -938,6 +956,198 @@ pub fn run_tunable_cc_internal(
         let sintering_coeff = params.sintering.sample(&mut rng);
         let mut merge_success = false;
         let mut retries_this_merge: usize = 0;
+
+        // ── Phase 3 algorithm branch (smart pair selection + adaptive fallback) ──
+        if use_phase3 {
+            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng);
+
+            match smart_result {
+                SmartPairResult::Feasible(pair) => {
+                    // Feasible pair found — use it with retry loop for placement
+                    let (impacted_idx, impactor_idx) =
+                        if clusters[pair.idx1].n_particles() >= clusters[pair.idx2].n_particles() {
+                            (pair.idx1, pair.idx2)
+                        } else {
+                            (pair.idx2, pair.idx1)
+                        };
+
+                    let mut impacted = clusters[impacted_idx].clone();
+                    let mut impactor = clusters[impactor_idx].clone();
+                    let n_po1 = impacted.n_particles();
+                    let n_po2 = impactor.n_particles();
+                    let required_distance = pair.required_distance;
+
+                    // Try placement up to max_merge_retries (fresh direction each time)
+                    let mut attempt_succeeded = false;
+                    for attempt in 0..=params.max_merge_retries {
+                        // Re-clone for each attempt to get fresh positioning
+                        let mut imp_try = clusters[impacted_idx].clone();
+                        let mut imr_try = clusters[impactor_idx].clone();
+
+                        let la1 = imp_try.get_candidate_particles(required_distance, imr_try.bounding_radius);
+                        let la2 = imr_try.get_candidate_particles(required_distance, imp_try.bounding_radius);
+
+                        if la1.is_empty() || la2.is_empty() {
+                            retries_this_merge = attempt;
+                            continue;
+                        }
+
+                        let mut inner_success = false;
+                        for _ in 0..params.max_particle_selection_attempts {
+                            if let Some((m1, m2)) = select_contact_particles(
+                                &imp_try, &imr_try, &la1, &la2,
+                                required_distance, sintering_coeff, &mut rng,
+                            ) {
+                                let positioned = position_clusters_for_contact(
+                                    &mut imp_try, &mut imr_try, m1, m2,
+                                    required_distance, sintering_coeff, &mut rng,
+                                );
+                                if positioned {
+                                    let has_contact = has_intercluster_contact(&imp_try, &imr_try, sintering_coeff);
+                                    if has_contact && !check_overlap(&imp_try, &imr_try, sintering_coeff) {
+                                        inner_success = true;
+                                        impacted = imp_try;
+                                        impactor = imr_try;
+                                        break;
+                                    } else if has_contact && resolve_overlap_by_rotation(
+                                        &imp_try, &mut imr_try, m2,
+                                        params.max_rotation_attempts, sintering_coeff, &mut rng,
+                                    ) && has_intercluster_contact(&imp_try, &imr_try, sintering_coeff)
+                                    {
+                                        inner_success = true;
+                                        impacted = imp_try;
+                                        impactor = imr_try;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        if inner_success {
+                            retries_this_merge = attempt;
+                            attempt_succeeded = true;
+                            break;
+                        }
+                        retries_this_merge = attempt;
+                    }
+
+                    if attempt_succeeded {
+                        // Tunable merge succeeded
+                        tunable_merges += 1;
+                        let actual_distance = impacted.center_of_mass.distance_to(&impactor.center_of_mass);
+
+                        let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                            (impactor_idx, impacted_idx)
+                        } else {
+                            (impacted_idx, impactor_idx)
+                        };
+                        clusters.remove(higher_idx);
+                        clusters.remove(lower_idx);
+
+                        let mut merged = impacted;
+                        merged.merge_with(impactor);
+
+                        let n_total = (n_po1 + n_po2) as f64;
+                        merge_trace.push(MergeTraceEntry {
+                            step: merge_count,
+                            n1: n_po1,
+                            n2: n_po2,
+                            required_distance,
+                            actual_distance,
+                            rg_after: merged.radius_of_gyration,
+                            rg_target: rp * (n_total / kf).powf(1.0 / df),
+                            merge_type: "tunable".to_string(),
+                            retries: retries_this_merge,
+                            bounding_check_passed: true,
+                            overshoot_pct: None,
+                        });
+                        merge_count += 1;
+                        clusters.push(merged);
+                        merge_success = true;
+                    } else {
+                        // Retries exhausted on feasible pair → adaptive fallback.
+                        // Use ballistic merge for guaranteed physical connectivity.
+                        adaptive_merges += 1;
+
+                        let imp_adaptive = clusters[impacted_idx].clone();
+                        let mut imr_adaptive = clusters[impactor_idx].clone();
+
+                        if merge_ballistic(&imp_adaptive, &mut imr_adaptive, sintering_coeff, &mut rng) {
+                            let actual_distance = imp_adaptive.center_of_mass.distance_to(&imr_adaptive.center_of_mass);
+
+                            let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                                (impactor_idx, impacted_idx)
+                            } else {
+                                (impacted_idx, impactor_idx)
+                            };
+                            clusters.remove(higher_idx);
+                            clusters.remove(lower_idx);
+
+                            let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                            let mut merged = imp_adaptive;
+                            merged.merge_with(imr_adaptive);
+
+                            merge_trace.push(emit_adaptive_merge_entry(
+                                merge_count, n_po1, n_po2,
+                                actual_distance, required_distance,
+                                merged.radius_of_gyration, rg_target,
+                                retries_this_merge,
+                            ));
+                            merge_count += 1;
+                            clusters.push(merged);
+                            merge_success = true;
+                        }
+                    }
+                }
+                SmartPairResult::AllInfeasible { max_achievable_pair } => {
+                    // No feasible pair exists — emit event + adaptive fallback via ballistic.
+                    no_feasible_pair_events += 1;
+                    merge_trace.push(emit_no_feasible_pair_entry(merge_count, clusters.len()));
+
+                    adaptive_merges += 1;
+                    let pair = max_achievable_pair;
+                    let (impacted_idx, impactor_idx) =
+                        if clusters[pair.idx1].n_particles() >= clusters[pair.idx2].n_particles() {
+                            (pair.idx1, pair.idx2)
+                        } else {
+                            (pair.idx2, pair.idx1)
+                        };
+
+                    let n_po1 = clusters[impacted_idx].n_particles();
+                    let n_po2 = clusters[impactor_idx].n_particles();
+
+                    let imp = clusters[impacted_idx].clone();
+                    let mut imr = clusters[impactor_idx].clone();
+
+                    if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
+                        let actual_distance = imp.center_of_mass.distance_to(&imr.center_of_mass);
+
+                        let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                            (impactor_idx, impacted_idx)
+                        } else {
+                            (impacted_idx, impactor_idx)
+                        };
+                        clusters.remove(higher_idx);
+                        clusters.remove(lower_idx);
+
+                        let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                        let mut merged = imp;
+                        merged.merge_with(imr);
+
+                        merge_trace.push(emit_adaptive_merge_entry(
+                            merge_count, n_po1, n_po2,
+                            actual_distance, pair.required_distance,
+                            merged.radius_of_gyration, rg_target,
+                            0,
+                        ));
+                        merge_count += 1;
+                        clusters.push(merged);
+                        merge_success = true;
+                    }
+                }
+            }
+        } else {
+        // ── Phase 2 algorithm branch (legacy random pair + retry + ballistic) ──
 
         // Retry loop: each retry picks a NEW random pair (R3 spec)
         for attempt in 0..=params.max_merge_retries {
@@ -1157,6 +1367,8 @@ pub fn run_tunable_cc_internal(
             }
         }
 
+        } // end of Phase 2 else branch
+
         // Track max retries across all merges
         if retries_this_merge > max_retries_per_merge {
             max_retries_per_merge = retries_this_merge;
@@ -1228,8 +1440,8 @@ pub fn run_tunable_cc_internal(
         principal_axes: inertia.principal_axes,
         tunable_merges,
         ballistic_merges,
-        adaptive_merges: 0,
-        no_feasible_pair_events: 0,
+        adaptive_merges,
+        no_feasible_pair_events,
         max_retries_per_merge,
         dpo_used: Some(dpo_used),
         target_kf_used: Some(target_kf_used),
@@ -2748,7 +2960,7 @@ mod tests {
             n_particles: 20,
             target_df: 2.0,
             target_kf: 1.0,
-            max_merge_retries: 0, // force all to ballistic
+            max_merge_retries: 0, // force all to fallback (ballistic or adaptive)
             sintering: SinteringDistribution::Fixed(sintering_coeff),
             ..Default::default()
         };
@@ -2760,10 +2972,11 @@ mod tests {
             "Must produce all 20 particles"
         );
 
-        // Ballistic should have been used for all merges
+        // With max_merge_retries=0, all merges must use fallback path
+        // (ballistic in Phase 2, adaptive in Phase 3 — both use ballistic internally)
         assert!(
-            result.ballistic_merges > 0,
-            "With max_merge_retries=0, ballistic merges must occur"
+            result.ballistic_merges > 0 || result.adaptive_merges > 0,
+            "With max_merge_retries=0, fallback merges must occur"
         );
 
         // Check that all inter-particle contact distances use sintered distance
@@ -2815,7 +3028,10 @@ mod tests {
 
         let result = run_tunable_cc_internal(params, 42, None);
         assert_eq!(result.coordinates.len(), 20);
-        assert!(result.ballistic_merges > 0);
+        assert!(
+            result.ballistic_merges > 0 || result.adaptive_merges > 0,
+            "With max_merge_retries=0, fallback merges must occur"
+        );
 
         // All contacts should be at bare distance
         let bare_contact = sintered_contact_distance(rp, rp, 1.0);
@@ -3252,7 +3468,8 @@ mod tests {
     /// R16.3 — Ballistic fallback flagged correctly.
     #[test]
     fn ballistic_fallback_flagged() {
-        // Use low Df + higher N + few retries to force some ballistic merges
+        // Use low Df + higher N + few retries to force some fallback merges.
+        // With Phase 3 active, fallbacks are "adaptive" (not "ballistic").
         let params = TunableCcParams {
             n_particles: 50,
             target_df: 1.4,
@@ -3263,24 +3480,26 @@ mod tests {
         let result = run_tunable_cc_internal(params, 42, None);
         assert_eq!(result.coordinates.len(), 50);
 
-        let ballistic_entries: Vec<_> = result
+        // Phase 3: fallback merges are tagged "adaptive" instead of "ballistic"
+        let fallback_entries: Vec<_> = result
             .merge_trace
             .iter()
-            .filter(|e| e.merge_type == "ballistic")
+            .filter(|e| e.merge_type == "ballistic" || e.merge_type == "adaptive")
             .collect();
 
         assert!(
-            !ballistic_entries.is_empty(),
-            "With Df=1.4, N=50, max_retries=5, at least one ballistic fallback expected. \
-             Got {} tunable, {} ballistic",
+            !fallback_entries.is_empty(),
+            "With Df=1.4, N=50, max_retries=5, at least one fallback expected. \
+             Got {} tunable, {} ballistic, {} adaptive",
             result.tunable_merges,
-            result.ballistic_merges
+            result.ballistic_merges,
+            result.adaptive_merges
         );
 
-        for entry in &ballistic_entries {
+        for entry in &fallback_entries {
             assert!(
                 !entry.bounding_check_passed,
-                "Ballistic entries must have bounding_check_passed=false"
+                "Fallback entries must have bounding_check_passed=false"
             );
         }
     }

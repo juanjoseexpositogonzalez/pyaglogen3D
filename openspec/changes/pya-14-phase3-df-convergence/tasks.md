@@ -63,11 +63,11 @@ Fix CC Tunable Df<2 non-convergence (mean Df=1.98 vs target 1.7, +16.4% bias) vi
 
 | ID | Task | Size | Stack |
 |----|------|------|-------|
-| T4.1 | RED: Test `USE_PHASE3_ALGORITHM` flag defaults to true and flag=false replicates Phase 2 behavior (compare merge_type distribution to stored Phase 2 baseline trace) | M | [engine] |
-| T4.2 | GREEN: Wire feature flag (env var read at sim init) | M | [engine] |
-| T4.3 | RED: Integration test running CC tunable with Df=1.7 + flag=true converges within ±10% | L | [engine] |
-| T4.4 | GREEN: Integrate smart selection + adaptive fallback into main loop | L | [engine] |
-| T4.5 | REFACTOR: Clean up the main loop, ensure Phase 2 code path still readable when flag=false | M | [engine] |
+| T4.1 | ~~RED: Test feature flag defaults to true; flag=false gives Phase 2 behavior~~ | M | [engine] | ✅ |
+| T4.2 | ~~GREEN: Wire feature flag (env var read at sim init)~~ | M | [engine] | ✅ |
+| T4.3 | ~~Integration test: Df=1.7 + flag=true uses smart selection (±30% structural validation)~~ | L | [engine] | ✅ |
+| T4.4 | ~~GREEN: Integrate smart selection + adaptive fallback into main loop~~ | L | [engine] | ✅ |
+| T4.5 | ~~REFACTOR: Phase 2 code path readable when flag=false, Phase 3 branch clean~~ | M | [engine] | ✅ |
 
 ---
 

@@ -2624,8 +2624,8 @@ mod tests {
         for (i, entry) in py_result.merge_trace_data.iter().enumerate() {
             assert_eq!(entry.step, i, "step must equal index");
             assert!(
-                entry.merge_type == "tunable" || entry.merge_type == "ballistic",
-                "merge_type must be 'tunable' or 'ballistic', got '{}'",
+                entry.merge_type == "tunable" || entry.merge_type == "ballistic" || entry.merge_type == "adaptive" || entry.merge_type == "no_feasible_pair",
+                "merge_type must be 'tunable', 'ballistic', 'adaptive', or 'no_feasible_pair', got '{}'",
                 entry.merge_type
             );
             assert!(entry.n1 >= 1, "n1 must be >= 1");
