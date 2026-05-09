@@ -1118,14 +1118,28 @@ pub fn run_tunable_cc_internal(
                 let mut merged = impacted;
                 merged.merge_with(impactor);
 
-                // R16: Record ballistic merge trace entry.
-                // required_distance is 0.0 for ballistic merges (no power-law target).
+                // R16.11: Compute what the tunable path would have targeted,
+                // so merge_trace is complete even for ballistic fallbacks.
+                // R16.12: If calculate_com_distance returns None (degenerate
+                // pair, e.g. exponent overflow), fall back to 0.0 with a
+                // diagnostic warning — ballistic merges must never fail.
+                let required_distance =
+                    calculate_com_distance(ballistic_n1, ballistic_n2, rp, df, kf, sintering_coeff)
+                        .unwrap_or_else(|| {
+                            eprintln!(
+                        "WARNING: calculate_com_distance returned None for ballistic fallback \
+                         (n1={}, n2={}, df={}, kf={}, rp={}, sintering={})",
+                        ballistic_n1, ballistic_n2, df, kf, rp, sintering_coeff
+                    );
+                            0.0
+                        });
+
                 let n_total = (ballistic_n1 + ballistic_n2) as f64;
                 merge_trace.push(MergeTraceEntry {
                     step: merge_count,
                     n1: ballistic_n1,
                     n2: ballistic_n2,
-                    required_distance: 0.0,
+                    required_distance,
                     actual_distance,
                     rg_after: merged.radius_of_gyration,
                     rg_target: rp * (n_total / kf).powf(1.0 / df),

@@ -401,3 +401,130 @@ fn convergence_5_runs_with_sintering() {
         (mean_kf - target_kf).abs() / target_kf * 100.0
     );
 }
+
+// ── PYA-14 Phase 2 Bug B — ballistic required_distance tests ────────────
+
+/// PYA-14 Phase 2 / R16.11: Ballistic fallback entries in merge_trace
+/// must populate `required_distance` via `calculate_com_distance` instead
+/// of hardcoding 0.0.
+///
+/// Strategy: run a moderate-Df simulation (target_df=1.7, n_particles=80,
+/// seed=Monomers) that is known to produce some ballistic fallbacks. Then
+/// assert that every ballistic entry has `required_distance > 0.0`.
+#[test]
+fn ballistic_fallback_populates_required_distance() {
+    let params = TunableCcParams {
+        n_particles: 80,
+        target_df: 1.7,
+        target_kf: 1.3,
+        radius_min: 12.5,
+        radius_max: 12.5,
+        seed_type: SeedType::Monomers,
+        ..Default::default()
+    };
+
+    let result = run_tunable_cc_internal(params, 42, None);
+
+    // Must have at least one ballistic merge to be a meaningful test.
+    let ballistic_entries: Vec<_> = result
+        .merge_trace
+        .iter()
+        .filter(|e| e.merge_type == "ballistic")
+        .collect();
+
+    assert!(
+        !ballistic_entries.is_empty(),
+        "Expected at least one ballistic fallback merge in trace, got 0 — \
+         adjust params or seed to ensure ballistic fallback occurs"
+    );
+
+    eprintln!(
+        "ballistic_fallback_populates_required_distance: {} ballistic entries out of {} total",
+        ballistic_entries.len(),
+        result.merge_trace.len()
+    );
+
+    // R16.11: Every ballistic entry must have required_distance computed
+    // via calculate_com_distance, which returns > 0.0 for physically valid pairs.
+    for (i, entry) in ballistic_entries.iter().enumerate() {
+        assert!(
+            entry.required_distance > 0.0,
+            "Ballistic entry {} (step={}, n1={}, n2={}) has required_distance={}, \
+             expected > 0.0 — calculate_com_distance was not called",
+            i,
+            entry.step,
+            entry.n1,
+            entry.n2,
+            entry.required_distance,
+        );
+    }
+}
+
+/// PYA-14 Phase 2 / R16.12: When `calculate_com_distance` returns None
+/// for a degenerate pair, the ballistic entry must still be produced with
+/// `required_distance == 0.0` and no panic.
+///
+/// At the integration level, triggering a true None from the formula is
+/// difficult because f64 can handle extreme exponents without overflow for
+/// small cluster sizes. Instead, this test verifies the contract from the
+/// outside: (a) pathological parameters do not cause panics, (b) all
+/// merge_trace entries have finite required_distance, and (c) the
+/// required_distance values are non-negative.
+///
+/// The None → 0.0 fallback path is covered by the unit test
+/// `test_com_distance_returns_none_for_degenerate_input` (in tunable_cc.rs)
+/// which directly exercises the formula guard.
+#[test]
+fn ballistic_fallback_handles_degenerate_distance() {
+    // Pathologically low Df forces all merges into ballistic fallback.
+    // The key assertion is: no panic, all values finite and non-negative.
+    let params = TunableCcParams {
+        n_particles: 5,
+        target_df: 0.05,
+        target_kf: 1.3,
+        radius_min: 12.5,
+        radius_max: 12.5,
+        seed_type: SeedType::Monomers,
+        ..Default::default()
+    };
+
+    // Must not panic — that's the primary assertion.
+    let result = run_tunable_cc_internal(params, 99, None);
+
+    // With Df=0.05 every merge should fall back to ballistic.
+    let ballistic_entries: Vec<_> = result
+        .merge_trace
+        .iter()
+        .filter(|e| e.merge_type == "ballistic")
+        .collect();
+
+    assert!(
+        !ballistic_entries.is_empty(),
+        "Expected ballistic entries with pathological Df=0.05, got 0"
+    );
+
+    eprintln!(
+        "ballistic_fallback_handles_degenerate_distance: {} ballistic entries",
+        ballistic_entries.len()
+    );
+
+    // R16.12: All ballistic entries must have finite, non-negative
+    // required_distance — whether computed by the formula or fallen back
+    // to 0.0 on None. No NaN, no Inf, no negative values.
+    for (i, entry) in ballistic_entries.iter().enumerate() {
+        assert!(
+            entry.required_distance.is_finite(),
+            "Ballistic entry {} (step={}) has non-finite required_distance={}",
+            i,
+            entry.step,
+            entry.required_distance,
+        );
+        assert!(
+            entry.required_distance >= 0.0,
+            "Ballistic entry {} (step={}) has negative required_distance={}",
+            i,
+            entry.step,
+            entry.required_distance,
+        );
+    }
+}
