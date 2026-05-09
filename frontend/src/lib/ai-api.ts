@@ -7,14 +7,38 @@ import { tokenStorage } from './token-storage'
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
 // Types
+export interface ModelInfo {
+  id: string
+  display_name: string
+  context_window?: number
+  is_recommended: boolean
+}
+
 export interface AIProvider {
   id: string
   provider: 'anthropic' | 'openai' | 'groq' | 'xai'
   model_name: string
   is_default: boolean
   is_active: boolean
+  available_models: ModelInfo[]
+  models_refreshed_at: string | null
   created_at: string
   updated_at: string
+}
+
+export interface TestProviderResponse {
+  success: boolean
+  message: string
+  response?: string
+  models?: ModelInfo[] | null
+  refreshed_at?: string | null
+  models_error?: string | null
+}
+
+export interface RefreshModelsResponse {
+  success: boolean
+  models: ModelInfo[]
+  refreshed_at: string
 }
 
 export interface AIProviderCreate {
@@ -243,9 +267,19 @@ export const aiApi = {
 
   /**
    * Test connection to an AI provider.
+   * On success, also fetches and returns the model catalog.
    */
-  async testProvider(id: string): Promise<{ success: boolean; message: string; response?: string }> {
+  async testProvider(id: string): Promise<TestProviderResponse> {
     return aiFetch(`/providers/${id}/test_connection/`, {
+      method: 'POST',
+    })
+  },
+
+  /**
+   * Refresh the model catalog for a provider (re-fetch from upstream API).
+   */
+  async refreshModels(id: string): Promise<RefreshModelsResponse> {
+    return aiFetch(`/providers/${id}/refresh_models/`, {
       method: 'POST',
     })
   },

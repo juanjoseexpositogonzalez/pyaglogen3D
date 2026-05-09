@@ -10,6 +10,7 @@ import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { aiApi, type AIProvider, type AIProviderCreate } from '@/lib/ai-api'
+import { ModelPickerSection } from '@/components/ai/ModelPickerSection'
 import { useAuth } from '@/contexts/AuthContext'
 import { Loader2, Plus, Trash2, Check, X, Star, TestTube, ShieldAlert } from 'lucide-react'
 
@@ -157,10 +158,44 @@ export default function AISettingsPage() {
       setTestResult(null)
       const result = await aiApi.testProvider(id)
       setTestResult({ id, success: result.success, message: result.message })
+      // Sync model catalog from test_connection response (T4.8)
+      if (result.success && result.models) {
+        setProviders((prev) =>
+          prev.map((p) =>
+            p.id === id
+              ? { ...p, available_models: result.models!, models_refreshed_at: result.refreshed_at ?? null }
+              : p
+          )
+        )
+      }
     } catch (err) {
       setTestResult({ id, success: false, message: err instanceof Error ? err.message : 'Test failed' })
     } finally {
       setTestingId(null)
+    }
+  }
+
+  async function handleRefreshModels(id: string) {
+    const result = await aiApi.refreshModels(id)
+    if (result.success) {
+      setProviders((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? { ...p, available_models: result.models, models_refreshed_at: result.refreshed_at }
+            : p
+        )
+      )
+    }
+  }
+
+  async function handleModelChange(providerId: string, modelId: string) {
+    try {
+      await aiApi.updateProvider(providerId, { model_name: modelId })
+      setProviders((prev) =>
+        prev.map((p) => (p.id === providerId ? { ...p, model_name: modelId } : p))
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update model')
     }
   }
 
@@ -327,7 +362,6 @@ export default function AISettingsPage() {
                             </span>
                           )}
                         </div>
-                        <p className="text-sm text-gray-400">{provider.model_name}</p>
                       </div>
                     </div>
                     <div className="flex items-center gap-2">
@@ -368,6 +402,14 @@ export default function AISettingsPage() {
                       </Button>
                     </div>
                   </div>
+                  {/* Dynamic model picker (T4.3–T4.8) */}
+                  <ModelPickerSection
+                    availableModels={provider.available_models ?? []}
+                    currentModelName={provider.model_name}
+                    modelsRefreshedAt={provider.models_refreshed_at ?? null}
+                    onModelChange={(modelId) => handleModelChange(provider.id, modelId)}
+                    onRefreshModels={() => handleRefreshModels(provider.id)}
+                  />
                 </CardContent>
               </Card>
             ))}

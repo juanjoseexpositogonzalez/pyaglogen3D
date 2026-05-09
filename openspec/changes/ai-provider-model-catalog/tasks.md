@@ -35,15 +35,15 @@
 
 ## Phase 4: Frontend integration
 
-- [ ] 4.1 **[frontend, S]** Locate the provider config form/modal. Candidates: `frontend/src/components/ai/`, `frontend/src/app/(app)/settings/ai/`, or grep for `model_name` input in provider forms. Confirm target component.
-- [ ] 4.2 **[frontend, M]** In `ai-api.ts`, add `available_models: ModelInfo[]`, `models_refreshed_at: string | null` to `AIProvider` type; add `refreshModels(providerId): Promise<...>` method.
-- [ ] 4.3 **[frontend, M]** Replace `model_name` text input with `<select>` populated from `provider.available_models`. Show `display_name` as option label, `id` as value. Preserve legacy model_name value as option if not in catalog.
-- [ ] 4.4 **[frontend, S]** Add empty-state CTA: when `available_models.length === 0`, show "Test connection to load available models" with a button to trigger test.
-- [ ] 4.5 **[frontend, S]** Show ⭐ badge next to model with `is_recommended: true` in the select options.
-- [ ] 4.6 **[frontend, S]** Show stale-model warning: if current `model_name` is not in `available_models`, show inline warning below the select.
-- [ ] 4.7 **[frontend, S]** Use `formatDistanceToNow` from `frontend/src/lib/utils.ts` to display `models_refreshed_at` as relative time.
-- [ ] 4.8 **[frontend, M]** Update local state after `test_connection` or `refresh_models` response with new catalog data. Ensure optimistic update of `available_models` and `models_refreshed_at`.
-- [ ] 4.9 **[frontend, L]** Vitest tests: empty state renders, dropdown populates with correct options, recommended badge appears on correct option, stale warning shows for legacy model, state updates after refresh. Run: `cd frontend && npx vitest run`.
+- [x] 4.1 **[frontend, S]** Locate the provider config form/modal. Candidates: `frontend/src/components/ai/`, `frontend/src/app/(app)/settings/ai/`, or grep for `model_name` input in provider forms. Confirm target component.
+- [x] 4.2 **[frontend, M]** In `ai-api.ts`, add `available_models: ModelInfo[]`, `models_refreshed_at: string | null` to `AIProvider` type; add `refreshModels(providerId): Promise<...>` method.
+- [x] 4.3 **[frontend, M]** Replace `model_name` text input with `<select>` populated from `provider.available_models`. Show `display_name` as option label, `id` as value. Preserve legacy model_name value as option if not in catalog.
+- [x] 4.4 **[frontend, S]** Add empty-state CTA: when `available_models.length === 0`, show "Test connection to load available models" with a button to trigger test.
+- [x] 4.5 **[frontend, S]** Show ⭐ badge next to model with `is_recommended: true` in the select options.
+- [x] 4.6 **[frontend, S]** Show stale-model warning: if current `model_name` is not in `available_models`, show inline warning below the select.
+- [x] 4.7 **[frontend, S]** Use `formatDistanceToNow` from `frontend/src/lib/utils.ts` to display `models_refreshed_at` as relative time.
+- [x] 4.8 **[frontend, M]** Update local state after `test_connection` or `refresh_models` response with new catalog data. Ensure optimistic update of `available_models` and `models_refreshed_at`.
+- [x] 4.9 **[frontend, L]** Vitest tests: empty state renders, dropdown populates with correct options, recommended badge appears on correct option, stale warning shows for legacy model, state updates after refresh. Run: `cd frontend && npx vitest run`.
 
 ---
 
