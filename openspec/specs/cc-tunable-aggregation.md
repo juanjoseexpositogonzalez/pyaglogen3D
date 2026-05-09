@@ -1,4 +1,4 @@
-<!-- Last sync: 2026-05-07 from change cc-tunable-merge-trace (Phase 1 of PYA-14) -->
+<!-- Last sync: 2026-05-09 from changes cc-tunable-merge-trace (Phase 1 of PYA-14) + pya-14-phase2-seed-type-fix (Phase 2) -->
 
 # Spec: cc-tunable-aggregation
 
@@ -626,7 +626,7 @@ Valid `mode` strings: `"fixed"` (default), `"normal"`, `"uniform"`.
 
 ---
 
-### R16 (ADDED — Cycle 14 / PYA-14 Phase 1) — Per-step merge diagnostic trace
+### R16 (MODIFIED — Cycle 14 / PYA-14 Phase 1+2) — Per-step merge diagnostic trace
 
 The CC tunable algorithm (`run_tunable_cc_internal`) MUST emit a
 `merge_trace` field on `SimulationResult`. The trace is a list of
@@ -640,7 +640,7 @@ ballistic fallback). Non-CC algorithms emit an empty list.
 | `step` | usize | 0-indexed merge counter (0 = first merge, N-2 = last). |
 | `n1` | usize | Particle count of the impacted sub-cluster at merge time. |
 | `n2` | usize | Particle count of the impactor sub-cluster at merge time. |
-| `required_distance` | f64 | COM-COM distance computed by `calculate_com_distance` (the target d for the power law). |
+| `required_distance` | f64 | COM-COM distance computed by `calculate_com_distance` for the candidate fragment pair using the canonical CC formula. MUST be populated for BOTH tunable and ballistic entries; MUST NOT be hardcoded to `0.0`. |
 | `actual_distance` | f64 | Measured COM-COM distance after positioning + contact resolution. |
 | `rg_after` | f64 | Measured radius of gyration of the merged cluster. |
 | `rg_target` | f64 | Target Rg for the merged cluster: `rp · ((n1 + n2) / kf)^(1/Df)`. |
@@ -664,7 +664,7 @@ ballistic fallback). Non-CC algorithms emit an empty list.
 
 **Scenario R16.3 — Ballistic fallback flagged**
 
-- GIVEN a CC tunable run where some merges fall back to ballistic (e.g. low Df target → bounding sphere too small for late-game merges)
+- GIVEN a CC tunable run where some merges fall back to ballistic (e.g. low Df target)
 - WHEN the simulation completes
 - THEN at least one entry has `merge_type == "ballistic"` AND that entry has `bounding_check_passed == false`
 
@@ -707,11 +707,78 @@ ballistic fallback). Non-CC algorithms emit an empty list.
 **Scenario R16.10 — No behaviour change at coeff=1.0 / default config**
 
 - GIVEN identical seed and parameters before and after this cycle
-- WHEN both simulations run with default sintering and default distributions (frente 13 backwards-compat path)
+- WHEN both simulations run with default sintering and default distributions
 - THEN the final aggregate's particle positions are bitwise-identical (the trace is purely additive observation)
+
+**Scenario R16.11 — Ballistic entry populates required_distance from CC formula**
+
+- GIVEN a merge step that exhausted all retries and fell back to `merge_ballistic`
+- WHEN the `MergeTraceEntry` is recorded
+- THEN `required_distance` MUST equal the value returned by `calculate_com_distance(n1, n2, rp, df, kf, sintering_coeff)` called for that candidate pair BEFORE the ballistic merge executes
+- AND `merge_type == "ballistic"`
+
+**Scenario R16.12 — Degenerate distance sets required_distance to 0.0 with warning**
+
+- GIVEN a ballistic fallback merge where `calculate_com_distance` returns `None` (e.g., negative argument under sqrt due to degenerate cluster sizes or parameters)
+- WHEN the `MergeTraceEntry` is recorded
+- THEN `required_distance` is set to `0.0`
+- AND a tracing/log warning is emitted identifying the degenerate pair (n1, n2, step)
+- AND no panic or error is raised; the ballistic merge proceeds normally
 
 #### Backwards compatibility
 
 - `merge_trace` is additive on `SimulationResult` and on the result dict / JSONField. Default value: empty list.
 - Pre-cycle 14 results stored without the field deserialise gracefully (treated as `[]`).
-- No DB migration. No frontend changes (rendering deferred to a future cycle).
+- No DB migration. No frontend changes.
+
+---
+
+### R17 — Seed Type Parameter Routing
+
+The simulation API MUST accept `seed_type` as a value inside the `parameters` JSON object (nested) and route it to the engine, in addition to the existing top-level field.
+
+The system MUST resolve `seed_type` using the following precedence:
+
+1. If `parameters.seed_type` is present → use that value (nested wins).
+2. Else if top-level `seed_type` is present → use that value (legacy fallback).
+3. Else → default to `"monomers"`.
+
+The persisted `Simulation.seed_type` field MUST reflect the value actually sent to the engine, NOT the DRF serializer default. After persistence, `parameters` SHOULD NOT contain a `seed_type` key (it is lifted via `pop()`).
+
+Valid values: `"monomers"`, `"dimers"`, `"trimers"`. Any other value MUST be rejected with a 400 error before creating a simulation record.
+
+#### Scenario R17.1 — Nested seed_type wins over absent top-level
+
+- GIVEN a POST with `parameters.seed_type = "dimers"` and no top-level `seed_type`
+- WHEN the serializer processes the request
+- THEN the engine receives `seed_type = "dimers"`
+- AND `Simulation.seed_type == "dimers"` in the DB
+- AND `parameters` does not contain a `seed_type` key after persistence
+
+#### Scenario R17.2 — Legacy top-level seed_type used when nested absent
+
+- GIVEN a POST with top-level `seed_type = "trimers"` and no `parameters.seed_type`
+- WHEN the serializer processes the request
+- THEN the engine receives `seed_type = "trimers"`
+- AND `Simulation.seed_type == "trimers"` in the DB
+
+#### Scenario R17.3 — Nested wins when both top-level and nested present
+
+- GIVEN a POST with `parameters.seed_type = "dimers"` AND top-level `seed_type = "monomers"`
+- WHEN the serializer processes the request
+- THEN the engine receives `seed_type = "dimers"` (nested wins)
+- AND `Simulation.seed_type == "dimers"` in the DB
+
+#### Scenario R17.4 — Default to monomers when neither present
+
+- GIVEN a POST with no `seed_type` at top-level and no `parameters.seed_type`
+- WHEN the serializer processes the request
+- THEN the engine receives `seed_type = "monomers"`
+- AND `Simulation.seed_type == "monomers"` in the DB
+
+#### Scenario R17.5 — Invalid nested value rejected with 400
+
+- GIVEN a POST with `parameters.seed_type = "foo"`
+- WHEN the serializer validates the request
+- THEN a 400 response is returned with a descriptive validation error
+- AND no `Simulation` record is created
