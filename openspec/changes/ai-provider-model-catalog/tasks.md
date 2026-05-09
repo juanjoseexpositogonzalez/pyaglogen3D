@@ -15,13 +15,13 @@
 
 ## Phase 2: ModelCatalogService — backend, TDD per provider
 
-- [ ] 2.1 **[backend, S]** Create `backend/apps/ai_assistant/services/model_catalog.py` skeleton: `ModelInfo` TypedDict, 3 exception classes (`ProviderAuthError`, `ProviderUnavailableError`, `ProviderRateLimitError`), `normalize_display_name(model_id)` function, `fetch_models(provider, api_key)` dispatcher raising `ValueError` for unknown provider.
-- [ ] 2.2 **[backend, M]** TDD `_fetch_anthropic`: mock `anthropic.Anthropic().models.list()` paginated response. Assert whitelist keeps only `claude-*`. Assert recommended = latest sonnet by date suffix. Assert error mapping (auth→ProviderAuthError, connection→ProviderUnavailableError, rate→ProviderRateLimitError).
-- [ ] 2.3 **[backend, M]** TDD `_fetch_openai`: mock `openai.OpenAI(api_key).models.list()`. Assert whitelist keeps `gpt-*`/`o1-*`/`o3-*`/`o4-*`. Assert recommended = latest non-mini gpt-4o family. Same error mapping.
-- [ ] 2.4 **[backend, M]** TDD `_fetch_groq`: mock `openai.OpenAI(api_key, base_url=GROQ_BASE_URL).models.list()`. Assert no filter applied. Assert recommended = first `llama-3.3` or `llama-4`, fallback chain per spec. Same error mapping.
-- [ ] 2.5 **[backend, M]** TDD `_fetch_xai`: mock `openai.OpenAI(api_key, base_url=XAI_BASE_URL).models.list()`. Assert whitelist keeps `grok-*`. Assert recommended = latest grok by version. Same error mapping.
-- [ ] 2.6 **[backend, S]** TDD `normalize_display_name`: `"gpt-4o"` → `"GPT-4o"`, `"llama-3.3-70b-versatile"` → `"Llama 3.3 70B Versatile"`, `"o1-mini"` → `"O1 Mini"`. Parametrized test with 10 known pairs.
-- [ ] 2.7 **[backend, L]** TDD error mapping integration: for each of the 4 providers, assert `InvalidSignatureError` → `ProviderAuthError`, `ConnectError` → `ProviderUnavailableError`, `RateLimitError` → `ProviderRateLimitError`. Use `pytest.mark.parametrize`.
+- [x] 2.1 **[backend, S]** Create `backend/apps/ai_assistant/services/model_catalog.py` skeleton: `ModelInfo` TypedDict, 3 exception classes (`ProviderAuthError`, `ProviderUnavailableError`, `ProviderRateLimitError`), `normalize_display_name(model_id)` function, `fetch_models(provider, api_key)` dispatcher raising `ValueError` for unknown provider.
+- [x] 2.2 **[backend, M]** TDD `_fetch_anthropic`: mock `anthropic.Anthropic().models.list()` paginated response. Assert whitelist keeps only `claude-*`. Assert recommended = latest sonnet by date suffix. Assert error mapping (auth→ProviderAuthError, connection→ProviderUnavailableError, rate→ProviderRateLimitError).
+- [x] 2.3 **[backend, M]** TDD `_fetch_openai`: mock `openai.OpenAI(api_key).models.list()`. Assert whitelist keeps `gpt-*`/`o1-*`/`o3-*`/`o4-*`. Assert recommended = latest non-mini gpt-4o family. Same error mapping.
+- [x] 2.4 **[backend, M]** TDD `_fetch_groq`: mock `openai.OpenAI(api_key, base_url=GROQ_BASE_URL).models.list()`. Assert no filter applied. Assert recommended = first `llama-3.3` or `llama-4`, fallback chain per spec. Same error mapping.
+- [x] 2.5 **[backend, M]** TDD `_fetch_xai`: mock `openai.OpenAI(api_key, base_url=XAI_BASE_URL).models.list()`. Assert whitelist keeps `grok-*`. Assert recommended = latest grok by version. Same error mapping.
+- [x] 2.6 **[backend, S]** TDD `normalize_display_name`: `"gpt-4o"` → `"GPT-4o"`, `"llama-3.3-70b-versatile"` → `"Llama 3.3 70B Versatile"`, `"o1-mini"` → `"O1 Mini"`. Parametrized test with 10 known pairs.
+- [x] 2.7 **[backend, L]** TDD error mapping integration: for each of the 4 providers, assert `InvalidSignatureError` → `ProviderAuthError`, `ConnectError` → `ProviderUnavailableError`, `RateLimitError` → `ProviderRateLimitError`. Use `pytest.mark.parametrize`.
 
 ---
 
