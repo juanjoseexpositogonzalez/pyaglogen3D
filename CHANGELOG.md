@@ -1,3 +1,18 @@
+## pya-14-phase2-seed-type-fix (unreleased)
+
+### Fixed
+
+- **`seed_type` parameter ignored** (`backend/apps/simulations/serializers.py`): The DRF serializer's `create()` method did not lift `parameters.seed_type` from the nested params blob into the top-level model field, so the DRF default `"monomers"` always won. Every simulation requesting `dimers` or `trimers` actually ran with monomers. Now nested wins, top-level falls back as legacy. ⚠️ **Historical impact**: any tunable_cc simulation created before this fix that requested non-monomer seeds actually ran as monomers — the persisted `Simulation.seed_type` shows `"monomers"` while `Simulation.parameters.seed_type` shows the requested value. Re-run if you depend on that data.
+- **Ballistic merge_trace `required_distance` always 0.0** (`aglogen_core/engine/src/simulation/tunable_cc.rs`): The ballistic fallback branch hardcoded `required_distance: 0.0` in the trace entry, hiding what the CC formula asked for in the cases that fell back. Now calls `calculate_com_distance` and stores the actual target; degenerate inputs fall back to 0.0 with a stderr warning.
+
+### Fixed (incidental)
+
+- `backend/apps/accounts/migrations/0003_fix_legacy_user_fk.py`: PostgreSQL-only DDL replaced with vendor-aware `RunPython` to unblock SQLite test runner.
+
+### Closes
+
+- Jira **PYA-14**: CC tunable seed_type + ballistic required_distance (Phase 2 — algorithmic fix).
+
 ## cc-tunable-merge-trace (unreleased)
 
 ### Added
