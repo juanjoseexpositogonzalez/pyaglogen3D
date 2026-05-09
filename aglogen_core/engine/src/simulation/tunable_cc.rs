@@ -1299,6 +1299,125 @@ fn calculate_fractal_dimension_from_evolution(
     (df, kf, r2)
 }
 
+// ── Phase 3: Smart Pair Selection + Adaptive Fallback (PYA-14) ───────────
+
+/// A candidate pair for smart selection, with pre-computed distances.
+#[derive(Debug, Clone)]
+pub(crate) struct PairCandidate {
+    pub idx1: usize,
+    pub idx2: usize,
+    pub required_distance: f64,
+    pub bounding_sum: f64,
+}
+
+/// Result of smart pair selection.
+#[derive(Debug)]
+pub(crate) enum SmartPairResult {
+    /// At least one feasible pair exists; one is selected.
+    Feasible(PairCandidate),
+    /// No feasible pair exists; the pair with the max achievable distance is returned.
+    AllInfeasible { max_achievable_pair: PairCandidate },
+}
+
+/// Compute the maximum achievable COM-COM distance between two clusters.
+///
+/// This is the sum of bounding radii (measured from COM), which represents
+/// the farthest the COMs can be placed while the clusters still potentially
+/// touch at their surfaces.
+pub(crate) fn compute_max_achievable_distance(c1: &TunableCluster, c2: &TunableCluster) -> f64 {
+    c1.bounding_radius + c2.bounding_radius
+}
+
+/// Find all feasible pairs in the pool: pairs where `required_distance <= bounding_sum`.
+///
+/// A pair (i, j) is feasible when the CC formula distance can be achieved
+/// geometrically, i.e., the bounding spheres can overlap at the required
+/// COM-COM distance.
+///
+/// Returns a vec of `PairCandidate` for all feasible pairs (O(k²) scan).
+pub(crate) fn find_feasible_pairs(
+    clusters: &[TunableCluster],
+    target_df: f64,
+    target_kf: f64,
+    rp: f64,
+    sintering_coeff: f64,
+) -> Vec<PairCandidate> {
+    let k = clusters.len();
+    let mut feasible = Vec::new();
+
+    for i in 0..k {
+        for j in (i + 1)..k {
+            let n1 = clusters[i].n_particles();
+            let n2 = clusters[j].n_particles();
+            let required = match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
+                Some(d) => d,
+                None => continue, // degenerate geometry, skip
+            };
+            let bounding_sum = compute_max_achievable_distance(&clusters[i], &clusters[j]);
+            if bounding_sum >= required {
+                feasible.push(PairCandidate {
+                    idx1: i,
+                    idx2: j,
+                    required_distance: required,
+                    bounding_sum,
+                });
+            }
+        }
+    }
+
+    feasible
+}
+
+/// Select a pair using smart feasibility pre-screen.
+///
+/// Returns `Feasible(pair)` if at least one feasible pair exists (random pick),
+/// or `AllInfeasible { max_achievable_pair }` if none are feasible (picks the pair
+/// whose bounding_sum is closest to required_distance, i.e. "least infeasible").
+pub(crate) fn select_pair_smart<R: Rng>(
+    clusters: &[TunableCluster],
+    target_df: f64,
+    target_kf: f64,
+    rp: f64,
+    sintering_coeff: f64,
+    rng: &mut R,
+) -> SmartPairResult {
+    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff);
+
+    if !feasible.is_empty() {
+        let chosen = feasible.choose(rng).unwrap().clone();
+        return SmartPairResult::Feasible(chosen);
+    }
+
+    // All infeasible — find the pair with the max bounding_sum (least infeasible)
+    let k = clusters.len();
+    let mut best: Option<PairCandidate> = None;
+
+    for i in 0..k {
+        for j in (i + 1)..k {
+            let n1 = clusters[i].n_particles();
+            let n2 = clusters[j].n_particles();
+            let required = match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
+                Some(d) => d,
+                None => continue,
+            };
+            let bounding_sum = compute_max_achievable_distance(&clusters[i], &clusters[j]);
+            match &best {
+                None => {
+                    best = Some(PairCandidate { idx1: i, idx2: j, required_distance: required, bounding_sum });
+                }
+                Some(b) if bounding_sum > b.bounding_sum => {
+                    best = Some(PairCandidate { idx1: i, idx2: j, required_distance: required, bounding_sum });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    SmartPairResult::AllInfeasible {
+        max_achievable_pair: best.expect("select_pair_smart called with empty pool"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3205,6 +3324,175 @@ mod tests {
                 dist < 1e-10,
                 "Particle {i} position differs: sintered={c1:?}, baseline={c2:?}"
             );
+        }
+    }
+
+    // ── Phase 2: Smart Pair Selection tests (PYA-14 Phase 3) ─────────
+
+    /// T2.1 — compute_max_achievable_distance for two unit-sphere monomers.
+    #[test]
+    fn test_compute_max_achievable_distance_two_monomers() {
+        let c1 = TunableCluster::new(Sphere::new(Vector3::zero(), 1.0));
+        let c2 = TunableCluster::new(Sphere::new(Vector3::new(10.0, 0.0, 0.0), 1.0));
+        let max_d = compute_max_achievable_distance(&c1, &c2);
+        // Two monomers: bounding_radius = particle_radius = 1.0 each
+        assert!((max_d - 2.0).abs() < 1e-10, "Expected 2.0, got {max_d}");
+    }
+
+    /// T2.3 — Degenerate: identical positions still returns positive.
+    #[test]
+    fn test_compute_max_achievable_distance_identical_positions() {
+        let c1 = TunableCluster::new(Sphere::new(Vector3::zero(), 1.0));
+        let c2 = TunableCluster::new(Sphere::new(Vector3::zero(), 1.0));
+        let max_d = compute_max_achievable_distance(&c1, &c2);
+        assert!((max_d - 2.0).abs() < 1e-10, "Expected 2.0, got {max_d}");
+    }
+
+    /// T2.3 — Large cluster bounding radius is larger.
+    #[test]
+    fn test_compute_max_achievable_distance_larger_cluster() {
+        let particles = vec![
+            Sphere::new(Vector3::zero(), 1.0),
+            Sphere::new(Vector3::new(4.0, 0.0, 0.0), 1.0),
+        ];
+        let c1 = TunableCluster::from_particles(particles);
+        let c2 = TunableCluster::new(Sphere::new(Vector3::new(20.0, 0.0, 0.0), 1.0));
+        let max_d = compute_max_achievable_distance(&c1, &c2);
+        // c1 bounding radius > 1.0 (two particles spread out)
+        assert!(max_d > 2.0, "Expected > 2.0 for multi-particle cluster, got {max_d}");
+    }
+
+    /// T2.4 — find_feasible_pairs with all-feasible pool returns all pairs.
+    #[test]
+    fn test_find_feasible_pairs_all_feasible() {
+        // 3 monomers with rp=1.0 at far positions.
+        // For monomer pairs (n1=1, n2=1), required_distance is small (< 2.0)
+        // and bounding_sum = 2.0 → all feasible.
+        let clusters = vec![
+            TunableCluster::new(Sphere::new(Vector3::zero(), 1.0)),
+            TunableCluster::new(Sphere::new(Vector3::new(10.0, 0.0, 0.0), 1.0)),
+            TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
+        ];
+        let df = 1.8;
+        let kf = 1.3;
+        let rp = 1.0;
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0);
+        // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
+        assert_eq!(feasible.len(), 3, "All 3 pairs should be feasible for monomers");
+    }
+
+    /// T2.6 — find_feasible_pairs with all-infeasible pool returns empty.
+    #[test]
+    fn test_find_feasible_pairs_all_infeasible() {
+        // Build clusters with very small bounding radii but large required distances.
+        // Use large clusters (many particles compressed into small space) with low Df.
+        // Simplest: create clusters with n_particles >> 1 but bounding_radius ~ rp.
+        // We'll use from_particles with overlapping particles at origin.
+        let make_compact_cluster = |n: usize| {
+            let particles: Vec<Sphere> = (0..n)
+                .map(|_| Sphere::new(Vector3::zero(), 1.0))
+                .collect();
+            TunableCluster::from_particles(particles)
+        };
+
+        let clusters = vec![
+            make_compact_cluster(50),
+            make_compact_cluster(50),
+        ];
+        // With n1=50, n2=50, df=1.4, the required distance is very large
+        // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
+        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0);
+        assert_eq!(feasible.len(), 0, "Compact clusters should have no feasible pairs at low Df");
+    }
+
+    /// T2.6 — find_feasible_pairs with partial feasibility.
+    #[test]
+    fn test_find_feasible_pairs_partial() {
+        // Mix of monomers (feasible at Df=1.8) and compact large clusters (infeasible)
+        let make_compact_cluster = |n: usize| {
+            let particles: Vec<Sphere> = (0..n)
+                .map(|_| Sphere::new(Vector3::zero(), 1.0))
+                .collect();
+            TunableCluster::from_particles(particles)
+        };
+
+        let clusters = vec![
+            TunableCluster::new(Sphere::new(Vector3::zero(), 1.0)),         // idx=0, monomer
+            TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), 1.0)), // idx=1, monomer
+            make_compact_cluster(100),                                       // idx=2, large compact
+        ];
+        // At Df=1.8, monomer-monomer required_distance < 2.0 (feasible)
+        // but monomer+large compact required distance >> 2.0 (infeasible)
+        let df = 1.8;
+        let kf = 1.3;
+        let rp = 1.0;
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0);
+        // Pair (0,1) = monomer+monomer → feasible at Df=1.8
+        // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
+        assert!(feasible.len() >= 1, "At least monomer-monomer should be feasible at Df=1.8, got {}", feasible.len());
+        // Verify the feasible pair is indeed the monomer pair
+        let monomer_pair = feasible.iter().find(|p| p.idx1 == 0 && p.idx2 == 1);
+        assert!(monomer_pair.is_some(), "Monomer-monomer pair (0,1) should be feasible");
+        // The large compact pairs should NOT be in the feasible set
+        assert!(feasible.len() < 3, "Not all pairs should be feasible: got {}", feasible.len());
+    }
+
+    /// T2.8 — select_pair_smart returns Feasible when feasible pairs exist.
+    #[test]
+    fn test_select_pair_smart_feasible() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+
+        let clusters = vec![
+            TunableCluster::new(Sphere::new(Vector3::zero(), 1.0)),
+            TunableCluster::new(Sphere::new(Vector3::new(10.0, 0.0, 0.0), 1.0)),
+            TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
+        ];
+
+        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng);
+        match result {
+            SmartPairResult::Feasible(pair) => {
+                assert!(pair.required_distance > 0.0);
+                assert!(pair.bounding_sum >= pair.required_distance);
+            }
+            SmartPairResult::AllInfeasible { .. } => {
+                panic!("Expected Feasible for monomer pool, got AllInfeasible");
+            }
+        }
+    }
+
+    /// T2.10 — select_pair_smart returns AllInfeasible when none feasible.
+    #[test]
+    fn test_select_pair_smart_all_infeasible() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+
+        let make_compact_cluster = |n: usize| {
+            let particles: Vec<Sphere> = (0..n)
+                .map(|_| Sphere::new(Vector3::zero(), 1.0))
+                .collect();
+            TunableCluster::from_particles(particles)
+        };
+
+        let clusters = vec![
+            make_compact_cluster(50),
+            make_compact_cluster(50),
+        ];
+
+        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng);
+        match result {
+            SmartPairResult::AllInfeasible { max_achievable_pair } => {
+                assert!(max_achievable_pair.bounding_sum > 0.0);
+                // bounding_sum < required_distance (infeasible)
+                assert!(
+                    max_achievable_pair.bounding_sum < max_achievable_pair.required_distance,
+                    "Infeasible pair should have bounding_sum < required: {} < {}",
+                    max_achievable_pair.bounding_sum, max_achievable_pair.required_distance
+                );
+            }
+            SmartPairResult::Feasible(_) => {
+                panic!("Expected AllInfeasible for compact clusters at low Df");
+            }
         }
     }
 }

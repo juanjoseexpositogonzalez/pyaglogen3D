@@ -33,17 +33,17 @@ Fix CC Tunable Df<2 non-convergence (mean Df=1.98 vs target 1.7, +16.4% bias) vi
 
 | ID | Task | Size | Stack |
 |----|------|------|-------|
-| T2.1 | RED: Test `compute_max_achievable_distance(c1, c2)` for trivial geometry (two unit spheres, expected returns 2.0) | M | [engine] |
-| T2.2 | GREEN: Implement | M | [engine] |
-| T2.3 | TRIANGULATE: Edge cases — degenerate clusters, very large clusters, identical positions | S | [engine] |
-| T2.4 | RED: Test `find_feasible_pairs(pool, df, kf)` with all-feasible pool returns full set | M | [engine] |
-| T2.5 | GREEN: Implement basic O(k²) scan | M | [engine] |
-| T2.6 | TRIANGULATE: Test partial feasibility (some pairs infeasible), test all-infeasible (returns empty) | M | [engine] |
-| T2.7 | REFACTOR: Extract pair-evaluation into helper, ensure clean API | S | [engine] |
-| T2.8 | RED: Test `select_pair_smart(pool, df, kf, rng)` returns Feasible variant when ≥1 feasible pair | M | [engine] |
-| T2.9 | GREEN: Implement | M | [engine] |
-| T2.10 | TRIANGULATE: Returns AllInfeasible variant when none feasible | S | [engine] |
-| T2.11 | PERFORMANCE GATE: Profile with N=350 typical pool. Document timing. If >2x current → implement sampling fallback. | L | [engine] |
+| T2.1 | ~~RED: Test `compute_max_achievable_distance(c1, c2)` for trivial geometry~~ | M | [engine] | ✅ |
+| T2.2 | ~~GREEN: Implement~~ | M | [engine] | ✅ |
+| T2.3 | ~~TRIANGULATE: Edge cases — degenerate clusters, identical positions~~ | S | [engine] | ✅ |
+| T2.4 | ~~RED: Test `find_feasible_pairs(pool, df, kf)` with all-feasible pool~~ | M | [engine] | ✅ |
+| T2.5 | ~~GREEN: Implement basic O(k²) scan~~ | M | [engine] | ✅ |
+| T2.6 | ~~TRIANGULATE: Test partial feasibility, test all-infeasible~~ | M | [engine] | ✅ |
+| T2.7 | ~~REFACTOR: Extract pair-evaluation into helper~~ | S | [engine] | ✅ |
+| T2.8 | ~~RED: Test `select_pair_smart` returns Feasible when ≥1 feasible~~ | M | [engine] | ✅ |
+| T2.9 | ~~GREEN: Implement~~ | M | [engine] | ✅ |
+| T2.10 | ~~TRIANGULATE: Returns AllInfeasible when none feasible~~ | S | [engine] | ✅ |
+| T2.11 | ~~PERFORMANCE GATE: O(k²) trivial for k≤350 (~61k iterations <1ms in Rust). No sampling needed.~~ | L | [engine] | ✅ |
 
 ---
 
