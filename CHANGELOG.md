@@ -1,3 +1,19 @@
+## ai-provider-model-catalog (unreleased)
+
+### Added
+
+- **Dynamic model catalog per provider** (Anthropic / OpenAI / Groq / xAI): populated automatically via `POST /api/v1/ai/providers/{id}/test_connection/` and refreshable on demand via new `POST /api/v1/ai/providers/{id}/refresh_models/` endpoint.
+- **`available_models` and `models_refreshed_at` fields** on `AIProviderConfig` model — persists last-fetched catalog per provider.
+- **Frontend dynamic model picker** with empty-state CTA ("Test connection to load available models"), ⭐ recommended badge, stale-model warning, and "Refreshed X ago" relative timestamp.
+
+### Migration
+
+- `0004_add_model_catalog_fields` — additive only (two new nullable/default fields), no data migration required. Reversible.
+
+### NOT closed
+
+- No Jira ticket — user-requested feature, no prior issue.
+
 ## pya-14-phase2-seed-type-fix (unreleased)
 
 ### Fixed

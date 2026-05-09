@@ -49,9 +49,9 @@
 
 ## Phase 5: Cross-cutting + docs
 
-- [ ] 5.1 **[docs, S]** Write `openspec/changes/ai-provider-model-catalog/SMOKE_TEST.md`: curl examples for `test_connection` and `refresh_models`, expected response shapes, UI walkthrough checklist. Include rate-limit and auth-failure scenarios.
-- [ ] 5.2 **[docs, S]** Add CHANGELOG entry under `[Unreleased]` with one-line summary and PR/issue reference.
-- [ ] 5.3 **[docs, XS]** Note: canonical spec sync to `openspec/specs/` handled by sdd-archive phase.
+- [x] 5.1 **[docs, S]** Write `openspec/changes/ai-provider-model-catalog/SMOKE_TEST.md`: curl examples for `test_connection` and `refresh_models`, expected response shapes, UI walkthrough checklist. Include rate-limit and auth-failure scenarios.
+- [x] 5.2 **[docs, S]** Add CHANGELOG entry under `[Unreleased]` with one-line summary and PR/issue reference.
+- [x] 5.3 **[docs, XS]** Note: canonical spec sync to `openspec/specs/` handled by sdd-archive phase.
 
 ---
 
