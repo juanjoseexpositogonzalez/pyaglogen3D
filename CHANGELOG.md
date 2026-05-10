@@ -1,3 +1,22 @@
+## coordination-export-and-histogram (unreleased)
+
+### Added
+- Per-particle coordination data in `Simulation.metrics.coordination.per_particle` — list of `{particle_id, n_contacts, contact_neighbors}` for every particle
+- Coordination distribution histogram in `Simulation.metrics.coordination.distribution` — keyed by coordination number, value = particle count
+- 2 new sections in per-simulation CSV export (`/api/v1/projects/{p}/simulations/{s}/export/`):
+  - `# section: coordination_per_particle`
+  - `# section: coordination_distribution`
+- 2 new columns in parametric study batch CSV export: `Coord_Mode`, `Coord_Max`
+- New service `apps/simulations/services/coordination.py` — single source of truth for contact computation
+
+### Changed
+- **Contact threshold unified** across the codebase to `(r_i + r_j) * 1.01` (1% tolerance, matching neighbor_graph endpoint). Previously: tasks.py used `2.1 * radius` (monodisperse) and `(r_i+r_j)*1.05` (polydisperse). Historical `coordination.mean` and `coordination.std` values may differ ~3-5% from previous releases. One-time correction for consistency.
+- `neighbor_graph` endpoint now returns cached per-particle data when available (faster, identical results to export).
+
+### Migration
+- No DB migration. New fields persist in existing JSONField.
+- Historical simulations remain valid; their `coordination` field has only `{mean, std}` (frontend treats new fields as Optional).
+
 ## pya-14-phase3-df-convergence (unreleased)
 
 ### Fixed

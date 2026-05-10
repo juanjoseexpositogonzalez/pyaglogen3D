@@ -220,23 +220,24 @@ Export per-particle coordination data and distribution histogram with simulation
 
 ## Phase 6: Docs
 
-### T6.1 — CHANGELOG entry
+### T6.1 — [x] CHANGELOG entry
 - **Size**: S
 - **Stack**: [docs]
 - **Description**: Add entry per design.md section 9. Include: new per-particle + distribution export, threshold unification (4 sites → unified), ~4% drift from old 2.1*r, new columns in batch CSV.
 - **Acceptance**: Entry present in CHANGELOG.md.
 
-### T6.2 — SMOKE_TEST.md examples
+### T6.2 — [x] SMOKE_TEST.md examples
 - **Size**: S
 - **Stack**: [docs]
 - **Description**: Add curl examples to verify per-sim and batch exports include new fields. Query SimViewSet and ParametricStudyViewSet export endpoints.
 - **Acceptance**: Examples working, verify output contains coordination data.
 
-### T6.3 — Mark spec sync deferred
+### T6.3 — [x] Mark spec sync deferred
 - **Size**: S
 - **Stack**: [docs]
 - **Description**: Note in tasks.md that spec sync to canonical is deferred to archive phase. Delta specs remain in change folder until complete.
 - **Acceptance**: Deferred status documented.
+- **Result**: Spec sync deferred to `sdd-archive` phase. Delta specs remain in `openspec/changes/coordination-export-and-histogram/specs/` until archive completes.
 
 ---
 
