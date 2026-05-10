@@ -1379,6 +1379,10 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         Returns the graph structure showing which particles are connected (touching).
         Useful for topological analysis and fingerprinting.
+
+        Performance: uses cached per_particle data from metrics when available
+        (stored during run_simulation_task). Falls back to recomputation for
+        legacy sims that only have {mean, std}.
         """
         simulation = self.get_object()
 
@@ -1388,12 +1392,27 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_404_NOT_FOUND,
             )
 
-        # Load geometry
+        # Load geometry (always needed for coords/radii in node properties)
         coords, radii = self._load_geometry(simulation)
         n_particles = len(coords)
 
-        # Calculate adjacency graph
-        adjacency = self._calculate_adjacency_graph(coords, radii)
+        # ── Cache check: use per_particle from metrics if available ───
+        cached_per_particle = (
+            simulation.metrics.get("coordination", {}).get("per_particle")
+            if simulation.metrics
+            else None
+        )
+
+        if cached_per_particle:
+            # Build adjacency from cached per_particle (cache hit path)
+            adjacency = [[] for _ in range(n_particles)]
+            for entry in cached_per_particle:
+                pid = entry["particle_id"]
+                if pid < n_particles:
+                    adjacency[pid] = entry.get("contact_neighbors", [])
+        else:
+            # Fallback: recompute adjacency graph (legacy sim path)
+            adjacency = self._calculate_adjacency_graph(coords, radii)
 
         # Build graph data structure for visualization
         # Nodes: particles with their properties
