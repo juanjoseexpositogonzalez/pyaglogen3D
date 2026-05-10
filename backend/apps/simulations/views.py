@@ -1295,6 +1295,26 @@ class SimulationViewSet(viewsets.ModelViewSet):
                 ]
             )
 
+        # Section 3: Coordination per-particle (from cached metrics)
+        wrow([])
+        wrow(["# section: coordination_per_particle"])
+        wrow(["particle_id", "n_contacts", "contact_neighbors"])
+
+        coord_metrics = simulation.metrics.get("coordination", {})
+        per_particle = coord_metrics.get("per_particle", [])
+        for p in per_particle:
+            neighbors_str = ";".join(str(n) for n in p.get("contact_neighbors", []))
+            wrow([p.get("particle_id", ""), p.get("n_contacts", 0), neighbors_str])
+
+        # Section 4: Coordination distribution histogram
+        wrow([])
+        wrow(["# section: coordination_distribution"])
+        wrow(["coordination", "count"])
+
+        distribution = coord_metrics.get("distribution", {})
+        for coord_num in sorted(distribution.keys(), key=lambda k: int(k)):
+            wrow([coord_num, distribution[coord_num]])
+
         # Return CSV response
         output.seek(0)
         response = HttpResponse(output.read(), content_type="text/csv")
@@ -1901,6 +1921,28 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             }
         )
 
+    @staticmethod
+    def _compute_coord_mode(metrics: dict) -> int:
+        """Compute coordination mode from distribution (smallest if multimodal)."""
+        distribution = metrics.get("coordination", {}).get("distribution", {})
+        if not distribution:
+            return 0
+        max_count = max(distribution.values())
+        if max_count == 0:
+            return 0
+        modes = [int(k) for k, v in distribution.items() if v == max_count]
+        return min(modes)  # R6 contract: smallest of modes
+
+    @staticmethod
+    def _compute_coord_max(metrics: dict) -> int:
+        """Compute maximum coordination number from distribution."""
+        distribution = metrics.get("coordination", {}).get("distribution", {})
+        if not distribution:
+            return 0
+        # Find highest coordination with count > 0
+        nonzero = [int(k) for k, v in distribution.items() if v > 0]
+        return max(nonzero) if nonzero else 0
+
     @action(detail=True, methods=["get"], url_path="export")
     def export_csv(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Export batch study results as CSV.
@@ -1909,6 +1951,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         - Base simulation data and metrics
         - Sintering columns if sintering_config is set
         - Box-counting columns if include_box_counting is enabled
+        - Coordination columns: Coord_Mode and Coord_Max (appended at end)
         """
         study = self.get_object()
         simulations = study.simulations.filter(status="completed").order_by(
@@ -1948,6 +1991,8 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "Asphericity",
                 "Acylindricity",
                 "Execution_ms",
+                "Coord_Mode",
+                "Coord_Max",
             ]
         )
 
@@ -1991,6 +2036,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         f"{sim.metrics.get('asphericity', 0):.6f}",
                         f"{sim.metrics.get('acylindricity', 0):.6f}",
                         sim.execution_time_ms or 0,
+                        # Coord_Mode: smallest of modes if multimodal (R6 contract)
+                        self._compute_coord_mode(sim.metrics),
+                        self._compute_coord_max(sim.metrics),
                     ]
                 )
 
