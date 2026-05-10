@@ -808,20 +808,14 @@ def compute_limiting_metrics(
         else 0.0
     )
 
-    # Compute coordination numbers (count neighbors within 2.1 * radius)
-    radius = 1.0
-    threshold = 2.1 * radius
-    coordinations = []
-    for i in range(n_particles):
-        count = 0
-        for j in range(n_particles):
-            if i != j:
-                dist = np.linalg.norm(coords[i] - coords[j])
-                if dist <= threshold:
-                    count += 1
-        coordinations.append(count)
-    coord_mean = np.mean(coordinations)
-    coord_std = np.std(coordinations)
+    # Compute coordination numbers via unified service (per-particle + distribution).
+    # Historical note: old threshold was 2.1 * radius (~5% tolerance for
+    # monodisperse r=1.0). New unified threshold: (r_i + r_j) * 1.01 (~1%).
+    # Drift is ~1-4% at boundary distances; see CHANGELOG.
+    from apps.simulations.services.coordination import compute_coordination_data
+
+    _radii = np.full(n_particles, radius)
+    coord_data = compute_coordination_data(coords, _radii)
 
     # Inertia tensor
     inertia = np.zeros((3, 3))
@@ -857,8 +851,19 @@ def compute_limiting_metrics(
         "radius_of_gyration": float(rg),
         "porosity": float(porosity),
         "coordination": {
-            "mean": float(coord_mean),
-            "std": float(coord_std),
+            "mean": coord_data.mean,
+            "std": coord_data.std,
+            "per_particle": [
+                {
+                    "particle_id": p.particle_id,
+                    "n_contacts": p.n_contacts,
+                    "contact_neighbors": p.contact_neighbors,
+                }
+                for p in coord_data.per_particle
+            ],
+            "distribution": coord_data.distribution,
+            "threshold_strategy": coord_data.threshold_strategy,
+            "tolerance": coord_data.tolerance,
         },
         "rg_evolution": rg_evolution,
         "anisotropy": float(anisotropy),
@@ -1075,19 +1080,12 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
         else 0.0
     )
 
-    # Coordination numbers
-    coordinations = []
-    for i in range(n_particles):
-        count = 0
-        for j in range(n_particles):
-            if i != j:
-                dist = np.linalg.norm(coords[i] - coords[j])
-                touching_dist = (radii[i] + radii[j]) * 1.05  # 5% tolerance
-                if dist <= touching_dist:
-                    count += 1
-        coordinations.append(count)
-    coord_mean = float(np.mean(coordinations))
-    coord_std = float(np.std(coordinations))
+    # Coordination numbers via unified service (per-particle + distribution).
+    # Historical note: old tolerance was 5% → now 1% (unified with neighbor_graph).
+    # Drift documented in CHANGELOG.
+    from apps.simulations.services.coordination import compute_coordination_data
+
+    coord_data = compute_coordination_data(coords, radii)
 
     # Inertia tensor (mass-weighted)
     inertia = np.zeros((3, 3))
@@ -1168,8 +1166,19 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
         "radius_of_gyration": float(rg),
         "porosity": float(porosity),
         "coordination": {
-            "mean": coord_mean,
-            "std": coord_std,
+            "mean": coord_data.mean,
+            "std": coord_data.std,
+            "per_particle": [
+                {
+                    "particle_id": p.particle_id,
+                    "n_contacts": p.n_contacts,
+                    "contact_neighbors": p.contact_neighbors,
+                }
+                for p in coord_data.per_particle
+            ],
+            "distribution": coord_data.distribution,
+            "threshold_strategy": coord_data.threshold_strategy,
+            "tolerance": coord_data.tolerance,
         },
         "anisotropy": anisotropy,
         "asphericity": asphericity,
@@ -1701,6 +1710,15 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         np.save(buffer, geometry_array)
         simulation.geometry = buffer.getvalue()
 
+        # Compute per-particle coordination data via unified service.
+        # The Rust engine already computes mean/std, but we need the full
+        # per-particle contact list + distribution histogram for exports.
+        from apps.simulations.services.coordination import compute_coordination_data
+
+        coord_data = compute_coordination_data(
+            result.coordinates, result.radii
+        )
+
         # Store metrics
         simulation.metrics = {
             "fractal_dimension": float(result.fractal_dimension),
@@ -1709,8 +1727,19 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "radius_of_gyration": float(result.radius_of_gyration),
             "porosity": float(result.porosity),
             "coordination": {
-                "mean": float(result.coordination_mean),
-                "std": float(result.coordination_std),
+                "mean": coord_data.mean,
+                "std": coord_data.std,
+                "per_particle": [
+                    {
+                        "particle_id": p.particle_id,
+                        "n_contacts": p.n_contacts,
+                        "contact_neighbors": p.contact_neighbors,
+                    }
+                    for p in coord_data.per_particle
+                ],
+                "distribution": coord_data.distribution,
+                "threshold_strategy": coord_data.threshold_strategy,
+                "tolerance": coord_data.tolerance,
             },
             "rg_evolution": result.rg_evolution.tolist(),
             # Inertia tensor analysis
