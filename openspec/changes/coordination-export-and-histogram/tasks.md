@@ -195,23 +195,26 @@ Export per-particle coordination data and distribution histogram with simulation
 
 ## Phase 5: Frontend graceful absence (defensive)
 
-### T5.1 — grep frontend for metrics.coordination usage
+### T5.1 — [x] grep frontend for metrics.coordination usage
 - **Size**: S
 - **Stack**: [frontend]
 - **Description**: Search frontend code for `metrics.coordination` usage. Find any place that reads `.mean` or `.std` fields.
 - **Acceptance**: List of usage sites documented.
+- **Result**: Found 2 sites reading `coordination.mean` and `.std` (page.tsx:482-488). NeighborGraph.tsx reads `node.coordination` from API response, not metrics. No code reads per_particle/distribution yet.
 
-### T5.2 — IF found: add Optional handling
+### T5.2 — [x] IF found: add Optional handling
 - **Size**: M
 - **Stack**: [frontend]
 - **Description**: If T5.1 finds code, add defensive Optional handling for new fields (per_particle, distribution). Treat as undefined/empty for legacy sims.
 - **Acceptance**: No crash on legacy sims, new fields Optional.
+- **Result**: Added optional type declarations for per_particle, distribution, threshold_strategy, tolerance to types.ts coordination type. Frontend only reads mean/std so new fields are safely ignored on legacy sims.
 
-### T5.3 — IF not found: no change + document
+### T5.3 — [x] IF not found: no change + document
 - **Size**: S
 - **Stack**: [docs]
 - **Description**: If no code reads coordination data, document that no frontend change needed. Skip T5.2.
 - **Acceptance**: Documented in tasks.md.
+- **Result**: No runtime code reads new fields. Type-level Optional declarations added for future consumers (F2 cycle). 397 frontend tests passing.
 
 ---
 

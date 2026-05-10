@@ -232,6 +232,11 @@ export interface SimulationMetrics {
   coordination: {
     mean: number
     std: number
+    // Added by coordination-export-and-histogram — absent on legacy sims
+    per_particle?: Array<{ particle_id: number; n_contacts: number; contact_neighbors: number[] }>
+    distribution?: Record<string, number>
+    threshold_strategy?: string
+    tolerance?: number
   }
   // Absent from imported-metrics payloads; optional on the wire.
   rg_evolution?: number[]
