@@ -1,3 +1,20 @@
+## pya-14-phase3-df-convergence (unreleased)
+
+### Fixed
+
+- **CC tunable Df convergence for Df<2** — was systematically biased +16.4% (Df_target=1.7 → Df_measured≈1.98), now within ±10% for Df ∈ {1.4, 1.6, 1.7, 1.8} and ±5% for Df ≥ 2.0 (Df=1.7 → 1.707, error 0.4%).
+
+### Added
+
+- **Smart pair selection** — feasibility pre-screen filters geometrically impossible pairs before retry loop (R3 modified).
+- **Adaptive merge with march-inward placement** — analytical sphere-sphere contact solver replaces undershoot ballistic for the no-feasible-pair case (R5 modified, R18 added).
+- **`merge_type="adaptive"`** value + `overshoot_pct` field in merge_trace entries (R18).
+- **Feature flag `CC_TUNABLE_USE_PHASE3_ALGORITHM`** env var for production rollback (default `true`, R20).
+
+### Closes
+
+- Jira **PYA-14** fully — Phase 1 (instrumentation), Phase 2 (bug fixes Bug A + Bug B), Phase 3 (algorithmic convergence) all shipped.
+
 ## ai-provider-model-catalog (unreleased)
 
 ### Added
