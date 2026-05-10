@@ -1065,15 +1065,16 @@ pub fn run_tunable_cc_internal(
                         clusters.push(merged);
                         merge_success = true;
                     } else {
-                        // Retries exhausted on feasible pair → adaptive fallback.
-                        // Use ballistic merge for guaranteed physical connectivity.
-                        adaptive_merges += 1;
+                        // Retries exhausted on feasible pair → march-inward adaptive.
+                        // Try march-inward first for better Df convergence.
+                        let march_result = march_inward_merge(
+                            &clusters[impacted_idx],
+                            &clusters[impactor_idx],
+                            required_distance, rp, sintering_coeff, &mut rng,
+                        );
 
-                        let imp_adaptive = clusters[impacted_idx].clone();
-                        let mut imr_adaptive = clusters[impactor_idx].clone();
-
-                        if merge_ballistic(&imp_adaptive, &mut imr_adaptive, sintering_coeff, &mut rng) {
-                            let actual_distance = imp_adaptive.center_of_mass.distance_to(&imr_adaptive.center_of_mass);
+                        if let Some((imp_m, imr_m, actual_distance)) = march_result {
+                            adaptive_merges += 1;
 
                             let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                                 (impactor_idx, impacted_idx)
@@ -1084,8 +1085,8 @@ pub fn run_tunable_cc_internal(
                             clusters.remove(lower_idx);
 
                             let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
-                            let mut merged = imp_adaptive;
-                            merged.merge_with(imr_adaptive);
+                            let mut merged = imp_m;
+                            merged.merge_with(imr_m);
 
                             merge_trace.push(emit_adaptive_merge_entry(
                                 merge_count, n_po1, n_po2,
@@ -1096,15 +1097,54 @@ pub fn run_tunable_cc_internal(
                             merge_count += 1;
                             clusters.push(merged);
                             merge_success = true;
+                        } else {
+                            // March-inward failed → pure ballistic fallback.
+                            // Tag as "ballistic" (not "adaptive") so we know it failed.
+                            let imp_b = clusters[impacted_idx].clone();
+                            let mut imr_b = clusters[impactor_idx].clone();
+
+                            if merge_ballistic(&imp_b, &mut imr_b, sintering_coeff, &mut rng) {
+                                ballistic_merges += 1;
+                                let actual_distance = imp_b.center_of_mass.distance_to(&imr_b.center_of_mass);
+
+                                let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                                    (impactor_idx, impacted_idx)
+                                } else {
+                                    (impacted_idx, impactor_idx)
+                                };
+                                clusters.remove(higher_idx);
+                                clusters.remove(lower_idx);
+
+                                let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                                let mut merged = imp_b;
+                                merged.merge_with(imr_b);
+
+                                let n_total = (n_po1 + n_po2) as f64;
+                                merge_trace.push(MergeTraceEntry {
+                                    step: merge_count,
+                                    n1: n_po1,
+                                    n2: n_po2,
+                                    required_distance,
+                                    actual_distance,
+                                    rg_after: merged.radius_of_gyration,
+                                    rg_target: rp * (n_total / kf).powf(1.0 / df),
+                                    merge_type: "ballistic".to_string(),
+                                    retries: retries_this_merge,
+                                    bounding_check_passed: false,
+                                    overshoot_pct: None,
+                                });
+                                merge_count += 1;
+                                clusters.push(merged);
+                                merge_success = true;
+                            }
                         }
                     }
                 }
                 SmartPairResult::AllInfeasible { max_achievable_pair } => {
-                    // No feasible pair exists — emit event + adaptive fallback via ballistic.
+                    // No feasible pair exists — emit event + march-inward adaptive.
                     no_feasible_pair_events += 1;
                     merge_trace.push(emit_no_feasible_pair_entry(merge_count, clusters.len()));
 
-                    adaptive_merges += 1;
                     let pair = max_achievable_pair;
                     let (impacted_idx, impactor_idx) =
                         if clusters[pair.idx1].n_particles() >= clusters[pair.idx2].n_particles() {
@@ -1116,11 +1156,15 @@ pub fn run_tunable_cc_internal(
                     let n_po1 = clusters[impacted_idx].n_particles();
                     let n_po2 = clusters[impactor_idx].n_particles();
 
-                    let imp = clusters[impacted_idx].clone();
-                    let mut imr = clusters[impactor_idx].clone();
+                    // Try march-inward first
+                    let march_result = march_inward_merge(
+                        &clusters[impacted_idx],
+                        &clusters[impactor_idx],
+                        pair.required_distance, rp, sintering_coeff, &mut rng,
+                    );
 
-                    if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
-                        let actual_distance = imp.center_of_mass.distance_to(&imr.center_of_mass);
+                    if let Some((imp_m, imr_m, actual_distance)) = march_result {
+                        adaptive_merges += 1;
 
                         let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                             (impactor_idx, impacted_idx)
@@ -1131,8 +1175,8 @@ pub fn run_tunable_cc_internal(
                         clusters.remove(lower_idx);
 
                         let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
-                        let mut merged = imp;
-                        merged.merge_with(imr);
+                        let mut merged = imp_m;
+                        merged.merge_with(imr_m);
 
                         merge_trace.push(emit_adaptive_merge_entry(
                             merge_count, n_po1, n_po2,
@@ -1143,6 +1187,46 @@ pub fn run_tunable_cc_internal(
                         merge_count += 1;
                         clusters.push(merged);
                         merge_success = true;
+                    } else {
+                        // March-inward failed → pure ballistic fallback.
+                        ballistic_merges += 1;
+
+                        let imp = clusters[impacted_idx].clone();
+                        let mut imr = clusters[impactor_idx].clone();
+
+                        if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
+                            let actual_distance = imp.center_of_mass.distance_to(&imr.center_of_mass);
+
+                            let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                                (impactor_idx, impacted_idx)
+                            } else {
+                                (impacted_idx, impactor_idx)
+                            };
+                            clusters.remove(higher_idx);
+                            clusters.remove(lower_idx);
+
+                            let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                            let n_total = (n_po1 + n_po2) as f64;
+                            let mut merged = imp;
+                            merged.merge_with(imr);
+
+                            merge_trace.push(MergeTraceEntry {
+                                step: merge_count,
+                                n1: n_po1,
+                                n2: n_po2,
+                                required_distance: pair.required_distance,
+                                actual_distance,
+                                rg_after: merged.radius_of_gyration,
+                                rg_target: rp * (n_total / kf).powf(1.0 / df),
+                                merge_type: "ballistic".to_string(),
+                                retries: 0,
+                                bounding_check_passed: false,
+                                overshoot_pct: None,
+                            });
+                            merge_count += 1;
+                            clusters.push(merged);
+                            merge_success = true;
+                        }
                     }
                 }
             }
@@ -1509,6 +1593,312 @@ fn calculate_fractal_dimension_from_evolution(
     };
 
     (df, kf, r2)
+}
+
+// ── Phase 3: March-Inward Placement (PYA-14 convergence fix) ─────────────
+
+/// Result of march-inward placement.
+///
+/// `Distance(d)` means first contact was found at COM-COM distance `d`.
+/// `NoContact` means no contact was found before reaching the sanity floor.
+#[derive(Debug, PartialEq)]
+pub(crate) enum MarchResult {
+    /// Contact found at this COM-COM distance.
+    Distance(f64),
+    /// No contact achievable within the march range.
+    NoContact,
+}
+
+/// March inward from `d_start` toward `d_floor`, checking for first
+/// sphere-sphere contact between clusters A and B.
+///
+/// Cluster A is centered at origin, cluster B's centroid is placed at
+/// distance `d` from origin along `direction` (unit vector).
+///
+/// The algorithm finds the closest pair of spheres (one from A, one from B)
+/// and computes the exact COM-COM distance at which they touch, then returns
+/// that distance (or the closest achievable if multiple pairs compete).
+///
+/// # Returns
+/// * `MarchResult::Distance(d)` — first contact at COM-COM distance `d`
+/// * `MarchResult::NoContact` — no contact achievable in the range
+pub(crate) fn find_first_contact_distance(
+    spheres_a: &[Sphere],
+    spheres_b: &[Sphere],
+    direction: &Vector3,
+    d_start: f64,
+    d_floor: f64,
+    _rp: f64,
+    sintering_coeff: f64,
+) -> MarchResult {
+    // Safety: d_start must be > d_floor
+    if d_start <= d_floor {
+        return MarchResult::NoContact;
+    }
+
+    // ANALYTICAL APPROACH: For each sphere pair (sa, sb), compute the
+    // exact COM-COM distance at which they first touch.
+    //
+    // When B's centroid is at offset = direction * d:
+    //   sb_position = sb.center + direction * d
+    //   distance(sa, sb) = |sa.center - (sb.center + direction * d)|
+    //   contact when distance = contact_dist
+    //
+    // This is a 1D problem along the direction axis.
+    // Let's solve: |sa.center - sb.center - direction * d|² = contact_dist²
+    //
+    // Let v = sa.center - sb.center
+    // |v - direction * d|² = contact_dist²
+    // |v|² - 2·d·(v·direction) + d² = contact_dist²
+    // d² - 2·(v·direction)·d + (|v|² - contact_dist²) = 0
+    //
+    // Quadratic in d. Take the larger root (approaching from far away).
+
+    let mut best_d: Option<f64> = None;
+
+    for sa in spheres_a {
+        for sb in spheres_b {
+            let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
+            let v = sa.center - sb.center; // vector from sb to sa
+            let v_dot_dir = v.dot(direction);
+            let v_sq = v.dot(&v);
+
+            // d² - 2·v_dot_dir·d + (v_sq - contact_dist²) = 0
+            let a_coef = 1.0;
+            let b_coef = -2.0 * v_dot_dir;
+            let c_coef = v_sq - contact_dist * contact_dist;
+
+            let discriminant = b_coef * b_coef - 4.0 * a_coef * c_coef;
+            if discriminant < 0.0 {
+                continue; // no real solution — this pair can't touch along this direction
+            }
+
+            let sqrt_disc = discriminant.sqrt();
+            // Two roots: d = (2·v_dot_dir ± sqrt_disc) / 2 = v_dot_dir ± sqrt_disc/2
+            let d_far = v_dot_dir + sqrt_disc / 2.0; // larger root (first contact from far)
+            let d_near = v_dot_dir - sqrt_disc / 2.0;
+
+            // We want the distance at first contact approaching from d_start (far).
+            // If d_far is within [d_floor, d_start], that's the first contact.
+            // If d_far > d_start, we're already past it, check d_near.
+            let candidate = if d_far <= d_start && d_far >= d_floor {
+                Some(d_far)
+            } else if d_near <= d_start && d_near >= d_floor {
+                Some(d_near)
+            } else if d_far > d_start && d_near >= d_floor && d_near <= d_start {
+                // Far root is beyond start, use near root
+                Some(d_near)
+            } else {
+                None
+            };
+
+            if let Some(d_contact) = candidate {
+                // Also check this doesn't cause overlap with any OTHER pair
+                // (skip expensive check for now — first contact is sufficient)
+                match best_d {
+                    None => best_d = Some(d_contact),
+                    Some(current_best) => {
+                        // Take the LARGEST d (first contact from far = least penetration)
+                        if d_contact > current_best {
+                            best_d = Some(d_contact);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Verify the best_d doesn't cause overlap with any pair
+    if let Some(d) = best_d {
+        let offset = *direction * d;
+        let mut has_overlap = false;
+        for sa in spheres_a {
+            for sb in spheres_b {
+                let sb_center = sb.center + offset;
+                let dist = sa.center.distance_to(&sb_center);
+                let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
+                if dist < contact_dist - 0.01 {
+                    has_overlap = true;
+                    break;
+                }
+            }
+            if has_overlap {
+                break;
+            }
+        }
+
+        if !has_overlap {
+            return MarchResult::Distance(d);
+        }
+
+        // If the exact analytical solution causes overlap with another pair,
+        // find the maximum d where no pair overlaps.
+        // This is the minimum of all d_far values across ALL pairs.
+        let mut max_safe_d = d;
+        for sa in spheres_a {
+            for sb in spheres_b {
+                let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
+                let v = sa.center - sb.center;
+                let v_dot_dir = v.dot(direction);
+                let v_sq = v.dot(&v);
+
+                let discriminant = 4.0 * v_dot_dir * v_dot_dir - 4.0 * (v_sq - contact_dist * contact_dist);
+                if discriminant < 0.0 {
+                    continue;
+                }
+                let sqrt_disc = discriminant.sqrt();
+                let d_far = v_dot_dir + sqrt_disc / 2.0;
+                if d_far >= d_floor && d_far <= d_start && d_far < max_safe_d {
+                    max_safe_d = d_far;
+                }
+            }
+        }
+
+        if max_safe_d >= d_floor {
+            return MarchResult::Distance(max_safe_d);
+        }
+    }
+
+    MarchResult::NoContact
+}
+
+/// Perform a march-inward adaptive merge between two clusters.
+///
+/// Strategy: normalize sphere positions to be relative to each cluster's
+/// centroid, then use `find_first_contact_distance` to find the COM-COM
+/// distance at which first physical contact occurs. Then position cluster2
+/// at that distance for the actual merge.
+///
+/// Returns `Some((cluster1_clone, positioned_cluster2, actual_distance))` on
+/// success, `None` if all directions failed (caller should fall back to
+/// pure ballistic).
+fn march_inward_merge<R: Rng>(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    target_distance: f64,
+    rp: f64,
+    sintering_coeff: f64,
+    rng: &mut R,
+) -> Option<(TunableCluster, TunableCluster, f64)> {
+    let max_achievable = compute_max_achievable_distance(cluster1, cluster2);
+
+    // If target_distance is not finite or absurdly large, bail immediately.
+    if !target_distance.is_finite() || target_distance <= 0.0 {
+        return None;
+    }
+
+    // Cap d_start at a reasonable multiple of max_achievable to avoid
+    // runaway march on pathological formula outputs (e.g. Df=0.05).
+    let d_start = max_achievable.max(target_distance).min(max_achievable * 2.0);
+    let d_floor = (target_distance * 0.3).max(rp * 0.5); // sanity floor
+
+    // Normalize sphere positions relative to each cluster's centroid.
+    let spheres_a_centered: Vec<Sphere> = cluster1
+        .particles
+        .iter()
+        .map(|s| Sphere::new(s.center - cluster1.center_of_mass, s.radius))
+        .collect();
+
+    // Try multiple random directions WITH random rotations of cluster B.
+    // Each attempt: rotate B randomly, then march along a random direction.
+    let n_attempts = 20;
+    let mut best_result: Option<(Vec<Sphere>, Vector3, f64)> = None;
+
+    for _ in 0..n_attempts {
+        // Random rotation of cluster B around its centroid
+        let (rx, ry, rz) = sample_merge_direction(rng);
+        let rot_axis = Vector3::new(rx, ry, rz);
+        let rot_angle: f64 = rng.gen_range(0.0..std::f64::consts::TAU);
+
+        let spheres_b_centered: Vec<Sphere> = cluster2
+            .particles
+            .iter()
+            .map(|s| {
+                let rel = s.center - cluster2.center_of_mass;
+                let rotated = rotate_vector(&rel, &rot_axis.normalize(), rot_angle);
+                Sphere::new(rotated, s.radius)
+            })
+            .collect();
+
+        let (dx, dy, dz) = sample_merge_direction(rng);
+        let direction = Vector3::new(dx, dy, dz);
+
+        let march = find_first_contact_distance(
+            &spheres_a_centered,
+            &spheres_b_centered,
+            &direction,
+            d_start,
+            d_floor,
+            rp,
+            sintering_coeff,
+        );
+
+        if let MarchResult::Distance(d) = march {
+            match &best_result {
+                None => best_result = Some((spheres_b_centered, direction, d)),
+                Some((_, _, best_d)) => {
+                    if (d - target_distance).abs() < (*best_d - target_distance).abs() {
+                        best_result = Some((spheres_b_centered, direction, d));
+                    }
+                }
+            }
+            // If very close to target, use immediately
+            if (d - target_distance).abs() < 0.05 * rp {
+                break;
+            }
+        }
+    }
+
+    let (rotated_b_spheres, direction, march_distance) = best_result?;
+
+    // Build a positioned cluster2 from the rotated sphere positions.
+    // The rotated_b_spheres are centered at origin (relative to B's centroid).
+    // Place B's centroid at `cluster1.center_of_mass + direction * march_distance`.
+    let com2_target = cluster1.center_of_mass + direction * march_distance;
+    let positioned_particles: Vec<Sphere> = rotated_b_spheres
+        .iter()
+        .map(|s| Sphere::new(s.center + com2_target, s.radius))
+        .collect();
+    let mut c2 = TunableCluster::from_particles(positioned_particles);
+
+    // Verify physical contact + no overlap
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
+        && !check_overlap(cluster1, &c2, sintering_coeff)
+    {
+        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+        return Some((cluster1.clone(), c2, actual));
+    }
+
+    // March found a COM distance but exact placement has slight misalignment.
+    // Nudge c2 toward cluster1 until contact + no overlap.
+    let trajectory = (cluster1.center_of_mass - c2.center_of_mass).normalize();
+    let step = 0.01 * rp;
+    let max_nudge = ((2.0 * rp) / step) as usize + 100;
+
+    for _ in 0..max_nudge {
+        c2.translate(trajectory * step);
+
+        if check_overlap(cluster1, &c2, sintering_coeff) {
+            // Overshot into overlap — back off one step
+            c2.translate(trajectory * (-step));
+            break;
+        }
+
+        if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
+            let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+            return Some((cluster1.clone(), c2, actual));
+        }
+    }
+
+    // Last check after nudging
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
+        && !check_overlap(cluster1, &c2, sintering_coeff)
+    {
+        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+        return Some((cluster1.clone(), c2, actual));
+    }
+
+    None
 }
 
 // ── Phase 3: Smart Pair Selection + Adaptive Fallback (PYA-14) ───────────
@@ -3835,5 +4225,207 @@ mod tests {
         assert_eq!(entry.rg_after, 0.0);
         assert_eq!(entry.rg_target, 0.0);
         assert_eq!(entry.actual_distance, 0.0);
+    }
+
+    // ── T-MARCH-1: March-inward placement tests ─────────────────────
+
+    /// T-MARCH-1 RED: Two single-sphere clusters (radius 1.0) along X axis.
+    /// target_d=2.0, max_achievable=3.0.
+    /// Should march from 3.0 inward, find contact at ~2.0 (within epsilon).
+    #[test]
+    fn test_march_inward_two_unit_spheres_contact_at_2() {
+        let sphere_a = Sphere::new(Vector3::zero(), 1.0);
+        let sphere_b = Sphere::new(Vector3::zero(), 1.0);
+        let direction = Vector3::new(1.0, 0.0, 0.0);
+
+        let result = find_first_contact_distance(
+            &[sphere_a],
+            &[sphere_b],
+            &direction,
+            3.0,  // d_start (max_achievable)
+            1.0,  // d_floor (sanity: 0.5 * target)
+            1.0,  // rp
+            1.0,  // sintering_coeff
+        );
+
+        match result {
+            MarchResult::Distance(d) => {
+                // Contact should be at ~2.0 (sum of radii), within march resolution
+                assert!(
+                    (d - 2.0).abs() < 0.05,
+                    "Expected contact near 2.0, got {d}"
+                );
+            }
+            MarchResult::NoContact => {
+                panic!("Expected contact at ~2.0 for two unit spheres, got NoContact");
+            }
+        }
+    }
+
+    /// T-MARCH-1 TRIANGULATE: Multi-sphere cluster A (3 spheres in a row along X),
+    /// single-sphere B marching along X. Contact should be at the sphere closest
+    /// to B's approach direction.
+    #[test]
+    fn test_march_inward_multi_sphere_a_single_b() {
+        // Cluster A: 3 spheres along X at x=0, x=2, x=4 (touching chain)
+        let spheres_a = vec![
+            Sphere::new(Vector3::zero(), 1.0),
+            Sphere::new(Vector3::new(2.0, 0.0, 0.0), 1.0),
+            Sphere::new(Vector3::new(4.0, 0.0, 0.0), 1.0),
+        ];
+        // Cluster B: single sphere at origin (will be placed along +X)
+        let sphere_b = Sphere::new(Vector3::zero(), 1.0);
+        let direction = Vector3::new(1.0, 0.0, 0.0);
+
+        // A's centroid is at x≈2.0 (COM of equal-radius spheres at 0,2,4).
+        // B approaches from +X. B's center will be at d along X from A's centroid.
+        // Contact with A's rightmost sphere (at x=4) happens when:
+        // d + 0 (B sphere at origin of B) = 4 + 1 + 1 = distance from A centroid.
+        // But B sphere is at B's centroid + direction*d, so B center = d along X.
+        // A spheres are at 0, 2, 4 (not centered at origin for COM).
+        // Actually spheres_a positions are absolute. Let's think about this:
+        // A's centroid is at (0+2+4)/3 = 2.0 on X.
+        // B sphere offset = direction * d, so B sphere center = (d, 0, 0).
+        // Rightmost A sphere at (4,0,0). Contact when |d - 4| = 2.0 (sum of radii).
+        // So d = 6.0 (from right) or d = 2.0 (from left/overlap).
+        // But these positions are relative to A's centroid which is at 2.0.
+        // No — the function uses raw sphere positions + offset.
+        // sphere_b.center = (0,0,0) offset by direction*d = (d, 0, 0).
+        // Contact with A sphere at (4,0,0): |(d, 0,0) - (4,0,0)| = |d-4| <= 2.0
+        // So contact at d = 6.0 (approaching from +X, first contact).
+        // But wait — d_start should be large enough. Let's use d_start=8.0.
+
+        let result = find_first_contact_distance(
+            &spheres_a,
+            &[sphere_b],
+            &direction,
+            8.0,  // d_start
+            1.0,  // d_floor
+            1.0,  // rp
+            1.0,  // sintering_coeff
+        );
+
+        match result {
+            MarchResult::Distance(d) => {
+                // Contact with rightmost A sphere (x=4) + B sphere at d:
+                // |d - 4| = 2.0 → d = 6.0 (from +X side)
+                assert!(
+                    (d - 6.0).abs() < 0.15,
+                    "Expected contact near 6.0 (rightmost sphere + radius sum), got {d}"
+                );
+            }
+            MarchResult::NoContact => {
+                panic!("Expected contact for multi-sphere A vs single B");
+            }
+        }
+    }
+
+    /// T-MARCH-1 TRIANGULATE: d_floor > d_start → returns NoContact immediately.
+    #[test]
+    fn test_march_inward_floor_above_start() {
+        let sphere_a = Sphere::new(Vector3::zero(), 1.0);
+        let sphere_b = Sphere::new(Vector3::zero(), 1.0);
+        let direction = Vector3::new(1.0, 0.0, 0.0);
+
+        let result = find_first_contact_distance(
+            &[sphere_a],
+            &[sphere_b],
+            &direction,
+            1.0,  // d_start
+            5.0,  // d_floor > d_start
+            1.0,
+            1.0,
+        );
+
+        assert_eq!(result, MarchResult::NoContact, "floor > start should return NoContact");
+    }
+
+    /// T-MARCH-1 TRIANGULATE: Spheres too far apart — no contact before floor.
+    #[test]
+    fn test_march_inward_no_contact_when_far_apart() {
+        // Cluster A sphere at origin, cluster B sphere will be placed along direction
+        // but floor is too high for them to ever touch
+        let sphere_a = Sphere::new(Vector3::zero(), 0.1);
+        let sphere_b = Sphere::new(Vector3::zero(), 0.1);
+        let direction = Vector3::new(1.0, 0.0, 0.0);
+
+        // Contact would be at 0.2 (radii sum), but floor is at 5.0
+        let result = find_first_contact_distance(
+            &[sphere_a],
+            &[sphere_b],
+            &direction,
+            10.0, // d_start
+            5.0,  // d_floor (too high for contact at 0.2)
+            0.1,  // rp
+            1.0,  // sintering
+        );
+
+        assert_eq!(result, MarchResult::NoContact);
+    }
+
+    /// T-MARCH-1 TRIANGULATE: With sintering (coeff=0.9), contact distance shrinks.
+    #[test]
+    fn test_march_inward_with_sintering() {
+        let sphere_a = Sphere::new(Vector3::zero(), 1.0);
+        let sphere_b = Sphere::new(Vector3::zero(), 1.0);
+        let direction = Vector3::new(1.0, 0.0, 0.0);
+
+        let sintering_coeff = 0.9;
+        // Contact distance = 2 * rp * sintering_coeff = 1.8
+        let result = find_first_contact_distance(
+            &[sphere_a],
+            &[sphere_b],
+            &direction,
+            3.0,
+            0.5,
+            1.0,
+            sintering_coeff,
+        );
+
+        match result {
+            MarchResult::Distance(d) => {
+                let expected_contact = sintered_contact_distance(1.0, 1.0, sintering_coeff);
+                assert!(
+                    (d - expected_contact).abs() < 0.05,
+                    "With sintering=0.9, expected contact near {expected_contact}, got {d}"
+                );
+            }
+            MarchResult::NoContact => {
+                panic!("Expected contact with sintering");
+            }
+        }
+    }
+
+    /// T-MARCH-1 TRIANGULATE: target > max_achievable (formula impossible).
+    /// Starts at max_d, marches inward, returns whatever distance achieves contact.
+    #[test]
+    fn test_march_inward_target_exceeds_max() {
+        // Two unit spheres. target_d = 5.0 (impossible), max_d = 2.5.
+        // March from 2.5 inward → contact at ~2.0.
+        let sphere_a = Sphere::new(Vector3::zero(), 1.0);
+        let sphere_b = Sphere::new(Vector3::zero(), 1.0);
+        let direction = Vector3::new(0.0, 1.0, 0.0); // different direction
+
+        let result = find_first_contact_distance(
+            &[sphere_a],
+            &[sphere_b],
+            &direction,
+            2.5,  // d_start (max_achievable, smaller than impossible target)
+            0.5,  // d_floor
+            1.0,
+            1.0,
+        );
+
+        match result {
+            MarchResult::Distance(d) => {
+                assert!(
+                    (d - 2.0).abs() < 0.05,
+                    "Expected contact near 2.0, got {d}"
+                );
+            }
+            MarchResult::NoContact => {
+                panic!("Expected contact even when target exceeds max");
+            }
+        }
     }
 }

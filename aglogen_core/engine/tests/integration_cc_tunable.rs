@@ -579,15 +579,87 @@ fn phase3_convergence_df_1_7_dimers_3_seeds() {
         mean_df, target_df, df_error * 100.0
     );
 
-    // Phase 4 structural validation: the Phase 3 algorithm runs correctly,
-    // smart pair selection is active (tunable merges > 0), and adaptive
-    // fallback fires (adaptive_merges > 0). Full ±10% convergence is a
-    // Phase 5 task requiring parametric tuning of the adaptive placement.
+    // Phase 3 convergence: march-inward placement achieves ±10% for Df<2.
+    // Tightened from ±30% (Phase 4 structural) to ±10% (spec R5).
     assert!(
-        df_error < 0.30,
-        "Phase 3 Df out of ±30% tolerance: mean={:.3}, target={}, error={:.1}%",
+        df_error < 0.10,
+        "Phase 3 Df out of ±10% tolerance: mean={:.3}, target={}, error={:.1}%",
         mean_df,
         target_df,
         df_error * 100.0
+    );
+}
+
+// ── T5.1: Parametric regression sweep (PYA-14 Phase 5) ──────────────────
+
+/// T5.1 — Parametric sweep: Df ∈ {1.4, 1.6, 1.7, 1.8, 2.0, 2.5}, kf=1.3,
+/// N=350, seed_type=Dimers, 3 seeds each.
+///
+/// Convergence tolerance:
+/// - Df < 2.0: ±10% (spec R19)
+/// - Df >= 2.0: ±5% (spec R21, non-regression)
+///
+/// This test runs the full matrix and prints a results table.
+/// March-inward placement should achieve these tolerances.
+#[test]
+fn parametric_sweep_df_range_kf_1_3() {
+    let targets: &[(f64, f64)] = &[
+        (1.4, 0.10),
+        (1.6, 0.10),
+        (1.7, 0.10),
+        (1.8, 0.10),
+        (2.0, 0.05),
+        (2.5, 0.05),
+    ];
+    let target_kf = 1.3;
+    let n_particles = 350;
+    let seeds = [1u64, 2, 3];
+
+    eprintln!("\n=== PARAMETRIC SWEEP: kf={target_kf}, N={n_particles}, Dimers ===");
+    eprintln!("{:<8} {:<10} {:<10} {:<10} {:<10} {:<10}", "Df_tgt", "seed1", "seed2", "seed3", "mean", "error%");
+
+    let mut all_pass = true;
+
+    for &(target_df, tolerance) in targets {
+        let mut df_results = Vec::new();
+
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Dimers,
+                ..Default::default()
+            };
+
+            let result = run_tunable_cc_internal(params, seed, None);
+            assert_eq!(result.coordinates.len(), n_particles);
+            df_results.push(result.fractal_dimension);
+        }
+
+        let mean_df: f64 = df_results.iter().sum::<f64>() / df_results.len() as f64;
+        let df_error = (mean_df - target_df).abs() / target_df;
+
+        eprintln!(
+            "{:<8.1} {:<10.3} {:<10.3} {:<10.3} {:<10.3} {:<10.1}",
+            target_df, df_results[0], df_results[1], df_results[2], mean_df, df_error * 100.0
+        );
+
+        if df_error >= tolerance {
+            eprintln!(
+                "  ⚠ FAIL: Df={} mean={:.3} error={:.1}% exceeds ±{:.0}%",
+                target_df, mean_df, df_error * 100.0, tolerance * 100.0
+            );
+            all_pass = false;
+        }
+    }
+
+    eprintln!("=========================================================");
+
+    assert!(
+        all_pass,
+        "Parametric sweep: at least one Df target exceeded tolerance — see table above"
     );
 }
