@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -41,6 +41,15 @@ export interface ExportProgress {
   total: number
 }
 
+/**
+ * Shape of the mode-change notification sent to the parent.
+ * Keeps the raw control values so the parent can derive grid directions.
+ */
+export type ModeChangeConfig =
+  | { n_az: number; n_el: number }      // grid
+  | { n: number }                        // fibonacci
+  | { az_step: number; el_step: number } // legacy
+
 interface ProjectionControlsProps {
   onPreview: (params: ProjectionParams) => void
   /** Legacy batch download (kept for backward compat with existing callers). */
@@ -54,6 +63,11 @@ interface ProjectionControlsProps {
     payload: ExportProjectionsPayload,
     onProgress?: (p: ExportProgress) => void
   ) => void | Promise<void>
+  /**
+   * Notifies the parent whenever the sampling mode or its config changes,
+   * so the page can compute grid directions for the hemisphere viz.
+   */
+  onModeChange?: (mode: ProjectionMode, config: ModeChangeConfig) => void
   isLoading?: boolean
   isBatchLoading?: boolean
 }
@@ -77,6 +91,7 @@ export function ProjectionControls({
   onPreview,
   onDownloadBatch,
   onExport,
+  onModeChange,
   isLoading,
   isBatchLoading,
 }: ProjectionControlsProps) {
@@ -109,6 +124,18 @@ export function ProjectionControls({
   // Async progress state (only set when the backend dispatches to Celery)
   const [progress, setProgress] = useState<ExportProgress | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
+
+  // Notify parent of mode + config so it can compute grid directions
+  useEffect(() => {
+    if (!onModeChange) return
+    if (mode === 'grid') {
+      onModeChange(mode, { n_az: nAz, n_el: nEl })
+    } else if (mode === 'fibonacci') {
+      onModeChange(mode, { n: nFib })
+    } else {
+      onModeChange(mode, { az_step: azStep, el_step: elStep })
+    }
+  }, [onModeChange, mode, nAz, nEl, nFib, azStep, elStep])
 
   const handleProjectCurrentView = () => {
     setAzimuth(cameraAzimuth)

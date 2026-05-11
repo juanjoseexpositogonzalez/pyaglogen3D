@@ -270,3 +270,62 @@ describe("ProjectionControls", () => {
     expect(payload.format).toBe("png");
   });
 });
+
+// ---------------------------------------------------------------------------
+// onModeChange callback — notifies parent of current mode + config
+// ---------------------------------------------------------------------------
+describe("ProjectionControls — onModeChange callback", () => {
+  it("fires onModeChange with grid config on mount (default mode)", () => {
+    const onModeChange = vi.fn();
+    render(
+      <ProjectionControls
+        onPreview={vi.fn()}
+        onModeChange={onModeChange}
+      />,
+    );
+    // Default mode is 'grid' with nAz=10, nEl=5
+    expect(onModeChange).toHaveBeenCalledWith("grid", { n_az: 10, n_el: 5 });
+  });
+
+  it("fires onModeChange when switching to fibonacci", () => {
+    const onModeChange = vi.fn();
+    render(
+      <ProjectionControls
+        onPreview={vi.fn()}
+        onModeChange={onModeChange}
+      />,
+    );
+    onModeChange.mockClear();
+    selectMode("fibonacci");
+    expect(onModeChange).toHaveBeenCalledWith("fibonacci", { n: 50 });
+  });
+
+  it("fires onModeChange when switching to legacy", () => {
+    const onModeChange = vi.fn();
+    render(
+      <ProjectionControls
+        onPreview={vi.fn()}
+        onModeChange={onModeChange}
+      />,
+    );
+    onModeChange.mockClear();
+    selectMode("legacy");
+    expect(onModeChange).toHaveBeenCalledWith("legacy", {
+      az_step: 30,
+      el_step: 30,
+    });
+  });
+
+  it("fires onModeChange when grid n_az changes", () => {
+    const onModeChange = vi.fn();
+    render(
+      <ProjectionControls
+        onPreview={vi.fn()}
+        onModeChange={onModeChange}
+      />,
+    );
+    onModeChange.mockClear();
+    setNumber(/azimuth samples/i, 20);
+    expect(onModeChange).toHaveBeenCalledWith("grid", { n_az: 20, n_el: 5 });
+  });
+});

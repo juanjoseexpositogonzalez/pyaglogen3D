@@ -15,8 +15,15 @@ import {
   type ProjectionParams,
   type BatchParams,
   type ExportProgress,
+  type ProjectionMode,
+  type ModeChangeConfig,
 } from '@/components/projection'
 import type { ExportProjectionsPayload } from '@/lib/api'
+import {
+  computeGridDirections,
+  modeConfigToGridConfig,
+  deriveGeneratedDirections,
+} from '@/lib/projection-grid'
 import { NeighborGraph } from '@/components/topology'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
@@ -70,6 +77,27 @@ export default function SimulationDetailPage({
   const [isExporting, setIsExporting] = useState(false)
   const [showLimitingCases, setShowLimitingCases] = useState(false)
 
+  // Hemisphere viz state — driven by ProjectionControls.onModeChange
+  const [projectionMode, setProjectionMode] = useState<ProjectionMode>('grid')
+  const [projectionModeConfig, setProjectionModeConfig] = useState<ModeChangeConfig>({ n_az: 10, n_el: 5 })
+  const [generatedDirections, setGeneratedDirections] = useState<
+    Array<{ az: number; el: number; projectionId: string }>
+  >([])
+
+  // Compute grid directions for the hemisphere (recalculates when mode/config change)
+  const gridDirections = useMemo(
+    () => computeGridDirections(projectionMode, modeConfigToGridConfig(projectionMode, projectionModeConfig)),
+    [projectionMode, projectionModeConfig],
+  )
+
+  const handleModeChange = (mode: ProjectionMode, config: ModeChangeConfig) => {
+    setProjectionMode(mode)
+    setProjectionModeConfig(config)
+    // Reset generated directions when config changes — the old export
+    // no longer matches the new grid.
+    setGeneratedDirections([])
+  }
+
   // Generate limiting case lines for the fractal plot when checkbox is checked
   // This must be before any early returns to follow React's rules of hooks
   const npo = simulation && 'n_particles' in simulation.parameters
@@ -121,6 +149,16 @@ export default function SimulationDetailPage({
     } finally {
       setIsProjectionLoading(false)
     }
+  }
+
+  const handleDirectionClick = (
+    direction: { az: number; el: number; projectionId: string },
+  ) => {
+    handleProjectionPreview({
+      azimuth: direction.az,
+      elevation: direction.el,
+      format: projectionParams.format,
+    })
   }
 
   const handleBatchDownload = async (params: BatchParams) => {
@@ -182,6 +220,9 @@ export default function SimulationDetailPage({
       link.click()
       document.body.removeChild(link)
       URL.revokeObjectURL(url)
+
+      // Populate hemisphere viz with the directions that were just generated
+      setGeneratedDirections(deriveGeneratedDirections(payload))
     } catch (err) {
       console.error('Failed to export projections:', err)
       setBatchDownloadError(
@@ -626,6 +667,9 @@ export default function SimulationDetailPage({
                   azimuth={projectionParams.azimuth}
                   elevation={projectionParams.elevation}
                   format={projectionParams.format}
+                  gridDirections={gridDirections}
+                  generatedDirections={generatedDirections}
+                  onDirectionClick={handleDirectionClick}
                 />
               </div>
               <div className="lg:col-span-1">
@@ -639,6 +683,7 @@ export default function SimulationDetailPage({
                     onPreview={handleProjectionPreview}
                     onExport={handleExportProjections}
                     onDownloadBatch={handleBatchDownload}
+                    onModeChange={handleModeChange}
                     isLoading={isProjectionLoading}
                     isBatchLoading={isBatchLoading}
                   />
