@@ -2092,25 +2092,17 @@ def _batch_storage_dir() -> str:
     return storage_dir
 
 
-@shared_task(bind=True, name="apps.simulations.tasks.build_batch_projections_zip")
-def build_batch_projections_zip(
-    self,
+def _build_batch_projections_zip_impl(
+    task_self,
     study_id: str,
     simulation_ids: list[str],
     mode: str,
     config: dict,
 ) -> dict:
-    """Build a batch projection ZIP for multiple simulations.
-
-    Iterates simulations sequentially, calls ``render_or_reuse_projections``
-    per sim, packs results into a single ZIP with ``sim_{uuid}/`` subfolders
-    and a root ``manifest.json``.
-
-    Per-sim failure isolation: if one sim fails, it is logged in
-    ``failed_sims`` and the rest continue.
+    """Core logic for batch projection ZIP (callable from tests with a fake self).
 
     Args:
-        self: Celery task instance (bound) or a fake with ``update_state``.
+        task_self: Celery task instance or test fake with ``update_state``.
         study_id: UUID string of the ParametricStudy.
         simulation_ids: List of simulation UUID strings.
         mode: ``"grid"`` | ``"fibonacci"`` | ``"legacy"``.
@@ -2146,7 +2138,7 @@ def build_batch_projections_zip(
 
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for idx, sim_id in enumerate(simulation_ids):
-            self.update_state(
+            task_self.update_state(
                 state="PROGRESS",
                 meta={
                     "current": idx + 1,
@@ -2221,6 +2213,20 @@ def build_batch_projections_zip(
         "failed_sims": failed_sims,
         "duration_sec": round(duration, 2),
     }
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.build_batch_projections_zip")
+def build_batch_projections_zip(
+    self,
+    study_id: str,
+    simulation_ids: list[str],
+    mode: str,
+    config: dict,
+) -> dict:
+    """Celery task wrapper for batch projection ZIP build."""
+    return _build_batch_projections_zip_impl(
+        self, study_id, simulation_ids, mode, config,
+    )
 
 
 # ============================================================================

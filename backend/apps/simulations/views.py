@@ -2305,14 +2305,19 @@ def projections_status_view(request: Request, job_id: str) -> Response:
         )
     if state == "PROGRESS":
         meta = result.info if isinstance(result.info, dict) else {}
-        return Response(
-            {
-                "status": "processing",
-                "progress": float(meta.get("progress", 0.0)),
-                "current": int(meta.get("current", 0)),
-                "total": int(meta.get("total", 0)),
-            }
-        )
+        resp = {
+            "status": "processing",
+            "progress": float(meta.get("progress", 0.0)),
+            "current": int(meta.get("current", 0)),
+            "total": int(meta.get("total", 0)),
+        }
+        # Batch-specific: surface current_sim_id when present (backward compat:
+        # single-sim consumers ignore unknown fields)
+        if "current_sim_id" in meta:
+            resp["current_sim_id"] = meta["current_sim_id"]
+        else:
+            resp["current_sim_id"] = None
+        return Response(resp)
     if state == "SUCCESS":
         data = result.result if isinstance(result.result, dict) else {}
         return Response(
@@ -2370,6 +2375,10 @@ def projections_download_view(request: Request, job_id: str) -> HttpResponse:
     with open(zip_path, "rb") as fp:
         zip_bytes = fp.read()
 
+    # Use download_filename from result dict if present (batch export),
+    # fall back to projections_{job_id}.zip (single-sim, backward compat)
+    filename = data.get("download_filename", f"projections_{job_id}.zip")
+
     response = HttpResponse(zip_bytes, content_type="application/zip")
-    response["Content-Disposition"] = f'attachment; filename="projections_{job_id}.zip"'
+    response["Content-Disposition"] = f'attachment; filename="{filename}"'
     return response

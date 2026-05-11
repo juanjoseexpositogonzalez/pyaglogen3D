@@ -21,7 +21,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from apps.simulations.tasks import build_batch_projections_zip
+from apps.simulations.tasks import _build_batch_projections_zip_impl as _build_fn
 
 
 # ---------------------------------------------------------------------------
@@ -96,7 +96,7 @@ class TestBuildBatchProjectionsZipStructure:
         ):
             MockSimModel.objects.get = mock_get_sim
 
-            result = build_batch_projections_zip(
+            result = _build_fn(
                 fake_self,
                 study_id=study_id,
                 simulation_ids=sim_ids,
@@ -179,7 +179,7 @@ class TestBatchTaskPerSimFailure:
         ):
             MockSimModel.objects.get = mock_get_sim
 
-            result = build_batch_projections_zip(
+            result = _build_fn(
                 fake_self,
                 study_id=study_id,
                 simulation_ids=sim_ids,
@@ -234,7 +234,7 @@ class TestBatchTaskProgressMeta:
         ):
             MockSimModel.objects.get = mock_get_sim
 
-            build_batch_projections_zip(
+            _build_fn(
                 fake_self,
                 study_id=study_id,
                 simulation_ids=sim_ids,
@@ -291,7 +291,7 @@ class TestBatchTaskDownloadFilename:
         ):
             MockSimModel.objects.get = mock_get_sim
 
-            result = build_batch_projections_zip(
+            result = _build_fn(
                 fake_self,
                 study_id=study_id,
                 simulation_ids=sim_ids,
