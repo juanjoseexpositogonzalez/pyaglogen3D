@@ -1,3 +1,24 @@
+## contacts-graph-viz (unreleased)
+
+### Added
+- Force-directed graph visualization for the simulation's Topology Analysis section (replaces the previous list-based explorer)
+- Interactive node click → inline detail panel below the graph showing position, radius, coordination, distance from CDG, and clickable neighbor buttons
+- Hover highlighting of nodes and their connecting edges
+- Stabilization spinner overlay during initial physics simulation
+- Theme-aware colors (light/dark mode)
+- Large-graph warning when N>1000 nodes
+- New helpers: `lib/graphUtils.ts` (data transformation), 3 new presentational components (StatsBanner, NetworkCanvas, NodeDetailPanel)
+- New dependencies: `vis-network@^10.0.3`, `vis-data@^8.0.4` (~170KB gzip)
+
+### Changed
+- `NeighborGraph` component body replaced: the particle-explorer button list and coordination-distribution pills are GONE. Coordination distribution is now encoded visually via node color and size in the graph. Particle navigation now happens by clicking graph nodes.
+- Component name and props interface preserved (`data`, `isLoading`, `onExportAdjacency`) — no `page.tsx` changes required.
+
+### Notes
+- Bundle size increased by ~170KB gzip (acceptable given Three.js + Plotly already present)
+- For N>1000 nodes, expect 2-5s stabilization time (no hard cap, just a warning)
+- The `onExportAdjacency` prop is still optional and not yet wired in the page — preserved for a future cycle
+
 ## batch-projection-export (unreleased)
 
 ### Added

@@ -114,10 +114,10 @@
 
 | # | Task | Size | Stack |
 |---|------|-------|
-| T7.1 | Investigate theme handling: search for `useTheme`, `next-themes`, `dark mode`, `matchMedia`, `ThemeProvider` in `frontend/src/`. If none found, document finding and proceed with `window.matchMedia('(prefers-color-scheme: dark)')` approach. | M | [frontend] |
-| T7.2 | Modify `buildVisNetworkData` signature to accept optional `{ theme: 'light' \| 'dark' }` argument (default `'light'`). | S | [frontend] |
-| T7.3 | Edge color: light theme → `'#cbd5e1'`, dark theme → `'#475569'` (per design doc §Edge Color). Pass theme through to `buildVisNetworkData` call in `NetworkCanvas`. | S | [frontend] |
-| T7.4 | **TDD** `buildVisNetworkData` test: call with `theme: 'dark'` → assert all edges have `color: '#475569'`; call with `theme: 'light'` → `'#cbd5e1'`. | S | [frontend] |
+| T7.1 | ~~Investigate theme handling: no `next-themes`/`useTheme`/`ThemeProvider` found. Used `window.matchMedia('(prefers-color-scheme: dark)')` with jsdom-safe guard.~~ | M | [frontend] | ✅ |
+| T7.2 | ~~Modify `buildVisNetworkData` signature to accept optional `theme: 'light' \| 'dark'` argument (default `'light'`).~~ | S | [frontend] | ✅ |
+| T7.3 | ~~Edge color: light→`#cbd5e1`, dark→`#475569`. Dark font→`#e2e8f0`. Wired via `matchMedia` in `NetworkCanvas`, re-inits on theme change.~~ | S | [frontend] | ✅ |
+| T7.4 | ~~**TDD** 4 tests: dark edges, light edges, dark font, no font in light mode. RED→GREEN confirmed.~~ | S | [frontend] | ✅ |
 
 **Phase 7 commit:** `feat(NetworkCanvas): adapt edge color to light/dark theme via matchMedia`
 
@@ -127,9 +127,9 @@
 
 | # | Task | Size | Stack |
 |---|------|------|-------|
-| T8.1 | Run full frontend test suite: `cd frontend && npx vitest run`. Fix any regressions (likely component imports, path aliases). | M | [frontend] |
-| T8.2 | Confirm `page.tsx` does not need changes: verify `NeighborGraph` export name and props interface are unchanged. | S | [frontend] |
-| T8.3 | **Manual** visual sanity check: open a simulation with N>100 particles in the Topology Analysis section, verify stats banner, force-directed graph, node click, detail panel (defer to SMOKE_TEST.md for post-deploy checklist). | M | [frontend] |
+| T8.1 | ~~Full suite: 525 passing, 6 pre-existing failures (FraktalBatchUpload/ImageDetail only). Zero regressions from contacts-graph-viz.~~ | M | [frontend] | ✅ |
+| T8.2 | ~~`page.tsx` unchanged — `NeighborGraph` export name + props interface (`data`, `isLoading`, `onExportAdjacency`) preserved.~~ | S | [frontend] | ✅ |
+| T8.3 | ~~Visual sanity deferred to SMOKE_TEST.md (post-deploy checklist).~~ | M | [frontend] | ✅ |
 
 **Phase 8 commit:** `test: verify full frontend suite passes with no regressions`
 
@@ -139,9 +139,9 @@
 
 | # | Task | Size | Stack |
 |---|------|------|-------|
-| T9.1 | Add `CHANGELOG.md` entry under `[unreleased]` for `contacts-graph-viz`: Added (force-directed graph viz, new sub-components `StatsBanner`, `NodeDetailPanel`, `NetworkCanvas`, vis-network dep), Changed (NeighborGraph body replaced — particle-explorer list removed, coordination-distribution pills removed), Notes (bundle size +170KB gzip vis-network + vis-data). | S | [docs] |
-| T9.2 | Create `docs/SMOKE_TEST.md` for `contacts-graph-viz` with: preconditions (deploy frontend), steps 1-6 (stats banner + graph render, node hover, click detail, neighbor nav, edge cases N=1/disconnected/N>1000, dark/light toggle), pass/fail criteria. | M | [docs] |
-| T9.3 | **Defer** spec sync to archive phase (per design doc §Migration/Rollout). | S | [docs] |
+| T9.1 | ~~CHANGELOG.md entry added at top of file with Added/Changed/Notes sections.~~ | S | [docs] | ✅ |
+| T9.2 | ~~SMOKE_TEST.md created at `openspec/changes/contacts-graph-viz/SMOKE_TEST.md` with 9 steps + pre/post conditions.~~ | M | [docs] | ✅ |
+| T9.3 | ~~**Defer** spec sync to archive phase (per design doc §Migration/Rollout).~~ | S | [docs] | ✅ — noted here: spec sync deferred to `sdd-archive` phase. |
 
 **Phase 9 commit:** `docs: add CHANGELOG entry and smoke test guide for contacts-graph-viz`
 
