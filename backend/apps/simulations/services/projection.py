@@ -353,3 +353,161 @@ def create_projection_filename(
         Filename like "Sim123_Az045_El030.png"
     """
     return f"{base_name}_Az{int(azimuth):03d}_El{int(elevation):03d}.{format}"
+
+
+# ============================================================================
+# Batch projection export — render-or-reuse helper
+# ============================================================================
+
+import logging
+import math
+from pathlib import Path
+from typing import Any
+
+_logger = logging.getLogger(__name__)
+
+
+def _compute_directions(
+    mode: str, config: dict
+) -> list[tuple[float, float]]:
+    """Compute the list of (azimuth, elevation) directions for a given mode.
+
+    Args:
+        mode: One of ``"grid"``, ``"fibonacci"``, ``"legacy"``.
+        config: Mode-specific parameters.
+
+    Returns:
+        List of ``(azimuth_deg, elevation_deg)`` tuples.
+    """
+    if mode == "fibonacci":
+        n = int(config.get("n", 10))
+        directions: list[tuple[float, float]] = []
+        golden_ratio = (1.0 + math.sqrt(5.0)) / 2.0
+        for i in range(n):
+            theta = math.acos(1.0 - 2.0 * (i + 0.5) / n)
+            phi = 2.0 * math.pi * i / golden_ratio
+            elevation = 90.0 - math.degrees(theta)
+            azimuth = math.degrees(phi) % 360.0
+            directions.append((round(azimuth, 6), round(elevation, 6)))
+        return directions
+
+    # grid and legacy share the same step-based logic
+    az_step = float(config.get("az_step", 30))
+    el_step = float(config.get("el_step", 30))
+
+    directions = []
+    az = 0.0
+    while az < 360.0:
+        el = -90.0
+        while el <= 90.0:
+            directions.append((round(az, 6), round(el, 6)))
+            el += el_step
+        az += az_step
+
+    return directions
+
+
+def _render_single_direction(
+    simulation: Any,
+    azimuth: float,
+    elevation: float,
+    output_dir: Path,
+    img_format: str = "png",
+) -> Path:
+    """Render a single projection direction and write to disk.
+
+    This is the default implementation that uses ``aglogen_core``.
+    In tests it is typically mocked so no Rust engine is required.
+
+    Args:
+        simulation: Simulation model instance with ``.geometry`` and ``.id``.
+        azimuth: Azimuth in degrees.
+        elevation: Elevation in degrees.
+        output_dir: Directory to write the rendered file.
+        img_format: ``"png"`` or ``"svg"``.
+
+    Returns:
+        Path to the written file.
+    """
+    import aglogen_core
+
+    buf = io.BytesIO(simulation.geometry)
+    geometry_array = np.load(buf)
+    coords = np.ascontiguousarray(geometry_array[:, :3])
+    radii_arr = np.ascontiguousarray(geometry_array[:, 3])
+
+    proj = aglogen_core.project_to_2d(coords, radii_arr, azimuth, elevation)
+
+    bounds = (proj.bounds[0], proj.bounds[1], proj.bounds[2], proj.bounds[3])
+    if img_format == "svg":
+        image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
+    else:
+        image_data = render_projection_png(
+            proj.x, proj.y, proj.radii, bounds, img_size=512,
+        )
+
+    base_name = f"sim_{str(simulation.id)[:8]}"
+    fname = create_projection_filename(base_name, azimuth, elevation, img_format)
+    out_path = output_dir / fname
+    if isinstance(image_data, str):
+        out_path.write_text(image_data)
+    else:
+        out_path.write_bytes(image_data)
+    return out_path
+
+
+def render_or_reuse_projections(
+    simulation: Any,
+    mode: str,
+    config: dict,
+    output_dir: Path,
+    img_format: str = "png",
+) -> list[Path]:
+    """Render projections for a simulation, reusing existing files on disk.
+
+    For each direction determined by ``mode`` + ``config``, checks whether
+    the deterministic filename already exists in ``output_dir``. If it does,
+    the path is appended to the result without re-rendering. If not, the
+    direction is rendered via :func:`_render_single_direction`.
+
+    Per-direction failures are isolated: a failed render logs a warning and
+    skips that direction without aborting the rest.
+
+    Args:
+        simulation: Simulation model instance.
+        mode: ``"grid"``, ``"fibonacci"``, or ``"legacy"``.
+        config: Mode-specific config dict (``az_step``/``el_step`` or ``n``).
+        output_dir: Directory for rendered files.
+        img_format: ``"png"`` or ``"svg"``.
+
+    Returns:
+        List of ``Path`` objects for all successfully produced projections
+        (both reused and freshly rendered).
+    """
+    directions = _compute_directions(mode, config)
+    base_name = f"sim_{str(simulation.id)[:8]}"
+    result: list[Path] = []
+
+    for az, el in directions:
+        fname = create_projection_filename(base_name, az, el, img_format)
+        file_path = output_dir / fname
+
+        if file_path.exists():
+            _logger.debug("Reusing cached projection: %s", fname)
+            result.append(file_path)
+            continue
+
+        try:
+            rendered_path = _render_single_direction(
+                simulation, az, el, output_dir, img_format,
+            )
+            result.append(rendered_path)
+        except Exception:
+            _logger.warning(
+                "Render failed for direction Az=%.1f El=%.1f on sim %s",
+                az, el, simulation.id,
+                exc_info=True,
+            )
+            # Per-direction failure isolation: skip, don't abort
+
+    return result
