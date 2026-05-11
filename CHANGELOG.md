@@ -1,3 +1,18 @@
+## projection-hemisphere-viz (unreleased)
+
+### Added
+- 2D stereographic hemisphere visualization in simulation results — shows projection direction discretization grid with parallels and meridians
+- Generated projections highlighted on the hemisphere; selected projection has a distinctive ring
+- Click on a generated dot switches the preview to that projection
+- Hover tooltip shows precise (Az, El) values
+- Supports all 3 projection modes: grid, fibonacci, legacy
+- New helpers: `lib/stereographic.ts` (math), `lib/projection-grid.ts` (grid generation)
+- New component: `components/projection/HemisphereGrid.tsx`
+
+### Notes
+- Pure frontend change, no backend impact
+- No new dependencies
+
 ## coordination-export-and-histogram (unreleased)
 
 ### Added
