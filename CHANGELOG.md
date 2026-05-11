@@ -1,3 +1,20 @@
+## batch-projection-export (unreleased)
+
+### Added
+- New endpoint `POST /api/v1/projects/{p}/studies/{s}/export-projections/` — async batch projection generation across multiple simulations of a parametric study
+- New frontend panel "Export Projections" in the parametric study results view — checkbox per simulation, select-all/deselect-all, mode selector (grid/fibonacci/legacy), progress polling, auto-download
+- New Celery task `build_batch_projections_zip` — packs all projections into a single ZIP organized by simulation, includes `manifest.json` with export metadata
+- Render-or-reuse efficiency: PNG files already on disk are reused without re-rendering (deterministic filenames)
+
+### Changed
+- `projections-status/{job_id}/` polling endpoint now surfaces `current`, `total`, `current_sim_id` from task meta (backward compatible — single-sim consumers ignore unknown fields)
+- `projections-status/{job_id}/download/` now uses custom filename from task result when present (e.g. `study_{study_id}_projections_{date}.zip` for batch exports)
+
+### Notes
+- Max 50 simulations per batch export
+- Per-simulation failures don't abort the batch — failed sims listed in manifest.json, ZIP includes successful ones
+- No DB migration
+
 ## projection-hemisphere-viz (unreleased)
 
 ### Added
