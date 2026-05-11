@@ -1389,9 +1389,115 @@ export const adminApi = {
    * Delete a user and all their data.
    * Requires staff/superuser permission.
    */
-  deleteUser: (userId: string) =>
+   deleteUser: (userId: string) =>
     request<{ message: string }>(`/auth/admin/users/${userId}/`, {
       method: 'DELETE',
     }),
+}
+
+// ---------------------------------------------------------------------------
+// Batch Projection Export — multi-sim study export (batch-projection-export)
+// ---------------------------------------------------------------------------
+
+export interface BatchProjectionExportRequest {
+  simulation_ids: string[]
+  mode: 'grid' | 'fibonacci' | 'legacy'
+  config: Record<string, number>
+}
+
+export interface BatchProjectionExportResponse {
+  job_id: string
+  status: string
+  total_sims: number
+}
+
+/**
+ * Trigger a batch projection export across multiple simulations in a study.
+ * Returns 202 with job_id for polling.
+ */
+export async function triggerBatchProjectionExport(
+  projectId: string,
+  studyId: string,
+  body: BatchProjectionExportRequest
+): Promise<BatchProjectionExportResponse> {
+  const res = await authFetch(
+    `${API_BASE}/projects/${projectId}/studies/${studyId}/export-projections/`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }
+  )
+
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({}))
+    throw new ApiError(
+      error.detail || error.message || 'Batch projection export failed',
+      res.status,
+      error.details
+    )
+  }
+
+  return res.json()
+}
+
+export interface BatchProjectionsResult {
+  status: string
+  download_url?: string
+  download_filename?: string
+  successful_sims?: number
+  failed_sims?: Array<{ sim_id: string; error: string }>
+}
+
+/**
+ * Poll projections-status/{job_id}/ until done or failed.
+ * Calls onProgress on each tick.
+ */
+export async function pollProjectionsStatus(
+  jobId: string,
+  onProgress?: (progress: number, current: number, total: number) => void,
+  pollIntervalMs = 2000,
+  maxWaitMs = 30 * 60 * 1000
+): Promise<BatchProjectionsResult> {
+  const startedAt = Date.now()
+  const statusUrl = `${API_BASE}/projections-status/${jobId}/`
+
+  while (Date.now() - startedAt < maxWaitMs) {
+    const statusRes = await authFetch(statusUrl)
+    if (!statusRes.ok) {
+      throw new ApiError(
+        `Projection status check failed (HTTP ${statusRes.status})`,
+        statusRes.status
+      )
+    }
+
+    const body = await statusRes.json().catch(() => ({}))
+
+    if (body.status === 'done') {
+      return body as BatchProjectionsResult
+    }
+
+    if (body.status === 'failed') {
+      throw new ApiError(
+        body.error || 'Projection generation failed',
+        500
+      )
+    }
+
+    if (body.status === 'processing' && onProgress) {
+      onProgress(
+        typeof body.progress === 'number' ? body.progress : 0,
+        typeof body.current === 'number' ? body.current : 0,
+        typeof body.total === 'number' ? body.total : 0
+      )
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
+  }
+
+  throw new ApiError(
+    'Batch projection export timed out (> 30 minutes)',
+    408
+  )
 }
 
