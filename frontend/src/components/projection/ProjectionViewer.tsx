@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Download, ImageOff } from 'lucide-react'
+import { HemisphereGrid } from './HemisphereGrid'
 
 interface ProjectionViewerProps {
   imageUrl: string | null
@@ -10,6 +11,12 @@ interface ProjectionViewerProps {
   elevation: number
   format: 'png' | 'svg'
   onDownload?: () => void
+  /** Grid of all directions (available) for the hemisphere visualization. */
+  gridDirections?: Array<{ az: number; el: number }>
+  /** Projections that have been generated (subset of gridDirections). */
+  generatedDirections?: Array<{ az: number; el: number; projectionId: string }>
+  /** Callback when user clicks a generated direction on the hemisphere. */
+  onDirectionClick?: (direction: { az: number; el: number; projectionId: string }) => void
 }
 
 export function ProjectionViewer({
@@ -18,6 +25,9 @@ export function ProjectionViewer({
   elevation,
   format,
   onDownload,
+  gridDirections,
+  generatedDirections,
+  onDirectionClick,
 }: ProjectionViewerProps) {
   const handleDownload = () => {
     if (!imageUrl) return
@@ -32,6 +42,8 @@ export function ProjectionViewer({
     onDownload?.()
   }
 
+  const showHemisphere = gridDirections && gridDirections.length > 0
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-2">
@@ -45,7 +57,7 @@ export function ProjectionViewer({
           </Button>
         )}
       </CardHeader>
-      <CardContent>
+      <CardContent className="space-y-4">
         {imageUrl ? (
           <div className="flex items-center justify-center bg-muted rounded-lg p-2">
             <img
@@ -61,6 +73,17 @@ export function ProjectionViewer({
               Generate a preview to see the 2D projection
             </p>
           </div>
+        )}
+
+        {/* Hemisphere direction coverage */}
+        {showHemisphere && (
+          <HemisphereGrid
+            gridDirections={gridDirections}
+            generatedDirections={generatedDirections ?? []}
+            selectedDirection={{ az: azimuth, el: elevation }}
+            onDirectionClick={onDirectionClick}
+            size={300}
+          />
         )}
       </CardContent>
     </Card>
