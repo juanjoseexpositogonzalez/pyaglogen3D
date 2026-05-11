@@ -30,6 +30,8 @@
     "react-plotly.js": "^2.6",
     "tailwind-merge": "^2.2",
     "three": "^0.160",
+    "vis-data": "^8.0.4",
+    "vis-network": "^10.0.3",
     "zod": "^4.3.6",
     "zustand": "^4.4"
   },
