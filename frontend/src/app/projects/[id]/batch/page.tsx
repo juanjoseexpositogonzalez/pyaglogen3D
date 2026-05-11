@@ -6,7 +6,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useProject } from '@/hooks/useProjects'
 import { studiesApi } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
-import { BatchSimulationForm, BatchResultsTable } from '@/components/batch'
+import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -239,17 +239,33 @@ export default function BatchSimulationsPage({
           </div>
 
           {/* Right: Results */}
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 space-y-6">
             {selectedStudyId && studyResults ? (
-              <BatchResultsTable
-                data={studyResults}
-                projectId={id}
-                onExport={handleExport}
-                onRefresh={() => refetchResults()}
-                onRunBoxCounting={handleRunBoxCounting}
-                isExporting={isExporting}
-                isRunningBoxCounting={isRunningBoxCounting}
-              />
+              <>
+                <BatchResultsTable
+                  data={studyResults}
+                  projectId={id}
+                  onExport={handleExport}
+                  onRefresh={() => refetchResults()}
+                  onRunBoxCounting={handleRunBoxCounting}
+                  isExporting={isExporting}
+                  isRunningBoxCounting={isRunningBoxCounting}
+                />
+                {/* Batch Projection Export — visible when ≥1 completed sim */}
+                {studyResults.results.filter((r) => r.status === 'completed').length > 0 && (
+                  <BatchProjectionExportPanel
+                    projectId={id}
+                    studyId={selectedStudyId}
+                    simulations={studyResults.results
+                      .filter((r) => r.status === 'completed')
+                      .map((r) => ({
+                        id: r.simulation_id,
+                        name: `Sim ${Object.entries(r.parameters).map(([k, v]) => `${k}=${v}`).join(', ')}`,
+                        status: r.status,
+                      }))}
+                  />
+                )}
+              </>
             ) : (
               <Card>
                 <CardContent className="p-8 text-center">
