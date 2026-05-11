@@ -55,7 +55,14 @@ export default function NetworkCanvas({
 
       const { nodes, edges, options } = buildVisNetworkData(data, theme)
 
-      const network = new Network(containerRef.current, { nodes, edges }, options)
+      // Cast to `any`: our internal Vis* types are a subset of vis-network's
+      // full types (we omit fields we never set, like `smooth.type`/`roundness`).
+      // vis-network applies its own defaults for the omitted fields at runtime.
+      const network = new Network(
+        containerRef.current,
+        { nodes, edges } as any,
+        options as any,
+      )
       networkRef.current = network as typeof networkRef.current
 
       network.on('click', (params: { nodes: number[] }) => {

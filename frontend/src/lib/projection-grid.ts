@@ -111,7 +111,6 @@ export function deriveGeneratedDirections(
     n?: number
     azimuth_step?: number
     elevation_step?: number
-    [key: string]: unknown
   },
 ): Array<{ az: number; el: number; projectionId: string }> {
   const mode = (payload.mode ?? '') as ProjectionMode
