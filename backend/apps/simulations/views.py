@@ -19,6 +19,7 @@ from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .models import ParametricStudy, Simulation, SimulationStatus
 from .serializers import (
+    BatchProjectionExportRequestSerializer,
     ParametricStudySerializer,
     SimulationDetailSerializer,
     SimulationSerializer,
@@ -2212,6 +2213,59 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 f"{results['skipped']} skipped (already done), {results['failed']} failed",
                 "results": results,
             }
+        )
+
+    @action(detail=True, methods=["post"], url_path="export-projections")
+    def export_projections(self, request: Request, pk=None, **kwargs) -> Response:
+        """Batch export projections for multiple simulations in a study.
+
+        POST body:
+        {
+            "simulation_ids": ["uuid1", "uuid2", ...],
+            "mode": "grid" | "fibonacci" | "legacy",
+            "config": { mode-specific params }
+        }
+
+        Returns 202 with {job_id, status: "queued", total_sims}.
+        """
+        serializer = BatchProjectionExportRequestSerializer(data=request.data)
+        if not serializer.is_valid():
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+        data = serializer.validated_data
+        sim_ids = [str(uid) for uid in data["simulation_ids"]]
+        mode = data["mode"]
+        config = data["config"]
+
+        # Validate sim IDs belong to this study
+        study = self.get_object()
+        study_sim_ids = set(
+            str(sid) for sid in study.simulations.values_list("id", flat=True)
+        )
+        foreign = [sid for sid in sim_ids if sid not in study_sim_ids]
+        if foreign:
+            return Response(
+                {"detail": f"Some simulation_ids do not belong to study {study.id}"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Dispatch async task
+        from .tasks import build_batch_projections_zip
+
+        task = build_batch_projections_zip.delay(
+            study_id=str(study.id),
+            simulation_ids=sim_ids,
+            mode=mode,
+            config=config,
+        )
+
+        return Response(
+            {
+                "job_id": task.id,
+                "status": "queued",
+                "total_sims": len(sim_ids),
+            },
+            status=status.HTTP_202_ACCEPTED,
         )
 
 

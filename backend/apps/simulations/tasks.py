@@ -2092,6 +2092,7 @@ def _batch_storage_dir() -> str:
     return storage_dir
 
 
+@shared_task(bind=True, name="apps.simulations.tasks.build_batch_projections_zip")
 def build_batch_projections_zip(
     self,
     study_id: str,
