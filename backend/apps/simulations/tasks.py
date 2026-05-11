@@ -2075,6 +2075,154 @@ def run_dda_task(
 
 
 # ============================================================================
+# Batch projection export
+# ============================================================================
+
+
+def _batch_storage_dir() -> str:
+    """Return (and lazily create) the directory for batch projection ZIPs."""
+    import os as _os
+
+    from django.conf import settings
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    base = str(media_root) if media_root else str(settings.BASE_DIR)
+    storage_dir = _os.path.join(base, "projections")
+    _os.makedirs(storage_dir, exist_ok=True)
+    return storage_dir
+
+
+def build_batch_projections_zip(
+    self,
+    study_id: str,
+    simulation_ids: list[str],
+    mode: str,
+    config: dict,
+) -> dict:
+    """Build a batch projection ZIP for multiple simulations.
+
+    Iterates simulations sequentially, calls ``render_or_reuse_projections``
+    per sim, packs results into a single ZIP with ``sim_{uuid}/`` subfolders
+    and a root ``manifest.json``.
+
+    Per-sim failure isolation: if one sim fails, it is logged in
+    ``failed_sims`` and the rest continue.
+
+    Args:
+        self: Celery task instance (bound) or a fake with ``update_state``.
+        study_id: UUID string of the ParametricStudy.
+        simulation_ids: List of simulation UUID strings.
+        mode: ``"grid"`` | ``"fibonacci"`` | ``"legacy"``.
+        config: Mode-specific config dict.
+
+    Returns:
+        Dict with ``zip_path``, ``download_filename``, ``total_sims_processed``,
+        ``successful_sims``, ``failed_sims``, ``duration_sec``.
+    """
+    import json
+    import os
+    import tempfile
+    import time
+    import zipfile
+    from datetime import date
+    from pathlib import Path
+
+    from apps.simulations.models import Simulation
+    from apps.simulations.services.projection import render_or_reuse_projections
+
+    start = time.monotonic()
+    total = len(simulation_ids)
+    successful = 0
+    failed_sims: list[dict] = []
+    manifest_sims: list[dict] = []
+    study_name = ""
+
+    storage_dir = _batch_storage_dir()
+    zip_filename = f"study_{study_id}_projections_{date.today().isoformat()}.zip"
+    zip_path = os.path.join(storage_dir, f"batch_{study_id}_{date.today().isoformat()}.zip")
+
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for idx, sim_id in enumerate(simulation_ids):
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "current": idx + 1,
+                    "total": total,
+                    "current_sim_id": sim_id,
+                },
+            )
+
+            try:
+                sim = Simulation.objects.get(id=sim_id)
+                if not study_name and hasattr(sim, "name"):
+                    study_name = str(sim.name)
+
+                # Create temp dir for this sim's renders
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output_dir = Path(tmpdir)
+                    paths = render_or_reuse_projections(
+                        simulation=sim,
+                        mode=mode,
+                        config=config,
+                        output_dir=output_dir,
+                    )
+
+                    sim_folder = f"sim_{sim_id}"
+                    for p in paths:
+                        arcname = f"{sim_folder}/{p.name}"
+                        zf.write(str(p), arcname)
+
+                successful += 1
+                manifest_sims.append({
+                    "sim_id": sim_id,
+                    "sim_name": getattr(sim, "name", ""),
+                    "projection_count": len(paths),
+                    "status": "success",
+                    "error": None,
+                })
+            except Exception as exc:
+                logger.warning(
+                    "Batch export: sim %s failed: %s", sim_id, exc, exc_info=True,
+                )
+                failed_sims.append({"sim_id": sim_id, "error": str(exc)})
+                manifest_sims.append({
+                    "sim_id": sim_id,
+                    "sim_name": "",
+                    "projection_count": 0,
+                    "status": "failed",
+                    "error": str(exc),
+                })
+
+        # Write manifest.json at root
+        manifest = {
+            "study_id": study_id,
+            "study_name": study_name,
+            "exported_at": date.today().isoformat(),
+            "mode": mode,
+            "config": config,
+            "simulations": manifest_sims,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    # Write ZIP to disk
+    with open(zip_path, "wb") as fp:
+        fp.write(zip_buffer.getvalue())
+
+    duration = time.monotonic() - start
+
+    return {
+        "zip_path": zip_path,
+        "download_filename": zip_filename,
+        "total_sims_processed": total,
+        "successful_sims": successful,
+        "failed_sims": failed_sims,
+        "duration_sec": round(duration, 2),
+    }
+
+
+# ============================================================================
 # Projection ZIP async builder (R6)
 # ============================================================================
 

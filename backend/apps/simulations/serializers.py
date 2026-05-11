@@ -382,3 +382,68 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 )
 
         return value
+
+
+class BatchProjectionExportRequestSerializer(serializers.Serializer):
+    """Validate batch projection export requests.
+
+    Per spec R1 + R2:
+    - ``simulation_ids``: non-empty UUID list, max 50
+    - ``mode``: ``"grid"`` | ``"fibonacci"`` | ``"legacy"``
+    - ``config``: mode-specific parameters (extra keys silently ignored)
+    """
+
+    simulation_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1,
+        max_length=50,
+    )
+    mode = serializers.ChoiceField(choices=["grid", "fibonacci", "legacy"])
+    config = serializers.DictField(default=dict)
+
+    def validate(self, data: dict) -> dict:
+        """Cross-field validation: mode-specific config rules."""
+        mode = data.get("mode")
+        config = data.get("config", {})
+
+        if mode in ("grid", "legacy"):
+            az_step = config.get("az_step")
+            el_step = config.get("el_step")
+            if az_step is None:
+                raise serializers.ValidationError(
+                    {"config": f"Mode '{mode}' requires 'az_step' in config"}
+                )
+            if el_step is None:
+                raise serializers.ValidationError(
+                    {"config": f"Mode '{mode}' requires 'el_step' in config"}
+                )
+            try:
+                az_step = float(az_step)
+                el_step = float(el_step)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"config": "az_step and el_step must be numeric"}
+                )
+            if az_step <= 0 or el_step <= 0:
+                raise serializers.ValidationError(
+                    {"config": "az_step and el_step must be > 0"}
+                )
+
+        elif mode == "fibonacci":
+            n = config.get("n")
+            if n is None:
+                raise serializers.ValidationError(
+                    {"config": "Mode 'fibonacci' requires 'n' in config"}
+                )
+            try:
+                n = int(n)
+            except (TypeError, ValueError):
+                raise serializers.ValidationError(
+                    {"config": "'n' must be an integer"}
+                )
+            if n < 1 or n > 1000:
+                raise serializers.ValidationError(
+                    {"config": "'n' must be between 1 and 1000"}
+                )
+
+        return data
