@@ -150,4 +150,40 @@ describe('buildVisNetworkData', () => {
     const elapsed = performance.now() - start
     expect(elapsed).toBeLessThan(200)
   })
+
+  // -- Theme awareness (spec R13) --
+
+  it('uses light edge color (#cbd5e1) by default and when theme is "light"', () => {
+    const result = buildVisNetworkData(data10)
+    expect(result.edges[0].color).toBe('#cbd5e1')
+
+    const resultLight = buildVisNetworkData(data10, 'light')
+    expect(resultLight.edges[0].color).toBe('#cbd5e1')
+  })
+
+  it('uses dark edge color (#475569) when theme is "dark"', () => {
+    const resultDark = buildVisNetworkData(data10, 'dark')
+    expect(resultDark.edges[0].color).toBe('#475569')
+    // Verify ALL edges get the dark color, not just the first
+    for (const edge of resultDark.edges) {
+      expect(edge.color).toBe('#475569')
+    }
+  })
+
+  it('applies dark node label font color when theme is "dark"', () => {
+    const resultDark = buildVisNetworkData(data10, 'dark')
+    // In dark mode, node font should be light-colored for readability
+    for (const node of resultDark.nodes) {
+      expect(node.font).toBeDefined()
+      expect((node.font as { color: string }).color).toBe('#e2e8f0')
+    }
+  })
+
+  it('does not add font property in light mode (uses vis-network default)', () => {
+    const resultLight = buildVisNetworkData(data10, 'light')
+    // In light mode, font should either be undefined or use default
+    for (const node of resultLight.nodes) {
+      expect(node.font).toBeUndefined()
+    }
+  })
 })

@@ -36,12 +36,20 @@ export function coordinationSize(coord: number, maxCoord: number): number {
 
 // -- Vis-network data types (internal) --
 
+/** Theme for graph rendering — affects edge color and node label font. */
+export type GraphTheme = 'light' | 'dark'
+
+const EDGE_COLOR_LIGHT = '#cbd5e1' // slate-300
+const EDGE_COLOR_DARK = '#475569'  // slate-600
+const FONT_COLOR_DARK = '#e2e8f0'  // slate-200
+
 interface VisNode {
   id: number
   label: string
   color: string
   size: number
   title: string
+  font?: { color: string }
   x?: number
   y?: number
 }
@@ -86,21 +94,31 @@ export interface BuildVisNetworkResult {
 /**
  * Transforms NeighborGraphData into vis-network–compatible nodes, edges, and options.
  * Pure function — no DOM access.
+ *
+ * @param theme - 'light' (default) or 'dark'. Affects edge color and node label font.
  */
-export function buildVisNetworkData(data: NeighborGraphData): BuildVisNetworkResult {
+export function buildVisNetworkData(
+  data: NeighborGraphData,
+  theme: GraphTheme = 'light',
+): BuildVisNetworkResult {
   const maxCoord = data.nodes.reduce((max, n) => Math.max(max, n.coordination), 0)
-  const edgeColor = '#cbd5e1' // light mode default
+  const edgeColor = theme === 'dark' ? EDGE_COLOR_DARK : EDGE_COLOR_LIGHT
+  const isDark = theme === 'dark'
 
   const nodes: VisNode[] = []
   for (let i = 0; i < data.nodes.length; i++) {
     const n = data.nodes[i]
-    nodes.push({
+    const node: VisNode = {
       id: n.id,
       label: `#${n.id}`,
       color: coordinationColor(n.coordination),
       size: coordinationSize(n.coordination, maxCoord),
       title: `Particle #${n.id}\nCoordination: ${n.coordination}\nPos: (${n.x.toFixed(2)}, ${n.y.toFixed(2)}, ${n.z.toFixed(2)})`,
-    })
+    }
+    if (isDark) {
+      node.font = { color: FONT_COLOR_DARK }
+    }
+    nodes.push(node)
   }
 
   const edges: VisEdge[] = []

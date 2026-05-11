@@ -2,7 +2,14 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import { buildVisNetworkData } from '@/lib/graphUtils'
+import type { GraphTheme } from '@/lib/graphUtils'
 import type { NeighborGraphData } from '@/lib/types'
+
+/** Detect current theme from system preference. SSR-safe and jsdom-safe — defaults to 'light'. */
+function detectTheme(): GraphTheme {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light'
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
 
 interface NetworkCanvasProps {
   data: NeighborGraphData
@@ -22,10 +29,20 @@ export default function NetworkCanvas({
   const containerRef = useRef<HTMLDivElement>(null)
   const networkRef = useRef<{ destroy: () => void; focus: (id: number, opts: object) => void; on: (event: string, cb: (...args: unknown[]) => void) => void; once: (event: string, cb: () => void) => void; setOptions: (opts: object) => void } | null>(null)
   const [stabilizing, setStabilizing] = useState(true)
+  const [theme, setTheme] = useState<GraphTheme>(detectTheme)
 
   // Stable callback for click handler
   const onNodeClickRef = useRef(onNodeClick)
   onNodeClickRef.current = onNodeClick
+
+  // Listen for system theme changes
+  useEffect(() => {
+    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
+    const mql = window.matchMedia('(prefers-color-scheme: dark)')
+    const handler = (e: MediaQueryListEvent) => setTheme(e.matches ? 'dark' : 'light')
+    mql.addEventListener('change', handler)
+    return () => mql.removeEventListener('change', handler)
+  }, [])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -36,7 +53,7 @@ export default function NetworkCanvas({
       const { Network } = await import('vis-network/standalone')
       if (destroyed || !containerRef.current) return
 
-      const { nodes, edges, options } = buildVisNetworkData(data)
+      const { nodes, edges, options } = buildVisNetworkData(data, theme)
 
       const network = new Network(containerRef.current, { nodes, edges }, options)
       networkRef.current = network as typeof networkRef.current
@@ -66,7 +83,7 @@ export default function NetworkCanvas({
         networkRef.current = null
       }
     }
-  }, [data])
+  }, [data, theme])
 
   // Focus on selected node when selectedNodeId changes
   useEffect(() => {
