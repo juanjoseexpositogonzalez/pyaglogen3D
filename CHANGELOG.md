@@ -1,3 +1,24 @@
+## batch-cc-tunable-parameter-parity (unreleased)
+
+### Added
+- 4 new keys for `parameter_grid` in parametric studies:
+  - `kf_distribution`: list of distribution configs (fixed/uniform/normal) to vary kf across batch sims
+  - `particle_radius_config`: list of distribution configs for polydispersity (std/mean ≤ 0.3 enforced)
+  - `sintering_config`: list of sintering distribution configs (overrides study-level when present)
+  - `seed_type`: list of seed types ("monomers" | "dimers" | "trimers")
+- `DistributionGridInput` frontend component for managing arrays of distribution configs
+- Enhanced `DistributionSelector` with `allowedTypes` filter and `error` prop
+- Live "projected simulation count" indicator in batch form; warning at >200; hard reject at >1000
+
+### Fixed
+- **Latent bug**: batch `create_simulation()` now correctly sets `seed_type` on the Simulation model field. Previously, all batch sims defaulted to "monomers" regardless of `seed_type` in `base_parameters`. (Discovered via engram #634 during exploration of this cycle.)
+
+### Notes
+- Backward compatible: existing parametric studies without new grid keys behave identically
+- No DB migration required
+- Engine handles distribution sampling internally (no engine changes needed)
+- Cartesian product of all grid keys × `seeds_per_combination` = total child sims
+
 ## contacts-graph-viz (unreleased)
 
 ### Added

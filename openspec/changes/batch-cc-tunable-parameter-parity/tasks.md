@@ -93,11 +93,11 @@ Chain strategy: pending
 
 ## Phase 7: Integration Verification [backend + frontend]
 
-- [ ] 7.1 Run full backend + frontend test suites — no regressions — M
-- [ ] 7.2 Document manual smoke test scenario for post-deploy — S
+- [x] 7.1 Run full backend + frontend test suites — no regressions — M
+- [x] 7.2 Document manual smoke test scenario for post-deploy — S
 
 ## Phase 8: Docs [docs]
 
-- [ ] 8.1 CHANGELOG entry for `batch-cc-tunable-parameter-parity` — S
-- [ ] 8.2 `openspec/changes/batch-cc-tunable-parameter-parity/SMOKE_TEST.md` — S
-- [ ] 8.3 Mark spec sync deferred to archive phase — S
+- [x] 8.1 CHANGELOG entry for `batch-cc-tunable-parameter-parity` — S
+- [x] 8.2 `openspec/changes/batch-cc-tunable-parameter-parity/SMOKE_TEST.md` — S
+- [x] 8.3 Mark spec sync deferred to archive phase — S
