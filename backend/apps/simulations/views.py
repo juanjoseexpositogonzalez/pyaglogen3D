@@ -1761,15 +1761,34 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         def create_simulation(
             params: dict, case_type: str = "grid", case_label: str = ""
         ) -> None:
-            """Create a single simulation with all configurations applied."""
+            """Create a single simulation with all configurations applied.
+
+            Handles:
+            - seed_type: popped from params → set as model field (fix #634)
+            - sintering_config: grid-level overrides study-level per combo
+            - Distribution configs (kf_distribution, particle_radius_config):
+              pass through as-is for engine sampling
+            """
             sim_params = dict(params)
 
-            # Apply sintering config if present
-            sim_params = apply_sintering_config(sim_params, study.sintering_config)
+            # --- seed_type: pop from params → model kwarg (fix #634) ---
+            seed_type_val = sim_params.pop(
+                "seed_type",
+                study.base_parameters.get("seed_type", "monomers"),
+            )
 
-            # Ensure integer parameters are properly typed
+            # --- sintering: grid-level overrides study-level ---
+            combo_sintering = sim_params.pop("sintering_config", None)
+            if combo_sintering is not None:
+                sim_params = apply_sintering_config(sim_params, combo_sintering)
+            else:
+                sim_params = apply_sintering_config(sim_params, study.sintering_config)
+
+            # Ensure integer parameters are properly typed (guard: skip dicts)
             for param_name in integer_params:
-                if param_name in sim_params:
+                if param_name in sim_params and not isinstance(
+                    sim_params[param_name], dict
+                ):
                     sim_params[param_name] = int(sim_params[param_name])
 
             for seed_idx in range(study.seeds_per_combination):
@@ -1789,6 +1808,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     name=auto_name,
                     status=SimulationStatus.QUEUED,
                     is_batch=True,
+                    seed_type=seed_type_val,
                 )
                 simulations_created.append(sim)
                 study.simulations.add(sim)

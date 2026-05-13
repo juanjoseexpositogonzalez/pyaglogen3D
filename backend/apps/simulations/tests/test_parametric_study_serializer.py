@@ -131,8 +131,8 @@ class TestSinteringConfigGridValidation:
             parameter_grid={
                 "n_particles": [100],
                 "sintering_config": [
-                    {"distribution_type": "fixed", "value": 0.9},
-                    {"distribution_type": "uniform", "min": 0.8, "max": 0.95},
+                    {"distribution_type": "fixed", "coefficient": 0.9},
+                    {"distribution_type": "uniform", "min": 0.85, "max": 0.95},
                 ],
             }
         )

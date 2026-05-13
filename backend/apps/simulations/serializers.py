@@ -395,7 +395,6 @@ class ParametricStudySerializer(serializers.ModelSerializer):
     _DISTRIBUTION_GRID_KEYS: dict[str, dict] = {
         "kf_distribution": {},
         "particle_radius_config": {"max_std_over_mean": 0.3},
-        "sintering_config": {},
     }
 
     _BATCH_HARD_CAP = 1000
@@ -424,6 +423,25 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 except serializers.ValidationError as exc:
                     raise serializers.ValidationError(
                         {f"parameter_grid.{key}[{i}]": exc.detail}
+                    )
+
+        # --- Validate sintering_config grid key (uses existing sintering shape) ---
+        sintering_entries = grid.get("sintering_config")
+        if sintering_entries is not None:
+            if not isinstance(sintering_entries, list):
+                raise serializers.ValidationError(
+                    {"parameter_grid.sintering_config": "Must be a list of sintering configs."}
+                )
+            for i, entry in enumerate(sintering_entries):
+                if not isinstance(entry, dict):
+                    raise serializers.ValidationError(
+                        {f"parameter_grid.sintering_config[{i}]": "Must be a dict."}
+                    )
+                try:
+                    self.validate_sintering_config(entry)
+                except serializers.ValidationError as exc:
+                    raise serializers.ValidationError(
+                        {f"parameter_grid.sintering_config[{i}]": exc.detail}
                     )
 
         # --- Validate seed_type grid key ---
