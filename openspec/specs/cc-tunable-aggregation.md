@@ -1,4 +1,4 @@
-<!-- Last sync: 2026-05-10 from change pya-14-phase3-df-convergence (Phase 3 of PYA-14: algorithmic convergence fix). PYA-14 fully closed. -->
+<!-- Last sync: 2026-05-13 from change batch-cc-tunable-parameter-parity (R17 extended with batch path scenarios R17.6-R17.8, bug #634 fix) -->
 
 # Spec: cc-tunable-aggregation
 
@@ -818,13 +818,17 @@ The simulation API MUST accept `seed_type` as a value inside the `parameters` JS
 
 The system MUST resolve `seed_type` using the following precedence:
 
-1. If `parameters.seed_type` is present → use that value (nested wins).
-2. Else if top-level `seed_type` is present → use that value (legacy fallback).
-3. Else → default to `"monomers"`.
+1. If `parameters.seed_type` is present -> use that value (nested wins).
+2. Else if top-level `seed_type` is present -> use that value (legacy fallback).
+3. Else -> default to `"monomers"`.
 
 The persisted `Simulation.seed_type` field MUST reflect the value actually sent to the engine, NOT the DRF serializer default. After persistence, `parameters` SHOULD NOT contain a `seed_type` key (it is lifted via `pop()`).
 
 Valid values: `"monomers"`, `"dimers"`, `"trimers"`. Any other value MUST be rejected with a 400 error before creating a simulation record.
+
+**The batch path (`ParametricStudy.create_simulation()` in `views.py:1761-1802`) MUST also apply this routing**: when `seed_type` appears in child sim params (from grid expansion or `base_parameters`), the helper MUST pop it from params and set it on the `Simulation` model field. This ensures batch-created sims have the correct `seed_type` model field, not the default `"monomers"`.
+
+(Previously: R17 covered only the single-sim serializer path. The batch `create_simulation()` helper did not set `seed_type` on the model field — all batch sims defaulted to `"monomers"` regardless of intent. See bug #634.)
 
 #### Scenario R17.1 — Nested seed_type wins over absent top-level
 
@@ -861,6 +865,28 @@ Valid values: `"monomers"`, `"dimers"`, `"trimers"`. Any other value MUST be rej
 - WHEN the serializer validates the request
 - THEN a 400 response is returned with a descriptive validation error
 - AND no `Simulation` record is created
+
+#### Scenario R17.6 — Batch create_simulation sets model field from grid params
+
+- GIVEN a ParametricStudy with `parameter_grid.seed_type = ["dimers", "trimers"]`
+- WHEN `create_simulation()` creates a child sim with `sim_params` containing `seed_type = "dimers"`
+- THEN `create_simulation()` pops `seed_type` from `sim_params`
+- AND passes `seed_type="dimers"` as a model kwarg to `Simulation.objects.create()`
+- AND the resulting `Simulation.seed_type == "dimers"` in the DB
+- AND `sim.parameters` does NOT contain `seed_type`
+
+#### Scenario R17.7 — Batch create_simulation defaults when seed_type absent from params
+
+- GIVEN a ParametricStudy where `parameter_grid` has no `seed_type` key
+- WHEN `create_simulation()` creates a child sim
+- THEN `Simulation.seed_type` uses the model default (`"monomers"`)
+- AND behavior is identical to pre-change (backward compat)
+
+#### Scenario R17.8 — Batch seed_type from base_parameters
+
+- GIVEN a ParametricStudy with `base_parameters.seed_type = "trimers"` and no grid `seed_type`
+- WHEN `create_simulation()` creates child sims
+- THEN each child sim has `Simulation.seed_type == "trimers"` (popped from base_parameters)
 
 ---
 
