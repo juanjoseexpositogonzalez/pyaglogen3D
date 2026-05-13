@@ -1,12 +1,16 @@
 """Simulation serializers."""
 
+from __future__ import annotations
+
 import base64
 import random
+from math import prod
 
 from rest_framework import serializers
 
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
+from .services.distribution_validation import validate_distribution_config
 from .services.params import (
     PARAM_KEY_DIAMETER,
     PARAM_KEY_RADIUS_LEGACY,
@@ -382,6 +386,89 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 )
 
         return value
+
+    # ------------------------------------------------------------------
+    # Cross-field validation (grid key shapes + batch size)
+    # ------------------------------------------------------------------
+
+    #: Grid keys validated via distribution helper.
+    _DISTRIBUTION_GRID_KEYS: dict[str, dict] = {
+        "kf_distribution": {},
+        "particle_radius_config": {"max_std_over_mean": 0.3},
+        "sintering_config": {},
+    }
+
+    _BATCH_HARD_CAP = 1000
+    _BATCH_WARN_THRESHOLD = 200
+
+    def validate(self, data: dict) -> dict:  # noqa: C901
+        """Cross-field validation for parameter_grid entries + batch size."""
+        grid = data.get("parameter_grid") or {}
+        allowed_dist_types = ("fixed", "uniform", "normal")
+        valid_seed_types = {c[0] for c in Simulation._meta.get_field("seed_type").choices}
+
+        # --- Validate distribution grid keys ---
+        for key, constraints in self._DISTRIBUTION_GRID_KEYS.items():
+            entries = grid.get(key)
+            if entries is None:
+                continue
+            if not isinstance(entries, list):
+                raise serializers.ValidationError(
+                    {f"parameter_grid.{key}": "Must be a list of distribution configs."}
+                )
+            for i, entry in enumerate(entries):
+                try:
+                    validate_distribution_config(
+                        entry, allowed_dist_types, **constraints
+                    )
+                except serializers.ValidationError as exc:
+                    raise serializers.ValidationError(
+                        {f"parameter_grid.{key}[{i}]": exc.detail}
+                    )
+
+        # --- Validate seed_type grid key ---
+        seed_type_entries = grid.get("seed_type")
+        if seed_type_entries is not None:
+            if not isinstance(seed_type_entries, list):
+                raise serializers.ValidationError(
+                    {"parameter_grid.seed_type": "Must be a list of seed_type values."}
+                )
+            for entry in seed_type_entries:
+                if entry not in valid_seed_types:
+                    raise serializers.ValidationError(
+                        {
+                            "parameter_grid.seed_type": (
+                                f"'{entry}' is not a valid seed_type. "
+                                f"Choose from: {sorted(valid_seed_types)}."
+                            )
+                        }
+                    )
+
+        # --- Batch size projection ---
+        seeds_per = data.get("seeds_per_combination", 1)
+        grid_sizes = [len(v) for v in grid.values() if isinstance(v, list)]
+        projected = seeds_per * (prod(grid_sizes) if grid_sizes else 0)
+
+        if projected > self._BATCH_HARD_CAP:
+            raise serializers.ValidationError(
+                {
+                    "parameter_grid": (
+                        f"Projected batch size ({projected}) exceeds the "
+                        f"maximum of {self._BATCH_HARD_CAP} simulations."
+                    )
+                }
+            )
+
+        # Store warning for >200 (view can include in response)
+        self.batch_warning = None
+        if projected > self._BATCH_WARN_THRESHOLD:
+            self.batch_warning = (
+                f"Batch contains {projected} simulations "
+                f"(threshold: {self._BATCH_WARN_THRESHOLD}). "
+                f"This may take a while."
+            )
+
+        return data
 
 
 class BatchProjectionExportRequestSerializer(serializers.Serializer):
