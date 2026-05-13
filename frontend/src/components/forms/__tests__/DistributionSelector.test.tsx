@@ -238,4 +238,82 @@ describe('DistributionSelector', () => {
       expect(input.disabled).toBe(true)
     }
   })
+
+  // -----------------------------------------------------------------------
+  // T4.7 — allowedTypes filters dropdown options
+  // -----------------------------------------------------------------------
+  it('allowedTypes=["fixed","normal"] hides uniform option', () => {
+    render(
+      <DistributionSelector
+        label="particle radius"
+        value={{ mode: 'fixed', value: 1.0 }}
+        onChange={vi.fn()}
+        allowedTypes={['fixed', 'normal']}
+      />
+    )
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement
+    const options = Array.from(select.options)
+
+    expect(options).toHaveLength(2)
+    expect(options.map(o => o.value)).toEqual(['fixed', 'normal'])
+  })
+
+  it('allowedTypes=["fixed"] shows only fixed option', () => {
+    render(
+      <DistributionSelector
+        label="test"
+        value={{ mode: 'fixed', value: 1.0 }}
+        onChange={vi.fn()}
+        allowedTypes={['fixed']}
+      />
+    )
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement
+    const options = Array.from(select.options)
+
+    expect(options).toHaveLength(1)
+    expect(options[0].value).toBe('fixed')
+  })
+
+  it('omitting allowedTypes shows all 3 options (default)', () => {
+    render(
+      <DistributionSelector
+        label="test"
+        value={{ mode: 'fixed', value: 1.0 }}
+        onChange={vi.fn()}
+      />
+    )
+
+    const select = screen.getByRole('combobox') as HTMLSelectElement
+    expect(select.options).toHaveLength(3)
+  })
+
+  // -----------------------------------------------------------------------
+  // T4.6 — error prop shows visual feedback
+  // -----------------------------------------------------------------------
+  it('error prop renders error message text', () => {
+    render(
+      <DistributionSelector
+        label="test"
+        value={{ mode: 'normal', mean: 1.0, std: 0.5 }}
+        onChange={vi.fn()}
+        error="std/mean exceeds 0.3 limit"
+      />
+    )
+
+    expect(screen.getByText('std/mean exceeds 0.3 limit')).toBeDefined()
+  })
+
+  it('no error prop renders no error message', () => {
+    render(
+      <DistributionSelector
+        label="test"
+        value={{ mode: 'fixed', value: 1.0 }}
+        onChange={vi.fn()}
+      />
+    )
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
 })

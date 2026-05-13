@@ -13,6 +13,8 @@ interface Props {
   value: DistributionValue
   onChange: (value: DistributionValue) => void
   disabled?: boolean
+  allowedTypes?: DistributionMode[]
+  error?: string
 }
 
 const modeOptions = [
@@ -28,7 +30,10 @@ const modeOptions = [
  * conditional numeric inputs for each mode. Used for dpo and target_kf
  * distribution configuration.
  */
-export function DistributionSelector({ label, value, onChange, disabled }: Props) {
+export function DistributionSelector({ label, value, onChange, disabled, allowedTypes, error }: Props) {
+  const filteredOptions = allowedTypes
+    ? modeOptions.filter((o) => allowedTypes.includes(o.value as DistributionMode))
+    : modeOptions
   const handleModeChange = (newMode: DistributionMode) => {
     if (newMode === value.mode) return
 
@@ -60,7 +65,7 @@ export function DistributionSelector({ label, value, onChange, disabled }: Props
         value={value.mode}
         onChange={(e) => handleModeChange(e.target.value as DistributionMode)}
         disabled={disabled}
-        options={modeOptions}
+        options={filteredOptions}
       />
 
       {value.mode === 'fixed' && (
@@ -123,6 +128,10 @@ export function DistributionSelector({ label, value, onChange, disabled }: Props
             step="any"
           />
         </div>
+      )}
+
+      {error && (
+        <p role="alert" className="text-xs text-destructive mt-1">{error}</p>
       )}
     </div>
   )
