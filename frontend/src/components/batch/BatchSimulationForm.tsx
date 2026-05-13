@@ -7,9 +7,10 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Trash2, Play } from 'lucide-react'
+import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
-import type { SimulationAlgorithm, CreateParametricStudyInput } from '@/lib/types'
+import { DistributionGridInput } from './DistributionGridInput'
+import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
 
 const limitingGeometryOptions = [
   { value: 'chain', label: 'Linear Chain (Df=1)' },
@@ -63,6 +64,11 @@ function getDefaultConfigForGeometry(geometry: string) {
 
 type InputMode = 'discrete' | 'range'
 
+// Parameters that use distribution grid or seed_type chips instead of discrete/range
+const DISTRIBUTION_PARAMS = new Set(['kf_distribution', 'particle_radius_config', 'sintering_config'])
+const SEED_TYPE_PARAM = 'seed_type'
+const SEED_TYPE_OPTIONS = ['monomers', 'dimers', 'trimers'] as const
+
 interface ParameterVariation {
   name: string
   inputMode: InputMode
@@ -72,6 +78,10 @@ interface ParameterVariation {
   start: string
   end: string
   step: string
+  // Distribution grid mode (for kf_distribution, particle_radius_config, sintering_config)
+  distributionValues: DistributionValue[]
+  // Seed type mode
+  seedTypeValues: string[]
 }
 
 interface BatchSimulationFormProps {
@@ -178,6 +188,8 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       start: '100',
       end: '1000',
       step: '100',
+      distributionValues: [{ mode: 'fixed', value: 1.0 }],
+      seedTypeValues: ['monomers'],
     }])
   }
 
@@ -215,7 +227,18 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     // Build parameter grid from variations
     const parameterGrid: Record<string, unknown[]> = {}
     for (const variation of variations) {
-      if (variation.name) {
+      if (!variation.name) continue
+
+      if (DISTRIBUTION_PARAMS.has(variation.name)) {
+        // Distribution grid values are objects, not scalars
+        if (variation.distributionValues.length > 0) {
+          parameterGrid[variation.name] = variation.distributionValues
+        }
+      } else if (variation.name === SEED_TYPE_PARAM) {
+        if (variation.seedTypeValues.length > 0) {
+          parameterGrid[variation.name] = variation.seedTypeValues
+        }
+      } else {
         const isInteger = integerParams.has(variation.name)
         const values = getVariationValues(variation, isInteger)
         if (values.length > 0) {
@@ -246,6 +269,12 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   // Calculate total simulations
   const variationCounts = useMemo(() => {
     return variations.map((v) => {
+      if (DISTRIBUTION_PARAMS.has(v.name)) {
+        return { values: v.distributionValues as unknown as (number | string)[], count: v.distributionValues.length || 1 }
+      }
+      if (v.name === SEED_TYPE_PARAM) {
+        return { values: v.seedTypeValues as (number | string)[], count: v.seedTypeValues.length || 1 }
+      }
       const isInteger = integerParams.has(v.name)
       const values = getVariationValues(v, isInteger)
       return { values, count: values.length || 1 }
@@ -279,6 +308,14 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     if (['tunable', 'tunable_cc', 'fracval', 'gcca'].includes(algorithm)) {
       options.push({ value: 'target_kf', label: 'Target kf' })
     }
+
+    // New batch-CC parameter grid options
+    options.push(
+      { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
+      { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
+      { value: 'sintering_config', label: 'Sintering coefficient distribution' },
+      { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
+    )
 
     return options
   }, [algorithm])
@@ -474,87 +511,138 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                     </Button>
                   </div>
 
-                  {/* Input Mode Toggle */}
-                  <div className="flex gap-2">
-                    <Button
-                      type="button"
-                      variant={variation.inputMode === 'range' ? 'default' : 'outline'}
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => updateVariation(index, 'inputMode', 'range')}
-                    >
-                      Range (Start → End)
-                    </Button>
-                    <Button
-                      type="button"
-                      variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
-                      size="sm"
-                      className="flex-1"
-                      onClick={() => updateVariation(index, 'inputMode', 'discrete')}
-                    >
-                      Discrete Values
-                    </Button>
-                  </div>
-
-                  {/* Range Mode Inputs */}
-                  {variation.inputMode === 'range' && (
-                    <div className="grid grid-cols-3 gap-2">
-                      <div className="space-y-1">
-                        <Label className="text-xs">Start</Label>
-                        <Input
-                          type="number"
-                          value={variation.start}
-                          onChange={(e) => updateVariation(index, 'start', e.target.value)}
-                          placeholder="100"
-                          step={isInteger ? 1 : 0.1}
-                        />
+                  {/* Conditional value input based on parameter type */}
+                  {DISTRIBUTION_PARAMS.has(variation.name) ? (
+                    /* Distribution grid input for kf_distribution, particle_radius, sintering */
+                    <DistributionGridInput
+                      value={variation.distributionValues}
+                      onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
+                      label={`${variation.name.replace(/_/g, ' ')} configurations`}
+                      allowedTypes={
+                        variation.name === 'particle_radius_config'
+                          ? ['fixed', 'normal']
+                          : undefined
+                      }
+                    />
+                  ) : variation.name === SEED_TYPE_PARAM ? (
+                    /* Seed type multi-select chips */
+                    <div className="space-y-2">
+                      <Label className="text-xs">Select seed types</Label>
+                      <div className="flex gap-2">
+                        {SEED_TYPE_OPTIONS.map((st) => {
+                          const isSelected = variation.seedTypeValues.includes(st)
+                          return (
+                            <Button
+                              key={st}
+                              type="button"
+                              variant={isSelected ? 'default' : 'outline'}
+                              size="sm"
+                              className="flex-1 capitalize"
+                              onClick={() => {
+                                const newValues = isSelected
+                                  ? variation.seedTypeValues.filter((v) => v !== st)
+                                  : [...variation.seedTypeValues, st]
+                                // Enforce min 1
+                                if (newValues.length > 0) {
+                                  updateVariation(index, 'seedTypeValues', newValues)
+                                }
+                              }}
+                            >
+                              {st}
+                            </Button>
+                          )
+                        })}
                       </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">End</Label>
-                        <Input
-                          type="number"
-                          value={variation.end}
-                          onChange={(e) => updateVariation(index, 'end', e.target.value)}
-                          placeholder="1000"
-                          step={isInteger ? 1 : 0.1}
-                        />
-                      </div>
-                      <div className="space-y-1">
-                        <Label className="text-xs">Step</Label>
-                        <Input
-                          type="number"
-                          value={variation.step}
-                          onChange={(e) => updateVariation(index, 'step', e.target.value)}
-                          placeholder="100"
-                          min={isInteger ? 1 : 0.01}
-                          step={isInteger ? 1 : 0.1}
-                        />
-                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        {variation.seedTypeValues.length} selected
+                      </p>
                     </div>
+                  ) : (
+                    /* Standard scalar variation: discrete or range */
+                    <>
+                      {/* Input Mode Toggle */}
+                      <div className="flex gap-2">
+                        <Button
+                          type="button"
+                          variant={variation.inputMode === 'range' ? 'default' : 'outline'}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => updateVariation(index, 'inputMode', 'range')}
+                        >
+                          Range (Start → End)
+                        </Button>
+                        <Button
+                          type="button"
+                          variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
+                          size="sm"
+                          className="flex-1"
+                          onClick={() => updateVariation(index, 'inputMode', 'discrete')}
+                        >
+                          Discrete Values
+                        </Button>
+                      </div>
+
+                      {/* Range Mode Inputs */}
+                      {variation.inputMode === 'range' && (
+                        <div className="grid grid-cols-3 gap-2">
+                          <div className="space-y-1">
+                            <Label className="text-xs">Start</Label>
+                            <Input
+                              type="number"
+                              value={variation.start}
+                              onChange={(e) => updateVariation(index, 'start', e.target.value)}
+                              placeholder="100"
+                              step={isInteger ? 1 : 0.1}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">End</Label>
+                            <Input
+                              type="number"
+                              value={variation.end}
+                              onChange={(e) => updateVariation(index, 'end', e.target.value)}
+                              placeholder="1000"
+                              step={isInteger ? 1 : 0.1}
+                            />
+                          </div>
+                          <div className="space-y-1">
+                            <Label className="text-xs">Step</Label>
+                            <Input
+                              type="number"
+                              value={variation.step}
+                              onChange={(e) => updateVariation(index, 'step', e.target.value)}
+                              placeholder="100"
+                              min={isInteger ? 1 : 0.01}
+                              step={isInteger ? 1 : 0.1}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Discrete Mode Input */}
+                      {variation.inputMode === 'discrete' && (
+                        <div className="space-y-1">
+                          <Label className="text-xs">Values (comma-separated)</Label>
+                          <Input
+                            value={variation.values}
+                            onChange={(e) => updateVariation(index, 'values', e.target.value)}
+                            placeholder="e.g., 100, 200, 500, 1000"
+                          />
+                        </div>
+                      )}
+
+                      {/* Preview */}
+                      <div className="p-2 bg-primary/5 rounded text-sm space-y-1">
+                        <div className="flex items-center justify-between">
+                          <span className="text-muted-foreground">Generated values:</span>
+                          <span className="font-mono font-medium">{count} values</span>
+                        </div>
+                        <p className="text-xs font-mono text-muted-foreground truncate">
+                          {formatValuesPreview(values)}
+                        </p>
+                      </div>
+                    </>
                   )}
-
-                  {/* Discrete Mode Input */}
-                  {variation.inputMode === 'discrete' && (
-                    <div className="space-y-1">
-                      <Label className="text-xs">Values (comma-separated)</Label>
-                      <Input
-                        value={variation.values}
-                        onChange={(e) => updateVariation(index, 'values', e.target.value)}
-                        placeholder="e.g., 100, 200, 500, 1000"
-                      />
-                    </div>
-                  )}
-
-                  {/* Preview */}
-                  <div className="p-2 bg-primary/5 rounded text-sm space-y-1">
-                    <div className="flex items-center justify-between">
-                      <span className="text-muted-foreground">Generated values:</span>
-                      <span className="font-mono font-medium">{count} values</span>
-                    </div>
-                    <p className="text-xs font-mono text-muted-foreground truncate">
-                      {formatValuesPreview(values)}
-                    </p>
-                  </div>
                 </div>
               )
             })}
@@ -615,7 +703,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
           </div>
 
           {/* Summary */}
-          <div className="p-3 bg-primary/10 rounded-lg">
+          <div className="p-3 bg-primary/10 rounded-lg space-y-2">
             <p className="text-sm">
               <span className="font-medium">Total simulations:</span>{' '}
               <span className="font-mono">{totalSimulations}</span>
@@ -630,10 +718,24 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                 </span>
               )}
             </p>
+
+            {totalSimulations > 200 && totalSimulations <= 1000 && (
+              <p className="text-sm text-yellow-600 flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" />
+                Batch contains {totalSimulations} simulations — this may take a while.
+              </p>
+            )}
+
+            {totalSimulations > 1000 && (
+              <p className="text-sm text-destructive font-medium flex items-center gap-1">
+                <AlertTriangle className="h-4 w-4" />
+                Batch exceeds 1000 simulations ({totalSimulations}). The server will reject this request.
+              </p>
+            )}
           </div>
 
           {/* Submit */}
-          <Button type="submit" disabled={isLoading || totalSimulations === 0} className="w-full">
+          <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
             <Play className="h-4 w-4 mr-2" />
             {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}
           </Button>
