@@ -42,11 +42,11 @@ Chain strategy: pending
 
 > **MUST be committed and merged before any source code change (R24).**
 
-- [ ] 0.1 Create `aglogen_core/engine/tests/fixtures/pre_low_df_fix/` directory with a `README.md` explaining fixture provenance and how to regenerate. `+15/-0` lines.
-- [ ] 0.2 Add `aglogen_core/engine/tests/fixtures/generate_snapshots.rs` (or a `[[bin]]` target `gen_pre_fix_snapshots`) that calls `run_tunable_cc_internal` for 3 `(seed, TunableCcParams)` tuples — `(seed=1, Df=1.6, N=200)`, `(seed=42, Df=1.5, N=200)`, `(seed=99, Df=1.7, N=100)` — and writes `coordinates`, `rg_evolution`, `fractal_dimension`, `prefactor` to JSON at `tests/fixtures/pre_low_df_fix/{seed}_{df}.json`. `+80/-0` lines. Verify: `cargo run --example gen_pre_fix_snapshots` or `cargo test --test generate_snapshots` produces non-empty files.
-  - **⚠ Fixture size note**: JSON for `coordinates` at N=200 is ~6 KB per file (200×3×~8 chars + keys); 3 files ≈ 18 KB / ~200 lines. Use compact JSON (no pretty-print) to stay under 300 added lines total. If still heavy, use `bincode` + base64 instead and document the choice in the README.
-- [ ] 0.3 Commit the generated `.json` fixture files under `tests/fixtures/pre_low_df_fix/`. Verify file hashes are stable across two consecutive runs on the same machine. `+200/-0` lines (estimate; compact JSON).
-  - Test cmd: `cargo test --test integration_cc_tunable 2>&1 | grep -E "PASSED|ok"` — existing tests must still pass.
+- [x] 0.1 Create `aglogen_core/engine/tests/fixtures/pre_low_df_fix/` directory with a `README.md` explaining fixture provenance and how to regenerate. `+15/-0` lines.
+- [x] 0.2 Add `aglogen_core/engine/examples/fixtures/gen_pre_fix_snapshots.rs` (`[[example]]` target `gen_pre_fix_snapshots`) that calls `run_tunable_cc_internal` for 3 `(seed, TunableCcParams)` tuples — `(seed=1, Df=1.5, N=100)`, `(seed=2, Df=1.8, N=100)`, `(seed=3, Df=2.0, N=100)` — and writes `coordinates`, `radii`, `rg_evolution`, `fractal_dimension`, `prefactor`, `merge_trace` to compact JSON at `tests/fixtures/pre_low_df_fix/{name}.json`. Verify: `cargo run --release --example gen_pre_fix_snapshots -p aglogen-engine` produces non-empty files. Also added `serde` + `serde_json` as `[dev-dependencies]`.
+  - **⚠ Fixture params deviate from tasks.md**: orchestrator specified N=100 with seeds 1/2/3 and df=1.5/1.8/2.0. This keeps PR1 under budget. tasks.md had N=200 with different seeds. Params recorded in fixtures and README.
+- [x] 0.3 Commit the generated `.json` fixture files under `tests/fixtures/pre_low_df_fix/`. Hash-stable across two consecutive runs verified (MD5 identical). `+207/-0` lines in commit.
+  - Test result: `cargo test --test integration_cc_tunable` → 9 passed; 0 failed; 1 ignored. All existing tests pass.
 
 **Phase 0 exit gate**: All 3 fixture files present and committed. Zero source files in `src/` changed.
 
