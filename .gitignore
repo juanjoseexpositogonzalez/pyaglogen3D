@@ -72,3 +72,6 @@ frontend/tsconfig.tsbuildinfo
 
 # Local validation/automation scripts (not versioned)
 scripts/
+
+# Local agent state (Engram/SDD client data)
+.atl/

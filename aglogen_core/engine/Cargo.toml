@@ -17,3 +17,30 @@ num-complex = "0.4"
 
 [dev-dependencies]
 approx = "0.5"
+
+# Diagnostic examples for the BC vs CC-tunable investigation (2026-05-26).
+# Kept under examples/diagnostics/ as historical reference for the bug study
+# documented in engram (topic: cc-tunable-bug-study-2026-05).
+[[example]]
+name = "bc_bias_diagnosis"
+path = "examples/diagnostics/bc_bias_diagnosis.rs"
+
+[[example]]
+name = "bc_peraxis_diagnosis"
+path = "examples/diagnostics/bc_peraxis_diagnosis.rs"
+
+[[example]]
+name = "bc_physical_range"
+path = "examples/diagnostics/bc_physical_range.rs"
+
+[[example]]
+name = "bc_high_df_clamp"
+path = "examples/diagnostics/bc_high_df_clamp.rs"
+
+[[example]]
+name = "bc_vs_sim_real"
+path = "examples/diagnostics/bc_vs_sim_real.rs"
+
+[[example]]
+name = "rg_evolution_tail"
+path = "examples/diagnostics/rg_evolution_tail.rs"
