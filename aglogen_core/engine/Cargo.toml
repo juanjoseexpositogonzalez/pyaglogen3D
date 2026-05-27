@@ -17,6 +17,8 @@ num-complex = "0.4"
 
 [dev-dependencies]
 approx = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # Diagnostic examples for the BC vs CC-tunable investigation (2026-05-26).
 # Kept under examples/diagnostics/ as historical reference for the bug study
@@ -44,3 +46,10 @@ path = "examples/diagnostics/bc_vs_sim_real.rs"
 [[example]]
 name = "rg_evolution_tail"
 path = "examples/diagnostics/rg_evolution_tail.rs"
+
+# Pre-fix snapshot generator for cc-tunable-low-df-fix (R24 byte-identity).
+# Committed alongside the snapshot fixtures in tests/fixtures/pre_low_df_fix/.
+# Run: cargo run --release --example gen_pre_fix_snapshots -p aglogen-engine
+[[example]]
+name = "gen_pre_fix_snapshots"
+path = "examples/fixtures/gen_pre_fix_snapshots.rs"
