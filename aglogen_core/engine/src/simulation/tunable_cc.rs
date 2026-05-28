@@ -36,6 +36,33 @@ fn read_phase3_flag() -> bool {
 /// Parsed once at simulation init, NOT at compile time.
 const USE_LOW_DF_FIX_DEFAULT: bool = true;
 
+/// Reads the `CC_TUNABLE_USE_LOW_DF_FIX` environment variable to determine
+/// whether the low-Df convergence fix is active.
+///
+/// ## Default behavior
+///
+/// When the variable is **absent**, the fix is **ON** (`true`). This is the
+/// production default: PC-seed pool (`floor(N/PC_SEED_SIZE)` clusters of 4
+/// particles) replaces the monomer pool, and the bounding-sum feasibility
+/// threshold is relaxed to `gamma/2` (matching the original MATLAB reference).
+///
+/// ## Rollback / escape hatch
+///
+/// Set `CC_TUNABLE_USE_LOW_DF_FIX=false` (or `"0"` or `"no"`) to revert to
+/// the **pre-fix algorithm bit-identically** (R24). The rollback path:
+/// 1. `initialize_seed_clusters` skips `build_pc_seeds`; falls through to the
+///    existing `build_monomers` / `Dimers` / `Trimers` branches.
+/// 2. No separate RNG stream is created; main RNG state is untouched.
+/// 3. `find_feasible_pairs` uses the full `gamma` threshold (`bounding_sum >= required`).
+/// 4. For any `(seed, TunableCcParams)`, the `SimulationResult` is byte-identical
+///    to a pre-patch run at the same seed.
+///
+/// ## Flag independence
+///
+/// This flag is **orthogonal to** `CC_TUNABLE_USE_PHASE3_ALGORITHM` (R20).
+/// The two flags never alias and do not implicitly toggle each other (R22.3).
+///
+/// Parsed once at simulation start; not re-read inside any inner loop (R3.9).
 fn read_low_df_fix_flag() -> bool {
     match std::env::var("CC_TUNABLE_USE_LOW_DF_FIX") {
         Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
@@ -872,9 +899,27 @@ fn build_monomers<R: Rng>(n: usize, params: &TunableCcParams, rng: &mut R) -> Ve
 /// via the PC (particle-cluster) placement algorithm, plus `n mod PC_SEED_SIZE`
 /// leftover monomers appended at the end.
 ///
-/// Uses a forked RNG stream (`seed XOR PC_SEED_RNG_SALT`) to keep the main
-/// aggregation RNG draws byte-identical to the pre-fix code path when the
-/// flag is OFF (R24).
+/// ## Separate RNG stream invariant (R24)
+///
+/// The caller is responsible for passing a **separate** `rng_pc` derived from
+/// the main simulation seed via XOR with `PC_SEED_RNG_SALT`:
+///
+/// ```text
+/// let mut rng_pc = create_rng(seed ^ PC_SEED_RNG_SALT);
+/// ```
+///
+/// This guarantees that the main RNG state (`rng`) is **not advanced** by any
+/// PC-seed work. Consequently, when the flag is OFF, the sequence of main-RNG
+/// draws in the aggregation loop is byte-identical to the pre-fix algorithm
+/// at the same seed (R24.3).
+///
+/// ## Salt constant
+///
+/// `PC_SEED_RNG_SALT = 0x5a7d_3f1e_8b2c_9604` is documented in the SALT REGISTRY
+/// comment block near the top of this module. It is a fixed `const` so that the
+/// same seed reproduces the same PC-seed pool across machines and Rust toolchain
+/// versions (determinism required by R23.4). Do **not** change this value without
+/// updating the SALT REGISTRY and auditing all other XOR-salt usages in this crate.
 ///
 /// Spec: cc-tunable-aggregation R23.
 fn build_pc_seeds<R: Rng>(
