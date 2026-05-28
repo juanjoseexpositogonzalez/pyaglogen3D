@@ -465,7 +465,8 @@ fn rotate_vector(v: &Vector3, axis: &Vector3, angle: f64) -> Vector3 {
 }
 
 /// Fallback: place particle using ballistic-like approach with sintering.
-fn place_particle_ballistic<R: Rng>(
+#[doc(hidden)]
+pub(crate) fn place_particle_ballistic<R: Rng>(
     particles: &[Sphere],
     rng: &mut R,
     radius: f64,
