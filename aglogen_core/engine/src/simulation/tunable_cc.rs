@@ -28,6 +28,39 @@ fn read_phase3_flag() -> bool {
     }
 }
 
+/// Feature flag for the low-Df fix.
+///
+/// Default: `true` (fix active — PC seed pool + relaxed bounding threshold).
+/// Set env var `CC_TUNABLE_USE_LOW_DF_FIX=false` to revert to the pre-fix
+/// monomer pool + strict bounding behaviour (byte-identical rollback, see R24).
+/// Parsed once at simulation init, NOT at compile time.
+const USE_LOW_DF_FIX_DEFAULT: bool = true;
+
+fn read_low_df_fix_flag() -> bool {
+    match std::env::var("CC_TUNABLE_USE_LOW_DF_FIX") {
+        Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => USE_LOW_DF_FIX_DEFAULT,
+    }
+}
+
+/// Seed cluster size for the PC-generated default pool (MATLAB convention).
+#[allow(dead_code)]
+const PC_SEED_SIZE: usize = 4;
+
+/// RNG salt for the PC seed forked stream. Documented in the SALT REGISTRY
+/// comment block below. DO NOT change without auditing other XOR-salt usages
+/// in this crate first.
+#[allow(dead_code)]
+const PC_SEED_RNG_SALT: u64 = 0x5a7d_3f1e_8b2c_9604;
+
+// ── SALT REGISTRY ────────────────────────────────────────────────────────
+// Salts used to fork deterministic RNG streams from the main simulation
+// seed. Add new entries here BEFORE introducing a new XOR-salt anywhere in
+// this crate. Verify the value is unique across this list.
+//
+//   PC_SEED_RNG_SALT  = 0x5a7d_3f1e_8b2c_9604   (PC seed pool, cc-tunable-low-df-fix R23)
+// ─────────────────────────────────────────────────────────────────────────
+
 use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_point_on_sphere};
 
