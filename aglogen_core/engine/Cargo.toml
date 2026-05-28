@@ -47,6 +47,26 @@ path = "examples/diagnostics/bc_vs_sim_real.rs"
 name = "rg_evolution_tail"
 path = "examples/diagnostics/rg_evolution_tail.rs"
 
+[[example]]
+name = "r24_byte_identity_probe"
+path = "examples/diagnostics/r24_byte_identity_probe.rs"
+
+[[example]]
+name = "r24_in_memory_check"
+path = "examples/diagnostics/r24_in_memory_check.rs"
+
+[[example]]
+name = "r24_json_roundtrip"
+path = "examples/diagnostics/r24_json_roundtrip.rs"
+
+[[example]]
+name = "r25_n_sensitivity"
+path = "examples/diagnostics/r25_n_sensitivity.rs"
+
+[[example]]
+name = "r58_prefactor_scan"
+path = "examples/diagnostics/r58_prefactor_scan.rs"
+
 # Pre-fix snapshot generator for cc-tunable-low-df-fix (R24 byte-identity).
 # Committed alongside the snapshot fixtures in tests/fixtures/pre_low_df_fix/.
 # Run: cargo run --release --example gen_pre_fix_snapshots -p aglogen-engine
