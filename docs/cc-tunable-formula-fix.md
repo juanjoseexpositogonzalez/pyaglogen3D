@@ -131,3 +131,51 @@ the remaining algorithmic issue.
 **Recommended workaround for users targeting Df < 1.8**: until
 PYA-14 is resolved, set the target Df to ≥ 1.8 OR use a different
 algorithm (e.g. ballistic CC with manually tuned parameters).
+
+---
+
+## Low-Df Convergence Fix (`cc-tunable-low-df-fix`, cycle 1 of 2)
+
+The **cc-tunable-low-df-fix** change (SDD cycle 1 of 2) resolves the primary convergence failure
+in the low-Df band `[1.4, 1.7]` by two independent changes, both controlled by the
+`CC_TUNABLE_USE_LOW_DF_FIX` environment flag (default `true`):
+
+1. **PC-seed pool** (`seed_type = "monomers"`, flag ON): replaces the N independent monomer
+   pool with `floor(N / 4)` pre-built 4-particle clusters. This gives the CC merge loop
+   more structured starting material for building low-Df aggregates.
+2. **Relaxed bounding threshold** (`gamma/2` instead of `gamma`): loosens the feasibility
+   pre-screen in `find_feasible_pairs` from `bounding_sum >= required_distance` to
+   `bounding_sum >= required_distance * 0.5`, matching the MATLAB reference implementation.
+
+### Before / After (N=1000, seeds 1-3, kf=1.3, Monomers)
+
+| Df_target | Before fix (sim_Df) | After fix (sim_Df) | After fix (BC_Df) |
+|-----------|---------------------|--------------------|-------------------|
+| 1.50      | 2.72                | 1.55               | 1.44              |
+| 1.80      | 1.80                | 1.79               | 1.63              |
+| 2.00      | 2.00                | 2.01               | 1.80              |
+| 2.20      | 2.21                | 2.25               | 1.91              |
+| 2.50      | 2.39                | 2.45               | 2.21              |
+| 2.70      | 2.35                | 2.45               | 2.18              |
+| 2.90      | 2.42                | 2.39               | 2.06              |
+
+Note: Df ≥ 2.5 still undershoots — cycle 2 (`cc-tunable-high-df-fix`) is pending.
+
+### Rollback / escape hatch
+
+Set `CC_TUNABLE_USE_LOW_DF_FIX=false` to restore the **pre-fix algorithm bit-identically**
+(same RNG draws, same seed pool, same bounding threshold). This is useful for:
+- Reproducing pre-fix simulation results for comparison
+- Temporarily disabling the fix while debugging convergence issues
+
+```bash
+CC_TUNABLE_USE_LOW_DF_FIX=false cargo run ...
+```
+
+Accepted off-values (case-insensitive): `"false"`, `"0"`, `"no"`. Any other value (including
+absent) activates the fix.
+
+### Companion change
+
+`cc-tunable-high-df-fix` (cycle 2 of 2) — addresses residual undershoot for `Df ≥ 2.5`.
+Not yet started.
