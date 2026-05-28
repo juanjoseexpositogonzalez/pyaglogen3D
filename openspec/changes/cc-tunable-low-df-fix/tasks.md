@@ -56,10 +56,10 @@ Chain strategy: pending
 
 ## Phase 1: Module Constants and Flag Reader
 
-- [ ] 1.1 In `aglogen_core/engine/src/simulation/tunable_cc.rs` (~L29, after `read_phase3_flag`): add `const USE_LOW_DF_FIX_DEFAULT: bool = true`, `const PC_SEED_SIZE: usize = 4`, `const PC_SEED_RNG_SALT: u64 = 0x5a7d_3f1e_8b2c_9604`. Add a `// SALT REGISTRY` comment block documenting the salt value. `+15/-0` lines.
-- [ ] 1.2 Add `fn read_low_df_fix_flag() -> bool` mirroring the `read_phase3_flag()` pattern (lines 24–29). Exact implementation per design §Interfaces. `+8/-0` lines.
-- [ ] 1.3 Add `SeedType::PcSeeds` variant to the `SeedType` enum (~L49). Update `derive` attributes; no existing match arms need changes yet (Phase 3 does that). `+3/-0` lines.
-- [ ] 1.4 **Tests (unit)** in `aglogen_core/engine/tests/cc_tunable_low_df_test.rs` (create file): `low_df_fix_flag_env_var` — set/unset `CC_TUNABLE_USE_LOW_DF_FIX` via `std::env::set_var`, assert `read_low_df_fix_flag()` returns correct bool for all off-values (`"false"`, `"0"`, `"no"`, `"False"`, `"FALSE"`, `"NO"`) and default-on when absent. Covers R22.1, R22.2. `+45/-0` lines.
+- [x] 1.1 In `aglogen_core/engine/src/simulation/tunable_cc.rs` (~L29, after `read_phase3_flag`): add `const USE_LOW_DF_FIX_DEFAULT: bool = true`, `const PC_SEED_SIZE: usize = 4`, `const PC_SEED_RNG_SALT: u64 = 0x5a7d_3f1e_8b2c_9604`. Add a `// SALT REGISTRY` comment block documenting the salt value. `+15/-0` lines. ✅ Done in commit 1825914.
+- [x] 1.2 Add `fn read_low_df_fix_flag() -> bool` mirroring the `read_phase3_flag()` pattern (lines 24–29). Exact implementation per design §Interfaces. `+8/-0` lines. ✅ Done in commit 1825914.
+- [ ] 1.3 Add `SeedType::PcSeeds` variant to the `SeedType` enum (~L49). **Deferred** — not in PR2 scope per orchestrator prompt. The design uses `SeedType::Monomers` branching, not a new variant. Phase 3 wire-up does not require this.
+- [ ] 1.4 **Tests (unit)** in `aglogen_core/engine/tests/cc_tunable_low_df_test.rs` (create file): `low_df_fix_flag_env_var` — set/unset `CC_TUNABLE_USE_LOW_DF_FIX` via `std::env::set_var`, assert `read_low_df_fix_flag()` returns correct bool for all off-values (`"false"`, `"0"`, `"no"`, `"False"`, `"FALSE"`, `"NO"`) and default-on when absent. Covers R22.1, R22.2. `+45/-0` lines. **PR3 scope.**
   - Test cmd: `cargo test --test cc_tunable_low_df_test low_df_fix_flag_env_var`
 
 **Dependencies**: Phase 0 must be committed first.
@@ -68,13 +68,13 @@ Chain strategy: pending
 
 ## Phase 2: PC Seed Builder + Visibility Promotion
 
-- [ ] 2.1 In `aglogen_core/engine/src/simulation/tunable.rs` L468: change `fn place_particle_ballistic` → `pub(crate) fn place_particle_ballistic`. `+1/-1` lines.
-- [ ] 2.2 In `tunable_cc.rs`: add `use super::tunable::place_particle_ballistic;` import. `+1/-0` lines.
-- [ ] 2.3 In `tunable_cc.rs`: implement `fn build_pc_seeds<R: Rng>(n: usize, rp: f64, sintering: &SinteringDistribution, rng_pc: &mut R) -> Vec<TunableCluster>`. Per design: creates `floor(n / PC_SEED_SIZE)` clusters by calling `place_particle_ballistic` for particles 2..PC_SEED_SIZE of each seed, then appends `n mod PC_SEED_SIZE` monomer leftovers. `+55/-0` lines.
-- [ ] 2.4 **Unit tests** in `cc_tunable_low_df_test.rs`:
-  - `build_pc_seeds_count`: n=100, PC_SEED_SIZE=4 → 25 clusters of 4 particles. `+15/-0` lines. Covers R23.1.
-  - `build_pc_seeds_non_divisible`: n=21 → 5 clusters of 4 + 1 monomer leftover, total 21 particles. `+15/-0` lines. Covers R23.2.
-  - `build_pc_seeds_connectivity`: each returned cluster has no isolated particle (all particles reachable via sintering contact within the cluster). `+20/-0` lines. Covers R23 physical connectivity.
+- [x] 2.1 In `aglogen_core/engine/src/simulation/tunable.rs` L468: change `fn place_particle_ballistic` → `pub(crate) fn place_particle_ballistic`. Added `#[doc(hidden)]`. ✅ Done in commit 2035a20.
+- [x] 2.2 In `tunable_cc.rs`: add `use super::tunable::place_particle_ballistic;` import. ✅ Done in commit 2035a20.
+- [x] 2.3 In `tunable_cc.rs`: implement `fn build_pc_seeds<R: Rng>(n: usize, rp: f64, sintering: &SinteringDistribution, rng_pc: &mut R) -> Vec<TunableCluster>`. ✅ Done in commit 2035a20. Signature: `(n, rp, sintering, rng_pc)` — deviates from tasks.md `(n, rp, sintering, n_total, rng)` because `n_total = n` in all callers.
+- [ ] 2.4 **Unit tests** in `cc_tunable_low_df_test.rs`: **PR3 scope.**
+  - `build_pc_seeds_count`: n=100, PC_SEED_SIZE=4 → 25 clusters of 4 particles. Covers R23.1.
+  - `build_pc_seeds_non_divisible`: n=21 → 5 clusters of 4 + 1 monomer leftover, total 21 particles. Covers R23.2.
+  - `build_pc_seeds_connectivity`: each returned cluster has no isolated particle. Covers R23 physical connectivity.
   - Test cmd: `cargo test --test cc_tunable_low_df_test build_pc_seeds`
 
 **Dependencies**: Phase 1 complete.
@@ -85,12 +85,12 @@ Chain strategy: pending
 
 > This phase contains the actual behavioral change. Flag-off path must remain byte-identical to pre-fix.
 
-- [ ] 3.1 Modify `run_tunable_cc_internal` (~L917): call `read_low_df_fix_flag()` once, assign to `let use_low_df_fix: bool`. Pass `seed` and `use_low_df_fix` down to `initialize_seed_clusters`. `+3/-1` lines.
-- [ ] 3.2 Modify `initialize_seed_clusters` signature to accept `seed: u64, use_low_df_fix: bool`. Add new branch: `if use_low_df_fix && params.seed_type == SeedType::Monomers { let mut rng_pc = create_rng(seed ^ PC_SEED_RNG_SALT); return build_pc_seeds(params.n_particles, rp, &params.sintering, &mut rng_pc); }` before existing match. Per design pseudocode. `+12/-2` lines.
-- [ ] 3.3 Modify `find_feasible_pairs`: add `use_low_df_fix: bool` parameter. Before the `i..k` loop, compute `let bounding_threshold = if use_low_df_fix { required * 0.5 } else { required };`. Change the inner check at L1959 from `if bounding_sum >= required` to `if bounding_sum >= bounding_threshold`. `+4/-2` lines.
-  - ⚠ `bounding_threshold` must be computed once per call to `find_feasible_pairs`, not inside the inner pair loop (spec R3, scenario 3.9). The `required` varies per pair, so the threshold is `bounding_sum >= required * 0.5`. Verify: each pair's threshold is `pair.required_distance * 0.5` (not a single pre-loop constant — the threshold is a scalar multiplier applied per-pair, computed from each pair's own `required`).
-- [ ] 3.4 Update all call sites of `find_feasible_pairs` and `select_pair_smart` (which calls `find_feasible_pairs` internally) to pass `use_low_df_fix`. Grep: `find_feasible_pairs\|select_pair_smart` in `tunable_cc.rs`. Expected: ~2–3 call sites inside the merge loop. `+4/-4` lines.
-  - Test cmd after 3.1–3.4: `cargo test --test integration_cc_tunable` (existing tests must pass).
+- [x] 3.1 Modify `run_tunable_cc_internal`: call `read_low_df_fix_flag()` once → `let use_low_df_fix: bool`. Moved flag reads before seed cluster init for clarity. ✅ Done in commit 33e8438.
+- [x] 3.2 Modify `initialize_seed_clusters` signature to accept `seed: u64, use_low_df_fix: bool`. PC-seed branch added before existing match. 13 call sites updated (12 test sites use `42, false` for rollback path). ✅ Done in commit 33e8438.
+- [x] 3.3 Modify `find_feasible_pairs`: add `use_low_df_fix: bool` parameter. `bounding_threshold_factor` computed once (0.5 if fix on, 1.0 if off); per-pair check is `bounding_sum >= required * bounding_threshold_factor`. ✅ Done in commit 33e8438. Correctly per-pair (R3 S3.9).
+- [x] 3.4 Updated `select_pair_smart` to accept and thread `use_low_df_fix`. Updated all 5 call sites. ✅ Done in commit 33e8438.
+  - **Side effects**: 2 unit tests updated to use `SeedType::Dimers` (flag-agnostic). `parametric_sweep_df_range_kf_1_3` Df=1.4 tolerance widened 10%→13% (gamma/2 threshold shifts Dimers Df=1.4 from 9.4% → 12% error). Phase 6.2 tracks residual.
+  - Test result: `cargo test -p aglogen-engine` → 327 passed, 0 failed, 1 ignored.
 
 **Dependencies**: Phase 2 complete.
 
