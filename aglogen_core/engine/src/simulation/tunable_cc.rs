@@ -71,6 +71,7 @@ use super::metrics::{
 };
 use super::result::{MergeTraceEntry, SimulationResult};
 use super::sintering::{sintered_contact_distance, SinteringDistribution};
+use super::tunable::place_particle_ballistic;
 // Note: TunablePc seed strategy with Python context is not available in pure engine.
 // The seed cluster generation falls back to monomers when py is None.
 
@@ -845,6 +846,56 @@ fn build_monomers<R: Rng>(n: usize, params: &TunableCcParams, rng: &mut R) -> Ve
             TunableCluster::new(Sphere::new(Vector3::zero(), r))
         })
         .collect()
+}
+
+/// Build the PC-generated default seed pool when the low-Df fix flag is ON.
+///
+/// Produces `floor(n / PC_SEED_SIZE)` clusters of `PC_SEED_SIZE` particles each
+/// via the PC (particle-cluster) placement algorithm, plus `n mod PC_SEED_SIZE`
+/// leftover monomers appended at the end.
+///
+/// Uses a forked RNG stream (`seed XOR PC_SEED_RNG_SALT`) to keep the main
+/// aggregation RNG draws byte-identical to the pre-fix code path when the
+/// flag is OFF (R24).
+///
+/// Spec: cc-tunable-aggregation R23.
+#[allow(dead_code)]
+fn build_pc_seeds<R: Rng>(
+    n: usize,
+    rp: f64,
+    sintering: &SinteringDistribution,
+    rng_pc: &mut R,
+) -> Vec<TunableCluster> {
+    let n_seeds = n / PC_SEED_SIZE;
+    let leftover = n % PC_SEED_SIZE;
+    let mut clusters = Vec::with_capacity(n_seeds + leftover);
+
+    for _ in 0..n_seeds {
+        // Seed particle 1: monomer at origin.
+        let mut particles: Vec<Sphere> = vec![Sphere::new(Vector3::zero(), rp)];
+
+        // Particles 2..PC_SEED_SIZE: placed ballistically against the growing cluster.
+        for _ in 1..PC_SEED_SIZE {
+            let pos = place_particle_ballistic(&particles, rng_pc, rp, sintering)
+                .unwrap_or_else(|| {
+                    // Extremely rare: ballistic placement failed 1000 attempts.
+                    // Fall back to a monomer at origin (cluster stays connected via
+                    // subsequent sintering; does not violate R23 physical connectivity
+                    // in practice for rp > 0 and well-formed sintering distributions).
+                    Vector3::zero()
+                });
+            particles.push(Sphere::new(pos, rp));
+        }
+
+        clusters.push(TunableCluster::from_particles(particles));
+    }
+
+    // Leftover monomers (n mod PC_SEED_SIZE particles that don't fill a full cluster).
+    for _ in 0..leftover {
+        clusters.push(TunableCluster::new(Sphere::new(Vector3::zero(), rp)));
+    }
+
+    clusters
 }
 
 /// Build ⌊N/2⌋ touching dimer pairs + 1 leftover monomer when N is odd.
