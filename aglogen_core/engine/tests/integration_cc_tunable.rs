@@ -33,10 +33,19 @@ use aglogen_engine::simulation::tunable_cc::{run_tunable_cc_internal, SeedType, 
 
 /// Full 5-run convergence test at target Df=1.6, kf=1.7, N=350.
 ///
-/// IGNORED: convergence not yet achieved at this target. See module doc.
-/// Remove `#[ignore]` once CC tunable merge geometry is improved.
+/// IGNORED: Df convergence was resolved by cc-tunable-low-df-fix (mean Df error ~0.6%
+/// with fix=ON, Monomers seeds). However, kf=1.7 convergence is still not achieved
+/// (mean kf ≈ 1.34, error ~21%). The kf issue is a separate algorithmic problem
+/// unrelated to the Df seeding fix.
+///
+/// Status as of cc-tunable-low-df-fix PR3:
+/// - Df: FIXED — mean Df=1.610 for target=1.6 (0.6% error)
+/// - kf: NOT FIXED — mean kf=1.343 for target=1.7 (21% error)
+///
+/// Action to un-ignore: address kf convergence separately (separate SDD change).
 #[test]
-#[ignore = "CC tunable convergence at Df=1.6 requires algorithmic improvement beyond formula fix — see module doc"]
+#[ignore = "Df convergence fixed by cc-tunable-low-df-fix, but kf=1.7 convergence still fails (mean kf≈1.34, 21% error). \
+            kf requires separate algorithmic fix."]
 fn convergence_5_runs_target_1_6_1_7() {
     let target_df = 1.6;
     let target_kf = 1.7;
@@ -667,5 +676,112 @@ fn parametric_sweep_df_range_kf_1_3() {
     assert!(
         all_pass,
         "Parametric sweep: at least one Df target exceeded tolerance — see table above"
+    );
+}
+
+// ── Phase 6: R21 non-regression with low-Df fix ON ──────────────────────────
+
+/// R21 non-regression — high-Df band still converges with low-Df fix flag ON.
+///
+/// Asserts that `CC_TUNABLE_USE_LOW_DF_FIX=true` (default) does NOT regress
+/// convergence for `Df_target ∈ {1.8, 2.0, 2.2, 2.5}`. The fix changes the
+/// bounding threshold from `gamma` to `gamma/2`, which could in principle
+/// affect high-Df convergence (more pairs become feasible, potentially
+/// changing which pair is selected).
+///
+/// Tolerances:
+/// - Df=1.8: ±10% (same as the low-Df < 2.0 tier per R19/R5)
+/// - Df ≥ 2.0: ±5%  (R21 spec tolerance)
+///
+/// Parameters: N=300, seeds {1,2,3}, kf=1.3, seed_type=Monomers, flag default-ON.
+/// Monomers is chosen (not Dimers) to exercise the PC-seed pool interaction
+/// with high-Df targets — the most likely source of regression.
+///
+/// Spec: cc-tunable-aggregation R21 non-regression.
+/// Refs: openspec/changes/cc-tunable-low-df-fix/tasks.md §6.1
+#[test]
+fn r21_high_df_band_still_converges_with_fix() {
+    // Ensure default flag state (fix ON).
+    unsafe {
+        std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
+    }
+
+    // (Df_target, tolerance) pairs.
+    // Df=1.8 uses 10% tolerance (< 2.0 tier); Df ≥ 2.0 uses 5% (R21 tier).
+    let targets: &[(f64, f64)] = &[
+        (1.8, 0.10),
+        (2.0, 0.05),
+        (2.2, 0.05),
+        (2.5, 0.05),
+    ];
+    let target_kf = 1.3;
+    let n_particles = 300;
+    let seeds = [1u64, 2, 3];
+
+    eprintln!(
+        "\n=== R21 non-regression: Monomers flag-ON, N={}, kf={} ===",
+        n_particles, target_kf
+    );
+    eprintln!(
+        "{:<8} {:<10} {:<10} {:<10} {:<10} {:<10} {:<12}",
+        "Df_tgt", "seed1", "seed2", "seed3", "mean", "error%", "pass?"
+    );
+
+    let mut all_pass = true;
+
+    for &(df_target, tolerance) in targets {
+        let mut df_results = Vec::new();
+
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df: df_target,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Monomers,
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            assert_eq!(
+                result.coordinates.len(),
+                n_particles,
+                "R21: seed {} Df={} must produce {} particles",
+                seed, df_target, n_particles
+            );
+            df_results.push(result.fractal_dimension);
+        }
+
+        let mean_df: f64 = df_results.iter().sum::<f64>() / df_results.len() as f64;
+        let df_error = (mean_df - df_target).abs() / df_target;
+        let pass = df_error < tolerance;
+
+        eprintln!(
+            "{:<8.1} {:<10.3} {:<10.3} {:<10.3} {:<10.3} {:<10.1} {:<12}",
+            df_target,
+            df_results[0],
+            df_results[1],
+            df_results[2],
+            mean_df,
+            df_error * 100.0,
+            if pass { "PASS" } else { "FAIL" }
+        );
+
+        if !pass {
+            eprintln!(
+                "  R21 FAIL: Df={} mean={:.3} error={:.1}% exceeds ±{:.0}%",
+                df_target, mean_df, df_error * 100.0, tolerance * 100.0
+            );
+            all_pass = false;
+        }
+    }
+
+    eprintln!("=========================================================");
+
+    assert!(
+        all_pass,
+        "R21: At least one high-Df target regressed with fix ON. \
+         The bounding threshold change (gamma→gamma/2) may have broken high-Df convergence. \
+         See table above."
     );
 }
