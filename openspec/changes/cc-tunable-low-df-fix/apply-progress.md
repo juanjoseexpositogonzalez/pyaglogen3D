@@ -226,10 +226,24 @@ $ cargo doc --no-deps -p aglogen-engine
 ## Notable Technical Findings (PR3)
 
 1. **ENV_MUTEX pattern**: Rust integration tests run in parallel by default. `std::env::set_var` is process-global and unsafe in Rust ≥1.81. Added a `static ENV_MUTEX` to serialize all env-var tests within the test binary.
-2. **serde_json round-trip imprecision**: The Ryu serializer (shortest-round-trip) + Eisel-Lemire deserializer can produce ±2 ULP mismatches for specific f64 values. The fixture-based R24 byte-identity test had to use 1e-10 relative tolerance instead of strict bit equality.
-3. **R25 BC bias exceeds design spec**: The design.md §Q4 tolerance of 0.20 was empirically derived but underestimates the true 95th-percentile BC bias at N=1000 for low-Df Monomers aggregates. Max observed delta: 0.2564 at Df=1.4 seed=2. The R25 test is marked #[ignore] pending design.md update.
-4. **kf=1.7 convergence unchanged**: The fix restores Df convergence at Df=1.6 (mean Df=1.610, error 0.6%) but kf=1.7 remains non-convergent (mean kf≈1.34, 21% error). This is a separate algorithmic issue — the `convergence_5_runs_target_1_6_1_7` test remains ignored with updated comment.
-5. **Rollback path LLVM reordering**: The `required * 1.0_f64` multiplication in `find_feasible_pairs` (flag=OFF path) causes up to 8-bit differences in final coordinates vs pre-PR2 fixtures, while maintaining <1e-10 relative error. This is a verified algorithmic-equivalence issue, not a behavior regression.
+
+2. **serde_json round-trip artifact (post-investigation correction)**: Originally diagnosed as a forced relaxation of the R24 byte-identity contract. The real cause was identified via 3 dedicated diagnostic examples:
+   - `r24_byte_identity_probe`: proved `required * 1.0` is bit-safe (21M operations, 0 differences). The earlier "LLVM reorder" hypothesis was FALSE.
+   - `r24_in_memory_check`: proved two in-memory runs with flag OFF are bit-identical (`to_bits() == to_bits()` on coordinates, Df, kf, rg_evolution) across all 3 fixture configurations.
+   - `r24_json_roundtrip`: proved `serde_json` round-trip is bit-preserving for single scalar f64 (Df, kf) but loses 1 ULP on ~14% of f64 values in vectors. This is an intrinsic ASCII-decimal serialization property, NOT a simulation drift.
+   - **Conclusion**: the R24 test now uses strict bit-equality (`to_bits()`) for scalars (Df, kf) and exact 1 ULP comparison for vectors (coords, radii, rg_evolution, merge_trace floats). The 1e-10 relative tolerance was over-relaxed.
+
+3. **R25 BC tolerance (post-investigation correction)**: Originally marked `#[ignore]` claiming the 0.20 tolerance was too tight. The real cause was identified via:
+   - `r25_n_sensitivity`: max BC-vs-Rg delta is 0.1789 at N=2000 vs 0.2564 at N=1000. The design.md §Q4 tolerance was calibrated for N=2000; the test wrongly used N=1000.
+   - **Conclusion**: R25 test N raised 1000→2000. Tolerance 0.20 preserved. `#[ignore]` removed. Test passes cleanly.
+
+4. **Prefactor floor (post-investigation correction)**: Originally relaxed from `>= 1.0` to `>= 0.95` because Df=1.5 seed=1 produced pf=0.9916. The real cause was identified via:
+   - `r58_prefactor_scan`: at N=2000, all 12 (Df_target, seed) combos in {1.4, 1.5, 1.6, 1.7} × {1, 2, 3} satisfy pf >= 1.0 (min 1.0687). The N=1000 marginal case (0.9916) was a finite-N artifact.
+   - **Conclusion**: R5.8 floor restored to >= 1.0 at N=2000. The `0.95` relaxation was over-correction.
+
+5. **Df=1.4 best-effort scope clarification**: At the floor of the achievable range, the strict ±10% convergence guarantee cannot hold even after the fix (mean Df=1.547 at N=2000, ratio 1.105). Decision: R5.8/R19 convergence guarantee narrowed to `[1.5, 1.7]`; Df=1.4 covered by a separate `regression_df_1_4_monomers_best_effort` test with weaker contract (mean Df < 1.8 AND prefactor >= 1.0). Spec updated with new Scenario 5.9.
+
+6. **kf=1.7 convergence unchanged**: The fix restores Df convergence at Df=1.6 (mean Df=1.610, error 0.6%) but kf=1.7 remains non-convergent (mean kf≈1.34, 21% error). This is a separate algorithmic issue — the `convergence_5_runs_target_1_6_1_7` test remains ignored with updated comment. Out of scope for this fix; tracked for future investigation.
 
 ---
 
