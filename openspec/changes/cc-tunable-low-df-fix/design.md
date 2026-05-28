@@ -202,7 +202,27 @@ Setting `CC_TUNABLE_USE_LOW_DF_FIX=false` at runtime (or removing it from the co
 5. For a given `seed`, the sequence of RNG draws in the main loop is **byte-identical** to the pre-patch run.
 
 Result: all `SimulationResult` fields, including `fractal_dimension`, `prefactor`, `coordinates`,
-and `radii`, are numerically identical to any pre-patch run at the same `seed`.
+and `radii`, are numerically identical to any pre-patch run at the same `seed`. **Empirical
+verification**: `examples/diagnostics/r24_in_memory_check` runs the simulation twice with the
+flag OFF and confirms bit-identical (`to_bits() == to_bits()`) `coordinates`, `fractal_dimension`,
+`prefactor`, and `rg_evolution` across all 3 fixture configurations.
+
+### R24 test tolerance: 1 ULP for f64 vectors, strict bit-equality for scalars
+
+The byte-identity property is **of the simulation**, not necessarily of every disk-stored
+fixture comparison. The fixture files are JSON, and `serde_json`'s `f64` round-trip preserves
+**single scalar values bit-exactly** (Ryu emitter + Eisel-Lemire parser) but can lose **1 ULP
+on ~14% of values in arrays of f64** (confirmed empirically by
+`examples/diagnostics/r24_json_roundtrip`). This is NOT a simulation drift — it is the
+intrinsic limit of ASCII-decimal float serialization for vectors.
+
+Therefore the R24 integration test (`rollback_byte_identity`) uses:
+- **Strict bit-equality** (`to_bits()`) for `fractal_dimension` and `prefactor` (single scalars
+  — round-trip preserved exactly)
+- **1 ULP tolerance** for `coordinates`, `radii`, `rg_evolution`, and float fields inside
+  `merge_trace` (vectors of f64 — subject to JSON serialization artifact)
+
+Any drift above 1 ULP indicates a real divergence and the test fails loudly.
 
 ---
 
