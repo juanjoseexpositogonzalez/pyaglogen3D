@@ -276,11 +276,12 @@ fn build_pc_seeds_connectivity() {
 
 /// R5.8 + R19.5 — Low-Df convergence band (Monomers, flag ON).
 ///
-/// Sweeps `Df_target ∈ {1.4, 1.5, 1.6, 1.7}` with N=1000, seeds {1,2,3}, kf=1.3,
-/// seed_type=Monomers, flag default-ON.
+/// Sweeps `Df_target ∈ {1.5, 1.6, 1.7}` with N=2000, seeds {1,2,3}, kf=1.3,
+/// seed_type=Monomers, flag default-ON. Df=1.4 is covered separately by
+/// `regression_df_1_4_monomers_best_effort` (weaker best-effort contract).
 ///
-/// N=1000 is required by spec R5.8 ("N ≥ 1000"). The BC sanity test
-/// `low_df_band_bc_vs_rg_agreement` uses the same N=1000.
+/// N=2000 is required by spec R5.8 ("N ≥ 2000"). The BC sanity test
+/// `low_df_band_bc_vs_rg_agreement` uses the same N=2000.
 ///
 /// Assertions per spec:
 /// - `mean(fractal_dimension) / Df_target ∈ [0.90, 1.10]`  (R5.8, R19.5)
@@ -449,8 +450,8 @@ fn regression_df_1_4_monomers_best_effort() {
 ///   `|BC_Df − result.fractal_dimension| ≤ 0.20`  (R25.1, R25.2)
 ///   `BC_Df` is finite and positive
 ///
-/// Per spec R25: requires N≥1000 and seeds≥3. This is the only test that uses
-/// N=1000; runtime is expected ~30-60 s total.
+/// Per spec R25: requires N≥2000 and seeds≥3. This is the only test that uses
+/// N=2000; runtime is expected ~30-60 s total.
 ///
 /// Tolerance 0.20 is locked in design.md §Q4 based on documented finite-N
 /// BC bias (~0.2) from the cc-tunable-bug-study-2026-05 empirical bounds.
