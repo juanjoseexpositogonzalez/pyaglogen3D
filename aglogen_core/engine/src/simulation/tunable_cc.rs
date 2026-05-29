@@ -28,6 +28,64 @@ fn read_phase3_flag() -> bool {
     }
 }
 
+/// Feature flag for the low-Df fix.
+///
+/// Default: `true` (fix active — PC seed pool + relaxed bounding threshold).
+/// Set env var `CC_TUNABLE_USE_LOW_DF_FIX=false` to revert to the pre-fix
+/// monomer pool + strict bounding behaviour (byte-identical rollback, see R24).
+/// Parsed once at simulation init, NOT at compile time.
+const USE_LOW_DF_FIX_DEFAULT: bool = true;
+
+/// Reads the `CC_TUNABLE_USE_LOW_DF_FIX` environment variable to determine
+/// whether the low-Df convergence fix is active.
+///
+/// ## Default behavior
+///
+/// When the variable is **absent**, the fix is **ON** (`true`). This is the
+/// production default: PC-seed pool (`floor(N/PC_SEED_SIZE)` clusters of 4
+/// particles) replaces the monomer pool, and the bounding-sum feasibility
+/// threshold is relaxed to `gamma/2` (matching the original MATLAB reference).
+///
+/// ## Rollback / escape hatch
+///
+/// Set `CC_TUNABLE_USE_LOW_DF_FIX=false` (or `"0"` or `"no"`) to revert to
+/// the **pre-fix algorithm bit-identically** (R24). The rollback path:
+/// 1. `initialize_seed_clusters` skips `build_pc_seeds`; falls through to the
+///    existing `build_monomers` / `Dimers` / `Trimers` branches.
+/// 2. No separate RNG stream is created; main RNG state is untouched.
+/// 3. `find_feasible_pairs` uses the full `gamma` threshold (`bounding_sum >= required`).
+/// 4. For any `(seed, TunableCcParams)`, the `SimulationResult` is byte-identical
+///    to a pre-patch run at the same seed.
+///
+/// ## Flag independence
+///
+/// This flag is **orthogonal to** `CC_TUNABLE_USE_PHASE3_ALGORITHM` (R20).
+/// The two flags never alias and do not implicitly toggle each other (R22.3).
+///
+/// Parsed once at simulation start; not re-read inside any inner loop (R3.9).
+fn read_low_df_fix_flag() -> bool {
+    match std::env::var("CC_TUNABLE_USE_LOW_DF_FIX") {
+        Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => USE_LOW_DF_FIX_DEFAULT,
+    }
+}
+
+/// Seed cluster size for the PC-generated default pool (MATLAB convention).
+const PC_SEED_SIZE: usize = 4;
+
+/// RNG salt for the PC seed forked stream. Documented in the SALT REGISTRY
+/// comment block below. DO NOT change without auditing other XOR-salt usages
+/// in this crate first.
+const PC_SEED_RNG_SALT: u64 = 0x5a7d_3f1e_8b2c_9604;
+
+// ── SALT REGISTRY ────────────────────────────────────────────────────────
+// Salts used to fork deterministic RNG streams from the main simulation
+// seed. Add new entries here BEFORE introducing a new XOR-salt anywhere in
+// this crate. Verify the value is unique across this list.
+//
+//   PC_SEED_RNG_SALT  = 0x5a7d_3f1e_8b2c_9604   (PC seed pool, cc-tunable-low-df-fix R23)
+// ─────────────────────────────────────────────────────────────────────────
+
 use crate::common::geometry::{Sphere, Vector3};
 use crate::common::rng::{create_rng, random_point_on_sphere};
 
@@ -38,6 +96,7 @@ use super::metrics::{
 };
 use super::result::{MergeTraceEntry, SimulationResult};
 use super::sintering::{sintered_contact_distance, SinteringDistribution};
+use super::tunable::place_particle_ballistic;
 // Note: TunablePc seed strategy with Python context is not available in pure engine.
 // The seed cluster generation falls back to monomers when py is None.
 
@@ -781,8 +840,28 @@ fn merge_ballistic<R: Rng>(
 /// Falls back to the legacy `seed_strategy` only when `seed_type` is `Monomers`
 /// AND `seed_strategy` is `Custom` (preserving backward compat for that path).
 #[allow(deprecated)]
-fn initialize_seed_clusters<R: Rng>(params: &TunableCcParams, rng: &mut R) -> Vec<TunableCluster> {
-    // New seed_type takes precedence unless it's Monomers AND legacy Custom is set
+fn initialize_seed_clusters<R: Rng>(
+    params: &TunableCcParams,
+    rng: &mut R,
+    seed: u64,
+    use_low_df_fix: bool,
+) -> Vec<TunableCluster> {
+    // When the low-Df fix is active and seed_type is Monomers, use the PC-generated
+    // default pool (R23). Other seed types and the flag-off path are byte-identical
+    // to the pre-fix algorithm (R24).
+    if use_low_df_fix && params.seed_type == SeedType::Monomers {
+        // Fork a separate RNG stream so the main RNG state is NOT advanced (R24).
+        let mut rng_pc = create_rng(seed ^ PC_SEED_RNG_SALT);
+        return build_pc_seeds(
+            params.n_particles,
+            params.mean_radius(),
+            &params.sintering,
+            &mut rng_pc,
+        );
+    }
+
+    // Existing branches — unchanged; flag-off path is byte-identical to pre-fix (R24).
+    // New seed_type takes precedence unless it's Monomers AND legacy Custom is set.
     match params.seed_type {
         SeedType::Monomers => {
             // Check legacy seed_strategy for backward compat
@@ -812,6 +891,73 @@ fn build_monomers<R: Rng>(n: usize, params: &TunableCcParams, rng: &mut R) -> Ve
             TunableCluster::new(Sphere::new(Vector3::zero(), r))
         })
         .collect()
+}
+
+/// Build the PC-generated default seed pool when the low-Df fix flag is ON.
+///
+/// Produces `floor(n / PC_SEED_SIZE)` clusters of `PC_SEED_SIZE` particles each
+/// via the PC (particle-cluster) placement algorithm, plus `n mod PC_SEED_SIZE`
+/// leftover monomers appended at the end.
+///
+/// ## Separate RNG stream invariant (R24)
+///
+/// The caller is responsible for passing a **separate** `rng_pc` derived from
+/// the main simulation seed via XOR with `PC_SEED_RNG_SALT`:
+///
+/// ```text
+/// let mut rng_pc = create_rng(seed ^ PC_SEED_RNG_SALT);
+/// ```
+///
+/// This guarantees that the main RNG state (`rng`) is **not advanced** by any
+/// PC-seed work. Consequently, when the flag is OFF, the sequence of main-RNG
+/// draws in the aggregation loop is byte-identical to the pre-fix algorithm
+/// at the same seed (R24.3).
+///
+/// ## Salt constant
+///
+/// `PC_SEED_RNG_SALT = 0x5a7d_3f1e_8b2c_9604` is documented in the SALT REGISTRY
+/// comment block near the top of this module. It is a fixed `const` so that the
+/// same seed reproduces the same PC-seed pool across machines and Rust toolchain
+/// versions (determinism required by R23.4). Do **not** change this value without
+/// updating the SALT REGISTRY and auditing all other XOR-salt usages in this crate.
+///
+/// Spec: cc-tunable-aggregation R23.
+fn build_pc_seeds<R: Rng>(
+    n: usize,
+    rp: f64,
+    sintering: &SinteringDistribution,
+    rng_pc: &mut R,
+) -> Vec<TunableCluster> {
+    let n_seeds = n / PC_SEED_SIZE;
+    let leftover = n % PC_SEED_SIZE;
+    let mut clusters = Vec::with_capacity(n_seeds + leftover);
+
+    for _ in 0..n_seeds {
+        // Seed particle 1: monomer at origin.
+        let mut particles: Vec<Sphere> = vec![Sphere::new(Vector3::zero(), rp)];
+
+        // Particles 2..PC_SEED_SIZE: placed ballistically against the growing cluster.
+        for _ in 1..PC_SEED_SIZE {
+            let pos = place_particle_ballistic(&particles, rng_pc, rp, sintering)
+                .unwrap_or_else(|| {
+                    // Extremely rare: ballistic placement failed 1000 attempts.
+                    // Fall back to a monomer at origin (cluster stays connected via
+                    // subsequent sintering; does not violate R23 physical connectivity
+                    // in practice for rp > 0 and well-formed sintering distributions).
+                    Vector3::zero()
+                });
+            particles.push(Sphere::new(pos, rp));
+        }
+
+        clusters.push(TunableCluster::from_particles(particles));
+    }
+
+    // Leftover monomers (n mod PC_SEED_SIZE particles that don't fill a full cluster).
+    for _ in 0..leftover {
+        clusters.push(TunableCluster::new(Sphere::new(Vector3::zero(), rp)));
+    }
+
+    clusters
 }
 
 /// Build ⌊N/2⌋ touching dimer pairs + 1 leftover monomer when N is odd.
@@ -913,8 +1059,12 @@ pub fn run_tunable_cc_internal(
     let kf = params.target_kf;
     let df = params.target_df;
 
+    // Feature flags — read once at simulation start (R20, R22).
+    let use_phase3 = read_phase3_flag();
+    let use_low_df_fix = read_low_df_fix_flag();
+
     // Step 1: Initialize pool with seed clusters
-    let mut clusters = initialize_seed_clusters(&params, &mut rng);
+    let mut clusters = initialize_seed_clusters(&params, &mut rng, seed, use_low_df_fix);
 
     // Spread clusters out to avoid initial overlaps
     let spread = (clusters.len() as f64).cbrt() * rp * 5.0;
@@ -927,9 +1077,6 @@ pub fn run_tunable_cc_internal(
     // Track Rg evolution
     let mut rg_evolution = Vec::new();
     let mut n_values = Vec::new();
-
-    // Feature flag: Phase 3 algorithm (R20 spec)
-    let use_phase3 = read_phase3_flag();
 
     // Diagnostic metadata counters (R7 spec)
     let mut tunable_merges: usize = 0;
@@ -959,7 +1106,7 @@ pub fn run_tunable_cc_internal(
 
         // ── Phase 3 algorithm branch (smart pair selection + adaptive fallback) ──
         if use_phase3 {
-            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng);
+            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng, use_low_df_fix);
 
             match smart_result {
                 SmartPairResult::Feasible(pair) => {
@@ -1930,11 +2077,16 @@ pub(crate) fn compute_max_achievable_distance(c1: &TunableCluster, c2: &TunableC
     c1.bounding_radius + c2.bounding_radius
 }
 
-/// Find all feasible pairs in the pool: pairs where `required_distance <= bounding_sum`.
+/// Find all feasible pairs in the pool: pairs where `bounding_sum >= threshold`.
 ///
 /// A pair (i, j) is feasible when the CC formula distance can be achieved
-/// geometrically, i.e., the bounding spheres can overlap at the required
-/// COM-COM distance.
+/// geometrically. The threshold is gated by the low-Df fix flag (R3, R22):
+///
+/// - `use_low_df_fix = true`:  `bounding_sum >= required * 0.5` (MATLAB's gamma/2)
+/// - `use_low_df_fix = false`: `bounding_sum >= required`       (full gamma, pre-fix)
+///
+/// The `bounding_threshold_factor` is computed ONCE before the inner loop;
+/// `read_low_df_fix_flag()` is NOT called inside the pair loop (R3, scenario 3.9).
 ///
 /// Returns a vec of `PairCandidate` for all feasible pairs (O(k²) scan).
 pub(crate) fn find_feasible_pairs(
@@ -1943,7 +2095,12 @@ pub(crate) fn find_feasible_pairs(
     target_kf: f64,
     rp: f64,
     sintering_coeff: f64,
+    use_low_df_fix: bool,
 ) -> Vec<PairCandidate> {
+    // Threshold factor is computed once (R3, scenario 3.9): each pair's
+    // required distance is multiplied by this factor before comparison.
+    let bounding_threshold_factor: f64 = if use_low_df_fix { 0.5 } else { 1.0 };
+
     let k = clusters.len();
     let mut feasible = Vec::new();
 
@@ -1956,7 +2113,8 @@ pub(crate) fn find_feasible_pairs(
                 None => continue, // degenerate geometry, skip
             };
             let bounding_sum = compute_max_achievable_distance(&clusters[i], &clusters[j]);
-            if bounding_sum >= required {
+            // Per-pair threshold: `required * factor` — NOT a single pre-loop constant (R3 S3.9).
+            if bounding_sum >= required * bounding_threshold_factor {
                 feasible.push(PairCandidate {
                     idx1: i,
                     idx2: j,
@@ -1982,8 +2140,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     rp: f64,
     sintering_coeff: f64,
     rng: &mut R,
+    use_low_df_fix: bool,
 ) -> SmartPairResult {
-    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff);
+    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff, use_low_df_fix);
 
     if !feasible.is_empty() {
         let chosen = feasible.choose(rng).unwrap().clone();
@@ -2347,11 +2506,15 @@ mod tests {
     /// Uses very constrained parameters to force some failures.
     #[test]
     fn test_retry_exhaustion_triggers_ballistic_fallback() {
+        // Use Dimers seed type so the initial pool is deterministic (5 dimers for N=20)
+        // regardless of CC_TUNABLE_USE_LOW_DF_FIX. This keeps the test focused on retry
+        // behavior without coupling it to the monomer/PC pool switch.
         let params = TunableCcParams {
             n_particles: 20,
             target_df: 2.0,
             target_kf: 1.0,
             max_merge_retries: 5,
+            seed_type: SeedType::Dimers,
             ..Default::default()
         };
 
@@ -2360,19 +2523,17 @@ mod tests {
         // Must still produce all particles (simulation completes)
         assert_eq!(result.coordinates.len(), 20);
 
-        // Metadata must be present (R7 scenario 7.3)
-        assert!(
-            result.tunable_merges + result.ballistic_merges > 0,
-            "At least one merge must have occurred"
-        );
+        // Metadata must be present (R7 scenario 7.3): at least some merge type occurred.
+        // With Phase 3, adaptive merges also count toward completion.
+        let total_merges =
+            result.tunable_merges + result.ballistic_merges + result.adaptive_merges;
+        assert!(total_merges > 0, "At least one merge must have occurred");
 
-        // With only 5 retries and constrained geometry, some ballistic fallback is expected
-        // (but not guaranteed for every seed — we mainly verify the field is populated)
+        // The simulation must have completed (5 dimers → 4 merges to reach 1 cluster)
         assert!(
-            result.tunable_merges > 0 || result.ballistic_merges > 0,
-            "tunable_merges={}, ballistic_merges={}",
-            result.tunable_merges,
-            result.ballistic_merges
+            result.merge_trace.len() >= 4,
+            "Expected at least 4 merge trace entries for N=20 dimers (5 clusters), got {}",
+            result.merge_trace.len()
         );
     }
 
@@ -2762,7 +2923,7 @@ mod tests {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
 
         assert_eq!(clusters.len(), 10, "Monomers N=10 → 10 clusters");
         for (i, c) in clusters.iter().enumerate() {
@@ -2784,7 +2945,7 @@ mod tests {
                 seed_type,
                 ..Default::default()
             };
-            let clusters = initialize_seed_clusters(&params, &mut rng);
+            let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
 
             assert_eq!(clusters.len(), 1, "N=1 with {seed_type:?} → 1 cluster");
             assert_eq!(
@@ -2805,7 +2966,7 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
 
         assert_eq!(clusters.len(), 1, "Dimers N=2 → 1 dimer");
         assert_eq!(clusters[0].n_particles(), 2);
@@ -2821,7 +2982,7 @@ mod tests {
             seed_type: SeedType::Trimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
 
         assert_eq!(clusters.len(), 1, "Trimers N=2 → 1 dimer (fallback)");
         assert_eq!(clusters[0].n_particles(), 2);
@@ -2839,7 +3000,7 @@ mod tests {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 4, "Monomers N=4 → 4 clusters");
         assert!(clusters.iter().all(|c| c.n_particles() == 1));
 
@@ -2850,7 +3011,7 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 2, "Dimers N=4 → 2 dimers");
         assert!(clusters.iter().all(|c| c.n_particles() == 2));
 
@@ -2861,7 +3022,7 @@ mod tests {
             seed_type: SeedType::Trimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 2, "Trimers N=4 → 1 trimer + 1 monomer");
         assert_eq!(clusters[0].n_particles(), 3);
         assert_eq!(clusters[1].n_particles(), 1);
@@ -2881,7 +3042,7 @@ mod tests {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 7);
         assert!(clusters.iter().all(|c| c.n_particles() == 1));
 
@@ -2892,7 +3053,7 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 4, "Dimers N=7 → 3 dimers + 1 monomer");
         for i in 0..3 {
             assert_eq!(clusters[i].n_particles(), 2);
@@ -2906,7 +3067,7 @@ mod tests {
             seed_type: SeedType::Trimers,
             ..Default::default()
         };
-        let clusters = initialize_seed_clusters(&params, &mut rng);
+        let clusters = initialize_seed_clusters(&params, &mut rng, 42, false);
         assert_eq!(clusters.len(), 3, "Trimers N=7 → 2 trimers + 1 monomer");
         assert_eq!(clusters[0].n_particles(), 3);
         assert_eq!(clusters[1].n_particles(), 3);
@@ -2926,7 +3087,7 @@ mod tests {
             n_particles: 20,
             ..Default::default()
         };
-        let clusters_default = initialize_seed_clusters(&params_default, &mut rng1);
+        let clusters_default = initialize_seed_clusters(&params_default, &mut rng1, 42, false);
 
         let mut rng2 = create_rng(42);
         let params_explicit = TunableCcParams {
@@ -2934,7 +3095,7 @@ mod tests {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let clusters_explicit = initialize_seed_clusters(&params_explicit, &mut rng2);
+        let clusters_explicit = initialize_seed_clusters(&params_explicit, &mut rng2, 42, false);
 
         assert_eq!(clusters_default.len(), clusters_explicit.len());
         assert_eq!(clusters_default.len(), 20);
@@ -3788,19 +3949,23 @@ mod tests {
     /// R16.1 — Trace length matches merge count for monomers.
     #[test]
     fn trace_length_matches_merge_count() {
+        // Use Dimers seed type so the initial pool size is deterministic regardless
+        // of the CC_TUNABLE_USE_LOW_DF_FIX flag (dimers are not affected by R23).
+        // N=10 dimers → 5 initial clusters → 4 merges.
         let params = TunableCcParams {
             n_particles: 10,
             target_df: 1.8,
             target_kf: 1.3,
+            seed_type: SeedType::Dimers,
             ..Default::default()
         };
         let result = run_tunable_cc_internal(params, 42, None);
         assert_eq!(result.coordinates.len(), 10);
-        // N monomers → N-1 merges
+        // n_initial_clusters - 1 merges (5 dimers → 4 merges)
         assert_eq!(
             result.merge_trace.len(),
-            9,
-            "N=10 monomers must produce 9 merge trace entries, got {}",
+            4,
+            "N=10 dimers must produce 4 merge trace entries (5 clusters → 4 merges), got {}",
             result.merge_trace.len()
         );
     }
@@ -4043,7 +4208,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false);
         // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
         assert_eq!(feasible.len(), 3, "All 3 pairs should be feasible for monomers");
     }
@@ -4068,7 +4233,7 @@ mod tests {
         ];
         // With n1=50, n2=50, df=1.4, the required distance is very large
         // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
-        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0);
+        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false);
         assert_eq!(feasible.len(), 0, "Compact clusters should have no feasible pairs at low Df");
     }
 
@@ -4093,7 +4258,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false);
         // Pair (0,1) = monomer+monomer → feasible at Df=1.8
         // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
         assert!(feasible.len() >= 1, "At least monomer-monomer should be feasible at Df=1.8, got {}", feasible.len());
@@ -4116,7 +4281,7 @@ mod tests {
             TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
         ];
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng);
+        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false);
         match result {
             SmartPairResult::Feasible(pair) => {
                 assert!(pair.required_distance > 0.0);
@@ -4146,7 +4311,7 @@ mod tests {
             make_compact_cluster(50),
         ];
 
-        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng);
+        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false);
         match result {
             SmartPairResult::AllInfeasible { max_achievable_pair } => {
                 assert!(max_achievable_pair.bounding_sum > 0.0);

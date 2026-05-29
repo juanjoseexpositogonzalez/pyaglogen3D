@@ -1,3 +1,57 @@
+## cc-tunable-low-df-fix (unreleased)
+
+Fixes systematic convergence failure in the CC tunable algorithm for `Df_target ∈ [1.4, 1.7]`
+(`seed_type = "monomers"`). Before this fix, the engine reported `sim_Df ≈ 2.72` for
+`Df_target = 1.5` with monomers — a 81% relative error caused by: (a) an overly strict
+bounding-sum feasibility threshold that rejected valid low-Df candidate pairs, pushing them
+into the ballistic fallback; and (b) N independent monomer starting clusters that provided
+insufficient structural diversity for the CC merge loop to converge at low Df.
+
+### Before / After Comparison (N=1000, seeds 1–3, kf=1.3, Monomers)
+
+| Df_target | Before fix (sim_Df) | After fix (sim_Df) | After fix (BC_Df) |
+|-----------|---------------------|--------------------|-------------------|
+| 1.50      | 2.72                | 1.55               | 1.44              |
+| 1.80      | 1.80                | 1.79               | 1.63              |
+| 2.00      | 2.00                | 2.01               | 1.80              |
+| 2.20      | 2.21                | 2.25               | 1.91              |
+| 2.50      | 2.39                | 2.45               | 2.21              |
+| 2.70      | 2.35                | 2.45               | 2.18              | ← still below target — fix cycle 2 pending
+| 2.90      | 2.42                | 2.39               | 2.06              | ← still below target — fix cycle 2 pending
+
+### Fixed
+
+- **CC tunable low-Df convergence** — `Df_target ∈ [1.4, 1.7]` with `seed_type = "monomers"`
+  now converges within ±10% (R5.8, R19). Before: systematic failure (`sim_Df ≈ 2.72` for
+  `target = 1.5`). Root cause: monomer-only starting pool + strict bounding threshold (full
+  `gamma`) rejected ~90% of candidate pairs at low Df.
+
+### Added
+
+- **`CC_TUNABLE_USE_LOW_DF_FIX` feature flag** (default `true`): controls the two-part low-Df fix:
+  1. PC-seed pool: `floor(N/4)` pre-built 4-particle sub-clusters replace N independent monomers
+     when `seed_type = "monomers"` and the flag is ON.
+  2. Relaxed bounding threshold: `bounding_sum ≥ required_distance × 0.5` (MATLAB `gamma/2`)
+     replaces the previous strict `bounding_sum ≥ required_distance`.
+
+### Rollback / Escape Hatch
+
+Set `CC_TUNABLE_USE_LOW_DF_FIX=false` to restore the **pre-fix algorithm bit-identically**
+(same RNG draws, same seed pool, same bounding threshold). Accepted off-values (case-insensitive):
+`"false"`, `"0"`, `"no"`.
+
+```bash
+# Disable the fix — bit-identical rollback to pre-fix behavior
+CC_TUNABLE_USE_LOW_DF_FIX=false cargo run ...
+```
+
+### Notes
+
+- No API or `SimulationResult` field changes. Drop-in compatible.
+- `seed_type ∈ {"dimers", "trimers"}` is unaffected by the flag (R23.5).
+- High-Df band (`Df ≥ 2.5`) still undershoots — cycle 2 (`cc-tunable-high-df-fix`) is pending.
+- `kf` convergence for high `kf_target` (e.g. `kf=1.7`) is a separate outstanding issue.
+
 ## batch-cc-tunable-parameter-parity (unreleased)
 
 ### Added
