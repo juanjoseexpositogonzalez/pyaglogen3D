@@ -1,4 +1,4 @@
-<!-- Last sync: 2026-05-13 from change batch-cc-tunable-parameter-parity (R17 extended with batch path scenarios R17.6-R17.8, bug #634 fix) -->
+<!-- Last sync: 2026-05-29 from change cc-tunable-low-df-fix (R3, R4, R5, R19 MODIFIED; R22-R25 ADDED) -->
 
 # Spec: cc-tunable-aggregation
 
@@ -1039,3 +1039,173 @@ MUST NOT introduce regression.)
 - WHEN the simulation runs
 - THEN `df_measured` is within floating-point tolerance of the Phase 2 reference value
 - AND this serves as the regression baseline to detect inadvertent Phase 3 contamination
+
+
+## ADDED REQUIREMENTS (cc-tunable-low-df-fix, 2026-05-29)
+
+### R22. Low-Df Fix Feature Flag
+
+The engine MUST read the env var `CC_TUNABLE_USE_LOW_DF_FIX` ONCE per simulation invocation
+via a helper `read_low_df_fix_flag()` that mirrors `read_phase3_flag()`. Default value when the
+variable is absent: `true` (fix active). Accepted off-values (case-insensitive): `"false"`,
+`"0"`, `"no"`. Any other non-empty value is treated as `true`.
+
+The flag is orthogonal to `CC_TUNABLE_USE_PHASE3_ALGORITHM` (R20). The two flags MUST NOT alias,
+share state, or implicitly toggle each other.
+
+#### Scenario R22.1 — Default ON when env var absent
+
+- GIVEN the env var `CC_TUNABLE_USE_LOW_DF_FIX` is not set in the process environment
+- WHEN `read_low_df_fix_flag()` is called at simulation start
+- THEN it returns `true`
+
+#### Scenario R22.2 — Off-values disable the fix
+
+- GIVEN the env var is set to one of `"false"`, `"0"`, `"no"`, `"False"`, `"FALSE"`, `"NO"`
+- WHEN `read_low_df_fix_flag()` is called
+- THEN it returns `false`
+
+#### Scenario R22.3 — Independent of Phase 3 flag
+
+- GIVEN `CC_TUNABLE_USE_PHASE3_ALGORITHM = false` and `CC_TUNABLE_USE_LOW_DF_FIX = true`
+- WHEN the engine initializes
+- THEN Phase 3 algorithm is OFF (random pair selection, undershoot fallback)
+- AND the low-Df fix is ON (PC-seeded pool, gamma/2 bounding threshold)
+
+---
+
+
+
+### R23. PC-Generated Default Seed Pool
+
+When `read_low_df_fix_flag()` returns `true` AND `seed_type == "monomers"`, the engine MUST
+build the initial pool as `floor(N / PC_SEED_SIZE)` PC-generated sub-clusters of
+`PC_SEED_SIZE = 4` particles each, plus `N mod PC_SEED_SIZE` leftover monomers appended to the
+pool. When the flag is `false`, the existing monomer pool behavior (R4) applies unchanged.
+
+The PC-seed builder MUST consume RNG draws from a **separate stream** derived from the main
+seed via XOR with a fixed salt `PC_SEED_RNG_SALT = 0x5a7d_3f1e_8b2c_9604`. The main RNG state
+MUST NOT be advanced by any PC-seed work. The salt value MUST be a `const` so that the same
+seed reproduces the same PC-seed pool across runs and machines.
+
+Each PC-seed cluster MUST be physically connected (no isolated particles within the cluster).
+Across all seeds, every particle MUST belong to exactly one initial cluster (no duplicates, no
+gaps).
+
+#### Scenario R23.1 — N divisible by PC_SEED_SIZE: no leftover monomers
+
+- GIVEN `seed_type = "monomers"`, `N = 20`, flag ON
+- WHEN the simulation initializes
+- THEN the pool contains exactly 5 PC-seed clusters of 4 particles each
+- AND 0 leftover monomers
+- AND total particle count is 20
+
+#### Scenario R23.2 — Non-divisible N: leftover monomers appended
+
+- GIVEN `seed_type = "monomers"`, `N = 21`, flag ON
+- WHEN the simulation initializes
+- THEN the pool contains 5 PC-seed clusters of 4 particles each AND 1 leftover monomer
+- AND total particle count is 21
+
+#### Scenario R23.3 — Flag OFF: monomer pool unchanged
+
+- GIVEN `seed_type = "monomers"`, `N = 20`, flag OFF
+- WHEN the simulation initializes
+- THEN the pool contains exactly 20 monomer clusters (1 particle each)
+- AND no PC-seed work is performed
+
+#### Scenario R23.4 — Separate RNG stream: main draws unaffected
+
+- GIVEN same `seed` and same `TunableCcParams` with `seed_type = "monomers"`, flag ON
+- WHEN the simulation runs twice in two fresh processes
+- THEN both runs produce identical SimulationResult.coordinates (deterministic salt + separate stream)
+- AND the sequence of main-RNG draws after `initialize_seed_clusters` is bit-identical between any two runs that share the seed
+
+#### Scenario R23.5 — `seed_type ∈ {"dimers", "trimers"}` unaffected by the flag
+
+- GIVEN `seed_type = "dimers"` (or `"trimers"`), flag ON
+- WHEN the simulation initializes
+- THEN the pool is built by the existing dimers/trimers branch (R4) — PC-seed builder is NOT invoked
+- AND the pool composition matches R4.2 / R4.4 exactly
+
+---
+
+
+
+### R24. Rollback Byte-Identity Guarantee
+
+When `read_low_df_fix_flag()` returns `false`, the code path executed by
+`run_tunable_cc_internal` MUST be byte-identical to the pre-fix algorithm: same RNG draw order,
+same RNG consumers, same `find_feasible_pairs` threshold (`bounding_sum >= required_distance`,
+full gamma), same seed pool construction. No new RNG streams are created in the flag-off path.
+
+For any `(seed, TunableCcParams)` pair, running with `CC_TUNABLE_USE_LOW_DF_FIX=false` MUST
+produce a `SimulationResult` that is **bit-identical in-memory** to the pre-patch reference,
+verified by `examples/diagnostics/r24_in_memory_check` (two consecutive runs compared via
+`to_bits()`).
+
+When verifying against JSON-stored fixture files, tolerance is governed by the
+**`serde_json` round-trip artifact** (≤ 1 ULP for ~14% of f64 values in arrays;
+single-scalar values preserved exactly). This is a property of the storage format, not the
+simulation. See `examples/diagnostics/r24_json_roundtrip` for the empirical bounds and
+`design.md` for the rationale.
+
+#### Scenario R24.1 — Flag-off reproduces pre-patch coordinates
+
+- GIVEN any `TunableCcParams` (any `seed_type`, any `target_df`, any `N ≤ 500`) and any seed `s`
+- WHEN the simulation runs with `CC_TUNABLE_USE_LOW_DF_FIX=false`
+- THEN `result.coordinates` matches a recorded pre-patch JSON snapshot for `(params, s)` within ≤ 1 ULP per coordinate value
+- AND `result.radii` matches within ≤ 1 ULP
+
+#### Scenario R24.2 — Flag-off reproduces pre-patch fractal metrics
+
+- GIVEN the same `(params, s)` as R24.1
+- WHEN the simulation runs with the flag OFF
+- THEN `result.fractal_dimension` and `result.prefactor` match the pre-patch JSON snapshot bit-for-bit (`to_bits() == to_bits()`, single scalars preserved exactly by `serde_json`)
+- AND `result.rg_evolution` (entire sequence) matches within ≤ 1 ULP per element
+
+#### Scenario R24.3 — Flag-off creates no additional RNG streams
+
+- GIVEN any simulation with the flag OFF
+- WHEN execution reaches the end of `initialize_seed_clusters`
+- THEN no RNG state was forked via the `PC_SEED_RNG_SALT` (no separate stream exists)
+- AND the main RNG advance count equals the pre-patch advance count at the same point
+
+---
+
+
+
+### R25. Box-Counting Sanity in the Low-Df Band
+
+When `read_low_df_fix_flag()` returns `true`, for any run with `target_df ∈ [1.4, 1.7]`,
+`N ≥ 2000`, `seeds ≥ 3`, the final aggregate MUST satisfy a box-counting cross-check against
+the Rg-scaling fractal dimension:
+
+```
+| BC_Df(coordinates, max_resolution=18) − result.fractal_dimension | ≤ 0.20
+```
+
+The tolerance accounts for documented finite-N box-counting bias (~0.2) observed in the
+generator across all algorithms. **N=2000 is the calibration floor**: empirical N-sensitivity
+scan (see `examples/diagnostics/r25_n_sensitivity`) shows max delta 0.1789 at N=2000 vs
+0.2564 at N=1000. Running R25 at N<2000 produces finite-N artifacts beyond the 0.20 bound.
+
+#### Scenario R25.1 — BC-vs-Rg agreement at Df=1.5
+
+- GIVEN `target_df=1.5`, `target_kf=1.3`, `N=2000`, seeds `{1, 2, 3}`, `seed_type="monomers"`, flag ON
+- WHEN each run completes
+- THEN for each seed, `|BC_Df − result.fractal_dimension| ≤ 0.20`
+- AND no seed produces a BC_Df value that is NaN, infinite, or negative
+
+#### Scenario R25.2 — BC sanity holds across the low-Df band
+
+- GIVEN `target_df ∈ {1.4, 1.5, 1.6, 1.7}`, `target_kf=1.3`, `N=2000`, seeds `{1, 2, 3}`
+- WHEN each combination runs with flag ON
+- THEN every (target_df, seed) pair satisfies `|BC_Df − result.fractal_dimension| ≤ 0.20`
+
+---
+
+## MODIFIED Requirements
+
+
+

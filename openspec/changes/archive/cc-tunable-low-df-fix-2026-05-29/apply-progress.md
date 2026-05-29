@@ -195,7 +195,7 @@ $ CC_TUNABLE_USE_LOW_DF_FIX=false cargo test -p aglogen-engine parametric_sweep_
 
 ```
 $ cargo test -p aglogen-engine --release --test cc_tunable_low_df_test
-→ 11 passed; 0 failed; 1 ignored (R25 BC tolerance too tight — documented)
+→ 12 passed; 0 failed; 0 ignored (R25 BC tolerance corrected; all tests pass)
 
 $ cargo test -p aglogen-engine --release --test integration_cc_tunable
 → 10 passed; 0 failed; 1 ignored (kf=1.7 convergence — separate issue)
