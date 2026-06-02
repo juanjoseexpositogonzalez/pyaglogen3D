@@ -70,6 +70,70 @@ fn read_low_df_fix_flag() -> bool {
     }
 }
 
+/// Feature flag for the high-Df fix (Cycle 2).
+///
+/// Default: `true` (fix active — physical-contact guard in `find_feasible_pairs`).
+/// Set env var `CC_TUNABLE_USE_HIGH_DF_FIX=false` (or `"0"` or `"no"`) to revert
+/// to the Cycle-1-only behavior (byte-identical rollback, see R26.4).
+///
+/// ## What the fix does
+///
+/// When enabled, `find_feasible_pairs` skips any candidate pair whose CC-formula
+/// `required_distance` is geometrically impossible — i.e. smaller than the minimum
+/// physical contact distance `2 * max(rp_i, rp_j)`. Without this guard, such pairs
+/// pass the bounding-sum check but exhaust all placement retries, causing the engine
+/// to fall back to ballistic merges and silently capping measured Df near 2.0–2.4
+/// even when `target_df ∈ [2.5, 2.9]` (root cause H_B2, explore.md §4.B).
+///
+/// ## Rollback / escape hatch
+///
+/// Set `CC_TUNABLE_USE_HIGH_DF_FIX=false` to revert to Cycle 1 behavior bit-identically
+/// (R26.4). The guard is read-only inside `find_feasible_pairs` — no new RNG consumers
+/// are introduced, so the flag-false path is byte-identical to the Cycle-1-only run
+/// at the same seed.
+///
+/// ## Flag independence
+///
+/// This flag is **orthogonal to** `CC_TUNABLE_USE_LOW_DF_FIX` (R22) and
+/// `CC_TUNABLE_USE_PHASE3_ALGORITHM` (R20). The three flags never alias and do not
+/// implicitly toggle each other (R26.3). Cycle 2 production default:
+/// `LOW_DF_FIX=true`, `HIGH_DF_FIX=true`, `PHASE3=true` (flag matrix row 8 in design.md §5).
+///
+/// Parsed once at simulation start; not re-read inside any inner loop (R3.9 invariant).
+///
+/// <!-- FLAG REGISTRY: USE_HIGH_DF_FIX_DEFAULT (no RNG salt — read-only guard) -->
+const USE_HIGH_DF_FIX_DEFAULT: bool = true;
+
+/// Reads the `CC_TUNABLE_USE_HIGH_DF_FIX` environment variable to determine
+/// whether the physical-contact feasibility guard (Cycle 2 high-Df fix) is active.
+///
+/// ## Default behavior
+///
+/// When the variable is **absent**, the fix is **ON** (`true`). This is the
+/// Cycle 2 production default: `find_feasible_pairs` skips pairs whose
+/// `required_distance < 2 * max(rp_i, rp_j)` and the `AllInfeasible` fallback
+/// is tagged `"adaptive_high_df_floor"` (design.md §3.4).
+///
+/// ## Rollback / escape hatch
+///
+/// Set `CC_TUNABLE_USE_HIGH_DF_FIX=false` (or `"0"` or `"no"`) to revert to
+/// the **Cycle-1-only algorithm bit-identically** (R26.4). The rollback path:
+/// 1. `find_feasible_pairs` does not evaluate the contact guard.
+/// 2. No new RNG consumers are introduced; main RNG state is untouched.
+/// 3. For any `(seed, TunableCcParams)`, the `SimulationResult` is byte-identical
+///    to a Cycle-1-only run at the same seed.
+///
+/// ## Flag independence
+///
+/// Orthogonal to `CC_TUNABLE_USE_LOW_DF_FIX` (R22) and `CC_TUNABLE_USE_PHASE3_ALGORITHM`
+/// (R20). Parsed once at simulation start; not re-read inside any inner loop (R3.9).
+fn read_high_df_fix_flag() -> bool {
+    match std::env::var("CC_TUNABLE_USE_HIGH_DF_FIX") {
+        Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
+        Err(_) => USE_HIGH_DF_FIX_DEFAULT,
+    }
+}
+
 /// Seed cluster size for the PC-generated default pool (MATLAB convention).
 const PC_SEED_SIZE: usize = 4;
 
@@ -84,6 +148,9 @@ const PC_SEED_RNG_SALT: u64 = 0x5a7d_3f1e_8b2c_9604;
 // this crate. Verify the value is unique across this list.
 //
 //   PC_SEED_RNG_SALT  = 0x5a7d_3f1e_8b2c_9604   (PC seed pool, cc-tunable-low-df-fix R23)
+//
+// Flag constants (no RNG salt — read-only guards):
+//   USE_HIGH_DF_FIX_DEFAULT = true  (physical-contact guard, cc-tunable-high-df-fix R26)
 // ─────────────────────────────────────────────────────────────────────────
 
 use crate::common::geometry::{Sphere, Vector3};

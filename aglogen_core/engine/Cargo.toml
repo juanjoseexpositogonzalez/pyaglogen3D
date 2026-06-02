@@ -73,3 +73,10 @@ path = "examples/diagnostics/r58_prefactor_scan.rs"
 [[example]]
 name = "gen_pre_fix_snapshots"
 path = "examples/fixtures/gen_pre_fix_snapshots.rs"
+
+# Pre-fix snapshot generator for cc-tunable-high-df-fix (R26.4 byte-identity).
+# Committed alongside the snapshot fixtures in tests/fixtures/pre_high_df_fix/.
+# Run: CC_TUNABLE_USE_HIGH_DF_FIX=false cargo run --release --example gen_pre_high_df_fix_snapshots -p aglogen-engine
+[[example]]
+name = "gen_pre_high_df_fix_snapshots"
+path = "examples/fixtures/gen_pre_high_df_fix_snapshots.rs"
