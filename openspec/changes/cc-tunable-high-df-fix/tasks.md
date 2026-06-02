@@ -104,7 +104,7 @@ Chain strategy: feature-branch-chain
 - [ ] 3.3 `floor_actual_distance_equals_2rp_max` in `cc_tunable_high_df_test.rs`: run at Df=2.9, N=20, seed=7 (monomer pool to force all early pairs to fail guard); scan `merge_trace` for `"adaptive_high_df_floor"` entries; assert `actual_distance == 2.0 * rp_max` within 1 ULP. Covers R27.2, R5 S5.12. `+30/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test floor_actual_distance`.
   - **Deps**: 2.5.
-- [ ] 3.4 `flag_off_no_high_df_floor_tag` in `cc_tunable_high_df_test.rs`: flag OFF, `Df_target=2.7`, seeds `{1,2,3}`. Assert NO `"adaptive_high_df_floor"` entries in any `merge_trace`. Covers R27.6, R26.2. `+25/-0` lines.
+- [x] 3.4 `flag_off_no_high_df_floor_tag` in `cc_tunable_high_df_test.rs`: flag OFF, `Df_target=2.7`, seeds `{1,2,3}`. Assert NO `"adaptive_high_df_floor"` entries in any `merge_trace`. Covers R27.6, R26.2. `+25/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test flag_off_no_high_df_floor_tag`.
   - **Deps**: 2.5.
 
