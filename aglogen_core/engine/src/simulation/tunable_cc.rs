@@ -1126,9 +1126,13 @@ pub fn run_tunable_cc_internal(
     let kf = params.target_kf;
     let df = params.target_df;
 
-    // Feature flags — read once at simulation start (R20, R22).
+    // Feature flags — read once at simulation start (R20, R22, R26).
     let use_phase3 = read_phase3_flag();
     let use_low_df_fix = read_low_df_fix_flag();
+    // R26: high-Df physical-contact guard (Cycle 2). Read here so the flag is available
+    // in the merge loop for `select_pair_smart`. No behavior change until PR2 wires it
+    // into the guard — this read is a no-op until then.
+    let _use_high_df_fix = read_high_df_fix_flag();
 
     // Step 1: Initialize pool with seed clusters
     let mut clusters = initialize_seed_clusters(&params, &mut rng, seed, use_low_df_fix);
