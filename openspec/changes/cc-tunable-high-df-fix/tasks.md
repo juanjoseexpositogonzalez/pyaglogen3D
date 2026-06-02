@@ -95,10 +95,10 @@ Chain strategy: feature-branch-chain
 
 > Core acceptance tests for the behavioral fix. Written in the same test file (task 1.3 created it).
 
-- [ ] 3.1 `high_df_convergence_band` in `cc_tunable_high_df_test.rs`: flag ON, `Df_target ∈ {2.5, 2.7, 2.9}`, `target_kf=1.3`, `N=100`, seeds `{1,2,3}`, `seed_type=Dimers`. Assert `|mean(fractal_dimension) − Df_target| ≤ 0.15` and `prefactor >= 1.0` per run. Covers R27.4, R5 S5.10, R19.7. `+55/-0` lines.
+- [x] 3.1 `high_df_convergence_band` in `cc_tunable_high_df_test.rs`: flag ON, `Df_target ∈ {2.5, 2.7, 2.9}`, `target_kf=1.3`, `N=100`, seeds `{1,2,3}`, `seed_type=Dimers`. Assert `|mean(fractal_dimension) − Df_target| ≤ 0.15` and `prefactor >= 1.0` per run. Covers R27.4, R5 S5.10, R19.7. `+55/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test cc_tunable_high_df_test high_df_convergence_band`.
   - **Deps**: Phase 2 complete.
-- [ ] 3.2 `high_df_bc_sanity` in `cc_tunable_high_df_test.rs`: same sweep → call `box_counting_3d_morton` on coordinates → assert `|BC_Df − fractal_dimension| ≤ 0.20` for every (Df_target, seed). Assert no NaN/Inf/negative BC_Df. Covers R27.5, R5 S5.10 BC clause, locked decision #4. `+50/-0` lines.
+- [x] 3.2 `high_df_bc_sanity` in `cc_tunable_high_df_test.rs`: same sweep → call `box_counting_3d_morton` on coordinates → assert `|BC_Df − fractal_dimension| ≤ 0.20` for every (Df_target, seed). Assert no NaN/Inf/negative BC_Df. Covers R27.5, R5 S5.10 BC clause, locked decision #4. `+50/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test cc_tunable_high_df_test high_df_bc_sanity`.
   - **Deps**: 3.1.
 - [ ] 3.3 `floor_actual_distance_equals_2rp_max` in `cc_tunable_high_df_test.rs`: run at Df=2.9, N=20, seed=7 (monomer pool to force all early pairs to fail guard); scan `merge_trace` for `"adaptive_high_df_floor"` entries; assert `actual_distance == 2.0 * rp_max` within 1 ULP. Covers R27.2, R5 S5.12. `+30/-0` lines.
