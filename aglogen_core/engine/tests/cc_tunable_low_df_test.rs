@@ -749,9 +749,15 @@ fn rollback_byte_identity() {
         let fixture: SnapshotFixture = serde_json::from_str(&json)
             .unwrap_or_else(|e| panic!("Failed to parse fixture {}: {}", filename, e));
 
-        // Set flag OFF — rollback path.
+        // Set both Cycle 1 and Cycle 2 flags OFF — Cycle 1 rollback path.
+        // CC_TUNABLE_USE_HIGH_DF_FIX=false is required as of PR2 (Cycle 2): without it,
+        // the high-Df guard (USE_HIGH_DF_FIX defaults to true) fires on monomer pairs at
+        // low Df and changes merge_type from "adaptive" to "adaptive_high_df_floor",
+        // breaking byte-identity with these Cycle 1 fixtures. Rollback to Cycle 1 state
+        // means BOTH Cycle 2 guards must be disabled (R26.4 + design §5 flag matrix row 1).
         unsafe {
             std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", "false");
+            std::env::set_var("CC_TUNABLE_USE_HIGH_DF_FIX", "false");
         }
 
         let params = TunableCcParams {
@@ -765,9 +771,10 @@ fn rollback_byte_identity() {
         };
         let result = run_tunable_cc_internal(params, fixture.seed, None);
 
-        // Clean up env var immediately after run.
+        // Clean up env vars immediately after run.
         unsafe {
             std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
+            std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
         }
 
         eprintln!(
