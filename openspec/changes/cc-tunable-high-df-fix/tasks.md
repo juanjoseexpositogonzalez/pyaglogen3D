@@ -72,15 +72,15 @@ Chain strategy: feature-branch-chain
 
 > This phase contains the actual behavioral change. Flag-false path MUST remain byte-identical to current production (Cycle 1 state).
 
-- [ ] 2.1 Add `use_high_df_fix: bool` parameter to `find_feasible_pairs` signature (~line 2092–2098). Insert guard block after `Some(d) => d` and before the `bounding_sum >= required * bounding_threshold_factor` check: `if use_high_df_fix { let rp_i = clusters[i].particles.first().map(|s| s.radius).unwrap_or(rp); let rp_j = ...; let rp_max = rp_i.max(rp_j); if required < 2.0 * rp_max { continue; } }`. Update doc-comment. `+14/-2` lines.
+- [x] 2.1 Add `use_high_df_fix: bool` parameter to `find_feasible_pairs` signature (~line 2092–2098). Insert guard block after `Some(d) => d` and before the `bounding_sum >= required * bounding_threshold_factor` check: `if use_high_df_fix { let rp_i = clusters[i].particles.first().map(|s| s.radius).unwrap_or(rp); let rp_j = ...; let rp_max = rp_i.max(rp_j); if required < 2.0 * rp_max { continue; } }`. Update doc-comment. `+14/-2` lines.
   - **Deps**: 1.2.
-- [ ] 2.2 Add `use_high_df_fix: bool` parameter to `select_pair_smart` signature (~line 2136–2143). Thread through to `find_feasible_pairs` call. Update doc-comment. `+2/-1` lines.
+- [x] 2.2 Add `use_high_df_fix: bool` parameter to `select_pair_smart` signature (~line 2136–2143). Thread through to `find_feasible_pairs` call. Update doc-comment. `+2/-1` lines.
   - **Deps**: 2.1.
-- [ ] 2.3 In `run_tunable_cc_internal` (~line 1063–1064): read `let use_high_df_fix = read_high_df_fix_flag();` alongside existing flag reads. Pass `use_high_df_fix` to `select_pair_smart` at ~line 1109. `+2/-1` lines.
+- [x] 2.3 In `run_tunable_cc_internal` (~line 1063–1064): read `let use_high_df_fix = read_high_df_fix_flag();` alongside existing flag reads. Pass `use_high_df_fix` to `select_pair_smart` at ~line 1109. `+2/-1` lines.
   - **Deps**: 2.2.
-- [ ] 2.4 Modify `emit_adaptive_merge_entry` (~line 2189): add `merge_type_override: Option<&str>` parameter. Change the `merge_type` field assignment to `merge_type_override.unwrap_or("adaptive").to_string()`. Update all 3 existing call sites to pass `None` (no behavior change for existing callers). `+4/-3` lines (function + 3 call sites).
+- [x] 2.4 Modify `emit_adaptive_merge_entry` (~line 2189): add `merge_type_override: Option<&str>` parameter. Change the `merge_type` field assignment to `merge_type_override.unwrap_or("adaptive").to_string()`. Update all 3 existing call sites to pass `None` (no behavior change for existing callers). `+4/-3` lines (function + 3 call sites).
   - **Deps**: 2.3.
-- [ ] 2.5 In `run_tunable_cc_internal` `AllInfeasible` branch (~lines 1290–1333): when `use_high_df_fix = true`, pass `Some("adaptive_high_df_floor")` to `emit_adaptive_merge_entry` (both the march-success path at ~1328 and the march-fail ballistic path tagged with new merge_type). `+3/-2` lines.
+- [x] 2.5 In `run_tunable_cc_internal` `AllInfeasible` branch (~lines 1290–1333): when `use_high_df_fix = true`, pass `Some("adaptive_high_df_floor")` to `emit_adaptive_merge_entry` (both the march-success path at ~1328 and the march-fail ballistic path tagged with new merge_type). `+3/-2` lines.
   - **Deps**: 2.4.
 - [ ] 2.6 Add unit test `physical_contact_guard_excludes_impossible_pair` to `cc_tunable_high_df_test.rs`: constructs a pair where `required_distance < 2·rp`, asserts `find_feasible_pairs` with flag ON returns empty; with flag OFF returns non-empty. Covers R27.1, R27.3. `+35/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test physical_contact_guard`.
