@@ -1129,10 +1129,9 @@ pub fn run_tunable_cc_internal(
     // Feature flags — read once at simulation start (R20, R22, R26).
     let use_phase3 = read_phase3_flag();
     let use_low_df_fix = read_low_df_fix_flag();
-    // R26: high-Df physical-contact guard (Cycle 2). Read here so the flag is available
-    // in the merge loop for `select_pair_smart`. No behavior change until PR2 wires it
-    // into the guard — this read is a no-op until then.
-    let _use_high_df_fix = read_high_df_fix_flag();
+    // R26: high-Df physical-contact guard (Cycle 2). Read once here; threaded into
+    // `select_pair_smart` → `find_feasible_pairs` to activate the physical-contact guard.
+    let use_high_df_fix = read_high_df_fix_flag();
 
     // Step 1: Initialize pool with seed clusters
     let mut clusters = initialize_seed_clusters(&params, &mut rng, seed, use_low_df_fix);
@@ -1177,7 +1176,7 @@ pub fn run_tunable_cc_internal(
 
         // ── Phase 3 algorithm branch (smart pair selection + adaptive fallback) ──
         if use_phase3 {
-            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng, use_low_df_fix);
+            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng, use_low_df_fix, use_high_df_fix);
 
             match smart_result {
                 SmartPairResult::Feasible(pair) => {
@@ -1311,6 +1310,7 @@ pub fn run_tunable_cc_internal(
                                 actual_distance, required_distance,
                                 merged.radius_of_gyration, rg_target,
                                 retries_this_merge,
+                                None,
                             ));
                             merge_count += 1;
                             clusters.push(merged);
@@ -1396,11 +1396,15 @@ pub fn run_tunable_cc_internal(
                         let mut merged = imp_m;
                         merged.merge_with(imr_m);
 
+                        // R27: when use_high_df_fix=true, tag ALL AllInfeasible events
+                        // as "adaptive_high_df_floor" (design §3.4: tag-all-when-flag-on).
+                        let adaptive_tag = if use_high_df_fix { Some("adaptive_high_df_floor") } else { None };
                         merge_trace.push(emit_adaptive_merge_entry(
                             merge_count, n_po1, n_po2,
                             actual_distance, pair.required_distance,
                             merged.radius_of_gyration, rg_target,
                             0,
+                            adaptive_tag,
                         ));
                         merge_count += 1;
                         clusters.push(merged);
@@ -2159,6 +2163,12 @@ pub(crate) fn compute_max_achievable_distance(c1: &TunableCluster, c2: &TunableC
 /// The `bounding_threshold_factor` is computed ONCE before the inner loop;
 /// `read_low_df_fix_flag()` is NOT called inside the pair loop (R3, scenario 3.9).
 ///
+/// When `use_high_df_fix` is `true`, pairs whose `required_distance < 2 * max(rp_i, rp_j)`
+/// are excluded before the bounding-sum check. This is the Cycle 2 physical-contact guard
+/// (R27): it removes geometrically impossible pairs (two spheres cannot touch at a COM
+/// distance smaller than the sum of their maximum radii). Guard is additive — it never
+/// removes a geometrically valid pair.
+///
 /// Returns a vec of `PairCandidate` for all feasible pairs (O(k²) scan).
 pub(crate) fn find_feasible_pairs(
     clusters: &[TunableCluster],
@@ -2167,6 +2177,7 @@ pub(crate) fn find_feasible_pairs(
     rp: f64,
     sintering_coeff: f64,
     use_low_df_fix: bool,
+    use_high_df_fix: bool,
 ) -> Vec<PairCandidate> {
     // Threshold factor is computed once (R3, scenario 3.9): each pair's
     // required distance is multiplied by this factor before comparison.
@@ -2183,6 +2194,19 @@ pub(crate) fn find_feasible_pairs(
                 Some(d) => d,
                 None => continue, // degenerate geometry, skip
             };
+
+            // Cycle 2 (R27): physical-contact guard — exclude geometrically impossible pairs.
+            // A pair is impossible when required_distance < 2 * max(rp_i, rp_j): the two
+            // bounding spheres would overlap before touching. Guard is additive (AND clause).
+            if use_high_df_fix {
+                let rp_i = clusters[i].particles.first().map(|s| s.radius).unwrap_or(rp);
+                let rp_j = clusters[j].particles.first().map(|s| s.radius).unwrap_or(rp);
+                let rp_max = rp_i.max(rp_j);
+                if required < 2.0 * rp_max {
+                    continue; // geometrically impossible — skip (R27.1)
+                }
+            }
+
             let bounding_sum = compute_max_achievable_distance(&clusters[i], &clusters[j]);
             // Per-pair threshold: `required * factor` — NOT a single pre-loop constant (R3 S3.9).
             if bounding_sum >= required * bounding_threshold_factor {
@@ -2204,6 +2228,10 @@ pub(crate) fn find_feasible_pairs(
 /// Returns `Feasible(pair)` if at least one feasible pair exists (random pick),
 /// or `AllInfeasible { max_achievable_pair }` if none are feasible (picks the pair
 /// whose bounding_sum is closest to required_distance, i.e. "least infeasible").
+///
+/// `use_high_df_fix` threads the Cycle 2 physical-contact guard (R27) into
+/// `find_feasible_pairs`. When `true`, geometrically impossible pairs are excluded
+/// before the bounding-sum check.
 pub(crate) fn select_pair_smart<R: Rng>(
     clusters: &[TunableCluster],
     target_df: f64,
@@ -2212,8 +2240,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     sintering_coeff: f64,
     rng: &mut R,
     use_low_df_fix: bool,
+    use_high_df_fix: bool,
 ) -> SmartPairResult {
-    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff, use_low_df_fix);
+    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff, use_low_df_fix, use_high_df_fix);
 
     if !feasible.is_empty() {
         let chosen = feasible.choose(rng).unwrap().clone();
@@ -2256,6 +2285,11 @@ pub(crate) fn select_pair_smart<R: Rng>(
 /// Places cluster2's COM at `max_achievable_distance` from cluster1's COM along
 /// a random direction, recording the overshoot percentage.
 ///
+/// `merge_type_override`: when `Some(tag)`, the trace entry uses `tag` as `merge_type`
+/// instead of the default `"adaptive"`. Pass `None` for the standard adaptive fallback;
+/// pass `Some("adaptive_high_df_floor")` when the Cycle 2 physical-contact guard
+/// (R27) is the reason all candidate pairs were infeasible.
+///
 /// Returns the trace entry for the caller to push into the trace vec.
 pub(crate) fn emit_adaptive_merge_entry(
     step: usize,
@@ -2266,6 +2300,7 @@ pub(crate) fn emit_adaptive_merge_entry(
     rg_after: f64,
     rg_target: f64,
     retries: usize,
+    merge_type_override: Option<&str>,
 ) -> MergeTraceEntry {
     let actual_distance = max_achievable;
     let overshoot_pct = if required_distance > 0.0 {
@@ -2281,7 +2316,7 @@ pub(crate) fn emit_adaptive_merge_entry(
         actual_distance,
         rg_after,
         rg_target,
-        merge_type: "adaptive".to_string(),
+        merge_type: merge_type_override.unwrap_or("adaptive").to_string(),
         retries,
         bounding_check_passed: false,
         overshoot_pct: Some(overshoot_pct),
@@ -4279,7 +4314,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
         // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
         assert_eq!(feasible.len(), 3, "All 3 pairs should be feasible for monomers");
     }
@@ -4304,7 +4339,7 @@ mod tests {
         ];
         // With n1=50, n2=50, df=1.4, the required distance is very large
         // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
-        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false);
+        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false, false);
         assert_eq!(feasible.len(), 0, "Compact clusters should have no feasible pairs at low Df");
     }
 
@@ -4329,7 +4364,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
         // Pair (0,1) = monomer+monomer → feasible at Df=1.8
         // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
         assert!(feasible.len() >= 1, "At least monomer-monomer should be feasible at Df=1.8, got {}", feasible.len());
@@ -4352,7 +4387,7 @@ mod tests {
             TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
         ];
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false);
+        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
         match result {
             SmartPairResult::Feasible(pair) => {
                 assert!(pair.required_distance > 0.0);
@@ -4382,7 +4417,7 @@ mod tests {
             make_compact_cluster(50),
         ];
 
-        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false);
+        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false);
         match result {
             SmartPairResult::AllInfeasible { max_achievable_pair } => {
                 assert!(max_achievable_pair.bounding_sum > 0.0);
@@ -4413,6 +4448,7 @@ mod tests {
             3.5,   // rg_after
             3.2,   // rg_target
             100,   // retries
+            None,  // merge_type_override — standard "adaptive"
         );
         assert_eq!(entry.merge_type, "adaptive");
         assert_eq!(entry.step, 10);
@@ -4428,7 +4464,7 @@ mod tests {
     /// T3.1 — Overshoot contract: actual >= required.
     #[test]
     fn test_emit_adaptive_merge_entry_overshoot_contract() {
-        let entry = emit_adaptive_merge_entry(0, 10, 10, 12.5, 10.0, 5.0, 4.8, 50);
+        let entry = emit_adaptive_merge_entry(0, 10, 10, 12.5, 10.0, 5.0, 4.8, 50, None);
         assert!(entry.actual_distance >= entry.required_distance);
         assert!(entry.overshoot_pct.unwrap() >= 0.0);
     }
@@ -4436,7 +4472,7 @@ mod tests {
     /// T3.1 — Zero required_distance edge case (no division by zero).
     #[test]
     fn test_emit_adaptive_merge_entry_zero_required() {
-        let entry = emit_adaptive_merge_entry(0, 1, 1, 2.0, 0.0, 1.0, 1.0, 0);
+        let entry = emit_adaptive_merge_entry(0, 1, 1, 2.0, 0.0, 1.0, 1.0, 0, None);
         assert_eq!(entry.overshoot_pct, Some(0.0)); // 0 when required=0
     }
 
