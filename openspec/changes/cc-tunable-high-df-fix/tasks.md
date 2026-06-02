@@ -40,13 +40,14 @@ Chain strategy: feature-branch-chain
 
 > **MUST commit and merge into tracker branch before any source code change (mirrors Cycle 1 R24 pattern).**
 
-- [ ] 0.1 Create `aglogen_core/engine/tests/fixtures/pre_high_df_fix/README.md` — explain fixture provenance, parameters, and regeneration command. `+12/-0` lines. No source changes.
+- [x] 0.1 Create `aglogen_core/engine/tests/fixtures/pre_high_df_fix/README.md` — explain fixture provenance, parameters, and regeneration command. `+12/-0` lines. No source changes.
   - **Deps**: none.
-- [ ] 0.2 Add `aglogen_core/engine/examples/fixtures/gen_pre_high_df_fix_snapshots.rs` (`[[example]]` target `gen_pre_high_df_fix_snapshots`) — calls `run_tunable_cc_internal` for 3 tuples: `(seed=1, Df=2.7, N=100)`, `(seed=2, Df=2.9, N=100)`, `(seed=3, Df=2.5, N=100)` with `CC_TUNABLE_USE_HIGH_DF_FIX=false` (Cycle 1 production default), writes `coordinates`, `radii`, `fractal_dimension`, `prefactor`, `merge_trace` to compact JSON at `tests/fixtures/pre_high_df_fix/{name}.json`. Verify: `cargo run --release --example gen_pre_high_df_fix_snapshots -p aglogen-engine`. `+60/-0` lines.
+- [x] 0.2 Add `aglogen_core/engine/examples/fixtures/gen_pre_high_df_fix_snapshots.rs` (`[[example]]` target `gen_pre_high_df_fix_snapshots`) — calls `run_tunable_cc_internal` for 3 tuples: `(seed=1, Df=2.7, N=100)`, `(seed=2, Df=2.9, N=100)`, `(seed=3, Df=2.5, N=100)` with `CC_TUNABLE_USE_HIGH_DF_FIX=false` (Cycle 1 production default), writes `coordinates`, `radii`, `fractal_dimension`, `prefactor`, `merge_trace` to compact JSON at `tests/fixtures/pre_high_df_fix/{name}.json`. Verify: `cargo run --release --example gen_pre_high_df_fix_snapshots -p aglogen-engine`. `+60/-0` lines.
   - **Deps**: none.
-- [ ] 0.3 Commit the 3 generated `.json` fixture files under `tests/fixtures/pre_high_df_fix/`. Hash-stable across two consecutive runs. `+~90/-0` lines (compact JSON).
+- [x] 0.3 Commit the 3 generated `.json` fixture files under `tests/fixtures/pre_high_df_fix/`. Hash-stable across two consecutive runs. `+~90/-0` lines (compact JSON).
   - Test: `cargo test --test cc_tunable_high_df_test` (existing suite must still pass before any source change).
   - **Deps**: 0.2.
+  - **Hash-stable**: md5 confirmed identical across 2 consecutive runs. Pre-fix Df: {seed1=2.335, seed2=2.427, seed3=2.399} (capped at ~2.4 due to H_B2 bug — expected, confirms fixture captures Cycle-1-only path).
 
 **Phase 0 exit gate**: 3 fixture files present and committed. Zero files in `src/` changed.
 
@@ -56,13 +57,14 @@ Chain strategy: feature-branch-chain
 
 > Mirrors Cycle 1 Phase 1. No behavioral change — flag-off is identical to current production.
 
-- [ ] 1.1 In `tunable_cc.rs` lines ~66–87 (after `read_low_df_fix_flag`, before SALT REGISTRY): add `const USE_HIGH_DF_FIX_DEFAULT: bool = true` with full doc-comment (default ON, rollback, orthogonality to R22/R20). Add a SALT REGISTRY entry line for discoverability (no new salt needed for this flag). `+18/-0` lines.
+- [x] 1.1 In `tunable_cc.rs` lines ~66–87 (after `read_low_df_fix_flag`, before SALT REGISTRY): add `const USE_HIGH_DF_FIX_DEFAULT: bool = true` with full doc-comment (default ON, rollback, orthogonality to R22/R20). Add a SALT REGISTRY entry line for discoverability (no new salt needed for this flag). `+18/-0` lines.
   - **Deps**: Phase 0.
-- [ ] 1.2 Add `fn read_high_df_fix_flag() -> bool` immediately below the constant — exact mirror of `read_low_df_fix_flag()` pattern (lines 66–71), reads `CC_TUNABLE_USE_HIGH_DF_FIX`, off-values `"false"|"0"|"no"`. `+8/-0` lines.
+- [x] 1.2 Add `fn read_high_df_fix_flag() -> bool` immediately below the constant — exact mirror of `read_low_df_fix_flag()` pattern (lines 66–71), reads `CC_TUNABLE_USE_HIGH_DF_FIX`, off-values `"false"|"0"|"no"`. `+8/-0` lines.
   - **Deps**: 1.1.
-- [ ] 1.3 Add unit tests `high_df_fix_flag_default_on`, `high_df_fix_flag_off_values`, `high_df_fix_flag_orthogonal_to_r20_r22` to `aglogen_core/engine/tests/cc_tunable_high_df_test.rs` (create file). Tests via behavioral effects (public API); covers R26.1, R26.2, R26.3. `+55/-0` lines (new file).
+- [x] 1.3 Add unit tests `high_df_fix_flag_default_on`, `high_df_fix_flag_off_values`, `high_df_fix_flag_orthogonal_to_r20_r22` to `aglogen_core/engine/tests/cc_tunable_high_df_test.rs` (create file). Tests via behavioral effects (public API); covers R26.1, R26.2, R26.3. `+55/-0` lines (new file).
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test high_df_fix_flag`.
   - **Deps**: 1.2.
+  - **PR1 also includes**: `_use_high_df_fix = read_high_df_fix_flag()` call site in `run_tunable_cc_internal` (no-op read, wired as `_use_high_df_fix` until PR2 passes it to `select_pair_smart`).
 
 ---
 
