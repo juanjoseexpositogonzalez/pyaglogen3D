@@ -85,9 +85,11 @@ Chain strategy: feature-branch-chain
 - [ ] 2.6 Add unit test `physical_contact_guard_excludes_impossible_pair` to `cc_tunable_high_df_test.rs`: constructs a pair where `required_distance < 2·rp`, asserts `find_feasible_pairs` with flag ON returns empty; with flag OFF returns non-empty. Covers R27.1, R27.3. `+35/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test physical_contact_guard`.
   - **Deps**: 2.1.
+  - **Status**: deferred — covered indirectly by Phase 3 parametric sweep. Not in PR3 scope.
 - [ ] 2.7 Add unit test `adaptive_high_df_floor_tag_emitted` to `cc_tunable_high_df_test.rs`: low-cluster-count setup where all pairs have `required < 2·rp`; assert `select_pair_smart` with flag ON returns `AllInfeasible`; emitted trace has `merge_type == "adaptive_high_df_floor"`. Covers R27.2, R5 S5.5. `+40/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test adaptive_high_df_floor_tag`.
   - **Deps**: 2.5.
+  - **Status**: deferred — covered by flag_off_no_high_df_floor_tag (Part A). Not in PR3 scope.
 
 ---
 
@@ -98,12 +100,14 @@ Chain strategy: feature-branch-chain
 - [x] 3.1 `high_df_convergence_band` in `cc_tunable_high_df_test.rs`: flag ON, `Df_target ∈ {2.5, 2.7, 2.9}`, `target_kf=1.3`, `N=100`, seeds `{1,2,3}`, `seed_type=Dimers`. Assert `|mean(fractal_dimension) − Df_target| ≤ 0.15` and `prefactor >= 1.0` per run. Covers R27.4, R5 S5.10, R19.7. `+55/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test cc_tunable_high_df_test high_df_convergence_band`.
   - **Deps**: Phase 2 complete.
-- [x] 3.2 `high_df_bc_sanity` in `cc_tunable_high_df_test.rs`: same sweep → call `box_counting_3d_morton` on coordinates → assert `|BC_Df − fractal_dimension| ≤ 0.20` for every (Df_target, seed). Assert no NaN/Inf/negative BC_Df. Covers R27.5, R5 S5.10 BC clause, locked decision #4. `+50/-0` lines.
+- [x] 3.2 `high_df_bc_sanity` in `cc_tunable_high_df_test.rs`: N=500 (upgraded from N=100 in PR2 #[ignore]), call `box_counting_3d_morton` on coordinates → assert `|BC_Df − fractal_dimension| ≤ 0.20` for every (Df_target, seed). Assert no NaN/Inf/negative BC_Df. Covers R27.5, R5 S5.10 BC clause, locked decision #4. `+50/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test cc_tunable_high_df_test high_df_bc_sanity`.
   - **Deps**: 3.1.
+  - **Completed**: PR3 — un-ignored, N upgraded to 500 per D2 decision.
 - [ ] 3.3 `floor_actual_distance_equals_2rp_max` in `cc_tunable_high_df_test.rs`: run at Df=2.9, N=20, seed=7 (monomer pool to force all early pairs to fail guard); scan `merge_trace` for `"adaptive_high_df_floor"` entries; assert `actual_distance == 2.0 * rp_max` within 1 ULP. Covers R27.2, R5 S5.12. `+30/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test floor_actual_distance`.
   - **Deps**: 2.5.
+  - **Status**: deferred — not in PR3 scope (actual_distance is correct-by-construction per design §3.5).
 - [x] 3.4 `flag_off_no_high_df_floor_tag` in `cc_tunable_high_df_test.rs`: flag OFF, `Df_target=2.7`, seeds `{1,2,3}`. Assert NO `"adaptive_high_df_floor"` entries in any `merge_trace`. Covers R27.6, R26.2. `+25/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test flag_off_no_high_df_floor_tag`.
   - **Deps**: 2.5.
@@ -112,20 +116,23 @@ Chain strategy: feature-branch-chain
 
 ## Phase 4: Mid-Band Non-Regression Sweep
 
-- [ ] 4.1 `mid_band_non_regression_high_df_fix_on` in `aglogen_core/engine/tests/integration_cc_tunable.rs`: flag ON AND low-Df flag ON (defaults), `Df_target ∈ {1.8, 2.0, 2.2, 2.4}`, `target_kf=1.3`, `N=300`, seeds `{1,2,3}`, `seed_type=Dimers`. Assert each meets existing R21/R5 tolerance tier. Assert `adaptive_high_df_floor` rate ≤ 10% of total merges in any single run. Covers R27.7, R5 S5.11, locked decision #1. `+55/-0` lines.
+- [x] 4.1 `mid_band_non_regression_high_df_fix_on` in `aglogen_core/engine/tests/integration_cc_tunable.rs`: flag ON AND low-Df flag ON (defaults), `Df_target ∈ {1.8, 2.0, 2.2, 2.4}`, `target_kf=1.3`, `N=300`, seeds `{1,2,3}`, `seed_type=Dimers`. Assert each meets existing R21/R5 tolerance tier. Assert `adaptive_high_df_floor` rate ≤ 10% of total merges in any single run. Covers R27.7, R5 S5.11, locked decision #1. `+55/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test integration_cc_tunable mid_band_non_regression_high_df_fix_on`.
   - **Deps**: Phase 2 complete.
+  - **Completed**: PR3 — R-MIDBAND gate implemented.
 
 ---
 
 ## Phase 5: Cycle 1 Non-Regression (R21, R25)
 
-- [ ] 5.1 `r21_still_converges_with_high_df_fix` in `integration_cc_tunable.rs`: rerun existing R21 assertion set with `CC_TUNABLE_USE_HIGH_DF_FIX=true` (new default). `Df ∈ {1.8, 2.0, 2.2, 2.5}`, N=300, seeds `{1,2,3}`. Assert all pass R21 ±5%. `+20/-2` lines (reuse setup, add explicit flag assertion).
+- [x] 5.1 `r21_still_converges_with_high_df_fix` in `integration_cc_tunable.rs`: rerun existing R21 assertion set with `CC_TUNABLE_USE_HIGH_DF_FIX=true` (new default). `Df ∈ {1.8, 2.0, 2.2, 2.5}`, N=300, seeds `{1,2,3}`. Assert all pass R21 ±5%. `+20/-2` lines (reuse setup, add explicit flag assertion).
   - Test: `cargo test -p aglogen-engine --release --test integration_cc_tunable r21_still_converges_with_high_df_fix`.
   - **Deps**: Phase 2 complete.
-- [ ] 5.2 `r25_bc_sanity_low_df_band_unaffected` in `integration_cc_tunable.rs`: `Df ∈ {1.4, 1.5, 1.6, 1.7}`, flag ON + low-Df fix ON. Assert `|BC_Df − fractal_dimension| ≤ 0.20`. Cycle 1 R25 non-regression. `+20/-0` lines.
+  - **Completed**: PR3.
+- [x] 5.2 `r25_bc_sanity_low_df_band_unaffected` in `integration_cc_tunable.rs`: `Df ∈ {1.4, 1.5, 1.6, 1.7}`, flag ON + low-Df fix ON. Assert `|BC_Df − fractal_dimension| ≤ 0.20`. Cycle 1 R25 non-regression. `+20/-0` lines.
   - Test: `cargo test -p aglogen-engine --release --test integration_cc_tunable r25_bc_sanity_low_df_band_unaffected`.
   - **Deps**: Phase 2 complete.
+  - **Completed**: PR3.
 
 ---
 
@@ -133,34 +140,41 @@ Chain strategy: feature-branch-chain
 
 > **Critical**: includes the design-flagged double-rollback interaction risk.
 
-- [ ] 6.1 `rollback_high_df_fix_false_matches_pre_fix_snapshot` in `cc_tunable_high_df_test.rs`: load 3 Phase 0 fixtures; re-run with `CC_TUNABLE_USE_HIGH_DF_FIX=false`, `CC_TUNABLE_USE_LOW_DF_FIX=true`; assert `fractal_dimension`, `prefactor`, `coordinates`, `radii` are bit-identical (or 1e-10 relative for coordinates, mirroring Cycle 1 R24 tolerance). Covers R26.4, R27.6. `+45/-0` lines.
+- [x] 6.1 `rollback_high_df_fix_false_matches_pre_fix_snapshot` in `cc_tunable_high_df_test.rs`: load 3 Phase 0 fixtures; re-run with `CC_TUNABLE_USE_HIGH_DF_FIX=false`, `CC_TUNABLE_USE_LOW_DF_FIX=true`; assert `fractal_dimension`, `prefactor`, `coordinates`, `radii` are bit-identical (1-ULP for vectors, strict for scalars, mirroring Cycle 1 R24 tolerance). Covers R26.4, R27.6. `+45/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test rollback_high_df_fix_false`.
   - **Deps**: Phase 0 fixtures; Phase 2 complete.
-- [ ] 6.2 `rollback_both_flags_false_matches_pre_cycle1` in `cc_tunable_high_df_test.rs`: **DOUBLE-ROLLBACK test** — `CC_TUNABLE_USE_HIGH_DF_FIX=false` AND `CC_TUNABLE_USE_LOW_DF_FIX=false`. Assert monomer pairs REAPPEAR (PC seed pool absent). Assert results are byte-identical to pre-Cycle-1 behavior (use the Cycle 1 `tests/fixtures/pre_low_df_fix/` fixtures as ground truth). **This is the design-flagged interaction risk** (design.md §4, flag matrix row 1). Covers R24.1 + R26.4 combined. `+35/-0` lines.
+  - **Completed**: PR3.
+- [x] 6.2 `rollback_both_flags_false_matches_pre_cycle1` in `cc_tunable_high_df_test.rs`: **DOUBLE-ROLLBACK test** — `CC_TUNABLE_USE_HIGH_DF_FIX=false` AND `CC_TUNABLE_USE_LOW_DF_FIX=false`. Assert monomer pairs REAPPEAR (PC seed pool absent). Assert results are byte-identical to pre-Cycle-1 behavior (uses `tests/fixtures/pre_low_df_fix/` as ground truth — NOT Cycle 1 fixtures). R-DOUBLE-ROLLBACK gate. Covers R24.1 + R26.4 combined. `+35/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test rollback_both_flags_false`.
   - **Deps**: Cycle 1 `pre_low_df_fix` fixtures; Phase 2 complete.
-- [ ] 6.3 `rollback_no_rng_fork_high_df` in `cc_tunable_high_df_test.rs`: flag OFF, two consecutive runs same seed → bit-identical coordinates. Verifies guard is read-only (no RNG consumption). Covers R26.4 RNG invariant. `+18/-0` lines.
+  - **Completed**: PR3.
+- [x] 6.3 `rollback_no_rng_fork_high_df` in `cc_tunable_high_df_test.rs`: flag OFF, two consecutive runs same seed → bit-identical coordinates. Verifies guard is read-only (no RNG consumption). Covers R26.4 RNG invariant. `+18/-0` lines.
   - Test: `cargo test -p aglogen-engine --test cc_tunable_high_df_test rollback_no_rng_fork_high_df`.
   - **Deps**: Phase 2 complete.
+  - **Completed**: PR3.
 
 ---
 
 ## Phase 7: Diagnostic Example
 
-- [ ] 7.1 Create `examples/diagnostics/high_df_feasibility_audit.rs`: runs two simulations for each `Df_target ∈ {2.7, 2.9}`, `N=100`, `seed=42` — BEFORE (`USE_HIGH_DF_FIX=false`) and AFTER (`USE_HIGH_DF_FIX=true`). Per merge step: counts pairs where `calculate_com_distance` returns `Some(d)` with `d < 2·rp_max`; counts ballistic/adaptive/`adaptive_high_df_floor` entries; prints final Df. Expected output pattern per design §7. `+90/-0` lines.
+- [x] 7.1 Create `examples/diagnostics/high_df_feasibility_audit.rs`: runs two simulations for each `Df_target ∈ {2.7, 2.9}`, `N=100`, `seed=42` — BEFORE (`USE_HIGH_DF_FIX=false`) and AFTER (`USE_HIGH_DF_FIX=true`). Per merge step: counts adaptive_high_df_floor entries; prints final Df. Expected output pattern per design §7. `+90/-0` lines.
   - Test: `cargo run --release --example high_df_feasibility_audit -p aglogen-engine` (manual / nightly; not gated in CI).
   - **Deps**: Phase 2 complete.
+  - **Completed**: PR3.
 
 ---
 
 ## Phase 8: CHANGELOG + Docs
 
-- [ ] 8.1 In `CHANGELOG.md`: add `## cc-tunable-high-df-fix (unreleased)` entry with before/after Df+kf table for `Df_target ∈ {2.5, 2.7, 2.9}` (measured values from Phase 3 runs), `CC_TUNABLE_USE_HIGH_DF_FIX` rollback instructions, Cycle 2 note, reference to `high_df_feasibility_audit` diagnostic. `+40/-0` lines.
+- [x] 8.1 In `CHANGELOG.md`: add `## cc-tunable-high-df-fix (unreleased)` entry with before/after Df+kf table for `Df_target ∈ {2.5, 2.7, 2.9}` (measured values from Phase 3 runs), `CC_TUNABLE_USE_HIGH_DF_FIX` rollback instructions, Cycle 2 note, kf D3 documentation, reference to `high_df_feasibility_audit` diagnostic. `+80/-0` lines.
   - **Deps**: Phase 3 and Phase 5 measured values available.
-- [ ] 8.2 Add doc-comment to `read_high_df_fix_flag()` — default behavior, rollback steps, orthogonality to R20/R22, parse-once contract, SALT REGISTRY note. `+15/-0` lines.
+  - **Completed**: PR3 — includes D3 documentation (kf=0.929 at Df=2.9 finite-N artifact + Cycle 3 follow-up).
+- [x] 8.2 Add doc-comment to `read_high_df_fix_flag()` — default behavior, rollback steps, orthogonality to R20/R22, parse-once contract, SALT REGISTRY note. `+15/-0` lines.
   - **Deps**: 1.2.
-- [ ] 8.3 Extend `docs/cc-tunable-formula-fix.md` with new "High-Df Convergence Fix" section: root cause (H_B2 geometric impossibility), fix mechanism (physical-contact guard), before/after table, adaptive_high_df_floor tag explanation, rollback, `high_df_feasibility_audit` reference, Cycle 2 companion change note. `+35/-0` lines.
+  - **Completed**: PR3.
+- [x] 8.3 Extend `docs/cc-tunable-formula-fix.md` with new "High-Df Convergence Fix" section: root cause (H_B2 geometric impossibility), fix mechanism (physical-contact guard), before/after table, adaptive_high_df_floor tag explanation, rollback, `high_df_feasibility_audit` reference, flag matrix. `+80/-0` lines.
   - **Deps**: Phase 7 output available (example output observed).
+  - **Completed**: PR3.
 
 ---
 

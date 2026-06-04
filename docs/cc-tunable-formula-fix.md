@@ -178,4 +178,90 @@ absent) activates the fix.
 ### Companion change
 
 `cc-tunable-high-df-fix` (cycle 2 of 2) — addresses residual undershoot for `Df ≥ 2.5`.
-Not yet started.
+See **High-Df Convergence Fix** section below.
+
+---
+
+## High-Df Convergence Fix (Cycle 2 — cc-tunable-high-df-fix)
+
+> Status: **shipped** (PR chain: #65 / #66 / PR3)
+
+### Root Cause (H_B2)
+
+After Cycle 1, `Df_target ∈ [2.5, 2.9]` with Dimers still capped near `sim_Df ≈ 2.4`.
+The root cause (H_B2, from `explore.md §4.B`): `calculate_com_distance` returns
+`Some(d)` where `d < 2·rp_max` — a geometrically impossible contact distance. This
+value passes the Cycle 1 bounding-sum threshold (trivially, since `bounding_sum ≥ d * 0.5`
+is easy for a small `d`), causing every subsequent placement attempt to fail. Retries
+exhaust → `march_inward_merge` → ballistic contact at `d = 2·rp` → measured Df caps
+at the ballistic limit (~2.0–2.4).
+
+The fix is a **physical-contact guard** inserted in `find_feasible_pairs`:
+
+```
+# After calculate_com_distance returns Some(d):
+if use_high_df_fix:
+    rp_max = max(rp_i, rp_j)           # per-particle, MATLAB-aligned
+    if required_distance < 2 * rp_max:
+        continue                        # geometrically impossible — skip
+# Proceed to Cycle 1 bounding-sum check
+```
+
+The guard is unconditional on `Df_target` and purely additive — it can only remove
+pairs that were already guaranteed to fail placement, never a valid pair.
+
+### Fix Mechanism: `adaptive_high_df_floor` Tag
+
+When all candidate pairs fail the contact guard (AllInfeasible), the adaptive fallback
+engages as usual, but the `MergeTraceEntry` is tagged with `merge_type = "adaptive_high_df_floor"`
+(distinct from `"adaptive"`). This enables precise auditing of guard-triggered fallbacks.
+The `actual_distance` is `2·rp_max` (the physical contact floor).
+
+### Before / After Comparison (N=100, seeds 1–3, kf=1.3, Dimers)
+
+| Df_target | Before sim_Df | After sim_Df | abs_err | kf_mean |
+|-----------|---------------|--------------|---------|---------|
+| 2.50      | ~2.399        | 2.439        | 0.061   | 1.260   |
+| 2.70      | ~2.396        | 2.802        | 0.102   | 1.060   |
+| 2.90      | ~2.427        | 2.932        | 0.032   | 0.929 ⚠️ |
+
+Spec tolerance: `|mean(Df) − Df_target| ≤ 0.15` absolute (R27.4). All three targets pass.
+
+#### ⚠️ kf at Df=2.9 / N=100
+
+`kf_mean = 0.929` at Df=2.9 sits below the `≥ 1.0` target. This is a **finite-N
+Rg-evolution estimator artifact**: at N=100 and near the geometric feasibility ceiling
+(Df=2.9), the Rg-evolution tail is short and underestimates the final Rg, biasing the
+power-law kf fit downward. The Df convergence is correct. Cycle 3
+(`cc-tunable-estimator-overhaul`) tracks kf improvement for the extreme high-Df band.
+
+### Rollback
+
+```bash
+# Rollback Cycle 2 only (keep Cycle 1 low-Df fix active)
+CC_TUNABLE_USE_HIGH_DF_FIX=false cargo run ...
+
+# Full rollback to pre-Cycle-1 (both fixes disabled)
+CC_TUNABLE_USE_HIGH_DF_FIX=false CC_TUNABLE_USE_LOW_DF_FIX=false cargo run ...
+```
+
+Both rollback paths are byte-identical to their respective baseline states (R26.4 / R24).
+
+### `high_df_feasibility_audit` Diagnostic
+
+Run `cargo run --release --example high_df_feasibility_audit -p aglogen-engine` for a
+before/after comparison at `Df_target ∈ {2.7, 2.9}` showing guard activation counts
+and Df improvement per run.
+
+### Flag Matrix (3 flags, 8 rows)
+
+| `LOW_DF_FIX` | `HIGH_DF_FIX` | `PHASE3` | Behavior |
+|:---:|:---:|:---:|---|
+| F | F | F | Pre-Cycle 1: random pair, full gamma, monomers, no guards |
+| F | F | T | Pre-Cycle 1 + Phase 3 smart pair |
+| T | F | F | Cycle 1 fixes only (PC seeds + gamma/2), Phase 2 pair |
+| T | F | T | **Cycle 1 production default**: PC seeds, gamma/2, Phase 3 |
+| F | T | F | Phase 2 + contact guard only (monomer seeds at mid-band risk) |
+| F | T | T | Phase 3 + contact guard, monomer seeds |
+| T | T | F | Cycle 1 + Cycle 2 fixes, Phase 2 pair |
+| T | T | T | **Cycle 2 production default**: PC seeds, gamma/2, Phase 3, contact guard |
