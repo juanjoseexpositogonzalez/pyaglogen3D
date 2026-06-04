@@ -785,3 +785,363 @@ fn r21_high_df_band_still_converges_with_fix() {
          See table above."
     );
 }
+
+// ── Phase 4 (task 4.1): R27.7 mid-band non-regression with both fixes ON ─────
+
+/// R27.7 / R5 S5.11 — Mid-band non-regression sweep with high-Df fix ON.
+///
+/// Runs `Df_target ∈ {1.8, 2.0, 2.2, 2.4}` with BOTH `CC_TUNABLE_USE_HIGH_DF_FIX=true`
+/// (default) AND `CC_TUNABLE_USE_LOW_DF_FIX=true` (default). N=300, seeds {1,2,3},
+/// kf=1.3, seed_type=Dimers (PC seeds via default Monomers path with low-Df fix ON).
+///
+/// **R-MIDBAND hard gate**: Two assertions must pass for EVERY run:
+/// 1. Convergence within the existing R5/R19 tolerance tier for each Df_target:
+///    - Df=1.8: ±10% (R19/R5 < 2.0 tier)
+///    - Df ∈ {2.0, 2.2, 2.4}: ±5% (R21 tier)
+/// 2. `adaptive_high_df_floor` rate ≤ 10% of total merges in any single run.
+///    This verifies the guard does NOT fire for PC seeds (n≥4 pairs) at Df≤2.4.
+///
+/// Analysis (design.md §4): for 4-particle symmetric merge (n1=n2=4, Df=2.0, kf=1.3),
+/// d_required ≈ 4.8·rp > 2·rp — guard does NOT fire. PC seeds ensure n_min=4
+/// throughout the early merge loop, so the guard is inactive in the mid-band.
+///
+/// If this test fails:
+/// - If rate > 10% at Df=2.4: R-MIDBAND HARD GATE FAIL — do NOT merge. Escalate.
+/// - If Df convergence fails: regression introduced by the new guard. Investigate.
+///
+/// Spec: R27.7, R5 S5.11. Design: §4 (Mid-Band Impact Analysis).
+/// Covers locked decision #1 (unconditional guard).
+///
+/// Run with `--release`:
+/// `cargo test --release --test integration_cc_tunable mid_band_non_regression_high_df_fix_on`
+#[test]
+fn mid_band_non_regression_high_df_fix_on() {
+    // Env-var mutex from the low-df test is in a different binary — safe to manipulate
+    // env vars here since integration_cc_tunable.rs is its own test binary.
+    // Ensure both flags are ON (default state).
+    unsafe {
+        std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
+        std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
+    }
+
+    // (Df_target, convergence_tolerance) — tolerances per R5/R19/R21.
+    let targets: &[(f64, f64)] = &[
+        (1.8, 0.10), // R19/R5 < 2.0 tier: ±10%
+        (2.0, 0.05), // R21 tier: ±5%
+        (2.2, 0.05),
+        (2.4, 0.05),
+    ];
+    let target_kf = 1.3_f64;
+    let n_particles = 300usize;
+    let seeds = [1u64, 2, 3];
+    // R-MIDBAND hard gate: adaptive_high_df_floor must not exceed 10% of total merges.
+    let max_floor_rate = 0.10_f64;
+
+    eprintln!(
+        "\n=== R27.7 / R5.11: Mid-band non-regression (both fixes ON, N={}, kf={}) ===",
+        n_particles, target_kf
+    );
+    eprintln!(
+        "{:<8} {:<6} {:<10} {:<10} {:<10} {:<12} {:<14} {:<8}",
+        "Df_tgt", "seed", "Df_meas", "error%", "floor_tags", "total_merges", "floor_rate%", "pass?"
+    );
+
+    let mut all_pass = true;
+    // Track Df results per target for mean-based convergence check.
+    let mut df_per_target: Vec<Vec<f64>> = vec![Vec::new(); targets.len()];
+
+    for (tgt_idx, &(df_target, _tol)) in targets.iter().enumerate() {
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df: df_target,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Dimers,
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+
+            // Count adaptive_high_df_floor entries vs total merge entries.
+            let total_merges = result.merge_trace.len();
+            let floor_count = result
+                .merge_trace
+                .iter()
+                .filter(|e| e.merge_type == "adaptive_high_df_floor")
+                .count();
+            let floor_rate = if total_merges > 0 {
+                floor_count as f64 / total_merges as f64
+            } else {
+                0.0
+            };
+
+            let df_meas = result.fractal_dimension;
+            let df_error = (df_meas - df_target).abs() / df_target;
+            let floor_pass = floor_rate <= max_floor_rate;
+
+            eprintln!(
+                "{:<8.1} {:<6} {:<10.3} {:<10.1} {:<10} {:<12} {:<14.2} {:<8}",
+                df_target,
+                seed,
+                df_meas,
+                df_error * 100.0,
+                floor_count,
+                total_merges,
+                floor_rate * 100.0,
+                if floor_pass { "ok" } else { "FAIL-GATE" }
+            );
+
+            // R-MIDBAND hard gate: floor rate > 10% is a hard failure.
+            if !floor_pass {
+                eprintln!(
+                    "  R-MIDBAND HARD GATE FAIL: Df_target={} seed={} floor_rate={:.2}% > 10%. \
+                     PC seeds should prevent guard firing in mid-band. \
+                     Contingency (n1>=PC_SEED_SIZE guard exemption) may be needed.",
+                    df_target, seed, floor_rate * 100.0
+                );
+                all_pass = false;
+            }
+
+            // Sanity: n_particles produced.
+            assert_eq!(
+                result.coordinates.len(),
+                n_particles,
+                "R27.7: Df={} seed={} must produce {} particles",
+                df_target, seed, n_particles
+            );
+
+            df_per_target[tgt_idx].push(df_meas);
+        }
+    }
+
+    // Convergence check: mean per Df_target must be within tolerance.
+    eprintln!("\n--- Mean convergence check ---");
+    for (tgt_idx, &(df_target, tolerance)) in targets.iter().enumerate() {
+        let dfs = &df_per_target[tgt_idx];
+        let mean_df: f64 = dfs.iter().sum::<f64>() / dfs.len() as f64;
+        let df_error = (mean_df - df_target).abs() / df_target;
+        let conv_pass = df_error < tolerance;
+
+        eprintln!(
+            "Df={:.1} mean={:.3} error={:.1}% tol={:.0}% → {}",
+            df_target,
+            mean_df,
+            df_error * 100.0,
+            tolerance * 100.0,
+            if conv_pass { "PASS" } else { "FAIL" }
+        );
+
+        if !conv_pass {
+            eprintln!(
+                "  R27.7 CONV FAIL: Df_target={} mean={:.3} error={:.1}% exceeds ±{:.0}%",
+                df_target, mean_df, df_error * 100.0, tolerance * 100.0
+            );
+            all_pass = false;
+        }
+    }
+
+    assert!(
+        all_pass,
+        "R27.7 / R5.11: Mid-band non-regression failed. Check R-MIDBAND hard gate \
+         (floor_rate > 10%) or convergence tolerance. See table above."
+    );
+}
+
+// ── Phase 5 (task 5.1): R21 non-regression with HIGH_DF_FIX explicitly ON ───
+
+/// R21 with high-Df fix ON — Cycle 1 high-Df band still converges with Cycle 2 active.
+///
+/// Reruns the existing R21 assertion set (`Df ∈ {1.8, 2.0, 2.2, 2.5}`) with
+/// `CC_TUNABLE_USE_HIGH_DF_FIX=true` explicitly set (new default).
+/// N=300, seeds {1,2,3}, kf=1.3, seed_type=Dimers.
+///
+/// This is the Phase 5 companion to `r21_high_df_band_still_converges_with_fix`
+/// (which tests the low-Df flag's effect on the high band). This test explicitly
+/// verifies the NEW high-Df fix flag does NOT degrade the Cycle 1 non-regression
+/// set — it only adds, never removes, valid pair candidates.
+///
+/// Tolerances:
+/// - Df=1.8: ±10% (R19/R5 < 2.0 tier)
+/// - Df ≥ 2.0: ±5% (R21 spec tolerance)
+///
+/// Spec: R21 non-regression (Cycle 2 obligation — see cc-tunable-aggregation.md).
+#[test]
+fn r21_still_converges_with_high_df_fix() {
+    unsafe {
+        std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX"); // default ON
+        std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");  // default ON
+    }
+
+    let targets: &[(f64, f64)] = &[
+        (1.8, 0.10),
+        (2.0, 0.05),
+        (2.2, 0.05),
+        (2.5, 0.05),
+    ];
+    let target_kf = 1.3_f64;
+    let n_particles = 300usize;
+    let seeds = [1u64, 2, 3];
+
+    eprintln!(
+        "\n=== R21 non-regression with HIGH_DF_FIX=true (N={}, Dimers) ===",
+        n_particles
+    );
+    eprintln!(
+        "{:<8} {:<10} {:<10} {:<10} {:<10} {:<10} {:<12}",
+        "Df_tgt", "seed1", "seed2", "seed3", "mean", "error%", "pass?"
+    );
+
+    let mut all_pass = true;
+
+    for &(df_target, tolerance) in targets {
+        let mut df_results = Vec::new();
+
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df: df_target,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Dimers,
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            assert_eq!(
+                result.coordinates.len(),
+                n_particles,
+                "R21 [high-Df-fix ON]: Df={} seed={} must produce {} particles",
+                df_target, seed, n_particles
+            );
+            df_results.push(result.fractal_dimension);
+        }
+
+        let mean_df: f64 = df_results.iter().sum::<f64>() / df_results.len() as f64;
+        let df_error = (mean_df - df_target).abs() / df_target;
+        let pass = df_error < tolerance;
+
+        eprintln!(
+            "{:<8.1} {:<10.3} {:<10.3} {:<10.3} {:<10.3} {:<10.1} {:<12}",
+            df_target,
+            df_results[0],
+            df_results[1],
+            df_results[2],
+            mean_df,
+            df_error * 100.0,
+            if pass { "PASS" } else { "FAIL" }
+        );
+
+        if !pass {
+            eprintln!(
+                "  R21 FAIL [high-Df-fix ON]: Df={} mean={:.3} error={:.1}% exceeds ±{:.0}%",
+                df_target, mean_df, df_error * 100.0, tolerance * 100.0
+            );
+            all_pass = false;
+        }
+    }
+
+    assert!(
+        all_pass,
+        "R21 non-regression with HIGH_DF_FIX=true failed. \
+         High-Df contact guard must not regress Cycle 1 high-Df band. \
+         See table above."
+    );
+}
+
+// ── Phase 5 (task 5.2): R25 BC sanity for low-Df band unaffected by Cycle 2 ─
+
+/// R25 / R5 S5.8 — Low-Df band BC sanity with both fixes ON (Cycle 2 non-regression).
+///
+/// Runs `Df ∈ {1.4, 1.5, 1.6, 1.7}` with both `CC_TUNABLE_USE_HIGH_DF_FIX=true`
+/// and `CC_TUNABLE_USE_LOW_DF_FIX=true` (both default). N=300, seeds {1,2,3},
+/// kf=1.3, seed_type=Dimers.
+///
+/// Asserts `|BC_Df − fractal_dimension| ≤ 0.40` for every (Df_target, seed).
+/// This is the Cycle 1 R25 non-regression — the high-Df guard (Cycle 2) must NOT
+/// affect BC agreement in the low-Df band.
+///
+/// **Tolerance note (±0.40 not ±0.20)**: The Cycle 1 `low_df_band_bc_vs_rg_agreement`
+/// test uses N=2000 and ±0.20 because BC needs large N for the power-law scaling to
+/// stabilize. At N=300, empirical BC variance reaches ±0.33. The ±0.40 tolerance
+/// covers this variance while still detecting gross BC failures (NaN/Inf/negative,
+/// or bias > 0.40). The primary purpose here is a regression guard (does the high-Df
+/// guard change anything in the low-Df band?), not a precision measurement.
+///
+/// Spec: R25 non-regression (Cycle 2 obligation). Design: §4.
+use aglogen_engine::fractal::box_counting_3d::box_counting_3d_morton as bc_3d_morton_integration;
+
+#[test]
+fn r25_bc_sanity_low_df_band_unaffected() {
+    unsafe {
+        std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
+        std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
+    }
+
+    let df_targets = [1.4_f64, 1.5, 1.6, 1.7];
+    let n_particles = 300usize;
+    let target_kf = 1.3_f64;
+    let seeds = [1u64, 2, 3];
+    // ±0.40: N=300 BC variance can reach ±0.33. See tolerance note in doc-comment.
+    let bc_tolerance = 0.40_f64;
+
+    eprintln!(
+        "\n=== R25 non-regression: low-Df BC sanity with both fixes ON (N={}) ===",
+        n_particles
+    );
+    eprintln!(
+        "{:<8} {:<6} {:<10} {:<10} {:<10} {:<10}",
+        "Df_tgt", "seed", "Rg_Df", "BC_Df", "delta", "pass?"
+    );
+
+    let mut all_pass = true;
+
+    for &df_target in &df_targets {
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df: df_target,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Dimers,
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            let rg_df = result.fractal_dimension;
+
+            let bc_result = bc_3d_morton_integration(&result.coordinates, 18);
+            let bc_df = bc_result.dimension;
+
+            let delta = (bc_df - rg_df).abs();
+            let pass = bc_df.is_finite() && bc_df > 0.0 && delta <= bc_tolerance;
+
+            eprintln!(
+                "{:<8.1} {:<6} {:<10.3} {:<10.3} {:<10.3} {:<10}",
+                df_target, seed, rg_df, bc_df, delta,
+                if pass { "PASS" } else { "FAIL" }
+            );
+
+            if !bc_df.is_finite() || bc_df <= 0.0 {
+                eprintln!(
+                    "  R25 FAIL: Df_target={} seed={}: BC_Df={} is not finite/positive",
+                    df_target, seed, bc_df
+                );
+                all_pass = false;
+            } else if delta > bc_tolerance {
+                eprintln!(
+                    "  R25 FAIL: Df_target={} seed={}: |{:.3} - {:.3}| = {:.3} > {:.2}",
+                    df_target, seed, bc_df, rg_df, delta, bc_tolerance
+                );
+                all_pass = false;
+            }
+        }
+    }
+
+    assert!(
+        all_pass,
+        "R25 non-regression: BC vs Rg agreement (±0.40 at N=300) failed for low-Df band \
+         with both fixes ON. The high-Df guard (Cycle 2) must not affect low-Df BC. \
+         See table above."
+    );
+}
