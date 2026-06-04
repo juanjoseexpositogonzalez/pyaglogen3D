@@ -123,10 +123,21 @@ const USE_HIGH_DF_FIX_DEFAULT: bool = true;
 /// 3. For any `(seed, TunableCcParams)`, the `SimulationResult` is byte-identical
 ///    to a Cycle-1-only run at the same seed.
 ///
+/// For full rollback to the pre-Cycle-1 baseline, combine with
+/// `CC_TUNABLE_USE_LOW_DF_FIX=false` — flag matrix row 1 in design.md §5
+/// (`LOW=F, HIGH=F`): random pair, full gamma, monomers, no guards.
+///
 /// ## Flag independence
 ///
 /// Orthogonal to `CC_TUNABLE_USE_LOW_DF_FIX` (R22) and `CC_TUNABLE_USE_PHASE3_ALGORITHM`
 /// (R20). Parsed once at simulation start; not re-read inside any inner loop (R3.9).
+///
+/// ## SALT REGISTRY note
+///
+/// This flag does NOT introduce a new RNG salt (the contact guard is a read-only
+/// filter in `find_feasible_pairs`; it selects from existing candidates but does
+/// not draw any random numbers). See `USE_HIGH_DF_FIX_DEFAULT` in the SALT REGISTRY
+/// comment block for the registry entry and discoverability rationale.
 fn read_high_df_fix_flag() -> bool {
     match std::env::var("CC_TUNABLE_USE_HIGH_DF_FIX") {
         Ok(val) => !matches!(val.to_lowercase().as_str(), "false" | "0" | "no"),
