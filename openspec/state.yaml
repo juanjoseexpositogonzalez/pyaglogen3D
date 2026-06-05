@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: cc-tunable-low-df-fix-2026-05-29
+last_archived: cc-tunable-high-df-fix-2026-06-05
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -9,6 +9,7 @@ archived_changes:
   - projections-export-fix-2026-04-22
   - fraktal-batch-analysis-2026-04-24
   - cc-tunable-low-df-fix-2026-05-29
+  - cc-tunable-high-df-fix-2026-06-05
 stack:
   rust:
     version: "1.94.0"
