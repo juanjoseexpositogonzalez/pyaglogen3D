@@ -1767,6 +1767,14 @@ pub fn run_tunable_cc_internal(
 }
 
 /// Calculate Df and kf from Rg evolution using power law fitting.
+///
+/// Note (Cycle 3.1, `cc-tunable-rg-fit-fix`): the unweighted OLS over all evolution points is
+/// NOT the source of the kf deficit at `Df_target = 2.9` (mean kf ≈ 0.93). The Phase 0
+/// diagnostic `rg_fit_variants_audit` (engine examples) compared this fit against an
+/// N-weighted OLS and a tail-restricted fit on identical points: no variant reaches kf ≥ 1.0,
+/// and N-weighting is strictly worse there. The deficit is genuine R27-guard geometry
+/// (fallback merges land `rg_after < rg_target` at the feasibility edge). Do not "fix" the
+/// weighting without re-running that diagnostic; see canonical spec R27.4 accepted-deviation note.
 fn calculate_fractal_dimension_from_evolution(
     n_values: &[usize],
     rg_values: &[f64],

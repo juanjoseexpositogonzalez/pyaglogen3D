@@ -130,3 +130,12 @@ mirrors `read_high_df_fix_flag` (:76-90 precedent).
   (c) revisit the estimator target itself (sub-cycle 2 BC-alignment territory). T3-T4
   (flag + wiring) can proceed mechanically for option (a), but R28.1's kf assertion
   must NOT be written as `≥ 1.0` without a design amendment.
+
+- L2 (2026-10-18, parent decision after T2 verdict): User selected "Sin cambio: documentar y
+  pasar a BC" — verbatim: "El diagnóstico mostró que el déficit de kf en Df=2.9 es geometría
+  real (guard R27), no artefacto del fit — ninguna variante de fit alcanza kf≥1.0. ¿Cómo
+  reencaminamos el sub-ciclo 1?" → option "Sin cambio: documentar y pasar a BC" (cerrar el
+  sub-ciclo 1 sin cambio de código: documentar kf≈0.93 en Df=2.9 como desviación aceptada
+  estilo D3 de Cycle 2 con la evidencia del diagnóstico, y pasar directo al sub-ciclo 2
+  cc-tunable-bc-alignment). Consequence: D1-D5 and the R28 delta are retired; T3-T8 dropped;
+  the change completes as documentation-only (canonical R27.4 deviation note + CHANGELOG).
