@@ -59,3 +59,47 @@ uses `s` (documented in doc-comment).
 2. Unit: windowed OLS vs hand-computed; window bounds validation (empty/out-of-range → error, not panic).
 3. Integration: default-path byte-identity; windowed path on fixtures; R27.5 opt-in ±0.20 test at diagnostic-proven N.
 4. Suite: full engine + bindings.
+
+## Log
+
+- L2 (2026-10-18): T1/T2 Phase 0 diagnostic `engine/examples/diagnostics/bc_window_alignment_audit.rs`
+  (45 runs = Df ∈ {1.5,2.0,2.5,2.7,2.9} × N ∈ {100,500,2000} × seeds {1,2,3}, R27.4 setup: Dimers,
+  target_kf=1.3, rp=1.0; ~10 min release, full 3-seed matrix kept — no N=2000 seed reduction needed).
+  Validations: recomputed-count legacy path (read-only copy; estimator untouched) **byte-identical to the
+  public API `box_counting_3d_morton` 45/45** (dimension, R², std error, linear region start — the
+  post-D5-refactor assertion itself still ships with T3); **D2 log-base invariance confirmed numerically**,
+  max |slope_ln − slope_log2| = 4.9e-14 over 108 window fits + all legacy fit ranges.
+  - **Structural finding (D1 premise correction):** on the default precision-18 Morton space the estimator's
+    count-validity filter (`0 < count < N`) leaves only **2–8 usable levels, all in raw levels ~10–17**;
+    raw levels 0–13 are count == N for every config. The design's candidate mid-band `[4,16]` (raw indices,
+    "skip finest 4 saturated + coarsest 2") is therefore **empty**, and a Matlab-style 32-level mid-window
+    has no equivalent here. Locked window semantics (D1) resolve as: inclusive indices into the **effective
+    (count-valid, finest-first) level sequence**, `end` clamped to the last effective level (swept end
+    candidates {16,15,14} are equivalent after clamping).
+  - **Fixed-window sweep** (start {0..5} × end {16,15,14} clamped, ≥3 levels; starts 0–1 added after pass 1
+    showed start ≥ 2 admits no fit at Df ≥ 2.7 where effLevels ≤ 4): best fixed window
+    **(s*, e*) = (1, last effective level)** — mean |Δt| **0.154** over all 45 runs (legacy 0.325);
+    at N=2000 mean 0.150 / max 0.443. Runner-up (2, last): mean 0.156, but no fit at all for Df ≥ 2.7 —
+    disqualified as a fixed recommendation covering all configs.
+  - Per-config means at N=2000, window (1, last) vs LEGACY (Δ = Df − Df_target):
+
+    | Df_target | legacy Df | Δ legacy | window Df | Δ window |
+    | --- | --- | --- | --- | --- |
+    | 1.5 | 1.578 | +0.078 | 1.578 | +0.078 |
+    | 2.0 | 1.876 | −0.124 | 1.876 | −0.124 |
+    | 2.5 | 2.021 | −0.479 | 2.159 | −0.341 |
+    | 2.7 | 2.505 | −0.195 | 2.694 | −0.006 |
+    | 2.9 | 2.545 | −0.355 | 2.717 | −0.183 |
+
+    (window ≡ legacy at Df 1.5/2.0 because the robust greedy fit already accepts the whole count-valid range
+    there; window beats legacy everywhere it differs. Residual deficit is concentrated at Df_target 2.5.)
+  - **D4 evidence (R27.5):** ±0.20 is **NOT reachable at N=2000** across the full Df range with any fixed
+    window: Df_target 2.5 retains ≈ −0.29…−0.34, and Df ≥ 2.7 admits only start ≤ 1 (effLevels ≤ 4) where
+    the window degenerates toward the legacy anchor. Achievable documented band on the opt-in path at
+    N=2000: **≈ ±0.35 per-config mean / ±0.45 per-seed**. Canonical ±0.90 default-path tolerance (D4)
+    unchanged; the T5 opt-in test must assert the documented band, not ±0.20.
+  - **T3 implications recorded:** (a) windowed path must return a validation error — not panic — when the
+    effective in-window level count is < 3 (happens at small N / high Df, e.g. effLevels = 2–3 at
+    Df ≥ 2.5/N ≤ 100); (b) `linear_region_start` for the windowed path reports `s` per design (with the
+    effective-sequence semantics above); (c) dead-variable cleanup (D5) is guarded by the 45/45 byte-identity
+    baseline reproduced by this diagnostic.
