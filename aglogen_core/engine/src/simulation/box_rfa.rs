@@ -33,18 +33,15 @@ use super::result::SimulationResult;
 
 /// Connectivity method for ensuring the aggregate is connected.
 #[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Default)]
 pub enum ConnectivityMethod {
     /// Use random walk to select sub-boxes (default, from Brown et al.)
+    #[default]
     RandomWalk,
     /// Select nearest neighbors to existing occupied boxes
     NearestNeighbor,
 }
 
-impl Default for ConnectivityMethod {
-    fn default() -> Self {
-        ConnectivityMethod::RandomWalk
-    }
-}
 
 /// Box-Counting RFA simulation parameters.
 #[derive(Debug, Clone)]

@@ -77,8 +77,8 @@ pub fn count_boxes(image: &[Vec<bool>], box_size: usize) -> usize {
 
     let mut count = 0;
 
-    let n_rows = (height + box_size - 1) / box_size;
-    let n_cols = (width + box_size - 1) / box_size;
+    let n_rows = height.div_ceil(box_size);
+    let n_cols = width.div_ceil(box_size);
 
     for row in 0..n_rows {
         for col in 0..n_cols {

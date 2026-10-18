@@ -151,14 +151,23 @@ fn ols(x: &[f64], y: &[f64]) -> Option<(f64, f64, f64)> {
         .zip(y)
         .map(|(a, b)| (b - (intercept + slope * a)).powi(2))
         .sum();
-    let r2 = if ss_tot > 1e-15 { 1.0 - ss_res / ss_tot } else { 0.0 };
+    let r2 = if ss_tot > 1e-15 {
+        1.0 - ss_res / ss_tot
+    } else {
+        0.0
+    };
     Some((slope, intercept, r2))
 }
 
 /// Windowed fit over the effective level sequence (inclusive indices).
 /// `use_log2` switches both axes to log2 (design D2 cross-check).
 /// Returns (slope, r_squared, n_points).
-fn window_fit(levels: &[LevelCount], s: usize, e: usize, use_log2: bool) -> Option<(f64, f64, usize)> {
+fn window_fit(
+    levels: &[LevelCount],
+    s: usize,
+    e: usize,
+    use_log2: bool,
+) -> Option<(f64, f64, usize)> {
     if s > e || e >= levels.len() {
         return None;
     }
@@ -190,10 +199,7 @@ fn window_fit(levels: &[LevelCount], s: usize, e: usize, use_log2: bool) -> Opti
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[allow(clippy::needless_range_loop)]
-fn legacy_replica(
-    mut log_scales: Vec<f64>,
-    mut log_counts: Vec<f64>,
-) -> (usize, f64, f64, f64) {
+fn legacy_replica(mut log_scales: Vec<f64>, mut log_counts: Vec<f64>) -> (usize, f64, f64, f64) {
     // Step 4b: saturation truncation (verbatim).
     if log_counts.len() > 6 {
         let mut truncate_before = 0;
@@ -233,7 +239,11 @@ fn legacy_replica(
             ss_res += res * res;
             ss_tot += (yi - mean_y) * (yi - mean_y);
         }
-        let r_squared = if ss_tot > 1e-15 { 1.0 - ss_res / ss_tot } else { 0.0 };
+        let r_squared = if ss_tot > 1e-15 {
+            1.0 - ss_res / ss_tot
+        } else {
+            0.0
+        };
         let mse = ss_res / (n - 2.0).max(1.0);
         let std_error = (mse / (sum_xx - sum_x * sum_x / n).abs().max(1e-15)).sqrt();
         (slope, intercept, r_squared, std_error)
@@ -318,7 +328,11 @@ fn main() {
     let rp = 1.0_f64;
 
     let start_cands = [0_usize, 1, 2, 3, 4, 5];
-    let end_cands = [(PRECISION - 2) as usize, (PRECISION - 3) as usize, (PRECISION - 4) as usize];
+    let end_cands = [
+        (PRECISION - 2) as usize,
+        (PRECISION - 3) as usize,
+        (PRECISION - 4) as usize,
+    ];
 
     let mut all_acc: Vec<((f64, usize), ConfigAcc)> = Vec::new();
 
@@ -386,8 +400,10 @@ fn main() {
                 acc.legacy_r2s.push(engine.r_squared);
                 acc.rg_dfs.push(result.fractal_dimension);
                 acc.eff_lens.push(levels.len());
-                acc.raw_level_ranges
-                    .push((levels.first().map_or(0, |l| l.level), levels.last().map_or(0, |l| l.level)));
+                acc.raw_level_ranges.push((
+                    levels.first().map_or(0, |l| l.level),
+                    levels.last().map_or(0, |l| l.level),
+                ));
 
                 // 3) Candidate window sweep (windowed path does not exist yet).
                 for ws in &mut acc.windows {
@@ -415,7 +431,8 @@ fn main() {
                     let x2: Vec<f64> = ls.iter().map(|v| v / std::f64::consts::LN_2).collect();
                     let y2: Vec<f64> = lc.iter().map(|v| v / std::f64::consts::LN_2).collect();
                     if let Some((slope2, _, _)) = ols(&x2, &y2) {
-                        acc.max_logbase_err = acc.max_logbase_err.max((engine.dimension - slope2).abs());
+                        acc.max_logbase_err =
+                            acc.max_logbase_err.max((engine.dimension - slope2).abs());
                     }
                 }
             }
@@ -459,7 +476,12 @@ fn main() {
             if ws.dfs.is_empty() {
                 continue;
             }
-            let score = mean(&ws.dfs.iter().map(|d| (d - df_target).abs()).collect::<Vec<_>>());
+            let score = mean(
+                &ws.dfs
+                    .iter()
+                    .map(|d| (d - df_target).abs())
+                    .collect::<Vec<_>>(),
+            );
             // Sweep order is (start asc, end desc); strict < keeps the earlier
             // (= wider at equal start) window on ties.
             if best.map_or(true, |(_, b)| score < b) {
@@ -503,7 +525,11 @@ fn main() {
             continue;
         }
         let m_all = mean(&all_abs);
-        let m_2000 = if n2000_abs.is_empty() { f64::NAN } else { mean(&n2000_abs) };
+        let m_2000 = if n2000_abs.is_empty() {
+            f64::NAN
+        } else {
+            mean(&n2000_abs)
+        };
         let mx_2000 = n2000_abs.iter().copied().fold(f64::NAN, f64::max);
         fixed_scores.push((key, m_all, m_2000, mx_2000));
     }
@@ -569,10 +595,21 @@ fn main() {
     // ── T2 verdict inputs ──
     println!("\n=== T2 verdict inputs (design D1/D4) ===");
     if let Some((rs, re)) = recommended {
-        println!("Recommended window: ({}, {}) — inclusive effective-level indices, 0 = finest.", rs, re);
-        println!("{:<12} | {:>9} {:>9} {:>8} {:>9} {:>8}", "config", "legacyDf", "winDf", "Δt win", "rgDf", "Δrg win");
+        println!(
+            "Recommended window: ({}, {}) — inclusive effective-level indices, 0 = finest.",
+            rs, re
+        );
+        println!(
+            "{:<12} | {:>9} {:>9} {:>8} {:>9} {:>8}",
+            "config", "legacyDf", "winDf", "Δt win", "rgDf", "Δrg win"
+        );
         for ((df_target, n), acc) in &all_acc {
-            let wi = all_acc[0].1.windows.iter().position(|w| w.key == (rs, re)).unwrap();
+            let wi = all_acc[0]
+                .1
+                .windows
+                .iter()
+                .position(|w| w.key == (rs, re))
+                .unwrap();
             let ws = &acc.windows[wi];
             if ws.dfs.is_empty() || acc.legacy_dfs.is_empty() {
                 continue;
@@ -597,7 +634,12 @@ fn main() {
             if *n != 2000 {
                 continue;
             }
-            let wi = all_acc[0].1.windows.iter().position(|w| w.key == (rs, re)).unwrap();
+            let wi = all_acc[0]
+                .1
+                .windows
+                .iter()
+                .position(|w| w.key == (rs, re))
+                .unwrap();
             for d in &acc.windows[wi].dfs {
                 worst_seed = worst_seed.max((d - df_target).abs());
             }
@@ -609,7 +651,10 @@ fn main() {
             worst_mean, worst_seed
         );
         if worst_mean <= 0.20 {
-            println!("-> mean-level ±0.20 IS reachable at N=2000 with window ({}, {}).", rs, re);
+            println!(
+                "-> mean-level ±0.20 IS reachable at N=2000 with window ({}, {}).",
+                rs, re
+            );
         } else {
             println!(
                 "-> mean-level ±0.20 NOT reachable at N=2000 with window ({}, {}); achievable band ≈ ±{:.2} (mean) / ±{:.2} (per-seed).",
@@ -620,7 +665,10 @@ fn main() {
         println!("No window produced fits — cannot recommend.");
     }
 
-    let total_windows_checked: usize = all_acc.iter().map(|(_, a)| a.windows.iter().filter(|w| !w.dfs.is_empty()).count()).sum();
+    let total_windows_checked: usize = all_acc
+        .iter()
+        .map(|(_, a)| a.windows.iter().filter(|w| !w.dfs.is_empty()).count())
+        .sum();
     println!(
         "\nD2 log-base invariance: max |slope_ln - slope_log2| across {} window fits + legacy ranges = {:.3e}",
         total_windows_checked,

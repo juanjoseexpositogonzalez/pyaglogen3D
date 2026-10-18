@@ -114,7 +114,7 @@ pub fn mie_coefficients(n_max: usize, x: f64, m: Complex64) -> (Vec<Complex64>, 
         let n_f = n as f64;
 
         // Logarithmic derivatives at x
-        let d_n_x = if n > 0 {
+        let _d_n_x = if n > 0 {
             psi_x[n - 1] / psi_x[n] - Complex64::new(n_f, 0.0) / z
         } else {
             Complex64::new(0.0, 0.0)
@@ -185,7 +185,7 @@ pub fn mie_sphere(
 
         // Asymmetry parameter numerator
         if n < n_max {
-            let n_f1 = (n + 1) as f64;
+            let _n_f1 = (n + 1) as f64;
             g_numerator += (n_f * (n_f + 2.0) / (n_f + 1.0))
                 * (an[n] * an[n + 1].conj() + bn[n] * bn[n + 1].conj()).re;
             g_numerator += ((2.0 * n_f + 1.0) / (n_f * (n_f + 1.0))) * (an[n] * bn[n].conj()).re;

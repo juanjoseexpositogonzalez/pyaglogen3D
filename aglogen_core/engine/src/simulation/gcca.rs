@@ -26,8 +26,10 @@ use super::result::SimulationResult;
 
 /// Split strategy for cluster pairing
 #[derive(Debug, Clone)]
+#[derive(Default)]
 pub enum SplitStrategy {
     /// Symmetric split: N1 ≈ N2 (recovers Filippov for powers of 2)
+    #[default]
     Symmetric,
     /// Particle-Cluster: N1 = N-1, N2 = 1 (sequential growth like Ringl)
     ParticleCluster,
@@ -35,11 +37,6 @@ pub enum SplitStrategy {
     Stochastic { mean_ratio: f64, std_ratio: f64 },
 }
 
-impl Default for SplitStrategy {
-    fn default() -> Self {
-        SplitStrategy::Symmetric
-    }
-}
 
 /// A cluster for GCCA aggregation
 #[derive(Clone)]
@@ -411,10 +408,10 @@ pub fn run_gcca_internal(
         let n_clusters = clusters.len();
 
         // Determine how to split/pair clusters
-        let (n1, n2) = determine_split(n_clusters, &split_strategy, &mut rng);
+        let (_n1, _n2) = determine_split(n_clusters, &split_strategy, &mut rng);
 
         // Sort clusters by size for more controlled merging
-        clusters.sort_by(|a, b| a.n_particles().cmp(&b.n_particles()));
+        clusters.sort_by_key(|a| a.n_particles());
 
         let mut new_clusters = Vec::new();
         let mut merged = vec![false; n_clusters];
@@ -468,7 +465,7 @@ pub fn run_gcca_internal(
                     n_values.push(main_cluster.n_particles());
 
                     new_clusters.push(main_cluster);
-                    new_clusters.extend(clusters.drain(..));
+                    new_clusters.append(&mut clusters);
                 }
             }
             _ => {
@@ -509,12 +506,11 @@ pub fn run_gcca_internal(
                         let new_com = cluster1.center_of_mass + direction * separation;
                         cluster2.translate(new_com - cluster2.center_of_mass);
 
-                        if !cluster1.overlaps_with(&cluster2, 0.01) {
-                            if cluster1.has_contact_with(&cluster2, 0.1) || target_df < 1.5 {
+                        if !cluster1.overlaps_with(&cluster2, 0.01)
+                            && (cluster1.has_contact_with(&cluster2, 0.1) || target_df < 1.5) {
                                 placement_ok = true;
                                 break;
                             }
-                        }
                     }
 
                     if !placement_ok {
