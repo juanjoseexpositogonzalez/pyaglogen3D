@@ -67,6 +67,13 @@ path = "examples/diagnostics/r25_n_sensitivity.rs"
 name = "r58_prefactor_scan"
 path = "examples/diagnostics/r58_prefactor_scan.rs"
 
+# Phase 0 diagnostic for cc-tunable-rg-fit-fix (PYA-17): Rg-evolution fit variant
+# comparison (unweighted vs N-weighted vs tail-restricted) + D5 no-clamp check.
+# Run: cargo run --release --example rg_fit_variants_audit -p aglogen-engine
+[[example]]
+name = "rg_fit_variants_audit"
+path = "examples/diagnostics/rg_fit_variants_audit.rs"
+
 # Pre-fix snapshot generator for cc-tunable-low-df-fix (R24 byte-identity).
 # Committed alongside the snapshot fixtures in tests/fixtures/pre_low_df_fix/.
 # Run: cargo run --release --example gen_pre_fix_snapshots -p aglogen-engine

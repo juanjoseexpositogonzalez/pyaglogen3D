@@ -82,3 +82,51 @@ fallback if the Phase 0 diagnostic shows weighting insufficient (diagnostic prin
 
 `CC_TUNABLE_RG_FIT_WEIGHTED=false` → function takes the legacy unweighted path; doc-comment
 mirrors `read_high_df_fix_flag` (:76-90 precedent).
+
+## Log
+
+- L1 (2026-10-18, T1-T2 Phase 0 diagnostic `rg_fit_variants_audit`, runtime 48.3 s, full
+  config set Df∈{2.5,2.7,2.9} × N∈{100,500} × seeds{1,2,3}, R27.4 setup: Dimers, kf=1.3,
+  rp=1.0): **D1 primary NOT confirmed — evidence contradicts D1's premise.** The N-weighted
+  variant does not merely fall short of kf ≥ 1.0 at Df=2.9/N=100; it is *worse* than the
+  current unweighted fit. The D1 fallback trigger condition ("weighted fails while
+  tail-restricted passes") is also NOT met, because tail-restriction fails too. Neither
+  candidate fit restores R28.1's `mean(prefactor) ≥ 1.0` at Df_target = 2.9.
+
+  Point reconstruction from public `SimulationResult` data (`rg_evolution` + `merge_trace`,
+  `no_feasible_pair` entries skipped, `n_i = max(n_{i-1}, n1+n2)`) was self-validated:
+  recomputed UNW matches the engine estimator exactly (max err 0.0e0 over all 18 runs) and
+  reproduces the Cycle 2 baseline mean kf = 0.929 at 2.9/100.
+
+  Mean kf per variant per config (seeds {1,2,3}):
+
+  | config | UNW (current) | WGT (D1 primary) | TAIL (D1 fallback) |
+  |---|---|---|---|
+  | 2.5/100 | 1.260 | 1.312 | 1.943 |
+  | 2.5/500 | 1.332 | 1.317 | 1.003 (1 run hit Df=3.5 clamp) |
+  | 2.7/100 | 1.060 | 1.065 | 1.107 |
+  | 2.7/500 | 1.063 | 1.101 | 1.173 |
+  | 2.9/100 | **0.929** | **0.879** | **0.921** |
+  | 2.9/500 | 0.941 | 0.941 | 0.990 |
+
+  D5 no-clamp: the D1 primary (WGT) has **zero** clamp-boundary hits across all 18 runs —
+  no prefactor touches 100.0 (nor 0.01, nor Df [0.5, 3.5]). The only hit in the whole
+  matrix is the TAIL variant clamping Df to 3.5 at 2.5/500 seed 1 (tail of 3 points,
+  degenerate leverage) — one more argument against tail-restriction as primary.
+
+  Interpretation: weighting toward large-N points *lowers* kf at Df=2.9, i.e. the tail
+  points are NOT sitting above the small-N scaling line — the guard/adaptive fallback
+  merges land at `rg_after < rg_target` (R27 geometry), dragging the large-N end down.
+  The kf deficit at the extreme high-Df edge is a property of the recorded point cloud
+  (finite-N geometric feasibility), not of unweighted point dominance. Note the mean
+  kf = 0.929 at 2.9/500 (all variants ≤ 0.990) shows it is not an N=100 artifact either.
+
+  **Proposed disposition (for parent decision, not implemented here):** D1 as locked
+  ("N-weighted restores kf ≥ 1.0") cannot deliver R28.1/R27.4-M at Df=2.9. Options:
+  (a) keep the N-weighted fit for its small Df-bias improvement (mean Df 2.973 vs 2.932
+  at 2.9/100, still within R19/R27.4 ± 0.15) but relax/amend R28.1's kf ≥ 1.0 to a
+  documented deviation (Cycle 2 D3 style); (b) re-lock D1 to tail-restricted (also fails
+  kf, adds a threshold parameter and a Df clamp hit — not recommended by evidence);
+  (c) revisit the estimator target itself (sub-cycle 2 BC-alignment territory). T3-T4
+  (flag + wiring) can proceed mechanically for option (a), but R28.1's kf assertion
+  must NOT be written as `≥ 1.0` without a design amendment.
