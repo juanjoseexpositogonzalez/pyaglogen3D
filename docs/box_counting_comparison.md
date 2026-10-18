@@ -277,6 +277,39 @@ The 3D Rust port is **algorithmically close to MATLAB** (same core idea: sort Mo
 
 None of these are *bugs*; they are opinionated re-implementations. A strict byte-exact port would keep `precision=32`, `log2`, and a fixed window.
 
+#### 5.1.1 Windowed fit (Cycle 3.2, `cc-tunable-bc-alignment`)
+
+The divergence in the table row "Linear region" is the one fixable bias, and Cycle 3.2 closes it
+with an **opt-in** windowed path rather than by changing the default:
+
+- **The divergence, precisely.** Matlab's `fit_frac.m` fits a hard-coded **mid-window** of the 32
+  bit levels (`eRange = [18, 30]` — skip the 17 coarsest, saturated levels and the 2 finest). The
+  Rust default instead runs an adaptive robust fit: anchor on the **coarsest 4** count-valid levels
+  and greedily extend toward finer levels while residuals stay acceptable. On the precision-18
+  Morton space (design D6 keeps the 21-bit cap) the count-validity filter leaves only 2–8 usable
+  levels, all coarse (raw levels ~10–17), so a Matlab-style mid-window has **no equivalent** — the
+  greedy anchor is what biases `Df` downward at high `Df_target` (legacy mean `|Δ|` up to 0.55 at
+  Df 2.5 and 0.69 at Df 2.7, N=500).
+- **What the windowed path provides.** `box_counting_3d_windowed(points, precision, (s, e))`
+  computes a plain OLS over an explicit inclusive window of the **effective (count-valid) level
+  sequence** — no anchor, no greedy extension — plus validation errors instead of panics. The
+  Phase 0 diagnostic (`aglogen_core/engine/examples/diagnostics/bc_window_alignment_audit.rs`,
+  45-run matrix) locked the recommendation `(s*, e*) = (1, last effective level)`, which cuts the
+  mean `|BC_Df − Df_target|` to **0.30 (Df 2.5) / 0.17 (Df 2.7)** at N=500 and carries the
+  documented band **±0.35 per-config mean / ±0.45 per-seed**. The ±0.20 aspiration was refuted by
+  that evidence (unreachable even at N=2000 with any fixed window) and retired.
+- **Default unchanged.** `box_counting_3d(points, precision)` is byte-identical to the pre-change
+  estimator (recorded f64 baselines + verbatim pre-refactor replica oracle; diagnostic re-run
+  45/45 byte-identical), so every existing consumer — including the Matlab-comparison numbers in
+  this document — remains valid. The Python binding exposes the window opt-in via
+  `box_counting_3d_windowed(coords, fit_window, precision=18)` and additive
+  `fit_window=None` keywords.
+- **Known coverage gap (design Log L4).** At N=500 the densest configs (all seeds at Df_target 2.9,
+  seed 3 at 2.7) have only 3 count-valid levels, so the locked `(1, last)` window correctly refuses
+  to fit (`InsufficientLevels`); the widest fit-admitting window `(0, last)` coincides with the
+  legacy fit there (zero improvement, zero regression). Callers should clamp the start
+  (`s = min(1, effLevels − 3)`) or fall back to the default path when the window is refused.
+
 ### 5.2 B (`buscafractal2012/2018.m` + `dimfrac2012.m` → `fraktal/*.rs`)
 
 **`bisection.rs` (`aglogen_core/src/fractal/fraktal/bisection.rs:1-260`):**

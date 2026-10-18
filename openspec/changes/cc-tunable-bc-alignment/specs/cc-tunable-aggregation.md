@@ -16,9 +16,13 @@ long-term target to the OPT-IN path only.
 - **WHEN** each run completes
 - **THEN** every (Df_target, seed) pair satisfies `|BC_Df(coordinates) − result.fractal_dimension| ≤ 0.90` (at N ≥ 500; DEFAULT path tolerance, unchanged)
 - **AND** no seed produces NaN, infinite, or negative `BC_Df`
-- **AND** (NEW, note) the long-term ±0.20 target applies ONLY to the opt-in windowed estimator
-  (R29) at the N proven sufficient by the Phase 0 diagnostic (`bc_window_alignment_audit`);
-  the default path keeps ±0.90 unconditionally
+- **AND** (NEW, note) the ±0.20 aspiration is **retired as a target**: the Phase 0 diagnostic
+  (`bc_window_alignment_audit`, design Log L2) refuted it — not reachable even at N=2000 with any
+  fixed window (Df_target 2.5 retains ≈ −0.29…−0.34; Df ≥ 2.7 admits only start ≤ 1, where the
+  window degenerates toward the legacy anchor). The OPT-IN windowed estimator (R29) instead carries
+  the documented evidence band **±0.35 per-config mean / ±0.45 per-seed** (`|BC_Df − Df_target|`,
+  window `(1, last effective level)`, locked by design Log L2/T5); the default path keeps ±0.90
+  unconditionally
 
 ## ADDED Requirements
 
@@ -51,6 +55,14 @@ robust-fit path **byte-identically**. The windowed path computes plain OLS of
 
 #### Scenario R29.4 — Aligned-window accuracy (evidence-gated)
 
-- **GIVEN** CC-tunable agglomerates at the Phase 0 diagnostic configs and the diagnostic-selected window `(s*, e*)`
+- **GIVEN** CC-tunable agglomerates at the Phase 0 diagnostic configs and the diagnostic-selected
+  window `(s*, e*)` = (1, last effective level), clamped to the widest fit-admitting window from
+  the same sweep when the locked window holds < 3 count-valid levels (dense configs, Log L4)
 - **WHEN** the windowed estimator runs
-- **THEN** `|BC_Df − Df_target|` improves over the default path per the diagnostic, and satisfies the tolerance the Phase 0 evidence locks (target ±0.20 at the proven N; else the observed band is documented in the R27.5 note instead)
+- **THEN** `|BC_Df − Df_target|` improves over the default path on the per-config mean across
+  seeds where the window differs from the legacy fit, and satisfies the **documented band ±0.35
+  per-config mean / ±0.45 per-seed** locked by the Phase 0 evidence (design Log L2). The ±0.20
+  target was refuted by that evidence (unreachable even at N=2000 with any fixed window) and is
+  retired; the observed band is documented in the R27.5 note
+- **AND** seeds where no fit-admitting window exists are refused with a validation error
+  (`InsufficientLevels`, R29.2), never a panic, and are recorded in design Log L4

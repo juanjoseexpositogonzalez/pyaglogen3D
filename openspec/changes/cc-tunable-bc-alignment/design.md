@@ -133,3 +133,42 @@ uses `s` (documented in doc-comment).
     (builds clean with that flag; no symbol from this change involved).
   - **No evidence contradicting Log L2 semantics was found**; the (s*, e*) = (1, last valid level)
     verdict and the ±0.35/±0.45 band were reproduced exactly by the post-refactor diagnostic run.
+- L4 (2026-10-18): T5 integration evidence — `bc_windowed_test.rs::
+  windowed_vs_legacy_on_real_cc_tunable_agglomerates` (9 live CC-tunable sims: Df_target ∈
+  {2.5, 2.7, 2.9}, N=500, seeds {1,2,3}, R27.4 setup: Dimers, target_kf=1.3, rp=1.0, high-Df fix
+  flag ON/default; precision 18; windowed vs legacy on identical coordinates).
+
+  | Df_target | seed | Rg_Df | BC legacy | \|Δ\| legacy | window | BC windowed | \|Δ\| windowed |
+  | --- | --- | --- | --- | --- | --- | --- | --- |
+  | 2.5 | 1 | 2.327 | 1.970 | 0.530 | (1, last) | 2.250 | 0.250 |
+  | 2.5 | 2 | 2.458 | 1.932 | 0.568 | (1, last) | 2.161 | 0.339 |
+  | 2.5 | 3 | 2.384 | 1.948 | 0.552 | (1, last) | 2.183 | 0.317 |
+  | 2.7 | 1 | 2.815 | 2.011 | 0.689 | (1, last) | 2.497 | 0.203 |
+  | 2.7 | 2 | 2.792 | 2.013 | 0.687 | (1, last) | 2.549 | 0.151 |
+  | 2.7 | 3 | 2.760 | 2.541 | 0.159 | (0, last)† | 2.541 | 0.159 |
+  | 2.9 | 1 | 2.960 | 2.575 | 0.325 | (0, last)† | 2.575 | 0.325 |
+  | 2.9 | 2 | 2.902 | 2.617 | 0.283 | (0, last)† | 2.617 | 0.283 |
+  | 2.9 | 3 | 2.918 | 2.590 | 0.310 | (0, last)† | 2.590 | 0.310 |
+
+  Per-config means: legacy vs windowed = **0.550 vs 0.302** (Df 2.5), **0.512 vs 0.171** (Df 2.7),
+  **0.306 vs 0.306** (Df 2.9). Assertions verified: per-seed |Δ| ≤ **0.45** on every seed
+  (documented band; max windowed |Δ| = 0.339) and windowed mean ≤ legacy mean per config —
+  **no seed contradicted the Log L2 evidence**, so no band weakening was needed.
+  - **Coverage-gap finding (refines the L2 fixed-window verdict, does not contradict the band):**
+    at N=500 the effective (count-valid) sequence holds only **3 levels** for the densest configs
+    (all three seeds at Df_target 2.9; seed 3 at Df_target 2.7). The locked `(1, last)` window then
+    contains 2 levels and the estimator correctly refuses with `InsufficientLevels` (R29.2
+    contract: refuse to fit, never panic) — † rows use the fit-admitting clamp
+    `s = min(1, effLevels − 3)` → `(0, last)`, i.e. the widest window from the same L2 sweep
+    ("windows with ≥ 3 levels"). At those configs the windowed fit over the full effective sequence
+    coincides exactly with the legacy robust fit (legacy greedy already accepts the whole
+    count-valid range) — "improves or matches" holds as an exact match, zero improvement.
+    The L2 sweep skipped such windows, so the (1, last) recommendation implicitly never covered
+    them; T5 makes that explicit. Recommendation for any future consumer: clamp the window start
+    per config (`s = min(1, effLevels − 3)`), or treat `InsufficientLevels` at effLevels = 3 as
+    the signal to fall back to the default path.
+  - **Non-regression (T6):** full engine suite release `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
+    cargo test -p aglogen-engine --release` → **372 passed / 0 failed** (3 pre-existing ignores:
+    lib unit ignore, `capture_legacy_baseline` helper, doc-test target; = 371 pre-existing + 1 new
+    T5 test). All pre-existing tolerance bodies untouched. `cargo check -p aglogen-python`
+    (same env) compiles clean (3 pre-existing dead-code warnings, unrelated).

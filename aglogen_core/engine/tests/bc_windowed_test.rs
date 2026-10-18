@@ -17,6 +17,16 @@ use aglogen_engine::fractal::box_counting_3d::{
     box_counting_3d_morton, box_counting_3d_windowed, compute_scale, count_unique_masked,
     find_bounding_box, generate_sphere_points, morton_encode_3d, normalize_coord, BoxCountingError,
 };
+use aglogen_engine::simulation::tunable_cc::{run_tunable_cc_internal, SeedType, TunableCcParams};
+
+// ── Env-var serialization mutex ───────────────────────────────────────────────
+//
+// The windowed-vs-legacy integration test below runs real CC-tunable sims and
+// pins the R27.4 flag setup by removing process-global env vars. This binary
+// is separate from the cc_tunable_*_test binaries, but the local mutex keeps
+// the convention and protects against future env-touching tests here.
+// (Cross-binary races cannot occur: each test binary is its own process.)
+static ENV_MUTEX: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures
@@ -499,4 +509,183 @@ fn default_path_untouched_by_windowed_addition() {
     let r = box_counting_3d_morton(&points, 5);
     assert_eq!(r.linear_region_start, 0);
     assert!(r.dimension > 0.9 && r.dimension < 1.1);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Windowed-vs-legacy on real CC-tunable agglomerates (R29.2 / R29.4)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Windowed-vs-legacy comparison on REAL CC-tunable agglomerates (R29.4).
+///
+/// Fixtures: 9 live sims — `Df_target ∈ {2.5, 2.7, 2.9}`, N=500, seeds {1,2,3},
+/// R27.4 setup (`Dimers`, `target_kf=1.3`, `rp=1.0`, high-Df fix flag ON/default),
+/// copied from `cc_tunable_high_df_test.rs::high_df_bc_sanity`.
+///
+/// Estimator: the diagnostic-locked window `(s*, e*) = (1, last effective level)`
+/// (design Log L2 — effective-sequence semantics) at precision 18, against the
+/// legacy robust-fit path on identical coordinates. Where the locked window
+/// contains fewer than 3 count-valid levels (a real coverage gap at N=500,
+/// Df_target ≥ 2.7 — see design Log L4), the test clamps the start to the
+/// widest fit-admitting window from the same Log L2 sweep
+/// (`s = min(1, effLevels − 3)`, i.e. `(0, last)` when only 3 effective levels
+/// exist) — the diagnostic's own "windows with ≥ 3 levels" rule — and records
+/// the fallback explicitly.
+///
+/// Assertions (evidence-gated, design Log L2):
+/// 1. Per-seed documented band: `|BC_Df_windowed − Df_target| ≤ 0.45` for every
+///    (Df_target, seed). This is the ±0.45 per-seed band measured by the Phase 0
+///    diagnostic — NOT ±0.20, which the diagnostic REFUTED as unreachable even at
+///    N=2000 (Log L2 D4 evidence; ±0.20 was retired as a target).
+/// 2. Mean improvement: for each Df_target, the windowed estimator's mean
+///    |Δ| across seeds is ≤ the legacy path's mean |Δ| over the SAME seeds
+///    (Log L2: the window beats legacy everywhere it differs — at Df 1.5/2.0 the
+///    fits coincide, so "improves or matches" holds trivially there; the
+///    divergence lives in the high-Df band asserted here).
+/// 3. Sanity: both estimators return finite, positive Df on every fixture.
+///
+/// Coverage gap (T5 evidence, design Log L4): at N=500 the effective
+/// (count-valid) sequence holds only 3 levels for some high-Df seeds (all
+/// seeds at Df_target 2.9, seed 3 at 2.7), so the locked `(1, last)` window
+/// triggers the documented `InsufficientLevels` refusal (R29.2 — refuse to
+/// fit, never panic). The per-config clamped start keeps every seed inside
+/// the band assertions; the primary-vs-clamped window usage is printed and
+/// mirrored in design Log L4.
+///
+/// If any fixture ever contradicts (2), do NOT silently weaken this test:
+/// record the numbers in design.md Log L4 and re-derive the band from evidence.
+///
+/// Run with `--release` for speed:
+/// `cargo test --release --test bc_windowed_test windowed_vs_legacy_on_real_cc_tunable_agglomerates -- --nocapture`
+#[test]
+fn windowed_vs_legacy_on_real_cc_tunable_agglomerates() {
+    let _guard = ENV_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+    // R27.4 setup: high-Df fix flag ON (default, env var absent).
+    unsafe {
+        std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
+    }
+
+    let df_targets = [2.5_f64, 2.7, 2.9];
+    let n_particles = 500;
+    let target_kf = 1.3_f64;
+    let seeds = [1u64, 2, 3];
+    let window_start = 1usize; // s* from design Log L2
+    let per_seed_band = 0.45_f64; // documented per-seed band (Log L2 D4 evidence)
+    let precision = 18u32;
+
+    eprintln!(
+        "\n=== R29.4: windowed (1, last) vs legacy BC on CC-tunable agglomerates \
+         (N={}, tol={:.2}) ===",
+        n_particles, per_seed_band
+    );
+    eprintln!(
+        "{:<8} {:<6} {:<10} {:<10} {:<10} {:<10} {:<10}",
+        "Df_tgt", "seed", "Rg_Df", "BC_legacy", "d_legacy", "BC_window", "d_window"
+    );
+
+    for &df_target in &df_targets {
+        // (legacy |Δ|, windowed |Δ|) per seed — after the Log-L2-sweep clamp every
+        // seed must fit, so the band/mean assertions cover the full config.
+        let mut paired: Vec<(f64, f64)> = Vec::with_capacity(seeds.len());
+
+        for &seed in &seeds {
+            let params = TunableCcParams {
+                n_particles,
+                target_df: df_target,
+                target_kf,
+                radius_min: 1.0,
+                radius_max: 1.0,
+                seed_type: SeedType::Dimers,
+                ..Default::default()
+            };
+            let result = run_tunable_cc_internal(params, seed, None);
+            let coords = &result.coordinates;
+            assert_eq!(
+                coords.len(),
+                n_particles,
+                "R29.4: expected {n_particles} particles (Df_target={df_target}, seed={seed})"
+            );
+
+            // Legacy default path (R29.1 byte-identity surface, unchanged).
+            let legacy = box_counting_3d_morton(coords, precision);
+
+            // Windowed opt-in path. Primary window is the diagnostic-locked
+            // (1, last); clamp the start to the widest fit-admitting window from
+            // the same Log L2 sweep when the locked window holds < 3 levels.
+            let num_effective = effective_levels(coords, precision).len();
+            assert!(
+                num_effective >= 3,
+                "R29.4: fixture (Df_target={df_target}, seed={seed}) has only {num_effective} \
+                 effective levels — NO window can fit (Log L2: N=100 configs already needed \
+                 start ≤ 1); investigate the fixture before touching the estimator"
+            );
+            let s = window_start.min(num_effective - 3);
+            let windowed = box_counting_3d_windowed(coords, precision, (s, num_effective - 1))
+                .unwrap_or_else(|e| {
+                    panic!(
+                        "R29.4: clamped window ({s}, {}) must fit on Df_target={df_target} \
+                         seed={seed} (num_effective={num_effective}): {e}",
+                        num_effective - 1
+                    )
+                });
+            if s != window_start {
+                eprintln!(
+                    "  → R29.4/L4: Df_target={df_target} seed={seed}: only {num_effective} effective \
+                     levels → locked window (1, last) holds {} < 3 (InsufficientLevels refusal, \
+                     R29.2); using fit-admitting clamp (0, last) per the Log L2 sweep rule",
+                    num_effective - window_start
+                );
+            }
+
+            let d_legacy = (legacy.dimension - df_target).abs();
+            let d_windowed = (windowed.dimension - df_target).abs();
+            paired.push((d_legacy, d_windowed));
+
+            eprintln!(
+                "{:<8.1} {:<6} {:<10.3} {:<10.3} {:<10.3} {:<10.3} {:<10.3}",
+                df_target,
+                seed,
+                result.fractal_dimension,
+                legacy.dimension,
+                d_legacy,
+                windowed.dimension,
+                d_windowed
+            );
+
+            // Sanity (R27.5 analogue): finite, positive Df from both paths.
+            assert!(
+                legacy.dimension.is_finite() && legacy.dimension > 0.0,
+                "R29.4: legacy BC_Df must be finite/positive (Df_target={df_target}, seed={seed})"
+            );
+            assert!(
+                windowed.dimension.is_finite() && windowed.dimension > 0.0,
+                "R29.4: windowed BC_Df must be finite/positive (Df_target={df_target}, seed={seed})"
+            );
+
+            // Assertion 1: per-seed documented band (NOT ±0.20 — retired, Log L2).
+            assert!(
+                d_windowed <= per_seed_band,
+                "R29.4: windowed |BC_Df − Df_target| = {d_windowed:.3} > {per_seed_band} \
+                 (Df_target={df_target}, seed={seed}, BC_Df={:.3}) — outside the documented \
+                 per-seed band; if this is a real regression, record it in design.md Log L4",
+                windowed.dimension
+            );
+        }
+
+        // Assertion 2: windowed improves or matches legacy on the per-config mean.
+        let mean_legacy = paired.iter().map(|(l, _)| l).sum::<f64>() / paired.len() as f64;
+        let mean_windowed = paired.iter().map(|(_, w)| w).sum::<f64>() / paired.len() as f64;
+        eprintln!(
+            "  → mean |Δ| over all {} seeds: legacy={:.3}, windowed={:.3} (Df_target={:.1})",
+            paired.len(),
+            mean_legacy,
+            mean_windowed,
+            df_target
+        );
+        assert!(
+            mean_windowed <= mean_legacy + 1e-9,
+            "R29.4: windowed mean |Δ| ({mean_windowed:.3}) must improve on or match the legacy \
+             mean |Δ| ({mean_legacy:.3}) at Df_target={df_target} — contradicts design Log L2; \
+             record the numbers in design.md Log L4 before changing this test"
+        );
+    }
 }

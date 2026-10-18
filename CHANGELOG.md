@@ -1,3 +1,47 @@
+### cc-tunable-bc-alignment (unreleased)
+
+Aligns the 3D box-counting estimator's fit-window bias (Cycle 3.2, SDD `cc-tunable-bc-alignment`,
+PYA-17). The default path is untouched; a new **opt-in windowed estimator** repairs the systematic
+Df undershoot at high `Df_target` caused by the legacy robust-fit heuristic (coarsest-4 anchor +
+greedy extension picking a biased linear region on the 18-level precision space).
+
+### Added
+
+- **Windowed BC estimator (opt-in)** — `box_counting_3d_windowed(points, precision, (s, e))`
+  (engine) computes plain OLS of `ln(1/box_size)` vs `ln(count)` restricted to the inclusive
+  effective-level window `[s, e]` (count-valid levels ordered finest-first; design D1), with no
+  saturation truncation and no greedy extension. Invalid windows (`s > e`, out of range, or fewer
+  than 3 count-valid levels inside the window) return a validation error — never a panic (R29.2).
+- **Python binding** — `box_counting_3d_windowed(coords, fit_window, precision=18)` plus additive
+  `fit_window=None` keywords on `box_counting_3d` / `box_counting_agglomerate` (R29.3).
+  **Param-order note:** pyo3 forbids a required positional parameter after an optional one, so the
+  new binding's order deviates from the engine signature: `fit_window` precedes `precision`
+  (design Log L3). Existing callers are unaffected.
+- **Documented accuracy band (opt-in path, evidence-gated)** — Phase 0 diagnostic
+  (`bc_window_alignment_audit`, 45 runs) and the T5 integration test on real CC-tunable
+  agglomerates (N=500, Df_target ∈ {2.5, 2.7, 2.9}, seeds 1–3):
+  `|BC_Df − Df_target| ≤ 0.35` per-config mean / `≤ 0.45` per-seed on the aligned window, vs
+  legacy means up to 0.55 (Df 2.5) and 0.69 (Df 2.7) at N=500. The ±0.20 long-term target was
+  **refuted by evidence and retired**: not reachable even at N=2000 with any fixed window
+  (design Log L2, D4).
+- Known coverage gap (design Log L4): at N=500 the effective level sequence holds only 3
+  count-valid levels for the densest configs (all seeds at Df_target 2.9, seed 3 at 2.7), so the
+  recommended `(1, last)` window returns `InsufficientLevels` there; the widest fit-admitting
+  window `(0, last)` coincides with the legacy fit at those configs.
+
+### Unchanged (non-regression, R29.1)
+
+- **Default path is byte-identical**: `box_counting_3d(points, precision)` keeps its exact 2-arg
+  signature (design D3 — a Result change was rejected to avoid rippling into every consumer) and
+  reproduces pre-refactor outputs exactly (recorded f64 baselines + verbatim pre-refactor replica
+  oracle; diagnostic re-run 45/45 byte-identical). Backend/CSV `sim_box_counting_df` values
+  unchanged; Django backend untouched.
+- Full engine suite: 372 passed / 0 failed (`cargo test -p aglogen-engine --release`); `cargo check
+  -p aglogen-python` (PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1) clean. Note: a bare
+  `cargo build -p aglogen-python` fails at the final cdylib LINK step — pre-existing environmental
+  property of pyo3 0.23 + `extension-module` on macOS (maturin supplies the missing linker flag);
+  unrelated to this change.
+
 ## cc-tunable-high-df-fix (unreleased)
 
 Fixes systematic convergence failure in the CC tunable algorithm for `Df_target ∈ [2.5, 2.9]`
