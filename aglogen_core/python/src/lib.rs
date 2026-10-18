@@ -10,7 +10,8 @@ use pyo3::prelude::*;
 // Re-export engine types
 use aglogen_engine::fractal::box_counting::box_counting_internal;
 use aglogen_engine::fractal::box_counting_3d::{
-    box_counting_3d_morton, generate_sphere_points, BoxCountingResult3D,
+    box_counting_3d_morton, box_counting_3d_windowed as box_counting_3d_windowed_engine,
+    generate_sphere_points, BoxCountingResult3D,
 };
 use aglogen_engine::fractal::fraktal::batch::{
     analyze_batch_broadcast as engine_analyze_batch_broadcast, AutocalibrateSource, BatchAlgorithm,
@@ -702,6 +703,20 @@ fn box_counting(
     Ok(result.into())
 }
 
+/// Extract Nx3 coordinates into points, or return a PyValueError.
+fn coords_to_points(coordinates: &PyReadonlyArray2<'_, f64>) -> PyResult<Vec<[f64; 3]>> {
+    let coords = coordinates.as_array();
+    if coords.shape()[1] != 3 {
+        return Err(pyo3::exceptions::PyValueError::new_err(
+            "Coordinates must be Nx3 array",
+        ));
+    }
+    let n = coords.shape()[0];
+    Ok((0..n)
+        .map(|i| [coords[[i, 0]], coords[[i, 1]], coords[[i, 2]]])
+        .collect())
+}
+
 #[pyfunction]
 #[pyo3(signature = (coordinates, precision=18))]
 fn box_counting_3d(
@@ -709,28 +724,42 @@ fn box_counting_3d(
     coordinates: PyReadonlyArray2<'_, f64>,
     precision: u32,
 ) -> PyResult<PyFractalResult> {
-    let coords = coordinates.as_array();
-    let n = coords.shape()[0];
-    if coords.shape()[1] != 3 {
-        return Err(pyo3::exceptions::PyValueError::new_err(
-            "Coordinates must be Nx3 array",
-        ));
-    }
-    let points: Vec<[f64; 3]> = (0..n)
-        .map(|i| [coords[[i, 0]], coords[[i, 1]], coords[[i, 2]]])
-        .collect();
+    let points = coords_to_points(&coordinates)?;
     let result = py.allow_threads(|| box_counting_3d_morton(&points, precision));
     Ok(result.into())
 }
 
+/// Windowed 3D box-counting (opt-in, R29.3): plain OLS over an inclusive
+/// range of EFFECTIVE level indices (0 = finest count-valid level, design
+/// Log L2). Raises ValueError on empty/out-of-range windows or fewer than 3
+/// count-valid levels inside the window (never panics).
+///
+/// Note: `fit_window` precedes `precision` because pyo3 forbids a required
+/// positional parameter after an optional one.
 #[pyfunction]
-#[pyo3(signature = (centers, radii, points_per_sphere=100, precision=18))]
+#[pyo3(signature = (coordinates, fit_window, precision=18))]
+fn box_counting_3d_windowed(
+    py: Python<'_>,
+    coordinates: PyReadonlyArray2<'_, f64>,
+    fit_window: (usize, usize),
+    precision: u32,
+) -> PyResult<PyFractalResult> {
+    let points = coords_to_points(&coordinates)?;
+    let result = py
+        .allow_threads(|| box_counting_3d_windowed_engine(&points, precision, fit_window))
+        .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?;
+    Ok(result.into())
+}
+
+#[pyfunction]
+#[pyo3(signature = (centers, radii, points_per_sphere=100, precision=18, fit_window=None))]
 fn box_counting_agglomerate(
     py: Python<'_>,
     centers: PyReadonlyArray2<'_, f64>,
     radii: &Bound<'_, PyArray1<f64>>,
     points_per_sphere: usize,
     precision: u32,
+    fit_window: Option<(usize, usize)>,
 ) -> PyResult<PyFractalResult> {
     let centers_arr = centers.as_array();
     let radii_arr = radii.try_readonly()?;
@@ -757,7 +786,12 @@ fn box_counting_agglomerate(
             )
         })
         .collect();
-    let result = py.allow_threads(|| box_counting_3d_morton(&points, precision));
+    let result = match fit_window {
+        None => py.allow_threads(|| box_counting_3d_morton(&points, precision)),
+        Some(window) => py
+            .allow_threads(|| box_counting_3d_windowed_engine(&points, precision, window))
+            .map_err(|e| pyo3::exceptions::PyValueError::new_err(e.to_string()))?,
+    };
     Ok(result.into())
 }
 
@@ -1827,6 +1861,7 @@ fn aglogen_core(m: &Bound<'_, PyModule>) -> PyResult<()> {
     // Fractal analysis functions
     m.add_function(wrap_pyfunction!(box_counting, m)?)?;
     m.add_function(wrap_pyfunction!(box_counting_3d, m)?)?;
+    m.add_function(wrap_pyfunction!(box_counting_3d_windowed, m)?)?;
     m.add_function(wrap_pyfunction!(box_counting_agglomerate, m)?)?;
     m.add_function(wrap_pyfunction!(fraktal_granulated_2012, m)?)?;
     m.add_function(wrap_pyfunction!(fraktal_voxel_2018, m)?)?;

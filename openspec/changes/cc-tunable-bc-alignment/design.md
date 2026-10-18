@@ -103,3 +103,33 @@ uses `s` (documented in doc-comment).
     Df ≥ 2.5/N ≤ 100); (b) `linear_region_start` for the windowed path reports `s` per design (with the
     effective-sequence semantics above); (c) dead-variable cleanup (D5) is guarded by the 45/45 byte-identity
     baseline reproduced by this diagnostic.
+- L3 (2026-10-18): T3/T4 implemented (`morton_core` extraction, D5 cleanup, windowed path + validation
+  errors, Python bindings).
+  - **D3 API shape resolved:** `box_counting_3d_morton(points, precision)` keeps its exact 2-arg signature
+    (delegates to `morton_core(..., None)`); the windowed path is a NEW public function
+    `box_counting_3d_windowed(points, precision, (s, e)) -> Result<BoxCountingResult3D, BoxCountingError>`
+    — a Result change on the public 2-arg function was rejected because it would ripple into every
+    consumer (python bindings, diagnostics, integration tests). Error enum `BoxCountingError`:
+    `EmptyWindow` (s > e), `WindowOutOfRange` (e ≥ effective level count), `InsufficientLevels`
+    (< 3 count-valid levels in window) — never panics (R29.2). Windowed path skips the saturation
+    truncation (Step 4b) and reports `linear_region_start = s`, log vectors carry the full effective
+    sequence; `box_counting_3d_agglomerate`-equivalent python binding gained an additive
+    `fit_window=None` keyword.
+  - **T4 python signature deviation (justified):** pyo3 forbids a required positional parameter after
+    an optional one, so the new binding is `box_counting_3d_windowed(coords, fit_window, precision=18)`
+    (fit_window precedes precision) instead of `(coords, precision, fit_window)`; existing
+    `box_counting_3d` / `box_counting_agglomerate` callers are untouched and additive
+    (`box_counting_agglomerate` gained `fit_window=None`).
+  - **Validation:** diagnostic re-run post-refactor **45/45 byte-identity exact** (dimension, R², std
+    error, linear region start), max log-base error 4.9e-14 unchanged; new unit tests
+    `engine/tests/bc_windowed_test.rs` (10 passed): recorded pre-refactor baseline (6 fixtures, exact
+    f64 equality), verbatim pre-refactor replica oracle (7 fixtures), hand-computed windowed OLS
+    (line32/precision-5 fixture with exact per-level counts → slope 1, R² 1), window bounds validation,
+    degenerate cases (flat counts, N < 2). Full engine suite release: 371 passed / 0 failed
+    (2 pre-existing ignores). `cargo check -p aglogen-python` (PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1)
+    compiles clean; bare `cargo build -p aglogen-python` fails at the final cdylib LINK step —
+    pre-existing environmental property of pyo3 0.23 + `extension-module` on macOS (no libpython link
+    args emitted; maturin supplies `-Wl,-undefined,dynamic_lookup`), confirmed unrelated to this change
+    (builds clean with that flag; no symbol from this change involved).
+  - **No evidence contradicting Log L2 semantics was found**; the (s*, e*) = (1, last valid level)
+    verdict and the ±0.35/±0.45 band were reproduced exactly by the post-refactor diagnostic run.
