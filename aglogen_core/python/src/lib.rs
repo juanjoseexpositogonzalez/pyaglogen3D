@@ -19,7 +19,7 @@ use aglogen_engine::fractal::fraktal::batch::{
 };
 // Re-export for per-image-scale binding (T3.2)
 // analyze_batch is used directly in analyze_fraktal_batch_per_image_scale
-use aglogen_engine::fractal::fraktal::result::{FraktalResult, FraktalStatus};
+use aglogen_engine::fractal::fraktal::result::FraktalResult;
 use aglogen_engine::fractal::fraktal::{
     analyze_granulated_2012, analyze_voxel_2018, Granulated2012Params, Voxel2018Params,
 };
@@ -1024,7 +1024,7 @@ fn run_dda(
 ) -> PyResult<PyOpticalResult> {
     let coords_flat: Vec<f64> = coordinates.as_slice()?.to_vec();
     let radii_vec: Vec<f64> = radii.as_slice()?.to_vec();
-    if coords_flat.len() % 3 != 0 {
+    if !coords_flat.len().is_multiple_of(3) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));
@@ -1067,7 +1067,7 @@ fn run_tmatrix(
 ) -> PyResult<PyOpticalResult> {
     let coords_flat: Vec<f64> = coordinates.as_slice()?.to_vec();
     let radii_vec: Vec<f64> = radii.as_slice()?.to_vec();
-    if coords_flat.len() % 3 != 0 {
+    if !coords_flat.len().is_multiple_of(3) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));
@@ -1569,7 +1569,7 @@ fn structure_factor(
     q_max: f64,
     n_q: usize,
 ) -> PyResult<(Vec<f64>, Vec<f64>)> {
-    if coordinates.len() % 3 != 0 {
+    if !coordinates.len().is_multiple_of(3) {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));

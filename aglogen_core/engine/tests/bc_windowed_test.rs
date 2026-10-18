@@ -15,8 +15,7 @@
 
 use aglogen_engine::fractal::box_counting_3d::{
     box_counting_3d_morton, box_counting_3d_windowed, compute_scale, count_unique_masked,
-    find_bounding_box, generate_sphere_points, morton_encode_3d, normalize_coord,
-    BoxCountingError,
+    find_bounding_box, generate_sphere_points, morton_encode_3d, normalize_coord, BoxCountingError,
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,13 +113,7 @@ fn default_path_byte_identity_against_prerefactor_baseline() {
             2.1850980010409252e-16,
             0,
         ),
-        (
-            "plane_40x40_p18",
-            2e0,
-            1e0,
-            1.30779339380907e-16,
-            0,
-        ),
+        ("plane_40x40_p18", 2e0, 1e0, 1.30779339380907e-16, 0),
         (
             "cube_20_p18",
             2.999999999999999e0,
@@ -300,9 +293,18 @@ fn default_path_byte_identity_vs_prerefactor_replica() {
         let (rep_start, rep_df, rep_r2, rep_se) =
             legacy_replica_prerefactor(log_scales, log_counts);
         let r = box_counting_3d_morton(&points, precision);
-        assert_eq!(r.dimension, rep_df, "{name}: dimension vs pre-refactor replica");
-        assert_eq!(r.r_squared, rep_r2, "{name}: r_squared vs pre-refactor replica");
-        assert_eq!(r.std_error, rep_se, "{name}: std_error vs pre-refactor replica");
+        assert_eq!(
+            r.dimension, rep_df,
+            "{name}: dimension vs pre-refactor replica"
+        );
+        assert_eq!(
+            r.r_squared, rep_r2,
+            "{name}: r_squared vs pre-refactor replica"
+        );
+        assert_eq!(
+            r.std_error, rep_se,
+            "{name}: std_error vs pre-refactor replica"
+        );
         assert_eq!(
             r.linear_region_start, rep_start,
             "{name}: linear_region_start vs pre-refactor replica"
@@ -400,7 +402,10 @@ fn windowed_matches_independent_ols_on_cloud() {
     let points = lcg_cloud(800, 1);
     let precision = 18;
     let levels = effective_levels(&points, precision);
-    assert!(levels.len() >= 4, "fixture must have enough effective levels");
+    assert!(
+        levels.len() >= 4,
+        "fixture must have enough effective levels"
+    );
     // Window (1, last): the diagnostic-locked (s*, e*) shape (Log L2).
     let s = 1;
     let e = levels.len() - 1;

@@ -120,8 +120,7 @@ pub struct BoxCountingResult3D {
 /// # Returns
 /// BoxCountingResult3D with fractal dimension and statistics.
 pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountingResult3D {
-    morton_core(points, precision, None)
-        .expect("default fit path never fails window validation")
+    morton_core(points, precision, None).expect("default fit path never fails window validation")
 }
 
 /// Fast 3D box-counting using Morton codes with an explicit fit window
