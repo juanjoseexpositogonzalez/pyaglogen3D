@@ -31,10 +31,10 @@ stack:
     type_check_cmd: "cd frontend && npm run type-check"
 conventions:
   commits: conventional
-  branches: "fix/pya-N-*, feature/*, rescue/*"
+  branches: "main <- develop <- feature/*; fix/*, chore/*, docs/*, style/* carril corto (ver AGENTS.md)"
   no_ai_attribution: true
-  issue_tracker: "Jira (project PYA)"
-  pr_target: main
+  issue_tracker: "Jira (project AGLO, isilduria.atlassian.net) + labels GitHub type:* en PR"
+  pr_target: develop
 deploy:
   docker: "Easypanel on VPS"
   alt: "Fly.io"
