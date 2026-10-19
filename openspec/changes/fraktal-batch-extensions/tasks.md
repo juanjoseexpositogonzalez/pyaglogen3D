@@ -1,8 +1,9 @@
 # Tasks: fraktal-batch-extensions
 
 > Specs (3 deltas): `specs/fraktal-batch-contract.md` (R12, R13), `specs/fraktal-batch-persistence.md`
-> (MODIFIED R2), `specs/fraktal-batch-distributions.md` (MODIFIED R2/R5/R-DELTA-M + ADDED R-DELTA-C2).
-> Design D1-D12: `design.md`. Pendiente: spec-review r3 → approval.md → apply.
+> (MODIFIED R2, restatement completo), `specs/fraktal-batch-distributions.md` (SOLO ADDED
+> R-DELTA-C2 marcador — sin MODIFIED). Design D1-D12: `design.md`. Pendiente: spec-review r5 →
+> approval.md → apply.
 > Provenance: contract commits (1c1bef7, d9b2e79, +this) viven en `feature/batch-windowed-box-counting`
 > (misma sesión de trabajo); al aplicar, T0 crea `feature/fraktal-batch-extensions` desde develop y
 > la rama de applyporta los cambios de contrato (o el apply va sobre esta rama tras el merge de A).
@@ -12,15 +13,19 @@
 | ID | Specs | Route | Commit |
 |---|---|---|---|
 | T0 | S(scaffold) | Rama `feature/fraktal-batch-extensions` desde develop al aplicar (provenance arriba) + este change folder | this |
-| T1 | R12, D1-D4 | Backend: helper puro `_build_study_comparison(sim_id, image_rows)` consumido por los 3 builders; contract tests R12.1 (población converged/approximate con df_estimate), R12.2 (edges D3: sin sim, sim borrada, sentinela 0.0, cero contribuyentes) + triple-builder equality | 2 |
-| T2 | R13, persistence-MOD-R2, D5-D8, D10 | Backend: migración nullable `pixels_per_100nm` (ÚNICA tarea con la migración) + servicio `reanalyze_failed_images` (UPDATE por pk, campos preservados, agregados full-set R7/ddof=0, prohibido subset→persist_batch_results) + ruta project-nested con permiso explícito (403) + boundary ≤30 sync (200) / >30 wrapper Celery (202 canónico) + 400 `no_failed_images`; tests R13.1/R13.2 + PNG hash-equal + subset-exclusivity + calibración | 3 |
-| T3 | R-DELTA-C2, D9 | Backend: `sim_df_value` escalar aditivo (null con la MISMA regla de ausencia que R12 — sentinela 0.0 incluida, r3 minor 6) vía el helper de T1; test exclusión en los 4 casos de ausencia | 3 |
+| T1 | R12, D1-D4 | Backend: helper puro `_build_study_comparison(sim_id, image_rows)` consumido por los 3 builders; contract tests R12.1 (población converged/approximate con df_estimate), R12.2 (edges D3: sin sim, sim borrada, sentinela 0.0, cero contribuyentes) + triple-builder equality + R12.3 (una sola tarjeta/nota) | 2 |
+| T2 | R13, persistence-MOD-R2, D5-D8, D10 | Backend: migración nullable `pixels_per_100nm` (ÚNICA tarea con la migración, scenarios 2.11/2.12) + servicio `reanalyze_failed_images` (UPDATE por pk con los 12 campos, campos preservados, agregados: 7 persistidos + read-derived, poblaciones R7/ddof=0, prohibido subset→persist_batch_results) + ruta project-nested con permiso explícito (403) + boundary ≤30 sync (200) / >30 wrapper Celery (202 canónico) + 400 `no_failed_images`; tests R13.1/R13.2 + PNG hash-equal + subset-exclusivity + calibración | 3 |
+| T3 | R-DELTA-C2, D9 | Backend: (FUSIONADO en T1 — la fuente única es `study_comparison.sim_df.value`, sin clave top-level; r4 MAJOR-2) — el test de `study_comparison` null/sentinela cubre la ocultación del marcador | 2 |
 | T4 | R12 | Frontend: `BatchStudyComparisonCard` NUEVA en SummaryPage (no reutiliza `FraktalComparisonCard` — requiere `comparison` no-opcional y carece de image_df/sim_df/Δ, r1 m3) con nota Sorensen, oculta si null + vitest | 4 |
-| T5 | R-DELTA-C2 | Frontend: marcador de referencia en FraktalBatchDistributions (línea vertical + chip `Sim Df: X.XX` + hover con target + toggle default ON; sin tocar bins/gates/tooltips canónicos) + prop `sim_df_value` desde `src/lib/api.ts` + vitest (R-DELTA-C2.1 visible, R-DELTA-C2.2 oculto en los 4 casos) | 4 |
+| T5 | R-DELTA-C2 | Frontend: marcador de referencia en FraktalBatchDistributions (línea vertical + chip `Sim Df: X.XX` + hover con target + toggle local default ON sin persistencia; SIN tocar bins/gates/tooltips canónicos; oculto si `study_comparison` null o panel no-data/"Not enough data") — lee `study_comparison.sim_df.value` desde `src/lib/api.ts` + vitest (R-DELTA-C2.1 visible, R-DELTA-C2.2 oculto) | 4 |
 | T6 | R13 | Frontend: botón re-análisis masivo con progreso (ResultsView/SummaryPage) + método en `src/lib/api.ts` + vitest | 4 |
 | T7 | todas | Suite completa backend (pytest/ruff) + frontend (vitest/lint/type-check) + Log de evidencia | 5 |
 
-## Log
+- L5 (2026-10-19): Spec-review r4 (task mvf3dtqr-i-7rrr): blockers r3 CERRADOS de verdad (distribuciones ADDED-only verificado; restatement persistence con diff solo-adiciones). 3 MAJOR + 9 minors → corrección r4:
+  - MAJOR-1: enumeración de agregados corregida — `persist_batch_results` escribe 7 campos; `q1_df/q3_df/mean_df_inclusive` son read-derived y no columnas; `n_successful` = no-null `fractal_dimension` (semántica persist), distinta del `n_successful` del histograma Df.
+  - MAJOR-2: fuente única del escalar — `study_comparison.sim_df.value` (sin clave top-level `sim_df_value` duplicada); T5 lee de ahí; T3 fusionado en T1.
+  - MAJOR-3: `BatchStudyComparisonCard` REEMPLAZA a `FraktalComparisonCard` en SummaryPage (R12.3: una sola tarjeta, nota Sorensen una vez, asimetría de sentinela resuelta en esa página; drill-downs fuera de alcance).
+  - minors: scenario renumerado 2.9→2.11 (canónico ya tenía 2.9/2.10) + scenario 2.12 población mixta + frase legacy NULL; headers de design/tasks alineados a marcador; proposal stale claims eliminados; marcador oculto también con n_successful<5; toggle = estado local sin persistencia; Log L4 claim de gate global corregido (el gate global no se toca — cubierto por R4 canónica); ancla permisos `:8-41`.
 
 - L1 (2026-10-19): Persona eligió C1+C2+C3. Contrato v0 (1c1bef7).
 - L2 (2026-10-19): Spec-review r1 (mvf21s3n-f-ztnz): NECESITA CORRECCIÓN — B1-B4/M1-M6/m1-m5 → corrección r1 (d9b2e79):

@@ -10,12 +10,12 @@ El change de abril (`fraktal-batch-analysis`) entregó el pipeline completo (ZIP
 análisis → persistencia → distribuciones → comparación con sims → CSV). La exploración identificó
 gaps de empaquetado y comparación que no requieren engine work. Este change cierra esos gaps.
 
-## Scope candidates (LA PERSONA ELIGE EN approval.md — ninguno está lockeado aún)
+## Scope candidates (ELEGIDOS por la persona 2026-10-19: C1+C2+C3 — pendiente solo approval.md)
 
 | # | Candidato | Qué añade | Superficie |
 |---|---|---|---|
-| C1 | **Comparativa batch ↔ su simulación enlazada** (reencaminada 2026-10-19 tras spec-review r1 B1: el modelo enlaza UNA sim por batch; la persona eligió "C1 contra la sim del batch"): stats de Df de imágenes (población canonical R7: converged→`fractal_dimension`, approximate→`df_estimate`) vs el Df de la sim, Δ, `deltas` por imagen, nota Sorensen a nivel batch | Bloque `study_comparison` en el payload de resumen (helper único para los 3 builders) + tarjeta en la SummaryPage | `fractal_analysis/views.py` (payload), `FraktalBatchSummaryPage` |
-| C2 | **Marcador de referencia del Df de la sim** (reencaminada 2026-10-19 tras spec-review r3 BLOCKER-1: con una sim por batch, `n_sim ≤ 1` — el overlay multi-valor era inimplementable): línea vertical en el histograma de Df de imágenes, chip `Sim Df: X.XX`, toggle por batch, sin tocar R2/R5/R-DELTA-M canónicos | Clave `sim_df_value` en payload + render del marcador en `FraktalBatchDistributions.tsx` | frontend + payload |
+| C1 | **Comparativa batch ↔ su simulación enlazada** — ELEGIDOS C1+C2+C3 (2026-10-19); C1 reencaminada tras r1 B1 (una sim por batch): stats de Df de imágenes (población canonical R7) vs Df de la sim, Δ, `deltas`, nota Sorensen | Bloque `study_comparison` (helper único, 3 builders) + `BatchStudyComparisonCard` que REEMPLAZA a `FraktalComparisonCard` en SummaryPage (r4 MAJOR-3) | `fractal_analysis/views.py` (payload), `FraktalBatchSummaryPage` |
+| C2 | **Marcador de referencia del Df de la sim** (reencaminada tras r3 BLOCKER-1: escalar, `n_sim ≤ 1`) | Línea vertical + chip sobre el histograma de Df; fuente ÚNICA `study_comparison.sim_df.value` (r4 MAJOR-2, sin clave duplicada) | frontend + payload |
 | C3 | **Re-análisis masivo de fallidas**: acción a nivel batch para re-correr solo las imágenes con `quality: failed` (hoy el reanalyze es por imagen) | Endpoint de acción + botón con progreso | views + task existente + UI |
 
 ### Out of Scope (lockeado por la persona)
@@ -31,10 +31,4 @@ gaps de empaquetado y comparación que no requieren engine work. Este change cie
 
 ### Modified Capabilities
 - `fraktal-batch-contract` (ADDED R12/R13), `fraktal-batch-persistence` (MODIFIED R2 — única
-  excepción), `fraktal-batch-distributions` (ADDED R-DELTA-C2) — deltas en `specs/`.
-
-## Nota de proceso
-
-Este proposal queda deliberadamente **sin delta spec hasta que la persona elija candidatos**
-(C1/C2/C3, subset o todos). El flujo continúa: elección → delta spec + design + tasks →
-spec-review → approval.md → apply.
+  excepción de contrato), `fraktal-batch-distributions` (ADDED R-DELTA-C2) — deltas en `specs/`.
