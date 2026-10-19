@@ -2,7 +2,7 @@
 
 > Specs (3 deltas): `specs/fraktal-batch-contract.md` (R12, R13), `specs/fraktal-batch-persistence.md`
 > (MODIFIED R2, restatement completo), `specs/fraktal-batch-distributions.md` (SOLO ADDED
-> R-DELTA-C2 marcador — sin MODIFIED). Design D1-D12: `design.md`. Pendiente: spec-review r6 →
+> R-DELTA-C2 marcador — sin MODIFIED). Design D1-D12: `design.md`. Pendiente: spec-review r7 →
 > approval.md → apply.
 > Provenance: contract commits (1c1bef7, d9b2e79, +this) viven en `feature/batch-windowed-box-counting`
 > (misma sesión de trabajo); al aplicar, T0 crea `feature/fraktal-batch-extensions` desde develop y
@@ -38,7 +38,7 @@
   - MAJOR-3: UPDATE list += `df_estimate`, `bisection_iterations`, `bisection_residual`, `failure_reason` (stale `df_estimate` en `mean_df_inclusive`). MAJOR-4: agregados fijados a EXACTAMENTE los campos que escribe `persist_batch_results` (lista completa) sobre el set completo. MAJOR-5: proposal Out-of-Scope + filas C1/C2 reescritas (las únicas excepciones nombradas). MAJOR-6: regla de sentinela `0.0` idéntica en R12, R-DELTA-C2 y D1.
   - minors: anclas corregidas (`services/batch.py:264`, canonical contract `:178`); T3 → D9 con sentinela; persistence header honesto (restatement, no "espeja R-DELTA"); `images_without_df` definida e `image_df.n == images_with_df`; gate global restated (component-global); tooltip del marcador propio (R-DELTA-M canónico intacto).
 
-- L5 (2026-10-19): Spec-review r4 (task mvf3dtqr-i-7rrr): blockers r3 CERRADOS de verdad (distribuciones ADDED-only verificado; restatement persistence con diff solo-adiciones). 3 MAJOR + 9 minors → corrección r4:
+- L5 (2026-10-19): Spec-review r4 (task mvf3tlz3-j-z97z; id corregido en r7 — L5 decía mvf3dtqr, que es el de r5): blockers r3 CERRADOS de verdad (distribuciones ADDED-only verificado; restatement persistence con diff solo-adiciones). 3 MAJOR + 9 minors → corrección r4:
   - MAJOR-1: enumeración de agregados corregida — `persist_batch_results` escribe 7 campos; `q1_df/q3_df/mean_df_inclusive` son read-derived y no columnas; `n_successful` = no-null `fractal_dimension` (semántica persist), distinta del `n_successful` del histograma Df.
   - MAJOR-2: fuente única del escalar — `study_comparison.sim_df.value` (sin clave top-level `sim_df_value` duplicada); T5 lee de ahí; T3 fusionado en T1.
   - MAJOR-3: `BatchStudyComparisonCard` REEMPLAZA a `FraktalComparisonCard` en SummaryPage (R12.3: una sola tarjeta, nota Sorensen una vez, asimetría de sentinela resuelta en esa página; drill-downs fuera de alcance).
@@ -49,3 +49,8 @@
   - minor 2: swap point nombrado — FraktalBatchResultsView.tsx:279, compartido por SummaryPage Y la página live (ambas cambian, sin fork de props). nit 8: legacy comparison block intacto pero NO es fuente del marcador.
   - minor 3: T2 añade el writer de primera analysis en persist_batch_results (batch.py:488-508). minor 4: "12 campos de análisis + pixels_per_100nm". minor 5: IDs canónicos corregidos (R1-R5/R-DELTA-L/M). minor 6: línea duplicada del header + fila Distribuciones duplicada eliminadas; Reviews chain extendida a r5. minor 7: L4/L5 reword (sin clave top-level; gate global no se toca). nit 9: AND-clause legacy NULL movida al cuerpo de R2.
   - Estado al cerrar esta corrección: pendiente spec-review r6.
+- L7 (2026-10-19): Spec-review r6 (task mvf4arvp-k-1jy0) + verificación r7 (task mvf4ssiq-m-2wsf): MAJOR de r6 cerrado genuinamente; 2 MINOR + 4 NIT + 1 cláusula → corrección r7 (este commit):
+  - MINOR-1: D4 alineado con la null branch de R12.3 (sin tarjeta y SIN fallback legacy; swap point compartido, ambas páginas) + tag extendido.
+  - MINOR-2: L7 añadido (este entry) + header a r7.
+  - MINOR (pre-existente): cláusula de scoping para el gap canónico de cuartiles (R7/R8 listan q1_df/q3_df que el modelo no tiene — fuera de alcance, documentado).
+  - NIT: anclas 775-777 (return del wrapper) y 1246-1249 (400 body) aplicadas de verdad; L5 task-id corregido; typo "(a legacy" → "as a legacy"; typo "applyporta".
