@@ -22,6 +22,7 @@ import {
   ArrowUp,
   BarChart3,
   Download,
+  RefreshCw,
   Table as TableIcon,
   Trash2,
 } from 'lucide-react'
@@ -29,7 +30,7 @@ import {
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { FraktalComparisonCard } from './FraktalComparisonCard'
+import { BatchStudyComparisonCard } from './BatchStudyComparisonCard'
 import { QualityBadge } from '@/components/common/QualityBadge'
 import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
 
@@ -41,6 +42,9 @@ interface Props {
   batchId: string
   /** Called after a successful delete so the parent can redirect / reset. */
   onDeleted?: () => void
+  /** Called with the refreshed payload after a bulk failed-image
+   *  re-analysis completes so the parent can update its state. */
+  onResultUpdate?: (result: FraktalBatchResult) => void
 }
 
 type SortKey =
@@ -62,11 +66,14 @@ export function FraktalBatchResultsView({
   projectId,
   batchId,
   onDeleted,
+  onResultUpdate,
 }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('index')
   const [sortDir, setSortDir] = useState<SortDir>('asc')
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleting, setDeleting] = useState(false)
+  const [reanalyzing, setReanalyzing] = useState(false)
+  const [reanalyzeProgress, setReanalyzeProgress] = useState<number | null>(null)
 
   const sortedImages = useMemo(() => {
     const images = [...result.images]
@@ -136,6 +143,30 @@ export function FraktalBatchResultsView({
     }
   }, [projectId, batchId, onDeleted])
 
+  // R13 (fraktal-batch-extensions): bulk re-analysis of the failed images,
+  // in place on the backend. <=30 failed -> sync 200; >30 -> 202 + polling
+  // (progress reported via onProgress ticks). Zero failed is guarded by
+  // rendering the button only when n_failed > 0.
+  const nFailed = result.stats.n_failed ?? 0
+
+  const handleReanalyzeFailed = useCallback(async () => {
+    setReanalyzing(true)
+    setReanalyzeProgress(null)
+    try {
+      const updated = await fraktalApi.reanalyzeFailedBatch(
+        projectId,
+        batchId,
+        (p) => setReanalyzeProgress(p.progress)
+      )
+      onResultUpdate?.(updated)
+    } catch (err) {
+      console.error('Bulk re-analysis failed:', err)
+    } finally {
+      setReanalyzing(false)
+      setReanalyzeProgress(null)
+    }
+  }, [projectId, batchId, onResultUpdate])
+
   return (
     <div className="space-y-4">
       {/* Action buttons bar */}
@@ -159,6 +190,25 @@ export function FraktalBatchResultsView({
           <Trash2 className="h-4 w-4 mr-2" />
           Delete batch
         </Button>
+        {nFailed > 0 && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleReanalyzeFailed}
+            disabled={reanalyzing}
+            aria-label="Re-analyze failed images"
+            data-testid="reanalyze-failed-button"
+          >
+            <RefreshCw
+              className={`h-4 w-4 mr-2 ${reanalyzing ? 'animate-spin' : ''}`}
+            />
+            {reanalyzing
+              ? reanalyzeProgress != null
+                ? `Re-analyzing (${Math.round(reanalyzeProgress * 100)}%)`
+                : 'Re-analyzing...'
+              : `Re-analyze failed (${nFailed})`}
+          </Button>
+        )}
       </div>
 
       {/* Delete confirmation */}
@@ -275,8 +325,14 @@ export function FraktalBatchResultsView({
         </Alert>
       )}
 
-      {/* Comparison card (R11) — present only when the batch was linked to a sim */}
-      {result.comparison && <FraktalComparisonCard comparison={result.comparison} />}
+      {/* Study comparison card (R12) — REPLACES the legacy comparison card
+          at this shared swap point (R12.3): exactly one card and one R11
+          Sorensen note per page. Renders ONLY when study_comparison is
+          non-null; the null branch shows NO card and NO legacy fallback
+          (the sentinel rule would be reintroduced). */}
+      {result.study_comparison ? (
+        <BatchStudyComparisonCard studyComparison={result.study_comparison} />
+      ) : null}
 
       {/* Per-image table (R9) — rows are clickable (T6.1) */}
       <Card>
