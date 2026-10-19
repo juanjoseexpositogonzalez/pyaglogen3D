@@ -1,73 +1,48 @@
 # Delta Spec: fraktal-batch-extensions → capability fraktal-batch-distributions
 
-> r2 MAJOR: el overlay del C2 en el MISMO histograma exige una excepción puntual a R2/R5/R-DELTA-M
-> cuando el overlay está ACTIVO (la Out-of-Scope original prohibía tocarlos y se contradecía).
-> Fuera del modo overlay, R2/R5/R-DELTA-M se aplican SIN cambios por serie.
-
-## MODIFIED Requirements
-
-### Requirement: R2. Bucket count derived from Sturges' rule, bounded [3, 30]
-
-When the sim-Df overlay (R-DELTA-C2) is ACTIVE on the Df histogram, the bin range and count are
-computed over the UNION of both series instead of the image series alone:
-
-`k = ceil(log2(n_union) + 1)` with `n_union = n_image + n_sim` (successful values of both
-series), clamped to `[3, 30]`; boundaries evenly spaced over the union `[min, max]` of both
-series. Each METRIC's bucket count stays independent (kf, Rg, npo unchanged). When the overlay
-is not active, R2 applies exactly as canonical (per-series, per-metric).
-
-#### Scenario 2-O.1 — Union binning under overlay
-
-- **GIVEN** 30 image Df values in [1.4, 2.2] and 3 sim Df values in [2.3, 2.5], overlay ON
-- **WHEN** the Df histogram is computed
-- **THEN** the shared bins cover [1.4, 2.5] with `k = ceil(log2(33) + 1) = 7` buckets, and
-  each series is binned over those shared boundaries (counting remains per-series)
-
-### Requirement: R5. Single unique value → degenerate histogram with one bar
-
-Per series: when a series has `n ≥ 5` with zero variance, its series renders a single bar
-spanning that value over the active shared range (overlay ON) or its own range (overlay OFF).
-The component MUST NOT error or omit a qualifying series because the OTHER series is
-degenerate or sparse.
-
-#### Scenario 5-O.1 — Independent degeneracy under overlay
-
-- **GIVEN** 10 image Df values all identical and 6 sim Df values with variance, overlay ON
-- **THEN** the image series renders its single bar AND the sim series renders its histogram
-  over the shared range — neither state suppresses the other
-
-### Requirement: R-DELTA-M. Df histogram tooltip shows per-quality count breakdown
-
-When the sim-Df overlay is ACTIVE, each bar's tooltip MUST attribute counts per SOURCE SERIES
-in addition to the per-quality breakdown of the image series:
-
-`"{n_image_in_bucket} images ({converged} converged, {approximate} approximate), {n_sim_in_bucket} sim"`
-
-omitting empty components per the canonical rules. The per-quality format applies unchanged
-to the image series; the sim series contributes a single count (no quality breakdown). With
-the overlay OFF, R-DELTA-M applies exactly as canonical.
+> r3 BLOCKER-1: con UNA sim por batch, la serie sim del overlay era un escalar (`n_sim ≤ 1`)
+> — todos los gates n≥5 y escenarios de unión eran inalcanzables. C2 se reencamina (decisión
+> forzada por los datos, a ratificar en approval.md) a un **marcador de referencia**: una línea
+> vertical en el Df de la sim sobre el histograma de imágenes. Consecuencia: NO hay MODIFIED de
+> R2/R5/R-DELTA-M — el binning, gates y tooltips canónicos quedan intactos (la Out-of-Scope
+> "sin cambios a requisitos existentes" vuelve a ser cierta para esta capability).
 
 ## ADDED Requirements
 
-### Requirement: R-DELTA-C2. Sim-Df overlay in the image Df histogram (C2)
+### Requirement: R-DELTA-C2. Sim-Df reference marker on the image Df histogram (C2)
 
-The batch result payload SHALL carry an additive `sim_df_values: […]` array (the linked sim's
-`sim_box_counting_df` source per canonical R9; empty when no sim/metric — note: a batch links
-ONE sim, so this array holds the values of that single sim's comparison lineage; empty is the
-common case for sim-less batches). The FraktalBatchDistributions component SHALL render the
-sim series as an overlay in the Df histogram per the MODIFIED R2/R5/R-DELTA-M above, with
-PER-SERIES data-volume gates replacing the card-level early return:
+The batch result payload SHALL carry an additive nullable `sim_df_value: number | null` — the
+linked simulation's `metrics["fractal_dimension"]` (`views.py:1132`), **with the SAME missing
+rule as R12**: absent sim, deleted sim row, missing metric, or the `0.0` sentinel → `null`
+(identical wording to R12's population rule — r3 minor 6: one rule, both deltas). Delivered
+through the same three payload builders via the `_build_study_comparison` lineage (Change A of
+this feature pair uses the same scalar; here it feeds the marker only).
 
-- image series: existing per-metric gate (`MIN_N_SUCCESSFUL = 5`, `:97/:241`)
-- sim series: renders at `n ≥ 5`; `1 ≤ n < 5` → "Not enough data" chip for that series;
-  `n = 0`/absent → overlay hidden
-- the global no-data gate (`:166-181`) applies only when BOTH series are empty for the metric
-- the overlay toggle is hidden when `sim_df_values` is empty
+When `sim_df_value` is non-null and the Df histogram is rendered, the component SHALL draw a
+**vertical reference marker** at `x = sim_df_value`:
 
-#### Scenario R-DELTA-C2.1 — Mixed gates under overlay
+- dashed vertical line spanning the plot height, visually distinct from the bars (r3: the
+  image series' binning, gates, and tooltips are UNTOUCHED — canonical R2/R5/R-DELTA-M apply
+  exactly as canonical);
+- a small label/chip near the line: `Sim Df: {value}` (2 decimals);
+- hovering the marker shows `Sim Df: {value} (target: {target_df})` when `target_df` is
+  available (source: R12's `sim_df.target_df`);
+- the marker is hidden when `sim_df_value` is `null`, when the Df histogram itself is in a
+  no-data state (canonical R4), and when the user disables it (a per-batch toggle, default ON).
 
-- **GIVEN** an image series with `n = 3` (< 5) and a sim series with `n = 8`, overlay ON
-- **WHEN** the Df panel renders
-- **THEN** the sim series renders its histogram (it qualifies) and the image series shows its
-  per-metric "Not enough data" state IN THE SAME CARD — the early-return gate does not
-  suppress the qualifying series (r2 minor: gates are per-series, not card-level)
+The marker MUST NOT affect bucket computation (R2), degenerate rendering (R5), tooltip
+breakdowns (R-DELTA-M), or the "N successful of M total" label in any way.
+
+#### Scenario R-DELTA-C2.1 — Marker renders over a normal histogram
+
+- **GIVEN** a batch linked to a sim with `fractal_dimension = 2.42`, 30 image Df values
+- **WHEN** the Df histogram renders
+- **THEN** the canonical histogram renders unchanged (Sturges buckets per R2, label per R3)
+- **AND** a dashed vertical marker sits at `x = 2.42` with the `Sim Df: 2.42` chip
+
+#### Scenario R-DELTA-C2.2 — Marker hidden
+
+- **GIVEN** a batch without sim, with a deleted sim row, with a sim metric missing or `0.0`
+- **WHEN** the Df histogram renders
+- **THEN** no marker is drawn and no empty space or error state appears (histogram identical
+  to pre-change)
