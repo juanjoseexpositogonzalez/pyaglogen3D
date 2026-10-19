@@ -1,6 +1,6 @@
 # Approval: fraktal-batch-extensions
 
-> Estado: **LISTO PARA APROBAR** — pendiente del gate de la persona.
+> Estado: **APROBADO** (2026-10-19, por la persona en sesión — ver Log). Pendiente: issue Jira + apply.
 > Spec-review: 7 rondas — r1 (mvf21s3n-f-ztnz) → r2 (mvf2hiqs-g-x5jy) → r3 (mvf2v5g3-h-bod9) →
 > r4 (mvf3tlz3-j-z97z) → r5 (mvf3dtqr-i-7rrr) → r6 (mvf4arvp-k-1jy0) → r7 (mvf4ssiq-m-2wsf).
 > La r7 no encontró hallazgos semánticos (solo bookkeeping de las correcciones previas); las
@@ -45,6 +45,7 @@ Tres extensiones **aditivas** del batch de imágenes FRAKTAL (capability `frakta
 
 ## Al aprobar
 
-- Marcar este archivo como APROBADO (con fecha), crear issue Jira → **En curso** con comentario,
-  y ejecutar `tasks.md` T0–T7 (rama `feature/fraktal-batch-extensions` desde develop, con los
-  cambios de contrato portaados o aplicando sobre esta rama tras el merge del Change A).
+- **APROBADO 2026-10-19**: la persona otorgó el gate ("Pues vamos a seguir") tras el resumen del
+  gate — C2-marcador RATIFICADO (acepta la reencaminación forzada por los datos).
+- Apply de `tasks.md` T0–T7: rama `feature/fraktal-batch-extensions` desde develop con los
+  commits de contrato cherry-picked; issue Jira nueva a En curso.
