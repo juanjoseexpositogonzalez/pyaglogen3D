@@ -4,6 +4,7 @@ import csv
 import io
 import json
 import logging
+import time
 import zipfile
 from typing import Any
 
@@ -2418,10 +2419,12 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             persisted_params["windowed"] = study_params["windowed"]
         effective_windowed = bool(persisted_params.get("windowed", False))
 
-        # Update study to enable box-counting for future reference
+        # Update study to enable box-counting for future reference. Fix
+        # round 2 (fresh-pass JD-B-NEW-001): this save happens AFTER the
+        # in-flight guard — a 409-rejected double-submit must not overwrite
+        # the study's stored params with the rejected request's values.
         study.include_box_counting = True
         study.box_counting_params = persisted_params
-        study.save(update_fields=["include_box_counting", "box_counting_params"])
 
         # JD-B-006: per-study double-submit guard — a second POST while a
         # box-counting run is in flight is rejected with 409. The marker is
@@ -2438,6 +2441,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 },
                 status=status.HTTP_409_CONFLICT,
             )
+        study.save(update_fields=["include_box_counting", "box_counting_params"])
 
         # Work set: completed simulations WITH geometry — the same filter as
         # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
@@ -2669,6 +2673,18 @@ def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
         task_id = meta.get("task_id")
         if not task_id:
             return None
+        # Fix round 2 (fresh-pass JD-B-NEW-002): a worker hard death
+        # (SIGKILL/OOM) never runs the task's ``finally`` release and never
+        # reaches a terminal state, so the marker would block new runs until
+        # RESULT_EXPIRES. Stamp a wall-clock dispatch time and treat markers
+        # older than one hour as stale (generous vs the 30-min poller
+        # deadline and the 16-48 min worst-case run ceiling).
+        dispatched_at = meta.get("dispatched_at")
+        if isinstance(dispatched_at, (int, float)):
+            import time as _time
+
+            if _time.time() - float(dispatched_at) > 3600:
+                return None
         if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
             return None
         return str(task_id)
@@ -2689,7 +2705,14 @@ def _stamp_bc_dispatch_meta(task: Any, total: int) -> None:
     try:
         task.backend.store_result(
             task.id,
-            {"current": 0, "total": total, "progress": 0.0},
+            {
+                "current": 0,
+                "total": total,
+                "progress": 0.0,
+                # Fix round 2 (fresh-pass JD-B-NEW-002): wall-clock dispatch
+                # time for the stale-marker bound (worker hard death).
+                "dispatched_at": time.time(),
+            },
             state="PROGRESS",
         )
     except Exception:  # noqa: BLE001 — stamping must never break dispatch

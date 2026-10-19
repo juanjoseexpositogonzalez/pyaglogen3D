@@ -527,8 +527,13 @@ class TestDoubleSubmitGuard:
         assert response.status_code == 202
         stamped = task.backend.store_result.call_args_list
         # First stamp: the dispatch meta carrying the 202-time total (F2)
+        # + the wall-clock dispatch time (fix round 2, JD-B-NEW-002).
         assert stamped[0].args[0] == "task-stamp-1"
-        assert stamped[0].args[1] == {"current": 0, "total": 31, "progress": 0.0}
+        stamp_meta = stamped[0].args[1]
+        assert stamp_meta["current"] == 0
+        assert stamp_meta["total"] == 31
+        assert stamp_meta["progress"] == 0.0
+        assert isinstance(stamp_meta["dispatched_at"], float)
         assert stamped[0].kwargs["state"] == "PROGRESS"
         # Second stamp: the per-study in-flight marker (JD-B-006)
         assert stamped[1].args[0] == f"bc-inflight-{study.id}"

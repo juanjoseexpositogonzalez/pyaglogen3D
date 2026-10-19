@@ -56,3 +56,5 @@
 ## Pendiente de approval
 
  approval.md se crea cuando la persona otorga el gate (tras r3 sin MEDIA/ALTA).
+
+- L8 (2026-10-19): Fresh-pass (judge mvfj8hb4-w-w5l5) CONFIRMADO — F1-F6 verificados con semántica sound: get_object() estrictamente antes de AsyncResult (F1); PENDING-no-meta→failed justificado por dispatch-stamp inmediato (F2); control UI windowed reasonable como entry point JD-A-003 (mini-amend R7 pendiente al archive); F4 real-engine con llamada THROUGH al engine real (sin mocks en los estimadores) y aserción adaptada sound (fit_window = selector de región, no slice); F5 migración reversible con noop documentado; F6(a-k) todos confirmados. 2 MINOR nuevos del fresh-pass corregidos (c157edd): JD-B-NEW-001 study.save movido DESPUÉS del guard 409 (un double-submit rechazado ya no sobrescribe los params persistidos) y JD-B-NEW-002 wall-clock `dispatched_at` en el marker meta + staleness bound de 1h (worker SIGKILL ya no bloquea 24h); test de dispatch stamp actualizado a subset + dispatched_at. Pendiente archive: mini-amend R7 entry-point (JD-A-003) al canonical.
