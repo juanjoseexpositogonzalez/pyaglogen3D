@@ -7,6 +7,7 @@ import random
 from math import prod
 
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
@@ -25,6 +26,42 @@ from .utils import generate_simulation_name
 # 10 MB raw file encodes to ~13.3 MB — we cap the encoded length to keep
 # the check cheap (no decode required).
 _CSV_MAX_BASE64_BYTES = 14 * 1024 * 1024
+
+#: Allowed keys of the box-counting params dict (batch-windowed-box-counting
+#: R1). `force` is accepted in the run-box-counting request body but is
+#: popped there and NEVER persisted, so it is not part of this set.
+BOX_COUNTING_PARAM_KEYS = ("points_per_sphere", "precision", "windowed")
+
+
+def validate_box_counting_params_dict(value: dict) -> None:
+    """Validate a box-counting params dict (R1, R1.2).
+
+    Shared by the study serializer field and the run-box-counting action so
+    the request body and the persisted shape are enforced identically:
+
+    - unknown keys are rejected with the offending key named (NEW behavior,
+      documented in R1.2 — pre-change extras were silently ignored);
+    - `points_per_sphere` within [10, 1000];
+    - `precision` within [8, 21];
+    - `windowed` must be a bool when present.
+    """
+    for key in value:
+        if key not in BOX_COUNTING_PARAM_KEYS:
+            raise ValidationError(
+                f"Invalid key '{key}'. Valid keys: {list(BOX_COUNTING_PARAM_KEYS)}"
+            )
+
+    points = value.get("points_per_sphere", 100)
+    if not (10 <= points <= 1000):
+        raise ValidationError("points_per_sphere must be between 10 and 1000")
+
+    precision = value.get("precision", 18)
+    if not (8 <= precision <= 21):
+        raise ValidationError("precision must be between 8 and 21")
+
+    windowed = value.get("windowed")
+    if windowed is not None and not isinstance(windowed, bool):
+        raise ValidationError("windowed must be a boolean")
 
 
 def generate_seed():
@@ -352,19 +389,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         return value
 
     def validate_box_counting_params(self, value):
-        """Validate box-counting parameters."""
+        """Validate box-counting parameters (delegates to the shared R1
+        validator, also used by the run-box-counting action)."""
         if value is None:
             return value
 
-        points = value.get("points_per_sphere", 100)
-        if not (10 <= points <= 1000):
-            raise serializers.ValidationError(
-                "points_per_sphere must be between 10 and 1000"
-            )
-
-        precision = value.get("precision", 18)
-        if not (8 <= precision <= 21):
-            raise serializers.ValidationError("precision must be between 8 and 21")
+        validate_box_counting_params_dict(value)
 
         return value
 

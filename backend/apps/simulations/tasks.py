@@ -11,6 +11,10 @@ from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
+#: Work-set size above which the study box-counting run is dispatched to
+#: Celery instead of running inline (design D5, R3).
+BC_ASYNC_THRESHOLD = 30
+
 
 def expand_distribution_kwargs(prefix: str, dist_config: dict | None) -> dict:
     """Expand a distribution config dict into engine keyword arguments.
@@ -966,6 +970,18 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
     # Update simulation metrics
     metrics = simulation.metrics or {}
     metrics["box_counting"] = box_counting_results
+    # Windowed passthrough (design D6/D8): the auto-run path honors the
+    # study's persisted windowed flag; the fit window is derived from the
+    # legacy result's effective_levels (D1/D2) — zero extra legacy calls.
+    if bc_params.get("windowed"):
+        metrics["box_counting_windowed"] = run_windowed_bc(
+            coords,
+            radii,
+            points_per_sphere,
+            precision,
+            result.effective_levels,
+            {"points_per_sphere": points_per_sphere, "precision": precision},
+        )
     simulation.metrics = metrics
     simulation.save(update_fields=["metrics"])
 
@@ -975,6 +991,234 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
     )
 
     return box_counting_results
+
+
+def derive_fit_window(effective_levels: int) -> tuple[int, int] | None:
+    """Derive the locked windowed fit window from the effective level count.
+
+    Design D2 (Cycle 3.2 diagnostic): ``s = max(0, min(1, eff-3))``,
+    ``e = eff-1``. With ``eff == 3`` the window is ``(0, 2)`` (≡ legacy fit,
+    archive Log L4); with ``eff < 3`` NO window is derived — the caller writes
+    ``status: "insufficient_levels"`` without calling the windowed estimator
+    (R2.2/R9: avoids the ``eff-1`` underflow and the pyo3 ``(usize, usize)``
+    constraint).
+    """
+    if effective_levels < 3:
+        return None
+    s = max(0, min(1, effective_levels - 3))
+    return (s, effective_levels - 1)
+
+
+def build_bc_block(result, params: dict, status: str, fit_window_used, error_message=None) -> dict:
+    """Build the windowed box-counting storage block (R2, design D3).
+
+    ONE schema for all three statuses (``ok | insufficient_levels | error``):
+    always the 11 keys ``dimension, r_squared, std_error, confidence_interval,
+    log_scales, log_values, execution_time_ms, parameters, status,
+    fit_window_used, error_message``. Key parity is enforced by code, not by
+    prose (spec-review r2):
+
+    - value fields are ``None`` when ``status != "ok"``;
+    - ``error_message`` is a string only when ``status == "error"``;
+    - ``fit_window_used`` is ``[s, e]`` only when ``status == "ok"``.
+    """
+    ok = status == "ok" and result is not None
+    return {
+        "dimension": float(result.dimension) if ok else None,
+        "r_squared": float(result.r_squared) if ok else None,
+        "std_error": float(result.std_error) if ok else None,
+        "confidence_interval": list(result.confidence_interval) if ok else None,
+        "log_scales": result.log_scales.tolist() if ok else None,
+        "log_values": result.log_values.tolist() if ok else None,
+        "execution_time_ms": int(result.execution_time_ms) if ok else 0,
+        "parameters": dict(params),
+        "status": status,
+        "fit_window_used": list(fit_window_used) if ok else None,
+        "error_message": str(error_message) if status == "error" else None,
+    }
+
+
+def run_windowed_bc(
+    coords: np.ndarray,
+    radii: np.ndarray,
+    points_per_sphere: int,
+    precision: int,
+    effective_levels: int,
+    params: dict,
+) -> dict:
+    """Run the windowed estimator for one simulation (R2, design D2/D4).
+
+    Refusals (``effective_levels < 3``) NEVER call the windowed estimator and
+    yield ``status: "insufficient_levels"``; any other windowed-side failure
+    yields ``status: "error"`` with the message — never aborts the run and
+    never touches the legacy block.
+    """
+    import aglogen_core
+
+    window = derive_fit_window(effective_levels)
+    if window is None:
+        return build_bc_block(None, params, "insufficient_levels", None)
+    try:
+        result = aglogen_core.box_counting_agglomerate(
+            coords,
+            radii,
+            points_per_sphere=points_per_sphere,
+            precision=precision,
+            fit_window=window,
+        )
+    except Exception as e:  # noqa: BLE001 — error status never aborts the run (D4)
+        return build_bc_block(None, params, "error", None, error_message=str(e))
+    return build_bc_block(result, params, "ok", window)
+
+
+def run_box_counting_for_study(
+    study_id: str,
+    points_per_sphere: int,
+    precision: int,
+    windowed: bool,
+    force: bool,
+    progress_cb=None,
+) -> dict:
+    """Run box-counting over a study's work set (R3, design D5/D6).
+
+    The work set is completed simulations WITH geometry (``geometry__isnull=False``)
+    — the same filter as the pre-change processing loop (spec-review M8).
+    Sims already holding a legacy block are skipped unless ``force`` (R2.3).
+    When ``windowed`` is set, every processed simulation additionally stores
+    the windowed block at ``metrics["box_counting_windowed"]``; the legacy
+    block construction is byte-identical to the pre-change loop (R2.1).
+
+    ``progress_cb(current, total)`` is invoked after each simulation (used by
+    the async Celery task to publish job state; design D5).
+    """
+    import aglogen_core
+
+    from .models import ParametricStudy
+
+    study = ParametricStudy.objects.get(id=study_id)
+    simulations = study.simulations.filter(
+        status="completed",
+        geometry__isnull=False,
+    ).order_by("created_at")
+
+    total = simulations.count()
+    results = {
+        "total": total,
+        "processed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "errors": [],
+        "windowed": bool(windowed),
+        "windowed_insufficient_levels": 0,
+        "windowed_errors": 0,
+    }
+    bc_params = {"points_per_sphere": points_per_sphere, "precision": precision}
+
+    for current, sim in enumerate(simulations, start=1):
+        # Check if already has box-counting (R2.3: skipped exactly as today
+        # unless force re-runs it)
+        if sim.metrics and sim.metrics.get("box_counting") and not force:
+            results["skipped"] += 1
+        else:
+            try:
+                # Load geometry
+                buf = io.BytesIO(sim.geometry)
+                geometry_array = np.load(buf)
+                coords = np.ascontiguousarray(geometry_array[:, :3])
+                radii = np.ascontiguousarray(geometry_array[:, 3])
+
+                # Run box-counting (legacy estimator first — D1: the window
+                # is derived from ITS effective_levels, zero extra calls)
+                bc_result = aglogen_core.box_counting_agglomerate(
+                    coords,
+                    radii,
+                    points_per_sphere=points_per_sphere,
+                    precision=precision,
+                )
+
+                # Update metrics (legacy block byte-identical to pre-change)
+                metrics = sim.metrics or {}
+                metrics["box_counting"] = {
+                    "dimension": float(bc_result.dimension),
+                    "r_squared": float(bc_result.r_squared),
+                    "std_error": float(bc_result.std_error),
+                    "confidence_interval": list(bc_result.confidence_interval),
+                    "log_scales": bc_result.log_scales.tolist(),
+                    "log_values": bc_result.log_values.tolist(),
+                    "execution_time_ms": int(bc_result.execution_time_ms),
+                    "parameters": {
+                        "points_per_sphere": points_per_sphere,
+                        "precision": precision,
+                    },
+                }
+                if windowed:
+                    block = run_windowed_bc(
+                        coords,
+                        radii,
+                        points_per_sphere,
+                        precision,
+                        bc_result.effective_levels,
+                        bc_params,
+                    )
+                    metrics["box_counting_windowed"] = block
+                    if block["status"] == "insufficient_levels":
+                        results["windowed_insufficient_levels"] += 1
+                    elif block["status"] == "error":
+                        results["windowed_errors"] += 1
+                sim.metrics = metrics
+                sim.save(update_fields=["metrics"])
+                results["processed"] += 1
+
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append(
+                    {
+                        "simulation_id": str(sim.id),
+                        "error": str(e),
+                    }
+                )
+
+        if progress_cb is not None:
+            progress_cb(current, total)
+
+    return results
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.run_box_counting_async")
+def run_box_counting_async(
+    self,
+    study_id: str,
+    points_per_sphere: int,
+    precision: int,
+    windowed: bool,
+    force: bool,
+) -> dict:
+    """Async box-counting run for work sets above BC_ASYNC_THRESHOLD (R3, D5).
+
+    Job state lives in Celery ``AsyncResult`` via ``update_state`` (NOT Django
+    cache: LocMemCache is per-process and invisible across the Gunicorn
+    workers). Payload: ``{current, total, progress 0..1}`` under state
+    PROGRESS; the final return value lands under SUCCESS.
+    """
+
+    def _report(current: int, total: int) -> None:
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "current": current,
+                "total": total,
+                "progress": (current / total) if total else 1.0,
+            },
+        )
+
+    return run_box_counting_for_study(
+        study_id,
+        points_per_sphere,
+        precision,
+        windowed,
+        force,
+        progress_cb=_report,
+    )
 
 
 def fit_power_law_rg(

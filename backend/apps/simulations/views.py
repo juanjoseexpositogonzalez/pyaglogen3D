@@ -24,17 +24,17 @@ from .serializers import (
     SimulationDetailSerializer,
     SimulationSerializer,
 )
+from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
     get_scale_factor_nm,
 )
 from .services.projection import (
+    create_projection_filename,
     render_projection_png,
     render_projection_svg,
-    create_projection_filename,
 )
-from .services.projections import build_projection_zip, compute_per_direction_scales
-from .services.mat_parser import MatParseError, parse_mat_geometry
+from .services.projections import build_projection_zip
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
 
@@ -82,9 +82,10 @@ logger = logging.getLogger(__name__)
 
 from apps.core.services.csv_locale import (
     get_user_csv_locale as _get_user_csv_locale,
+)
+from apps.core.services.csv_locale import (
     write_localized_row as _write_localized_row,
 )
-
 
 # --- Shared projection rendering --------------------------------------------
 
@@ -2122,19 +2123,39 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         Request body (optional):
         - points_per_sphere: int (default: 100)
         - precision: int (default: 18)
+        - windowed: bool (optional) — overrides the study's persisted flag
+          for this run AND is persisted (explicit values win; absence
+          preserves — R1.3)
+        - force: bool (optional, default False) — re-run sims that already
+          hold a legacy block; accepted but NEVER persisted (M5/R2.3)
 
-        Returns progress and results summary.
+        Work set ≤ 30 → runs synchronously (full per-sim summary in the
+        response, as today); > 30 → 202 with a Celery task id (R3, design D5).
         """
-        from .tasks import run_box_counting_if_configured
-        import aglogen_core
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        from .serializers import validate_box_counting_params_dict
+        from .tasks import (
+            BC_ASYNC_THRESHOLD,
+            run_box_counting_async,
+            run_box_counting_for_study,
+        )
 
         study = self.get_object()
 
-        # Get parameters from request
-        points_per_sphere = request.data.get("points_per_sphere", 100)
-        precision = request.data.get("precision", 18)
+        body = request.data if isinstance(request.data, dict) else {}
 
-        # Validate
+        # `force` is accepted in the body but never persisted (R1/R2.3): pop
+        # it before the shared key validation, which enforces the persisted
+        # shape {points_per_sphere, precision, windowed} (R1.2).
+        force = bool(body.get("force", False))
+        body_wo_force = {k: v for k, v in body.items() if k != "force"}
+
+        # Get parameters from request
+        points_per_sphere = body_wo_force.get("points_per_sphere", 100)
+        precision = body_wo_force.get("precision", 18)
+        windowed = body_wo_force.get("windowed")
+
         try:
             points_per_sphere = int(points_per_sphere)
             precision = int(precision)
@@ -2144,87 +2165,76 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not (10 <= points_per_sphere <= 1000):
+        # Shared validation with the study serializer (R1.2): the FULL body
+        # (minus `force`) is validated against the persisted shape — unknown
+        # keys are rejected naming the offending key; ranges and windowed
+        # bool-ness too. Coerced numerics are substituted so string inputs
+        # pass the range check.
+        try:
+            candidate_params = dict(body_wo_force)
+            candidate_params["points_per_sphere"] = points_per_sphere
+            candidate_params["precision"] = precision
+            validate_box_counting_params_dict(candidate_params)
+        except DRFValidationError as exc:
+            detail = exc.detail
+            message = detail[0] if isinstance(detail, list) and detail else detail
             return Response(
-                {"error": "points_per_sphere must be between 10 and 1000"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not (8 <= precision <= 21):
-            return Response(
-                {"error": "precision must be between 8 and 21"},
+                {"error": str(message)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Update study to enable box-counting for future reference
-        study.include_box_counting = True
-        study.box_counting_params = {
+        # Precedence (R1): request body > study.box_counting_params.windowed
+        # > absent. Explicit values win and are persisted; absence preserves
+        # the stored flag (B2).
+        study_params = (
+            study.box_counting_params
+            if isinstance(study.box_counting_params, dict)
+            else {}
+        )
+        persisted_params: dict = {
             "points_per_sphere": points_per_sphere,
             "precision": precision,
         }
+        if windowed is not None:
+            persisted_params["windowed"] = windowed
+        elif "windowed" in study_params:
+            persisted_params["windowed"] = study_params["windowed"]
+        effective_windowed = bool(persisted_params.get("windowed", False))
+
+        # Update study to enable box-counting for future reference
+        study.include_box_counting = True
+        study.box_counting_params = persisted_params
         study.save(update_fields=["include_box_counting", "box_counting_params"])
 
-        # Get completed simulations without box-counting results
-        simulations = study.simulations.filter(
+        # Work set: completed simulations WITH geometry — the same filter as
+        # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
+        # count toward the sync/async boundary.
+        work_set = study.simulations.filter(
             status="completed",
             geometry__isnull=False,
         )
+        total = work_set.count()
 
-        results = {
-            "total": simulations.count(),
-            "processed": 0,
-            "skipped": 0,
-            "failed": 0,
-            "errors": [],
-        }
+        if total > BC_ASYNC_THRESHOLD:
+            task = run_box_counting_async.delay(
+                str(study.id),
+                points_per_sphere,
+                precision,
+                effective_windowed,
+                force,
+            )
+            return Response(
+                {"task_id": task.id, "total": total},
+                status=status.HTTP_202_ACCEPTED,
+            )
 
-        for sim in simulations:
-            # Check if already has box-counting
-            if sim.metrics and sim.metrics.get("box_counting"):
-                results["skipped"] += 1
-                continue
-
-            try:
-                # Load geometry
-                buf = io.BytesIO(sim.geometry)
-                geometry_array = np.load(buf)
-                coords = np.ascontiguousarray(geometry_array[:, :3])
-                radii = np.ascontiguousarray(geometry_array[:, 3])
-
-                # Run box-counting
-                bc_result = aglogen_core.box_counting_agglomerate(
-                    coords,
-                    radii,
-                    points_per_sphere=points_per_sphere,
-                    precision=precision,
-                )
-
-                # Update metrics
-                metrics = sim.metrics or {}
-                metrics["box_counting"] = {
-                    "dimension": float(bc_result.dimension),
-                    "r_squared": float(bc_result.r_squared),
-                    "std_error": float(bc_result.std_error),
-                    "confidence_interval": list(bc_result.confidence_interval),
-                    "log_scales": bc_result.log_scales.tolist(),
-                    "log_values": bc_result.log_values.tolist(),
-                    "execution_time_ms": int(bc_result.execution_time_ms),
-                    "parameters": {
-                        "points_per_sphere": points_per_sphere,
-                        "precision": precision,
-                    },
-                }
-                sim.metrics = metrics
-                sim.save(update_fields=["metrics"])
-                results["processed"] += 1
-
-            except Exception as e:
-                results["failed"] += 1
-                results["errors"].append(
-                    {
-                        "simulation_id": str(sim.id),
-                        "error": str(e),
-                    }
-                )
+        results = run_box_counting_for_study(
+            str(study.id),
+            points_per_sphere,
+            precision,
+            effective_windowed,
+            force,
+        )
 
         return Response(
             {
