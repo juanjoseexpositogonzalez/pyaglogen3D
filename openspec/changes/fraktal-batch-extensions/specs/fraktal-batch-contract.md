@@ -66,11 +66,25 @@ exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes pr
 - **THEN** `study_comparison` is `null` (deleted-sim case mirrors `build_comparison_data`'s
   `DoesNotExist` handling, `services/batch.py:264`, function starting ~:239 — r3 minor 9)
 
+#### Scenario R12.3 — Exactly one comparison card and one Sorensen note (r4 MAJOR-3)
+
+- **GIVEN** the SummaryPage today renders `FraktalComparisonCard` (canonical R9/R11 card, with
+  `sim_box_counting_df` and the Sorensen note) — note: `build_comparison_data` does NOT apply
+  the 0.0-sentinel rule, so the same sim could render `0.0` there and `null` here
+- **WHEN** this change ships
+- **THEN** `BatchStudyComparisonCard` REPLACES `FraktalComparisonCard` on the SummaryPage:
+  it renders when `study_comparison` is non-null (applying the sentinel rule) and the legacy
+  card does not render alongside it
+- **AND** the canonical R11 Sorensen note is rendered EXACTLY ONCE on the page (by the new
+  card, when `show_sorensen_note`); drill-down views keep the legacy card unchanged (out of
+  scope)
+
 ### Requirement: R13. In-place bulk re-analysis of failed images (C3)
 
 Project-nested action `POST projects/<project_pk>/fraktal/batches/<pk>/reanalyze-failed/`
 (r1 m1) with an **enforceable** permission check (r2 MAJOR): `IsProjectOwnerOrShared` only
-implements `has_object_permission` (`apps/accounts/permissions.py:6-33`) and this family uses
+implements `has_object_permission` only (`apps/accounts/permissions.py:8-41`; the class does
+NOT implement `has_permission` — r4 minor 8) and this family uses
 function views with `IsAuthenticated` only — the view SHALL fetch the `Project` by
 `project_pk` and call `IsProjectOwnerOrShared().has_object_permission(request, None, project)`
 explicitly; a non-shared authenticated user gets **403**.
@@ -89,14 +103,19 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
   persistence requires hash-equal bytes), `analysis_input_variant` (reused as-is),
   `filename`, `azimuth`, `elevation`, `index`. Analysis inputs: `dpo = batch.dpo_used`,
   `autocalibrate_dpo = false`.
-- **Aggregate recompute (r2 MAJOR / r3 MAJOR 4):** after the row updates, batch aggregates are
-  recomputed over the FULL row set — EXACTLY the aggregate fields `persist_batch_results`
-  writes (`n_images`, `n_successful`, `mean_df`, `mean_df_inclusive`, `std_df`, `median_df`,
-  `min_df`, `max_df`, `q1_df`, `q3_df`; `services/batch.py:519-546`), with the canonical R7
-  populations (`mean_df` converged-only over `fractal_dimension`, `mean_df_inclusive`
-  inclusive incl. `df_estimate`) and `ddof=0`. The subset MUST NOT be passed to
-  `persist_batch_results` as-is (it overwrites `n_images` with the list length,
-  `services/batch.py:~470-546`); either a `rows_scope="full"` mode or an explicit full-set
+- **Aggregate recompute (r1 MAJOR / r2-r4 corrections):** after the row updates, batch aggregates are
+  recomputed over the FULL row set. Persisted columns — EXACTLY the 7 `persist_batch_results`
+  writes (`n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `min_df`, `max_df`;
+  `services/batch.py:519-520,537-546`) — plus the READ-DERIVED stats (`q1_df`, `q3_df` via
+  `compute_metric_stats` `batch.py:304-340`; `mean_df_inclusive` computed at read,
+  `views.py:889-892,1050-1052`) which are NOT model columns and recompute themselves from the
+  rows. Populations: canonical R7 (`mean_df` converged-only over `fractal_dimension`,
+  `mean_df_inclusive` inclusive incl. `df_estimate`), `ddof=0`; `n_successful` = non-null
+  `fractal_dimension` count (the `persist_batch_results` semantics — the Df histogram's own
+  `n_successful`, converged+approximate per the distributions spec, is a DIFFERENT quantity
+  and is not touched by this recompute — r4 minor 9). The subset MUST NOT be passed to
+  `persist_batch_results` as-is (the real hazard: `batch.n_images = len(image_results)`,
+  `services/batch.py:519`); either a `rows_scope="full"` mode or an explicit full-set
   recompute in the new service — implementer's choice, contract pins the observable outcome
   (no `min_df > mean_df`-class incoherence in the same payload).
 - **Boundary:** ≤30 failed images → sync, response `200` with the updated batch summary
