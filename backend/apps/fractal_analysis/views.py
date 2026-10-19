@@ -28,6 +28,7 @@ from .serializers import (
     ImageAnalysisSerializer,
 )
 from .services.batch import (
+    _build_study_comparison,
     build_comparison_data,
     compute_batch_statistics,
     compute_histogram,
@@ -566,7 +567,13 @@ def _build_batch_response(
                 "rg_nm": json_safe_float(r.get("rg_nm")),
                 "error": r.get("error"),
                 # PYA-13: bisection diagnostic fields from engine result.
-                "quality": r.get("quality"),
+                # Fix round F3: builder 1 derives quality with the SAME rule
+                # persist_batch_results applies ("failed" when the engine
+                # surfaced an error) so all three summary builders emit
+                # IDENTICAL study_comparison for error-carrying rows (R12.1).
+                "quality": (
+                    "failed" if r.get("error") else (r.get("quality") or "converged")
+                ),
                 "bisection_iterations": r.get("bisection_iterations"),
                 "bisection_residual": json_safe_float(r.get("bisection_residual")),
                 "failure_reason": r.get("failure_reason"),
@@ -578,6 +585,10 @@ def _build_batch_response(
     stats["kf"] = compute_metric_stats(images_out, "prefactor")
     stats["rg"] = compute_metric_stats(images_out, "rg_nm")
     stats["npo"] = compute_metric_stats(images_out, "n_particles_counted")
+    # Fix round F4: builder 1 (sync/async live payload) must carry the
+    # failed-image counter so the frontend bulk re-analyze button is
+    # visible without a reload (builders 2/3 already emit it from DB).
+    stats["n_failed"] = sum(1 for e in images_out if e["quality"] == "failed")
     df_values = [
         e["fractal_dimension"] for e in images_out if e["fractal_dimension"] is not None
     ]
@@ -596,6 +607,7 @@ def _build_batch_response(
         "stats": stats,
         "histogram": histogram,
         "comparison": comparison,
+        "study_comparison": _build_study_comparison(sim_id, images_out),
         "calibration": calibration,
     }
 
@@ -690,6 +702,7 @@ def _run_batch_sync(
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
             input_variants=input_variants,
+            pixels_per_100nm_list=per_image_scales,
         )
         payload["batch_id"] = str(batch.id)
 
@@ -890,12 +903,23 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         float(np.mean(inclusive_values)) if inclusive_values else None
     )
 
+    # Fix round 2 (fresh-pass JD-A-004): hoisted — compute once, not twice.
+    batch_stats = compute_batch_statistics(images_out)
+
     stats = {
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
         "mean_df": mean_df,
         "std_df": json_safe_float(batch.std_df),
         "median_df": json_safe_float(batch.median_df),
+        # Fix round F2: builder 2 (DB-serialized payloads — sync re-analysis
+        # 200 and async results endpoint) must carry q1_df/q3_df with the
+        # SAME np.percentile(arr, 25/75) population as builder 1's
+        # compute_batch_statistics, otherwise the frontend Q1/Q3 stat cards
+        # flip to "—" until reload. Population: non-null fractal_dimension
+        # over ALL rows (identical to compute_batch_statistics(images_out)).
+        "q1_df": batch_stats["q1_df"],
+        "q3_df": batch_stats["q3_df"],
         "min_df": json_safe_float(batch.min_df),
         "max_df": json_safe_float(batch.max_df),
         "kf": compute_metric_stats(images_out, "prefactor"),
@@ -928,6 +952,7 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         "stats": stats,
         "histogram": histogram,
         "comparison": comparison,
+        "study_comparison": _build_study_comparison(batch.sim_id, images_out),
         "calibration": calibration,
     }
 
@@ -1016,6 +1041,8 @@ def batch_detail_view(
             "rg_nm": json_safe_float(img.rg_nm),
             "error": img.error or None,
             "dpo_used": img.dpo_used,
+            "quality": img.quality,
+            "df_estimate": json_safe_float(img.df_estimate),  # type: ignore[no-untyped-call]
         }
         for img in images
     ]
@@ -1059,6 +1086,13 @@ def batch_detail_view(
         "median_df": json_safe_float(batch.median_df),
         "min_df": json_safe_float(batch.min_df),
         "max_df": json_safe_float(batch.max_df),
+        # Fix round 2 (fresh-pass JD-A-002): builder 3 (batch_detail_view —
+        # the page-load path) must carry q1_df/q3_df with the same
+        # np.percentile(arr, 25/75) population as builders 1/2, otherwise
+        # the Q1/Q3 stat cards flip to "—" on EVERY reload after a sync
+        # re-analysis (the flapping F2 claimed to remove).
+        "q1_df": compute_batch_statistics(images_data)["q1_df"],
+        "q3_df": compute_batch_statistics(images_data)["q3_df"],
         "kf": compute_metric_stats(images_data, "prefactor"),
         "rg": compute_metric_stats(images_data, "rg_nm"),
         "npo": compute_metric_stats(images_data, "n_particles_counted"),
@@ -1089,6 +1123,7 @@ def batch_detail_view(
             "images": images_data,
             "stats": stats,
             "comparison": comparison,
+            "study_comparison": _build_study_comparison(batch.sim_id, images_data),
             "calibration": calibration,
             "original_zip_filename": batch.original_zip_filename,
         }
@@ -1266,6 +1301,98 @@ def batch_image_reanalyze_view(
     )
 
 
+@api_view(["POST"])  # type: ignore[untyped-decorator]
+@permission_classes([IsAuthenticated])  # type: ignore[untyped-decorator]
+def batch_reanalyze_failed_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID
+) -> Response:
+    """POST .../batches/{batch_id}/reanalyze-failed/ (R13, change
+    fraktal-batch-extensions).
+
+    In-place bulk re-analysis of the batch's ``quality == "failed"`` images.
+
+    Permission: ``IsProjectOwnerOrShared`` only implements
+    ``has_object_permission`` and this family uses function views with
+    ``IsAuthenticated`` — the decorator alone is a NO-OP here, so the view
+    fetches the ``Project`` and calls ``has_object_permission`` explicitly.
+    A non-shared authenticated user gets **403**.
+
+    Boundary: ≤30 failed images → sync ``200`` with the updated batch
+    summary payload (including ``study_comparison``); >30 → thin Celery
+    wrapper, ``202 {job_id, status: "queued"}`` (pollable via
+    ``fraktal_status_view``). Zero failed → ``400`` with
+    ``code: "no_failed_images"``.
+    """
+    from apps.projects.models import Project
+
+    try:
+        project = Project.objects.get(id=project_pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # Explicit enforceable check — the permission decorator is a no-op on
+    # function views (IsProjectOwnerOrShared has no has_permission).
+    if not IsProjectOwnerOrShared().has_object_permission(request, None, project):
+        return Response(
+            {"detail": "You do not have permission to perform this action."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    from .services.batch import reanalyze_failed_images
+
+    failed_count = batch.images.filter(  # pyright: ignore[reportAttributeAccessIssue]
+        quality="failed"
+    ).count()
+    if failed_count == 0:
+        return Response(
+            {
+                "detail": "No failed images to re-analyze in this batch.",
+                "code": "no_failed_images",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if failed_count <= 30:
+        reanalyze_failed_images(batch)
+        payload = _serialize_batch_from_db(str(batch.id))
+        if payload is None:  # pragma: no cover — batch exists, cannot be None
+            return Response(
+                {"detail": "Batch serialization failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+    # >30 failed → async via a thin Celery wrapper (canonical 202 shape).
+    from .tasks import reanalyze_failed_batch_task
+
+    try:
+        task = reanalyze_failed_batch_task.delay(  # pyright: ignore[reportFunctionMemberAccess]
+            str(batch.id)
+        )
+    except OperationalError:
+        logger.warning(
+            "Celery broker unavailable, running failed-image re-analysis sync"
+        )
+        reanalyze_failed_images(batch)
+        payload = _serialize_batch_from_db(str(batch.id))
+        if payload is None:  # pragma: no cover
+            return Response(
+                {"detail": "Batch serialization failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+    return Response(
+        {"job_id": task.id, "status": "queued"},
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def batch_csv_view(
@@ -1278,6 +1405,7 @@ def batch_csv_view(
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     from apps.core.services.csv_locale import get_user_csv_locale
+
     from .services.csv_export import build_batch_csv
 
     decimal, delimiter = get_user_csv_locale(request)
@@ -1303,6 +1431,7 @@ def single_image_csv_view(
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     from apps.core.services.csv_locale import get_user_csv_locale
+
     from .services.csv_export import build_single_image_csv
 
     decimal, delimiter = get_user_csv_locale(request)

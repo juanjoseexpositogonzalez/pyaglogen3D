@@ -114,6 +114,7 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
         <FraktalBatchDistributions
           images={data.images}
           stats={data.stats}
+          studyComparison={data.study_comparison ?? null}
         />
       </section>
 
@@ -122,6 +123,7 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
         projectId={projectId}
         batchId={batchId}
         onDeleted={() => router.push(`/projects/${projectId}`)}
+        onResultUpdate={setData}
       />
     </div>
   )

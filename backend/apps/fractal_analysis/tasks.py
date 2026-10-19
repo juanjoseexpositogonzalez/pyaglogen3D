@@ -597,6 +597,56 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
 # ============================================================================
 
 
+@shared_task(bind=True, name="apps.fractal_analysis.tasks.reanalyze_failed_batch")
+def reanalyze_failed_batch_task(self, batch_id: str) -> dict:
+    """Thin async wrapper for the R13 bulk re-analysis (>30 failed images).
+
+    Reports ``{"batch_id": ...}`` on completion so the existing
+    ``fraktal_status_view`` polling endpoint stays reusable (same contract
+    as ``analyze_fraktal_batch_task``). Progress is reported per re-analyzed
+    image via ``update_state`` (fix round F6) so the poller sees real
+    ``PROGRESS`` ticks instead of a pinned 0.
+    """
+    from apps.fractal_analysis.models import FraktalBatch
+    from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+    def _report_progress(done: int, total: int) -> None:
+        if self.request.id:
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "progress": (done / total) if total else 0.0,
+                    "current": done,
+                    "total": total,
+                    "stage": "reanalyzing",
+                },
+            )
+
+    # Fix round F8: a batch deleted while the job sat in the queue must
+    # surface a CLEAR failure to the poller, not a raw
+    # ``FraktalBatch.DoesNotExist`` traceback.
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id)
+    except FraktalBatch.DoesNotExist:
+        msg = (
+            f"FRAKTAL batch {batch_id} not found — it was deleted before "
+            "the failed-image re-analysis ran."
+        )
+        logger.warning("Re-analysis aborted: %s", msg)
+        raise ValueError(msg) from None
+
+    summary = reanalyze_failed_images(batch, progress_callback=_report_progress)
+
+    logger.info(
+        "FRAKTAL batch %s failed-image re-analysis completed: "
+        "reanalyzed=%s still_failed=%s",
+        batch_id,
+        summary.get("reanalyzed"),
+        summary.get("still_failed"),
+    )
+    return summary
+
+
 @shared_task(bind=True, name="apps.fractal_analysis.tasks.analyze_fraktal_batch")
 def analyze_fraktal_batch_task(
     self,
@@ -764,6 +814,7 @@ def analyze_fraktal_batch_task(
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
             input_variants=input_variants,
+            pixels_per_100nm_list=per_image_scales,
         )
         batch_id = str(batch.id)
 

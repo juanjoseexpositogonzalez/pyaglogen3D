@@ -17,6 +17,9 @@ import type {
   CreateParametricStudyInput,
   ParametricStudyResults,
   BoxCounting3DResult,
+  BoxCountingJobStatus,
+  BatchBoxCountingRunResponse,
+  StudyFractalAnalysisSummary,
   AnalysisStatus,
 } from './types'
 import { tokenStorage } from './token-storage'
@@ -748,6 +751,35 @@ export interface FraktalBatchComparison {
   sorensen_note: string
 }
 
+export interface FraktalStudyComparisonImageDf {
+  n: number
+  mean: number
+  median: number
+  min: number
+  max: number
+  n_converged: number
+  n_approximate: number
+}
+
+/**
+ * Batch-vs-linked-simulation comparison block (R12, change
+ * fraktal-batch-extensions). Additive to FraktalBatchResult; null when the
+ * batch has no linked sim, the sim row was deleted, the sim metric is
+ * missing / carries the 0.0 sentinel, or there are zero contributing image
+ * values. `sim_df.value` is the SINGLE source for the Df reference marker
+ * (R-DELTA-C2) — no top-level duplicate key exists.
+ */
+export interface FraktalStudyComparison {
+  sim_id: string
+  images_with_df: number
+  images_without_df: number
+  image_df: FraktalStudyComparisonImageDf
+  sim_df: { value: number; target_df: number | null }
+  mean_delta: number | null
+  deltas: number[]
+  show_sorensen_note: boolean
+}
+
 export interface FraktalBatchCalibration {
   source: 'manual' | 'metadata' | 'autocalibrate'
   pixels_per_100nm: number
@@ -762,6 +794,9 @@ export interface FraktalBatchResult {
   stats: FraktalBatchStats
   histogram: FraktalBatchHistogram | null
   comparison: FraktalBatchComparison | null
+  /** R12 study_comparison block. Optional for backward compat with legacy
+   *  server responses that predate fraktal-batch-extensions. */
+  study_comparison?: FraktalStudyComparison | null
   calibration: FraktalBatchCalibration
 }
 
@@ -788,7 +823,7 @@ export interface FraktalBatchProgress {
   progress: number // 0..1
   current: number
   total: number
-  stage: 'autocalibrate' | 'analyzing' | 'aggregating'
+  stage: 'autocalibrate' | 'analyzing' | 'aggregating' | 'reanalyzing'
 }
 
 export interface FraktalBatchOptions {
@@ -1162,6 +1197,59 @@ export const fraktalApi = {
     ),
 
   /**
+   * Bulk re-analysis of the batch's failed images (R13, change
+   * fraktal-batch-extensions). In place by UPDATE per pk; preserves the PNG
+   * bytes (hash-equal — no re-rasterization), analysis_input_variant and
+   * orientation. Boundary: <=30 failed -> backend responds 200 with the
+   * updated batch summary payload (including study_comparison); >30 -> 202
+   * {job_id, status: "queued"} and this method polls
+   * /fraktal-status/{job_id}/ (the re-analysis task reports {batch_id}, so
+   * the existing results endpoint resolves) until done. Zero failed -> 400
+   * {code: "no_failed_images"}; non-shared user -> 403.
+   *
+   * `onProgress` fires on every poll tick (async path only).
+   */
+  reanalyzeFailedBatch: async (
+    projectId: string,
+    batchId: string,
+    onProgress?: (progress: FraktalBatchProgress) => void
+  ): Promise<FraktalBatchResult> => {
+    const res = await authFetch(
+      `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/reanalyze-failed/`,
+      { method: 'POST' }
+    )
+
+    // Sync path — backend already produced the updated summary payload.
+    if (res.status === 200) {
+      return (await res.json()) as FraktalBatchResult
+    }
+
+    // Async path — poll until the Celery job settles.
+    if (res.status === 202) {
+      const data = (await res.json().catch(() => ({}))) as { job_id?: string }
+      if (!data.job_id) {
+        throw new ApiError(
+          'Async re-analysis job accepted but no job_id returned',
+          502
+        )
+      }
+      return pollFraktalBatchUntilDone(data.job_id, onProgress)
+    }
+
+    const contentType = res.headers.get('Content-Type') || ''
+    if (contentType.includes('application/json')) {
+      const error = await res.json().catch(() => ({}))
+      throw new ApiError(
+        error.detail || error.message || 'Bulk re-analysis failed',
+        res.status,
+        error.details
+      )
+    }
+    const text = await res.text().catch(() => '')
+    throw new ApiError(text || 'Bulk re-analysis failed', res.status)
+  },
+
+  /**
    * Delete a batch and all its images (cascade).
    */
   deleteBatch: (projectId: string, batchId: string) =>
@@ -1255,26 +1343,86 @@ export const studiesApi = {
 
   /**
    * Run box-counting analysis on all completed simulations in the study.
+   *
+   * Dual response (R3): with a work set ≤30 the backend responds 200 with the
+   * sync summary; with >30 it responds 202 `{task_id, total}` and the job must
+   * be polled via `boxCountingJobStatus`. Discriminate with `'task_id' in result`.
    */
   runBoxCounting: (
     projectId: string,
     id: string,
-    params?: { points_per_sphere?: number; precision?: number }
+    params?: {
+      points_per_sphere?: number
+      precision?: number
+      windowed?: boolean
+      force?: boolean
+    }
   ) =>
-    request<{
-      status: string
-      message: string
-      results: {
-        total: number
-        processed: number
-        skipped: number
-        failed: number
-        errors: Array<{ simulation_id: string; error: string }>
-      }
-    }>(`/projects/${projectId}/studies/${id}/run-box-counting/`, {
-      method: 'POST',
-      body: JSON.stringify(params || {}),
-    }),
+    request<BatchBoxCountingRunResponse>(
+      `/projects/${projectId}/studies/${id}/run-box-counting/`,
+      {
+        method: 'POST',
+        body: JSON.stringify(params || {}),
+      },
+    ),
+
+  /**
+   * Poll the status of an async box-counting run (R3, design D5).
+   * Canonical payload: `{status: processing|done|failed, progress, current, total, error?}`.
+   */
+  boxCountingJobStatus: (projectId: string, id: string, taskId: string) =>
+    request<BoxCountingJobStatus>(
+      `/projects/${projectId}/studies/${id}/run-box-counting/${taskId}/`,
+    ),
+
+  /**
+   * Per-config estimator distributions for the study (R5). Raw value arrays
+   * are returned — histogram bucketing happens CLIENT-side (sturgesBuckets).
+   */
+  fractalAnalysisSummary: (projectId: string, id: string) =>
+    request<StudyFractalAnalysisSummary>(
+      `/projects/${projectId}/studies/${id}/fractal-analysis/`,
+    ),
+}
+
+// --- Box-counting async job polling (R3, design D5) ---
+
+export interface PollBoxCountingJobOptions {
+  /** Delay between polls in ms (default 2000). */
+  intervalMs?: number
+  /** Overall deadline in ms (default 30 min). */
+  timeoutMs?: number
+  /** Called with every observed status payload, including the final one. */
+  onProgress?: (status: BoxCountingJobStatus) => void
+}
+
+/**
+ * Poll a box-counting job until it reaches `done` or `failed` (R3.2).
+ *
+ * Resolves with the FINAL status payload (a `failed` payload resolves — it is
+ * an expected terminal state, not a transport error). Throws ApiError only on
+ * HTTP failure or when the deadline passes.
+ */
+export async function pollBoxCountingJobStatus(
+  projectId: string,
+  studyId: string,
+  taskId: string,
+  options: PollBoxCountingJobOptions = {},
+): Promise<BoxCountingJobStatus> {
+  const intervalMs = options.intervalMs ?? 2000
+  const deadline = Date.now() + (options.timeoutMs ?? 30 * 60 * 1000)
+
+  for (;;) {
+    const status = await studiesApi.boxCountingJobStatus(projectId, studyId, taskId)
+    options.onProgress?.(status)
+    if (status.status === 'done' || status.status === 'failed') {
+      return status
+    }
+    if (Date.now() + intervalMs > deadline) {
+      throw new ApiError('Box-counting job polling timed out', 408)
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
 }
 
 // Project Sharing API

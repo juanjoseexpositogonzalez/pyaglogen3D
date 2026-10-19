@@ -109,6 +109,12 @@ pub struct BoxCountingResult3D {
     pub num_points: usize,
     /// Start index of linear region (0 = all points used).
     pub linear_region_start: usize,
+    /// Number of count-valid levels (`0 < count < N`) BEFORE the Step 4b
+    /// saturation truncation (design D1, R9). Read-only additive field: the
+    /// legacy path truncates `log_scales`/`log_counts`, so the effective level
+    /// count is NOT derivable from the returned vectors. The windowed fit
+    /// `(s, e)` is derived from this count by the backend (design D2).
+    pub effective_levels: usize,
 }
 
 /// Fast 3D box-counting using Morton codes (default legacy fit path).
@@ -180,6 +186,7 @@ fn morton_core(
             execution_time_ms: 0,
             num_points: n_points,
             linear_region_start: 0,
+            effective_levels: 0,
         });
     }
 
@@ -223,6 +230,12 @@ fn morton_core(
             log_counts.push((box_count as f64).ln());
         }
     }
+
+    // Effective level count BEFORE any truncation (design D1, R9): captured
+    // before the legacy Step 4b saturation truncation reassigns `log_scales`.
+    // The windowed path indexes THIS sequence, so it must not observe the
+    // truncated vectors.
+    let effective_levels = log_scales.len();
 
     // ── Windowed path: plain OLS over the effective level range (R29.2) ──
     // Applied BEFORE the legacy saturation truncation: the window indexes the
@@ -274,6 +287,7 @@ fn morton_core(
             execution_time_ms,
             num_points: n_points,
             linear_region_start: start,
+            effective_levels,
         });
     }
 
@@ -322,6 +336,7 @@ fn morton_core(
         execution_time_ms,
         num_points: n_points,
         linear_region_start: linear_start,
+        effective_levels,
     })
 }
 
@@ -630,6 +645,85 @@ mod tests {
             result.dimension
         );
         assert!(result.r_squared > 0.9);
+    }
+
+    #[test]
+    fn test_effective_levels_matches_count_valid_levels() {
+        // Normal case: `effective_levels` equals the number of count-valid
+        // levels. Cross-checked against the windowed path, which fits the
+        // full effective sequence `(0, eff-1)` without truncation.
+        let points: Vec<[f64; 3]> = (0..1000).map(|i| [i as f64, 0.0, 0.0]).collect();
+        let result = box_counting_3d_morton(&points, 16);
+        let eff = result.effective_levels;
+        assert!(eff >= 3, "line fixture must have enough levels, got {eff}");
+
+        let windowed = box_counting_3d_windowed(&points, 16, (0, eff - 1))
+            .expect("full effective window is valid");
+        assert_eq!(windowed.effective_levels, eff);
+        assert_eq!(windowed.log_scales.len(), eff);
+        // The legacy path may truncate; the field reports the pre-truncation
+        // count, so it is never smaller than the returned vectors.
+        assert!(result.log_scales.len() <= eff);
+
+        // JD-A-008 (fix round A): strengthen the truncation side — mirror the
+        // plateau fixture used by `test_effective_levels_reports_pre_truncation_count`
+        // and assert the STRICT inequality when Step 4b truncation fires, not
+        // just the weak `<=` above.
+        let mut plateau: Vec<[f64; 3]> = Vec::new();
+        for i in 0..8 {
+            for j in 0..8 {
+                for k in 0..8 {
+                    for r in 0..20 {
+                        let jitter = r as f64 * 1e-9;
+                        plateau.push([i as f64 + jitter, j as f64 + jitter, k as f64 + jitter]);
+                    }
+                }
+            }
+        }
+        let truncated = box_counting_3d_morton(&plateau, 16);
+        assert!(
+            truncated.effective_levels > truncated.log_scales.len(),
+            "truncation must fire in the plateau fixture: log_scales.len()={}, effective_levels={}",
+            truncated.log_scales.len(),
+            truncated.effective_levels
+        );
+    }
+
+    #[test]
+    fn test_effective_levels_reports_pre_truncation_count() {
+        // Plateau fixture (R9.1): an 8x8x8 lattice of distinct positions,
+        // each repeated with tiny jitter so all replicas collapse into one
+        // voxel. At every level finer than the lattice spacing the box count
+        // is constant (512), so the effective sequence opens with a long
+        // plateau while several coarse levels remain — enough for the legacy
+        // Step 4b saturation truncation to fire (its guard keeps ≥3 levels).
+        let mut points: Vec<[f64; 3]> = Vec::new();
+        for i in 0..8 {
+            for j in 0..8 {
+                for k in 0..8 {
+                    for r in 0..20 {
+                        let jitter = r as f64 * 1e-9;
+                        points.push([i as f64 + jitter, j as f64 + jitter, k as f64 + jitter]);
+                    }
+                }
+            }
+        }
+        let result = box_counting_3d_morton(&points, 16);
+
+        // Truncation fired: the returned (post-truncation) vectors hold fewer
+        // levels than the reported pre-truncation effective count.
+        assert!(
+            result.effective_levels > 6,
+            "fixture must exceed the truncation threshold, got {}",
+            result.effective_levels
+        );
+        assert!(
+            result.log_scales.len() < result.effective_levels,
+            "Step 4b truncation must fire in this fixture: log_scales.len()={}, effective_levels={}",
+            result.log_scales.len(),
+            result.effective_levels
+        );
+        assert_eq!(result.log_counts.len(), result.log_scales.len());
     }
 
     #[test]
