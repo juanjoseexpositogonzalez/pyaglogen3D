@@ -4,9 +4,9 @@
 > (SOLO ADDED R-DELTA-C2, sin MODIFIED de distributions), C3 in-place por UPDATE. Deltas:
 > `specs/fraktal-batch-contract.md`, `specs/fraktal-batch-persistence.md` (MODIFIED R2 completo),
 > `specs/fraktal-batch-distributions.md`.
-> `specs/fraktal-batch-persistence.md`, `specs/fraktal-batch-distributions.md`.
-> Reviews: r1 (mvf21s3n-f-ztnz, B1-B4/M1-M6/m1-m5) → r2 (mvf2hiqs-g-x5jy, 2 BLOCKER + 4 MAJOR +
-> minors) resueltos aquí (r2).
+> Reviews: r1 (mvf21s3n-f-ztnz) → r2 (mvf2hiqs-g-x5jy) → r3 (mvf2v5g3-h-bod9) → r4
+> (mvf3tlz3-j-z97z) → r5 (mvf3dtqr-i-7rrr) — correcciones aplicadas por ronda, itemizadas en
+> tasks.md Log L2-L6.
 
 ## Decision Summary (LOCKED)
 
@@ -33,7 +33,6 @@
 | Batch sin sim/métrica/vacíos | `study_comparison: null` (R12.2, D3) | R12.2 + edges |
 | Re-análisis | UPDATE por pk, PNG hash-equal, `n_images` constante, agregados R7 full-set (R13.1) | Service/task test fixture mixto |
 | Permisos | 403 no-compartido autenticado (D10) | Contract test |
-| Distribuciones | Marcador sin tocar R2/R5/R-DELTA-M (R-DELTA-C2.1/C2.2) | Vitest marcador visible/oculto + histograma idéntico al pre-change con marcador OFF |
 | Distribuciones | Marcador sin tocar R2/R5/R-DELTA-M (R-DELTA-C2.1/C2.2) | Vitest marcador visible/oculto + histograma idéntico al pre-change con marcador OFF |
 | CSV | Sin cambios | Suite existente |
 

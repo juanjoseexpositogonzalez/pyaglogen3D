@@ -23,7 +23,7 @@ gaps de empaquetado y comparación que no requieren engine work. Este change cie
 - Cualquier cambio en `aglogen_core/`.
 - **ÚNICA excepción de contrato (r3):** MODIFIED R2 de `fraktal-batch-persistence` (columna
   nullable `pixels_per_100nm`, restatement completo — r2 BLOCKER-2). Distributions: SOLO ADDED
-  (marcador C2) — R1–R11 / R-DELTA-I..M intactos.
+  (marcador C2) — R1-R5 / R-DELTA-L / R-DELTA-M intactos (r5 minor 5: las distribuciones canónicas no tienen R6-R11 ni R-DELTA-I/J/K).
 - Enlace imagen→sim por imagen (FK) — rechazado por la persona; la comparativa multi-config
   vive en el tab del Change A.
 
