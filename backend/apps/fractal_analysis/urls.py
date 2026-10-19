@@ -13,6 +13,7 @@ from .views import (
     batch_image_png_view,
     batch_image_reanalyze_view,
     batch_list_view,
+    batch_reanalyze_failed_view,
     fraktal_results_view,
     fraktal_status_view,
     single_image_csv_view,
@@ -151,6 +152,11 @@ urlpatterns = [
         "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/reanalyze/",
         batch_image_reanalyze_view,
         name="project-fraktal-batch-image-reanalyze",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/reanalyze-failed/",
+        batch_reanalyze_failed_view,
+        name="project-fraktal-batch-reanalyze-failed",
     ),
     path(
         "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/csv/",

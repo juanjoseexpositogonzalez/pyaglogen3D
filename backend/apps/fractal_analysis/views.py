@@ -692,6 +692,7 @@ def _run_batch_sync(
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
             input_variants=input_variants,
+            pixels_per_100nm_list=per_image_scales,
         )
         payload["batch_id"] = str(batch.id)
 
@@ -1272,6 +1273,98 @@ def batch_image_reanalyze_view(
     )
 
 
+@api_view(["POST"])  # type: ignore[untyped-decorator]
+@permission_classes([IsAuthenticated])  # type: ignore[untyped-decorator]
+def batch_reanalyze_failed_view(
+    request: Request, project_pk: uuid.UUID, batch_id: uuid.UUID
+) -> Response:
+    """POST .../batches/{batch_id}/reanalyze-failed/ (R13, change
+    fraktal-batch-extensions).
+
+    In-place bulk re-analysis of the batch's ``quality == "failed"`` images.
+
+    Permission: ``IsProjectOwnerOrShared`` only implements
+    ``has_object_permission`` and this family uses function views with
+    ``IsAuthenticated`` — the decorator alone is a NO-OP here, so the view
+    fetches the ``Project`` and calls ``has_object_permission`` explicitly.
+    A non-shared authenticated user gets **403**.
+
+    Boundary: ≤30 failed images → sync ``200`` with the updated batch
+    summary payload (including ``study_comparison``); >30 → thin Celery
+    wrapper, ``202 {job_id, status: "queued"}`` (pollable via
+    ``fraktal_status_view``). Zero failed → ``400`` with
+    ``code: "no_failed_images"``.
+    """
+    from apps.projects.models import Project
+
+    try:
+        project = Project.objects.get(id=project_pk)
+    except Project.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    # Explicit enforceable check — the permission decorator is a no-op on
+    # function views (IsProjectOwnerOrShared has no has_permission).
+    if not IsProjectOwnerOrShared().has_object_permission(request, None, project):
+        return Response(
+            {"detail": "You do not have permission to perform this action."},
+            status=status.HTTP_403_FORBIDDEN,
+        )
+
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id, project_id=project_pk)
+    except FraktalBatch.DoesNotExist:
+        return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    from .services.batch import reanalyze_failed_images
+
+    failed_count = batch.images.filter(  # pyright: ignore[reportAttributeAccessIssue]
+        quality="failed"
+    ).count()
+    if failed_count == 0:
+        return Response(
+            {
+                "detail": "No failed images to re-analyze in this batch.",
+                "code": "no_failed_images",
+            },
+            status=status.HTTP_400_BAD_REQUEST,
+        )
+
+    if failed_count <= 30:
+        reanalyze_failed_images(batch)
+        payload = _serialize_batch_from_db(str(batch.id))
+        if payload is None:  # pragma: no cover — batch exists, cannot be None
+            return Response(
+                {"detail": "Batch serialization failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+    # >30 failed → async via a thin Celery wrapper (canonical 202 shape).
+    from .tasks import reanalyze_failed_batch_task
+
+    try:
+        task = reanalyze_failed_batch_task.delay(  # pyright: ignore[reportFunctionMemberAccess]
+            str(batch.id)
+        )
+    except OperationalError:
+        logger.warning(
+            "Celery broker unavailable, running failed-image re-analysis sync"
+        )
+        reanalyze_failed_images(batch)
+        payload = _serialize_batch_from_db(str(batch.id))
+        if payload is None:  # pragma: no cover
+            return Response(
+                {"detail": "Batch serialization failed."},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+        return Response(payload, status=status.HTTP_200_OK)
+
+    return Response(
+        {"job_id": task.id, "status": "queued"},
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+
 @api_view(["GET"])
 @permission_classes([IsAuthenticated])
 def batch_csv_view(
@@ -1284,6 +1377,7 @@ def batch_csv_view(
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     from apps.core.services.csv_locale import get_user_csv_locale
+
     from .services.csv_export import build_batch_csv
 
     decimal, delimiter = get_user_csv_locale(request)
@@ -1309,6 +1403,7 @@ def single_image_csv_view(
         return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
 
     from apps.core.services.csv_locale import get_user_csv_locale
+
     from .services.csv_export import build_single_image_csv
 
     decimal, delimiter = get_user_csv_locale(request)

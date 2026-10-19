@@ -17,6 +17,7 @@ import json
 import re
 import uuid
 import zipfile
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -171,10 +172,11 @@ def extract_per_image_scales(
             fn
             and isinstance(per_dir_scale, (int, float))
             and not isinstance(per_dir_scale, bool)
+            and np.isfinite(per_dir_scale)
+            and per_dir_scale > 0
         ):
-            if np.isfinite(per_dir_scale) and per_dir_scale > 0:
-                fn_to_scale[fn] = float(per_dir_scale)
-                has_any = True
+            fn_to_scale[fn] = float(per_dir_scale)
+            has_any = True
 
     if not has_any:
         return None
@@ -542,6 +544,7 @@ def persist_batch_results(
     dpo_used: float,
     scientific_png_list: list[bytes | None] | None = None,
     input_variants: list[str] | None = None,
+    pixels_per_100nm_list: Sequence[float | None] | None = None,
 ) -> None:
     """Write per-image rows and update batch summary fields.
 
@@ -562,6 +565,14 @@ def persist_batch_results(
         input_variants: Optional parallel list of variant strings
             (``"scientific"`` or ``"presentation"``).  When ``None``, all
             rows default to ``"presentation"`` (backward-compatible).
+        pixels_per_100nm_list: Optional parallel list of per-image
+            calibration scales (from ``directions[i].pixels_per_100nm``
+            with the batch broadcast fallback, i.e. the output of
+            ``extract_per_image_scales``). When ``None`` (legacy ZIP),
+            every row stores the batch-level broadcast value
+            (``batch.pixels_per_100nm``). Populated at FIRST analysis per
+            the persistence delta R2; re-analysis (R13) reuses the
+            persisted value instead of this argument.
     """
     from apps.fractal_analysis.models import FraktalBatchImage
 
@@ -575,16 +586,25 @@ def persist_batch_results(
         if input_variants is not None and i < len(input_variants):
             variant = input_variants[i]
 
+        # fraktal-batch-extensions R2 (MODIFIED): per-image calibration scale
+        # populated at FIRST analysis. Source: directions[i].pixels_per_100nm
+        # when the ZIP direction carries it (already resolved — with batch
+        # broadcast fallback — by extract_per_image_scales), else the
+        # batch-level broadcast value. Pre-migration rows are not backfilled.
+        candidate: float | None = None
+        if pixels_per_100nm_list is not None and i < len(pixels_per_100nm_list):
+            candidate = pixels_per_100nm_list[i]
+        row_ppn = (
+            candidate if candidate is not None else batch.pixels_per_100nm
+        )
+
         # PYA-13 T3.3: quality override safety net.
         # Engine Default impl returns quality="converged" even for blank/error
         # images that fail BEFORE bisection runs. Override to "failed" when
         # the engine surfaced an error string.
         engine_quality = result.get("quality") or "converged"
         engine_error = result.get("error")
-        if engine_error:
-            quality = "failed"
-        else:
-            quality = engine_quality
+        quality = "failed" if engine_error else engine_quality
 
         rows.append(
             FraktalBatchImage(
@@ -593,21 +613,34 @@ def persist_batch_results(
                 filename=result.get("filename") or "",
                 azimuth=result.get("azimuth"),
                 elevation=result.get("elevation"),
-                fractal_dimension=json_safe_float(result.get("fractal_dimension")),
-                prefactor=json_safe_float(result.get("prefactor")),
-                r_squared=json_safe_float(result.get("r_squared")),
+                fractal_dimension=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("fractal_dimension")
+                ),
+                prefactor=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("prefactor")
+                ),
+                r_squared=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("r_squared")
+                ),
                 n_particles_counted=result.get("n_particles_counted"),
-                rg_nm=json_safe_float(result.get("rg_nm")),
+                rg_nm=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("rg_nm")
+                ),
                 dpo_used=dpo_used,
                 error=engine_error or "",
                 image_png=png_bytes,
                 png_scientific_bytes=sci_bytes,
                 analysis_input_variant=variant,
                 bisection_iterations=result.get("bisection_iterations"),
-                bisection_residual=json_safe_float(result.get("bisection_residual")),
+                bisection_residual=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("bisection_residual")
+                ),
                 failure_reason=result.get("failure_reason"),
-                df_estimate=json_safe_float(result.get("df_estimate")),
+                df_estimate=json_safe_float(  # type: ignore[no-untyped-call]
+                    result.get("df_estimate")
+                ),
                 quality=quality,
+                pixels_per_100nm=row_ppn,
             )
         )
     FraktalBatchImage.objects.bulk_create(rows)
@@ -647,3 +680,160 @@ def persist_batch_results(
             "max_df",
         ]
     )
+
+
+# ---------------------------------------------------------------------------
+# R13 — In-place bulk re-analysis of failed images (fraktal-batch-extensions)
+# ---------------------------------------------------------------------------
+
+
+def reanalyze_failed_images(batch: FraktalBatch) -> dict[str, Any]:
+    """Re-analyze ONLY the ``quality == "failed"`` images of *batch*, in place.
+
+    R13 (change ``fraktal-batch-extensions``). Each failed
+    ``FraktalBatchImage`` row is UPDATED by pk (never delete/reinsert) with
+    the fresh analysis result fields plus ``pixels_per_100nm``. Preserved
+    unchanged: ``png_bytes`` / ``image_png``, ``png_scientific_bytes`` (no
+    re-rasterization — the PNG endpoint serves ``Cache-Control: immutable``
+    and canonical persistence requires hash-equal bytes),
+    ``analysis_input_variant`` (reused as engine input), ``filename``,
+    ``azimuth``, ``elevation``, ``index``. Inputs: ``dpo = batch.dpo_used``,
+    ``autocalibrate_dpo = False``.
+
+    Calibration: uses the persisted per-image ``pixels_per_100nm`` when
+    present, else the batch scale; the batch-level ``calibration_source`` is
+    left unchanged (per-image provenance is observable only through the new
+    field).
+
+    After the row updates the batch aggregates are recomputed over the FULL
+    row set — EXACTLY the 7 persisted columns ``persist_batch_results``
+    writes. The failed SUBSET is analyzed as a subset but is NEVER handed to
+    ``persist_batch_results`` (that helper would overwrite
+    ``batch.n_images = len(image_results)``). ``q1_df``/``q3_df`` are
+    read-derived builder-1-only values and ``mean_df_inclusive`` is computed
+    at read time — neither is persisted nor recomputed here.
+
+    Returns a small summary dict (``reanalyzed`` / ``still_failed`` counts).
+    """
+    import aglogen_core
+
+    failed_rows = list(batch.images.filter(quality="failed").order_by("index"))
+    if not failed_rows:
+        return {"reanalyzed": 0, "still_failed": 0}
+
+    images: list[np.ndarray] = []
+    scales: list[float] = []
+    for row in failed_rows:
+        # Reuse the SAME input variant recorded at first analysis — no
+        # re-rasterization, PNG bytes stay hash-equal.
+        if row.analysis_input_variant == "scientific" and row.png_scientific_bytes:
+            raw = bytes(row.png_scientific_bytes)
+        else:
+            raw = bytes(row.image_png)
+        images.append(
+            np.array(Image.open(io.BytesIO(raw)).convert("L"), dtype=np.uint8)
+        )
+        # R2 MODIFIED: persisted per-image scale wins; NULL (pre-migration
+        # rows) falls back to the batch scale. calibration_source untouched.
+        scales.append(
+            float(row.pixels_per_100nm)
+            if row.pixels_per_100nm is not None
+            else float(batch.pixels_per_100nm)
+        )
+
+    # Subset analysis ONLY — never pass the subset to persist_batch_results.
+    rust_result = aglogen_core.analyze_fraktal_batch_per_image_scale(
+        images, scales, False, batch.dpo_used, batch.algorithm
+    )
+    results: list[dict[str, Any]] = rust_result.get("results", [])
+
+    update_fields = [
+        "fractal_dimension",
+        "prefactor",
+        "r_squared",
+        "n_particles_counted",
+        "dpo_used",
+        "error",
+        "rg_nm",
+        "quality",
+        "df_estimate",
+        "bisection_iterations",
+        "bisection_residual",
+        "failure_reason",
+        "pixels_per_100nm",
+    ]
+    still_failed = 0
+    for row, result, scale in zip(failed_rows, results, scales, strict=True):
+        engine_error = result.get("error")
+        # Same PYA-13 T3.3 safety net as persist_batch_results: an engine
+        # error string forces quality="failed" so the row stays re-analyzable
+        # and cannot feed a stale estimate into the aggregates.
+        quality = "failed" if engine_error else (result.get("quality") or "converged")
+        if quality == "failed":
+            still_failed += 1
+        row.fractal_dimension = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("fractal_dimension")
+        )
+        row.prefactor = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("prefactor")
+        )
+        row.r_squared = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("r_squared")
+        )
+        row.n_particles_counted = result.get("n_particles_counted")
+        row.dpo_used = float(result.get("dpo_used") or batch.dpo_used)
+        row.error = engine_error or ""
+        row.rg_nm = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("rg_nm")
+        )
+        row.quality = quality
+        row.df_estimate = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("df_estimate")
+        )
+        row.bisection_iterations = result.get("bisection_iterations")
+        row.bisection_residual = json_safe_float(  # type: ignore[no-untyped-call]
+            result.get("bisection_residual")
+        )
+        row.failure_reason = result.get("failure_reason")
+        row.pixels_per_100nm = scale
+        row.save(update_fields=update_fields)  # UPDATE by pk — in place
+
+    # Aggregate recompute over the FULL row set — exactly the 7 persisted
+    # columns of persist_batch_results (populations: mean over non-null
+    # fractal_dimension, ddof=0; n_successful = non-null count).
+    all_rows = list(batch.images.all())
+    df_values = [
+        r.fractal_dimension for r in all_rows if r.fractal_dimension is not None
+    ]
+    batch.n_images = len(all_rows)
+    batch.n_successful = len(df_values)
+    if df_values:
+        arr = np.array(df_values, dtype=np.float64)
+        batch.mean_df = float(np.mean(arr))
+        batch.std_df = float(np.std(arr, ddof=0))
+        batch.median_df = float(np.median(arr))
+        batch.min_df = float(np.min(arr))
+        batch.max_df = float(np.max(arr))
+    else:
+        batch.mean_df = None
+        batch.std_df = None
+        batch.median_df = None
+        batch.min_df = None
+        batch.max_df = None
+    batch.save(
+        update_fields=[
+            "n_images",
+            "n_successful",
+            "mean_df",
+            "std_df",
+            "median_df",
+            "min_df",
+            "max_df",
+        ]
+    )
+
+    return {
+        "reanalyzed": len(failed_rows),
+        "still_failed": still_failed,
+        "batch_id": str(batch.id),
+    }

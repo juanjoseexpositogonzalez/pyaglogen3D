@@ -597,6 +597,29 @@ def run_fraktal_analysis_task(self, analysis_id: str) -> dict:
 # ============================================================================
 
 
+@shared_task(bind=True, name="apps.fractal_analysis.tasks.reanalyze_failed_batch")
+def reanalyze_failed_batch_task(self, batch_id: str) -> dict:
+    """Thin async wrapper for the R13 bulk re-analysis (>30 failed images).
+
+    Reports ``{"batch_id": ...}`` on completion so the existing
+    ``fraktal_status_view`` polling endpoint stays reusable (same contract
+    as ``analyze_fraktal_batch_task``)."""
+    from apps.fractal_analysis.models import FraktalBatch
+    from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+    batch = FraktalBatch.objects.get(id=batch_id)
+    summary = reanalyze_failed_images(batch)
+
+    logger.info(
+        "FRAKTAL batch %s failed-image re-analysis completed: "
+        "reanalyzed=%s still_failed=%s",
+        batch_id,
+        summary.get("reanalyzed"),
+        summary.get("still_failed"),
+    )
+    return summary
+
+
 @shared_task(bind=True, name="apps.fractal_analysis.tasks.analyze_fraktal_batch")
 def analyze_fraktal_batch_task(
     self,
@@ -764,6 +787,7 @@ def analyze_fraktal_batch_task(
             dpo_used=batch.dpo_used,
             scientific_png_list=scientific_png_list,
             input_variants=input_variants,
+            pixels_per_100nm_list=per_image_scales,
         )
         batch_id = str(batch.id)
 

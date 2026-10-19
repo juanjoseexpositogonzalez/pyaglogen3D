@@ -17,6 +17,7 @@ purely through its primitives.
 from __future__ import annotations
 
 import uuid
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -36,25 +37,27 @@ from apps.simulations.models import Simulation
 
 
 def _make_user() -> User:
-    return User.objects.create_user(
+    user: User = User.objects.create_user(  # pyright: ignore[reportAttributeAccessIssue]
         email=f"study-cmp-{uuid.uuid4()}@example.com",
         password="irrelevant",
     )
+    return user
 
 
 def _make_project(user: User) -> Project:
     return Project.objects.create(name="test-study-cmp", owner=user)
 
 
-def _make_sim(project: Project, metrics: dict | None = None) -> Simulation:
+def _make_sim(project: Project, metrics: dict[str, Any] | None = None) -> Simulation:
+    sim_metrics: dict[str, Any] = (
+        metrics if metrics is not None else {"fractal_dimension": 2.42, "kf": 0.001}
+    )
     return Simulation.objects.create(
         project=project,
         algorithm="tunable",
         parameters={"n_particles": 500, "target_df": 2.30},
         seed=42,
-        metrics=metrics
-        if metrics is not None
-        else {"fractal_dimension": 2.42, "kf": 0.001},
+        metrics=sim_metrics,
     )
 
 
@@ -69,9 +72,9 @@ def _make_batch(project: Project, sim_id: uuid.UUID | None) -> FraktalBatch:
     )
 
 
-def _image_rows() -> list[dict]:
+def _image_rows() -> list[dict[str, Any]]:
     """26 converged + 4 approximate + 2 failed rows (R12.1 shape)."""
-    rows = []
+    rows: list[dict[str, Any]] = []
     for i in range(26):
         rows.append(
             {
@@ -160,7 +163,7 @@ def _persist_rows(batch: FraktalBatch, rows: list[dict]) -> None:
         )
 
 
-def _fake_rust_result(rows: list[dict], dpo_used: float = 25.0) -> dict:
+def _fake_rust_result(rows: list[dict[str, Any]], dpo_used: float = 25.0) -> dict[str, Any]:
     return {
         "results": [
             {
@@ -338,8 +341,8 @@ class TestTripleBuilderEquality:
         resp = client.get(
             f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
         )
-        assert resp.status_code == 200, resp.content
-        b3 = resp.json()
+        assert resp.status_code == 200, resp.content  # pyright: ignore[reportAttributeAccessIssue]
+        b3 = resp.json()  # pyright: ignore[reportAttributeAccessIssue]
 
         assert b1["study_comparison"] is not None
         assert b2 is not None and b2["study_comparison"] is not None
@@ -363,7 +366,7 @@ class TestTripleBuilderEquality:
         b2_0 = _serialize_batch_from_db(str(batch0.id))
         b3_0 = client.get(
             f"/api/v1/projects/{project.id}/fraktal/batches/{batch0.id}/"
-        ).json()
+        ).json()  # pyright: ignore[reportAttributeAccessIssue]
         assert b1_0["study_comparison"] is None
         assert b2_0 is not None and b2_0["study_comparison"] is None
         assert b3_0["study_comparison"] is None
@@ -412,7 +415,7 @@ class TestTripleBuilderEquality:
         client.force_authenticate(user=user)
         payload = client.get(
             f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
-        ).json()
+        ).json()  # pyright: ignore[reportAttributeAccessIssue]
 
         first = payload["images"][0]
         assert first["quality"] == "converged"
