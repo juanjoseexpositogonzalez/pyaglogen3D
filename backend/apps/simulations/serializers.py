@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import random
 from math import prod
+from typing import Any
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
@@ -33,7 +34,7 @@ _CSV_MAX_BASE64_BYTES = 14 * 1024 * 1024
 BOX_COUNTING_PARAM_KEYS = ("points_per_sphere", "precision", "windowed")
 
 
-def validate_box_counting_params_dict(value: dict) -> None:
+def validate_box_counting_params_dict(value: dict[str, Any]) -> None:
     """Validate a box-counting params dict (R1, R1.2).
 
     Shared by the study serializer field and the run-box-counting action so
@@ -64,7 +65,7 @@ def validate_box_counting_params_dict(value: dict) -> None:
         raise ValidationError("windowed must be a boolean")
 
 
-def generate_seed():
+def generate_seed() -> int:
     """Generate a random seed."""
     return random.randint(0, 2**31 - 1)
 
