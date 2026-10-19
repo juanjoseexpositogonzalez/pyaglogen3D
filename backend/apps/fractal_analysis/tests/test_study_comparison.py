@@ -163,7 +163,9 @@ def _persist_rows(batch: FraktalBatch, rows: list[dict]) -> None:
         )
 
 
-def _fake_rust_result(rows: list[dict[str, Any]], dpo_used: float = 25.0) -> dict[str, Any]:
+def _fake_rust_result(
+    rows: list[dict[str, Any]], dpo_used: float = 25.0
+) -> dict[str, Any]:
     return {
         "results": [
             {
@@ -338,9 +340,7 @@ class TestTripleBuilderEquality:
         # Builder 3: inline detail view.
         client = APIClient()
         client.force_authenticate(user=user)
-        resp = client.get(
-            f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
-        )
+        resp = client.get(f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/")
         assert resp.status_code == 200, resp.content  # pyright: ignore[reportAttributeAccessIssue]
         b3 = resp.json()  # pyright: ignore[reportAttributeAccessIssue]
 

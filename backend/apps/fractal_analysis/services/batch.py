@@ -594,9 +594,7 @@ def persist_batch_results(
         candidate: float | None = None
         if pixels_per_100nm_list is not None and i < len(pixels_per_100nm_list):
             candidate = pixels_per_100nm_list[i]
-        row_ppn = (
-            candidate if candidate is not None else batch.pixels_per_100nm
-        )
+        row_ppn = candidate if candidate is not None else batch.pixels_per_100nm
 
         # PYA-13 T3.3: quality override safety net.
         # Engine Default impl returns quality="converged" even for blank/error

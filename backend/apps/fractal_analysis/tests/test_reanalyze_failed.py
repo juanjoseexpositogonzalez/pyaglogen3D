@@ -181,12 +181,8 @@ class TestReanalyzeFailedBoundaries:
         for i in range(12):
             _make_row(batch, i, quality="failed")
         # Pre-existing successful rows so the recompute spans the FULL set.
-        _make_row(
-            batch, 12, quality="converged", fractal_dimension=1.80
-        )
-        _make_row(
-            batch, 13, quality="converged", fractal_dimension=1.82
-        )
+        _make_row(batch, 12, quality="converged", fractal_dimension=1.80)
+        _make_row(batch, 13, quality="converged", fractal_dimension=1.82)
 
         with patch(
             "aglogen_core.analyze_fraktal_batch_per_image_scale",
@@ -376,12 +372,15 @@ class TestReanalyzeFailedContractPins:
 
         from apps.fractal_analysis.services.batch import reanalyze_failed_images
 
-        with patch(
-            "aglogen_core.analyze_fraktal_batch_per_image_scale",
-            return_value=_fake_engine_result(5),
-        ), patch(
-            "apps.fractal_analysis.services.batch.persist_batch_results"
-        ) as mock_persist:
+        with (
+            patch(
+                "aglogen_core.analyze_fraktal_batch_per_image_scale",
+                return_value=_fake_engine_result(5),
+            ),
+            patch(
+                "apps.fractal_analysis.services.batch.persist_batch_results"
+            ) as mock_persist,
+        ):
             reanalyze_failed_images(batch)
 
         mock_persist.assert_not_called()
