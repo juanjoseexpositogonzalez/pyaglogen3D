@@ -33,12 +33,16 @@ This change also ADDS unknown-key rejection to `validate_box_counting_params` (p
 
 #### Scenario R1.2 — Unknown-key rejection (NEW behavior, documented)
 
-- **GIVEN** a request (or study params) whose `box_counting_params` contain any key outside
+- **GIVEN** a request body or persisted `box_counting_params` containing any key outside
+  `{points_per_sphere, precision, windowed}` (after popping `force`, which is never persisted)
   `{points_per_sphere, precision, windowed}`
 - **WHEN** validation runs
 - **THEN** the response is 400 naming the offending key
-- **AND** pre-change, such keys were silently accepted and stored — this rejection is an
-  intentional behavior change introduced by this requirement
+- **AND** pre-change, extra keys in the body were silently ignored and only
+  `points_per_sphere`/`precision` were stored — this rejection is an
+  intentional behavior change introduced by this requirement, enforced by
+  `validate_box_counting_params` (called by both the StudySerializer create/update path and
+  the run-box-counting action)
 
 #### Scenario R1.3 — Precedence and persistence
 
@@ -95,7 +99,9 @@ The batch run SHALL execute synchronously inside the POST when the **work set** 
 simulations of the study **with `geometry` present** (`status="completed", geometry__isnull=False`),
 the same filter as the processing loop — has ≤30 members, and asynchronously via Celery when >30,
 mirroring the FRAKTAL batch boundary (`fraktal-batch-contract.md` R4/R5). The async job state
-SHALL use Celery `AsyncResult` + `update_state(meta=...)` (pattern: `fractal_analysis/views.py:719-777`)
+SHALL use Celery `AsyncResult` + `update_state(meta=...)` (payload mapping pattern:
+`fractal_analysis/views.py:719-777`; producer side: `update_state` called from the new Celery
+task in `backend/apps/simulations/tasks.py`)
 — NOT Django cache (LocMemCache is per-process and invisible across the 2 Gunicorn workers).
 
 The async status payload SHALL inherit the canonical shape: `{status: processing|done|failed,
@@ -120,7 +126,8 @@ progress: 0..1, current, total, error?}`.
 ### Requirement: R4. Comparison surface (API)
 
 The study `results` endpoint rows SHALL include the windowed block and `bc_delta =
-box_counting_windowed.dimension − box_counting.dimension` when both blocks exist. The row's
+box_counting_windowed.dimension − box_counting.dimension` ONLY when the windowed block exists
+AND `status == "ok"` (a refusal/error block carries no dimension → no delta, r3). The row's
 `fractal_dimension` (Rg-evolution Df) is ALREADY returned and is the third comparison term —
 no `rg_df` alias is introduced.
 
@@ -143,8 +150,11 @@ A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter 
   windowed refusals (`status: "insufficient_levels"`), `errors` counts `status: "error"`
   (separate counters, both excluded from `n` and from all stats; 0 for `rg`/`bc_legacy`);
   refusals/errors are excluded from `n` and from all stats.
-- `config` is the sim's `parameters` dict (the same `param_keys` source the results endpoint
-  reads, `views.py:2005/2064`) — not an unpinned projection.
+- `config` is the sim's `parameters` dict (keys from `study.parameter_grid.keys()` at
+  `views.py:2010-2011`, values from `sim.parameters` at `views.py:2065`) — not an unpinned
+  projection.
+- `rg` reads `metrics["fractal_dimension"]` (the value the results endpoint already returns,
+  `views.py:1918`).
 - `values` is the raw array; the histogram is computed CLIENT-side with `sturgesBuckets`
   (clamp [3,30], `FraktalBatchDistributions.tsx:52-56`) — the backend does NOT bucket.
 
@@ -153,14 +163,19 @@ A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter 
 - **GIVEN** one config with bc_windowed values `[2.30, 2.50, 2.70]` and 1 refusal
 - **WHEN** the endpoint returns that config's `bc_windowed` stats
 - **THEN** `n: 3, mean: 2.5, median: 2.5, min: 2.30, max: 2.70, insufficient_levels: 1`
-  (quartiles per the shared implementation used by batch stats)
+  (quartiles with the same percentile formula as the batch stats helper
+  `backend/apps/simulations/services/batch.py:320-343`)
 
 ### Requirement: R6. CSV export (study-level header gate)
 
 When the study has a windowed run recorded (any row carrying a `box_counting_windowed`
 block), the CSV header SHALL append `BC_Win_Df, BC_Win_R2, BC_Win_StdError, BC_Win_Time_ms,
 BC_Win_Delta, BC_Win_Status` after the existing `BC_*` columns; rows without a windowed block
-emit empty cells in those columns. A study whose run was legacy-only produces a CSV
+emit empty cells in those columns. `BC_Win_Delta` carries the R4 delta (windowed − legacy)
+only when that row's windowed `status == "ok"`, else empty. The appended block sits after the
+columns gated by `study.include_box_counting` (`views.py:2043-2045`): a study with the flag
+toggled off after a windowed run keeps its `BC_Win_*` header (the gate for the windowed block
+is the recorded run, not the current flag). A study whose run was legacy-only produces a CSV
 **byte-identical** to pre-change (single header, no appended block).
 
 ### Requirement: R7. Frontend: dedicated Fractal Analysis tab
@@ -170,7 +185,9 @@ comparison table (columns: sim, config, `fractal_dimension` labeled "Rg Df", BC 
 BC Win Df, BC Win R², Δ, status with `insufficient_levels` rendered distinctly), (b) histogram
 panels per config per estimator reusing the `sturgesBuckets` semantics, **inheriting the
 data-volume behaviors of `fraktal-batch-distributions.md`**: `n = 0` (or all refusals) → R4
-"No data available"; `1 ≤ n < 5` → the "Not enough data" panel the component actually renders
+"No data available" (NEW tab rule for n=0, not inherited); `1 ≤ n < 5` → the "Not enough data"
+panel the component actually renders (per-metric gate `MIN_N_SUCCESSFUL = 5`,
+`FraktalBatchDistributions.tsx:97/241` — lines 14-15 are the global no-data gate)
 (`FraktalBatchDistributions.tsx:14-15,168`); single-bar rendering per R5 only at `n ≥ 5`,
 (c) the CSV export of R6. Frontend types: `StudyFractalAnalysisSummary` (distinct from the
 existing `FraktalAnalysisSummary`). Without a windowed run the tab shows legacy + Rg columns
@@ -192,9 +209,10 @@ only, with no error state.
 ### Requirement: R8. Single-simulation windowed analysis (opt-in)
 
 The single-sim `GET .../box-counting/` endpoint (`views.py:1502`) SHALL accept an optional
-`windowed=true` query param; when present and a windowed fit is possible, the flat response
-dict gains a `box_counting_windowed` key with the R2 shape (or
-`{status: "insufficient_levels"}`); when absent, the response is byte-identical to pre-change.
+`windowed=true` query param (only `"true"` engages it; `windowed=false` or absent = legacy
+behavior); the flat response dict gains a `box_counting_windowed` key with the R2 schema (all
+statuses: `ok` full keys; `insufficient_levels`/`error` per the R2 null-schema with
+`error_message`); when the param is absent, the response is byte-identical to pre-change.
 
 #### Scenario R8.1 — Response unchanged without the flag
 
@@ -217,6 +235,11 @@ underflow and the pyo3 `(usize, usize)` constraint).
 - **WHEN** results are inspected
 - **THEN** both carry `effective_levels` with the pre-truncation count-valid level count
 - **AND** all existing fields and values are unchanged (byte-identical results otherwise)
+- **AND** the acceptance fixture includes a case where Step 4b truncation fires (`effective_levels
+  > 6` with a plateau) asserting the field reports the PRE-truncation count (r3: without it, a
+  post-truncation implementation would pass R9.1)
+
+## Out of scope call sites (documented)
 
 - `ai_assistant/tools/analysis_tools.py:89` (AI tool BC path) — legacy only, no `windowed`.
 - `tasks.py:1139` `compute_import_metrics` (import pipeline) — legacy only, no `windowed`.
