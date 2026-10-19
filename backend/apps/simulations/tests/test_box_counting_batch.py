@@ -196,9 +196,7 @@ class TestR1WindowedParameter:
         _make_sim(project, study)
         client = _authed_client(user)
 
-        response = client.post(
-            _run_url(study), {"bogus_key": 1}, format="json"
-        )
+        response = client.post(_run_url(study), {"bogus_key": 1}, format="json")
 
         assert response.status_code == 400
         assert "bogus_key" in str(response.data["error"])
@@ -244,7 +242,11 @@ class TestR1WindowedParameter:
         without a legacy block; stored params retain windowed: true."""
         study = _make_study(
             project,
-            box_counting_params={"points_per_sphere": 100, "precision": 18, "windowed": True},
+            box_counting_params={
+                "points_per_sphere": 100,
+                "precision": 18,
+                "windowed": True,
+            },
         )
         sim = _make_sim(project, study)
         client = _authed_client(user)
@@ -264,16 +266,18 @@ class TestR1WindowedParameter:
         is persisted (explicit values win)."""
         study = _make_study(
             project,
-            box_counting_params={"points_per_sphere": 100, "precision": 18, "windowed": True},
+            box_counting_params={
+                "points_per_sphere": 100,
+                "precision": 18,
+                "windowed": True,
+            },
         )
         sim = _make_sim(project, study)
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
             mock_bc.return_value = _FakeResult(5)
-            response = client.post(
-                _run_url(study), {"windowed": False}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": False}, format="json")
 
         assert response.status_code == 200
         sim.refresh_from_db()
@@ -296,9 +300,7 @@ class TestR2DualEstimatorStorage:
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
             mock_bc.side_effect = [_FakeResult(5), _FakeResult(5, dimension=2.7)]
-            response = client.post(
-                _run_url(study), {"windowed": True}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
 
         assert response.status_code == 200
         sim.refresh_from_db()
@@ -323,7 +325,9 @@ class TestR2DualEstimatorStorage:
 
         assert client.post(_run_url(study_a), {}, format="json").status_code == 200
         assert (
-            client.post(_run_url(study_b), {"windowed": True}, format="json").status_code
+            client.post(
+                _run_url(study_b), {"windowed": True}, format="json"
+            ).status_code
             == 200
         )
 
@@ -340,9 +344,7 @@ class TestR2DualEstimatorStorage:
         assert "box_counting_windowed" in sim_b.metrics
         assert "box_counting_windowed" not in sim_a.metrics
 
-    def test_r2_2_insufficient_levels_without_calling_estimator(
-        self, user, project
-    ):
+    def test_r2_2_insufficient_levels_without_calling_estimator(self, user, project):
         """eff=2 → insufficient_levels with nulls; the windowed estimator is
         NEVER called (mock invoked exactly once — the legacy call)."""
         study = _make_study(project)
@@ -351,9 +353,7 @@ class TestR2DualEstimatorStorage:
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
             mock_bc.side_effect = [_FakeResult(2)]
-            response = client.post(
-                _run_url(study), {"windowed": True}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
 
         assert response.status_code == 200
         assert mock_bc.call_count == 1
@@ -380,9 +380,7 @@ class TestR2DualEstimatorStorage:
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
             mock_bc.side_effect = [_FakeResult(3), _FakeResult(3, dimension=2.1)]
-            response = client.post(
-                _run_url(study), {"windowed": True}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
 
         assert response.status_code == 200
         sim.refresh_from_db()
@@ -402,9 +400,7 @@ class TestR2DualEstimatorStorage:
                 _FakeResult(5),
                 ValueError("pyo3 window out of range"),
             ]
-            response = client.post(
-                _run_url(study), {"windowed": True}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
 
         assert response.status_code == 200
         assert response.data["results"]["failed"] == 0
@@ -416,9 +412,7 @@ class TestR2DualEstimatorStorage:
         assert block["fit_window_used"] is None
         assert "box_counting" in sim.metrics
 
-    def test_r2_3_existing_legacy_block_skipped_without_force(
-        self, user, project
-    ):
+    def test_r2_3_existing_legacy_block_skipped_without_force(self, user, project):
         study = _make_study(project)
         existing = {
             "dimension": 1.9,
@@ -434,9 +428,7 @@ class TestR2DualEstimatorStorage:
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
-            response = client.post(
-                _run_url(study), {"windowed": True}, format="json"
-            )
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
 
         assert response.status_code == 200
         assert response.data["results"]["skipped"] == 1

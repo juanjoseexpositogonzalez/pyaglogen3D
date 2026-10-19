@@ -1009,7 +1009,9 @@ def derive_fit_window(effective_levels: int) -> tuple[int, int] | None:
     return (s, effective_levels - 1)
 
 
-def build_bc_block(result, params: dict, status: str, fit_window_used, error_message=None) -> dict:
+def build_bc_block(
+    result, params: dict, status: str, fit_window_used, error_message=None
+) -> dict:
     """Build the windowed box-counting storage block (R2, design D3).
 
     ONE schema for all three statuses (``ok | insufficient_levels | error``):
@@ -1959,9 +1961,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         # per-particle contact list + distribution histogram for exports.
         from apps.simulations.services.coordination import compute_coordination_data
 
-        coord_data = compute_coordination_data(
-            result.coordinates, result.radii
-        )
+        coord_data = compute_coordination_data(result.coordinates, result.radii)
 
         # Store metrics
         simulation.metrics = {
@@ -2376,7 +2376,9 @@ def _build_batch_projections_zip_impl(
 
     storage_dir = _batch_storage_dir()
     zip_filename = f"study_{study_id}_projections_{date.today().isoformat()}.zip"
-    zip_path = os.path.join(storage_dir, f"batch_{study_id}_{date.today().isoformat()}.zip")
+    zip_path = os.path.join(
+        storage_dir, f"batch_{study_id}_{date.today().isoformat()}.zip"
+    )
 
     zip_buffer = io.BytesIO()
 
@@ -2412,25 +2414,32 @@ def _build_batch_projections_zip_impl(
                         zf.write(str(p), arcname)
 
                 successful += 1
-                manifest_sims.append({
-                    "sim_id": sim_id,
-                    "sim_name": getattr(sim, "name", ""),
-                    "projection_count": len(paths),
-                    "status": "success",
-                    "error": None,
-                })
+                manifest_sims.append(
+                    {
+                        "sim_id": sim_id,
+                        "sim_name": getattr(sim, "name", ""),
+                        "projection_count": len(paths),
+                        "status": "success",
+                        "error": None,
+                    }
+                )
             except Exception as exc:
                 logger.warning(
-                    "Batch export: sim %s failed: %s", sim_id, exc, exc_info=True,
+                    "Batch export: sim %s failed: %s",
+                    sim_id,
+                    exc,
+                    exc_info=True,
                 )
                 failed_sims.append({"sim_id": sim_id, "error": str(exc)})
-                manifest_sims.append({
-                    "sim_id": sim_id,
-                    "sim_name": "",
-                    "projection_count": 0,
-                    "status": "failed",
-                    "error": str(exc),
-                })
+                manifest_sims.append(
+                    {
+                        "sim_id": sim_id,
+                        "sim_name": "",
+                        "projection_count": 0,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
 
         # Write manifest.json at root
         manifest = {
@@ -2469,7 +2478,11 @@ def build_batch_projections_zip(
 ) -> dict:
     """Celery task wrapper for batch projection ZIP build."""
     return _build_batch_projections_zip_impl(
-        self, study_id, simulation_ids, mode, config,
+        self,
+        study_id,
+        simulation_ids,
+        mode,
+        config,
     )
 
 

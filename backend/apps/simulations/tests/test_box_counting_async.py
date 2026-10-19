@@ -133,9 +133,7 @@ class TestR31SyncPath:
         assert response.data["results"]["processed"] == 2
         assert "task_id" not in response.data
 
-    def test_geometry_less_sims_do_not_count_toward_boundary(
-        self, user, project
-    ):
+    def test_geometry_less_sims_do_not_count_toward_boundary(self, user, project):
         """≤30 sims WITH geometry plus geometry-less sims stay synchronous
         and the geometry-less sims are not processed (M8)."""
         study = _make_study(project)
@@ -176,9 +174,10 @@ class TestR32AsyncPath:
             _make_sim(project, study, with_geometry=False)
         client = _authed_client(user)
 
-        with patch(
-            "apps.simulations.tasks.run_box_counting_async.delay"
-        ) as mock_delay, patch("aglogen_core.box_counting_agglomerate"):
+        with (
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
             mock_delay.return_value = MagicMock(id="task-abc-123")
             response = client.post(_run_url(study), {}, format="json")
 
@@ -213,9 +212,7 @@ class TestR32AsyncPath:
             "total": 31,
         }
 
-    def test_status_endpoint_reports_pending_as_processing(
-        self, user, project
-    ):
+    def test_status_endpoint_reports_pending_as_processing(self, user, project):
         study = _make_study(project)
         client = _authed_client(user)
 
@@ -279,8 +276,9 @@ class TestAsyncTaskProducer:
         # For a bound task, run() binds the real task instance as self; patch
         # Task.update_state at the class level so no real result backend is
         # contacted while we capture the published job state.
-        with patch("aglogen_core.box_counting_agglomerate") as mock_bc, patch(
-            "celery.app.task.Task.update_state", side_effect=_capture
+        with (
+            patch("aglogen_core.box_counting_agglomerate") as mock_bc,
+            patch("celery.app.task.Task.update_state", side_effect=_capture),
         ):
             mock_bc.return_value = MagicMock(
                 dimension=2.5,

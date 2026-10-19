@@ -199,9 +199,7 @@ class TestR6CsvWindowedColumns:
         assert row[bc_idx + 5] == ""  # delta only on ok
         assert row[bc_idx + 6] == "insufficient_levels"
 
-    def test_legacy_only_study_is_byte_identical_to_pre_change(
-        self, user, project
-    ):
+    def test_legacy_only_study_is_byte_identical_to_pre_change(self, user, project):
         """A study without any windowed block produces the exact pre-change
         CSV bytes: single header, no BC_Win_* columns, no extra cells."""
         study = _make_study(project)
