@@ -15,7 +15,7 @@ payload SHALL gain an additive `study_comparison` block, built by ONE shared pur
 exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes primitives, not a
 `FraktalBatch` instance) consumed by ALL THREE payload builders (`_build_batch_response`
 `views.py:531` with `images_out`, `_serialize_batch_from_db` `views.py:840`, inline
-`batch_detail_view` `views.py:1084-1096`):
+`batch_detail_view` `views.py:1083-1095`):
 
 ```json
 {
@@ -34,7 +34,7 @@ exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes pr
   `quality == "converged"` and `df_estimate` when `quality == "approximate"` (canonical R7
   / `fraktal-batch-contract.md:200,240` precedent; approximate rows carry
   `fractal_dimension = null` when `quality == "approximate"` — canonical
-  `fraktal-batch-contract.md:178`, R6.3; query at `views.py:882-887`). `images_with_df` = count of contributing
+  `fraktal-batch-contract.md:178`, R6.3; query at `views.py:875-884`). `images_with_df` = count of contributing
   values; `n_converged`/`n_approximate` = per-quality breakdown of contributors.
 - `sim_df.value` = `metrics["fractal_dimension"]` of the sim (`views.py:1132`); the `0.0`
   sentinel counts as MISSING (r1 m4). `target_df` = the sim's target Df when available
@@ -82,6 +82,13 @@ exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes pr
 - **AND** the legacy `comparison` block stays UNCHANGED (canonical R9/R11, no sentinel rule)
   but is NOT a marker source — `study_comparison.sim_df.value` is the only permitted source
   for the marker and the new card (r5 nit 8)
+- **AND** the null branch is pinned (r6 MINOR-1): when `study_comparison` is `null` — the real
+  case where a sim IS linked but its metric is missing/`0.0`/deleted, since
+  `build_comparison_data` renders the legacy card whenever `sim_id` is non-null
+  (`services/batch.py:255-270`) — the SummaryPage shows **NO comparison card and NO legacy
+  fallback** (a legacy fallback would reintroduce the `0.0` rendering D4 exists to fix); the
+  sim/target info is simply absent, and a test MUST distinguish this case from the non-null
+  one
 
 ### Requirement: R13. In-place bulk re-analysis of failed images (C3)
 
@@ -110,7 +117,8 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
 - **Aggregate recompute (r1 MAJOR / r2-r4 corrections):** after the row updates, batch aggregates are
   recomputed over the FULL row set. Persisted columns — EXACTLY the 7 `persist_batch_results`
   writes (`n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `min_df`, `max_df`;
-  `services/batch.py:519-520,537-546`) — plus the READ-DERIVED stats (r5 MAJOR-1):
+  `services/batch.py:519-520,537-546`) — the READ-DERIVED stats are foreign to the service
+  (r6 MINOR-2):
   `q1_df`/`q3_df` are emitted ONLY by builder 1 (`compute_batch_statistics`,
   `batch.py:293-341`, percentiles `:339-340`) from in-memory rust results — they are NOT
   model columns and the two DB read builders do NOT emit them (`views.py:895-908`,
@@ -129,7 +137,7 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
 - **Boundary:** ≤30 failed images → sync, response `200` with the updated batch summary
   payload (including `study_comparison`); >30 → async via a thin Celery wrapper, response
   `202 {job_id, status: "queued"}` (canonical shape, r1 B4; `fraktal_status_view` reusable
-  if the wrapper reports `{"batch_id": …}` as `tasks.py:770-775` does).
+  if the wrapper reports `{"batch_id": …}` as `tasks.py:770-773` does).
 - **Errors:** zero failed images → `400 {"detail": …, "code": "no_failed_images"}` (r2 minor:
   body shape pinned to the sibling `{"detail": …}` convention, `views.py:1247-1252`). Any
   other failure → the canonical `failed` job payload (async) or a 500 (sync).

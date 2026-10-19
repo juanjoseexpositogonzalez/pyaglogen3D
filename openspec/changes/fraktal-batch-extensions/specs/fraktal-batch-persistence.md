@@ -2,10 +2,10 @@
 
 > **Modifies R2 of `fraktal-batch-persistence`.** Restatement COMPLETE (regla de archive del repo:
 > los bloques MODIFIED se escriben completos — spec-review r3 BLOCKER-2, verificado en r4 con diff
-> solo-adiciones contra el canónico). Único cambio de contrato: el campo nullable
-> `pixels_per_100nm` (+ cláusula de uso en re-análisis + scenario 2.11). Todo lo demás es el texto
-> canónico verbatim (enumeración exhaustiva, AND-clauses y scenarios 2.1-2.10 preservados sin
-> alteración).
+> solo-adiciones contra el canónico). Cambios de contrato: el campo nullable
+> `pixels_per_100nm` (+ cláusula de uso en re-análisis + scenarios 2.11 y 2.12). Todo lo demás es
+> el texto canónico verbatim (enumeración exhaustiva, AND-clauses y scenarios 2.1-2.10 preservados
+> sin alteración).
 
 ### R2. FraktalBatchImage rows store per-image data + PNG bytes
 
@@ -118,7 +118,7 @@ data were not persisted.)
 - WHEN two rows with the same `(batch, index)` are attempted
 - THEN the unique constraint is violated; second insert is rejected (unchanged behavior)
 
-#### Scenario 2.11 — Re-analysis uses persisted per-image scale (renumbered from 2.9: canonical already has 2.9/2.10 — r4 minor 1)
+#### Scenario 2.11 — Re-analysis uses persisted per-image scale
 
 - GIVEN a failed image whose row carries `pixels_per_100nm = 4.2` (populated at first analysis)
 - WHEN the bulk re-analysis of R13 processes that image
