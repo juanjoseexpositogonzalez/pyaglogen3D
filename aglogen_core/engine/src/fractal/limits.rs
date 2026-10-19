@@ -69,7 +69,7 @@ pub fn cross_2d(n_per_arm: usize) -> LimitCase {
     let n = n_per_arm;
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    if n % 2 != 0 {
+    if !n.is_multiple_of(2) {
         // Odd case
         let ultima = n as f64 * 2.0 * r;
         // Horizontal spine
@@ -127,7 +127,7 @@ pub fn cross_2d(n_per_arm: usize) -> LimitCase {
 /// (matching MATLAB behaviour).
 pub fn asterisk(n_per_arm: usize) -> LimitCase {
     let r = 1.0;
-    let n = if n_per_arm % 2 == 0 {
+    let n = if n_per_arm.is_multiple_of(2) {
         n_per_arm + 1
     } else {
         n_per_arm
@@ -172,7 +172,7 @@ pub fn asterisk(n_per_arm: usize) -> LimitCase {
 /// If `n_per_arm` is even, it is silently incremented to odd.
 pub fn cross_3d(n_per_arm: usize) -> LimitCase {
     let r = 1.0;
-    let n = if n_per_arm % 2 == 0 {
+    let n = if n_per_arm.is_multiple_of(2) {
         n_per_arm + 1
     } else {
         n_per_arm
@@ -224,7 +224,7 @@ pub fn plane_hc(n_layers: usize) -> LimitCase {
     let r = 1.0;
     let sqrt3 = 3.0_f64.sqrt();
     let esferas2 = n_layers * 2 + 1;
-    let half = (esferas2 + 1) / 2; // ceil(esferas2/2)
+    let half = esferas2.div_ceil(2); // ceil(esferas2/2)
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
     for i in 1..=half {
@@ -277,7 +277,7 @@ pub fn double_plane_hc(n_layers: usize) -> LimitCase {
     let r = 1.0;
     let sqrt3 = 3.0_f64.sqrt();
     let esferas2 = n_layers * 2 + 1;
-    let half = (esferas2 + 1) / 2;
+    let half = esferas2.div_ceil(2);
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
     // First plane: xy (z = 0)
@@ -318,7 +318,7 @@ pub fn triple_plane_hc(n_layers: usize) -> LimitCase {
     let r = 1.0;
     let sqrt3 = 3.0_f64.sqrt();
     let esferas2 = n_layers * 2 + 1;
-    let half = (esferas2 + 1) / 2;
+    let half = esferas2.div_ceil(2);
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
     // Plane 1: xy (flat, z = 0)
@@ -372,7 +372,7 @@ const HC_Z_SPACING: f64 = {
     // sqrt(6) ≈ 2.449489742783178
     // We rely on the compiler evaluating this at const time via a literal,
     // since f64::sqrt is not const. The value is exact to f64 precision.
-    1.632_993_161_855_452_1
+    1.632_993_161_855_452
 };
 
 /// **Mode 8 (HC) — Cuboctahedron, hexagonal close-packed**: a 3D
@@ -399,7 +399,7 @@ pub fn cuboctahedron_hc(n_layers: usize) -> LimitCase {
     }
 
     let esferas2 = capas * 2 + 1;
-    let half = (esferas2 + 1) / 2; // ceil(esferas2/2)
+    let half = esferas2.div_ceil(2); // ceil(esferas2/2)
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
     // Base hexagonal plane (z = 0)

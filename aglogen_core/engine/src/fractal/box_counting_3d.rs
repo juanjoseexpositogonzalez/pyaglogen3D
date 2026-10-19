@@ -10,12 +10,59 @@
 //! - Parallel processing with rayon
 //! - SIMD-friendly bit operations
 
+use std::fmt;
 use std::time::Instant;
 
 use rayon::prelude::*;
 
 /// Maximum precision in bits (21 bits per dimension = 63 bits total for 3D Morton code).
 const MAX_PRECISION: u32 = 21;
+
+/// Validation error from the windowed box-counting path (`box_counting_3d_windowed`).
+///
+/// Window indices refer to the EFFECTIVE level sequence: the count-valid
+/// levels (`0 < count < N`) ordered finest-first (index 0 = finest count-valid
+/// level) — the semantics validated by the Phase 0 diagnostic
+/// (`bc_window_alignment_audit`, design Log L2). NOT raw Morton level indices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BoxCountingError {
+    /// Window start is greater than window end (empty range).
+    EmptyWindow { start: usize, end: usize },
+    /// Window extends beyond the effective level sequence.
+    WindowOutOfRange {
+        start: usize,
+        end: usize,
+        num_levels: usize,
+    },
+    /// Fewer than 3 count-valid levels fall inside the window (occurs at
+    /// small N / high Df, e.g. effLevels = 2-3 at Df >= 2.5, N <= 100 —
+    /// see design Log L2).
+    InsufficientLevels { have: usize, need: usize },
+}
+
+impl fmt::Display for BoxCountingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            BoxCountingError::EmptyWindow { start, end } => {
+                write!(f, "empty fit window: start {start} > end {end}")
+            }
+            BoxCountingError::WindowOutOfRange {
+                start,
+                end,
+                num_levels,
+            } => write!(
+                f,
+                "fit window ({start}, {end}) out of range: only {num_levels} count-valid levels"
+            ),
+            BoxCountingError::InsufficientLevels { have, need } => write!(
+                f,
+                "only {have} count-valid levels inside the fit window, need at least {need}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for BoxCountingError {}
 
 /// Interleave bits of x into a 64-bit integer, spreading them apart for Morton code.
 /// Places bits of x at positions 0, 3, 6, 9, ... (every 3rd bit for 3D).
@@ -64,7 +111,7 @@ pub struct BoxCountingResult3D {
     pub linear_region_start: usize,
 }
 
-/// Fast 3D box-counting using Morton codes.
+/// Fast 3D box-counting using Morton codes (default legacy fit path).
 ///
 /// # Arguments
 /// * `points` - Nx3 array of (x, y, z) coordinates
@@ -73,11 +120,56 @@ pub struct BoxCountingResult3D {
 /// # Returns
 /// BoxCountingResult3D with fractal dimension and statistics.
 pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountingResult3D {
+    morton_core(points, precision, None).expect("default fit path never fails window validation")
+}
+
+/// Fast 3D box-counting using Morton codes with an explicit fit window
+/// (design D1/D3, R29.2).
+///
+/// `fit_window = (s, e)` is an inclusive range of indices into the EFFECTIVE
+/// level sequence — the count-valid levels (`0 < count < N`) ordered
+/// finest-first (0 = finest count-valid level) — exactly the semantics
+/// validated by the Phase 0 diagnostic (design Log L2). The windowed path
+/// computes a plain OLS of ln(1/box_size) vs ln(count) restricted to levels
+/// `[s, e]` (no saturation truncation, no coarse-anchor greedy extension) and
+/// reports `linear_region_start = s`.
+///
+/// # Errors
+/// Returns [`BoxCountingError`] (never panics) when the window is empty
+/// (`s > e`), out of range of the effective level sequence, or when fewer
+/// than 3 count-valid levels fall inside the window.
+pub fn box_counting_3d_windowed(
+    points: &[[f64; 3]],
+    precision: u32,
+    fit_window: (usize, usize),
+) -> Result<BoxCountingResult3D, BoxCountingError> {
+    morton_core(points, precision, Some(fit_window))
+}
+
+/// Shared counting + fit core (design D3).
+///
+/// `fit_window = None` → legacy robust-fit path (saturation truncation +
+/// `linear_regression_robust`), byte-identical to the pre-refactor
+/// implementation (R29.1). `fit_window = Some((s, e))` → plain OLS over the
+/// effective level range `[s, e]` with validation errors (R29.2).
+fn morton_core(
+    points: &[[f64; 3]],
+    precision: u32,
+    fit_window: Option<(usize, usize)>,
+) -> Result<BoxCountingResult3D, BoxCountingError> {
     let start_time = Instant::now();
     let n_points = points.len();
 
     if n_points < 2 {
-        return BoxCountingResult3D {
+        if let Some((start, end)) = fit_window {
+            // No count-valid levels exist at all.
+            return Err(BoxCountingError::WindowOutOfRange {
+                start,
+                end,
+                num_levels: 0,
+            });
+        }
+        return Ok(BoxCountingResult3D {
             dimension: 0.0,
             r_squared: 0.0,
             std_error: f64::INFINITY,
@@ -88,7 +180,7 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
             execution_time_ms: 0,
             num_points: n_points,
             linear_region_start: 0,
-        };
+        });
     }
 
     let precision = precision.min(MAX_PRECISION);
@@ -132,6 +224,59 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
         }
     }
 
+    // ── Windowed path: plain OLS over the effective level range (R29.2) ──
+    // Applied BEFORE the legacy saturation truncation: the window indexes the
+    // effective (count-valid) sequence, exactly as the Phase 0 diagnostic
+    // validated (design Log L2).
+    if let Some((start, end)) = fit_window {
+        let num_levels = log_scales.len();
+        if start > end {
+            return Err(BoxCountingError::EmptyWindow { start, end });
+        }
+        if end >= num_levels {
+            return Err(BoxCountingError::WindowOutOfRange {
+                start,
+                end,
+                num_levels,
+            });
+        }
+        let have = end - start + 1;
+        if have < 3 {
+            return Err(BoxCountingError::InsufficientLevels { have, need: 3 });
+        }
+        // Plain OLS restricted to [start, end] — no greedy extension, no
+        // coarse anchor. `linear_region_start` reports the window start `s`.
+        let (slope, intercept, r_squared, std_error, _) =
+            linear_regression(&log_scales[start..=end], &log_counts[start..=end]);
+
+        // Residuals for ALL effective levels vs the windowed fit
+        // (same "for visualization" convention as the legacy path).
+        let residuals: Vec<f64> = log_scales
+            .iter()
+            .zip(log_counts.iter())
+            .map(|(xi, yi)| yi - (intercept + slope * xi))
+            .collect();
+
+        let dimension = slope;
+        let ci_half = 1.96 * std_error;
+        let confidence_interval = (dimension - ci_half, dimension + ci_half);
+
+        let execution_time_ms = start_time.elapsed().as_millis() as u64;
+
+        return Ok(BoxCountingResult3D {
+            dimension,
+            r_squared,
+            std_error,
+            confidence_interval,
+            log_scales,
+            log_counts,
+            residuals,
+            execution_time_ms,
+            num_points: n_points,
+            linear_region_start: start,
+        });
+    }
+
     // Step 4b: Saturation truncation (ported from fit_frac3D.m:4-12)
     // Data is ordered finest (index 0) → coarsest (last index).
     // log_counts should monotonically DECREASE (fewer boxes at coarser scales).
@@ -166,7 +311,7 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
 
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-    BoxCountingResult3D {
+    Ok(BoxCountingResult3D {
         dimension,
         r_squared,
         std_error,
@@ -177,7 +322,7 @@ pub fn box_counting_3d_morton(points: &[[f64; 3]], precision: u32) -> BoxCountin
         execution_time_ms,
         num_points: n_points,
         linear_region_start: linear_start,
-    }
+    })
 }
 
 /// Count unique values after masking off `shift` low bits.
@@ -309,16 +454,13 @@ fn linear_regression_robust(x: &[f64], y: &[f64]) -> (usize, f64, f64, f64, f64,
     let r2_drop_threshold = 0.02; // Max allowed R squared drop when adding a point
 
     // Start with rightmost points (large scales - more reliable)
-    let mut best_start = 0;
-    let mut best_r2 = 0.0;
-
     // Initial regression with last min_points
     let start_idx = n - min_points;
-    let (mut slope, mut intercept, mut r2, mut std_error, _) =
+    let (mut slope, mut intercept, r2, mut std_error, _) =
         linear_regression(&x[start_idx..], &y[start_idx..]);
 
-    best_start = start_idx;
-    best_r2 = r2;
+    let mut best_start = start_idx;
+    let mut best_r2 = r2;
 
     // Progressively add points from the left
     for i in (0..start_idx).rev() {
@@ -354,8 +496,6 @@ fn linear_regression_robust(x: &[f64], y: &[f64]) -> (usize, f64, f64, f64, f64,
             best_start = i;
             best_r2 = new_r2.max(best_r2);
         }
-
-        r2 = new_r2;
     }
 
     // Final regression on selected range

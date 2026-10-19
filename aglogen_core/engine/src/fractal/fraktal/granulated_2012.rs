@@ -431,7 +431,7 @@ pub fn analyze_granulated_2012(
         } else {
             0.0
         };
-        let npo_aligned = npo_ratio >= 0.5 && npo_ratio <= 2.0;
+        let npo_aligned = (0.5..=2.0).contains(&npo_ratio);
 
         return FraktalResult {
             rg,
@@ -479,7 +479,7 @@ pub fn analyze_granulated_2012(
     } else {
         0.0
     };
-    let npo_aligned = npo_ratio >= 0.5 && npo_ratio <= 2.0;
+    let npo_aligned = (0.5..=2.0).contains(&npo_ratio);
 
     // Classify quality on success path (PYA-13)
     let quality = classify_quality(last_bisection_residual, None);

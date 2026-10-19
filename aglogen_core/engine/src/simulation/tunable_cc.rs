@@ -202,8 +202,10 @@ pub enum SeedType {
     since = "0.5.0",
     note = "Use `SeedType` on `TunableCcParams` instead. `TunablePc` falls back to Monomers in pure engine."
 )]
+#[derive(Default)]
 pub enum SeedStrategy {
     /// All monomers (like standard Ballistic CC)
+    #[default]
     Monomers,
     /// Generate seed clusters using Tunable PC with specified size.
     /// Falls back to Monomers in the pure-engine crate.
@@ -213,11 +215,6 @@ pub enum SeedStrategy {
 }
 
 #[allow(deprecated)]
-impl Default for SeedStrategy {
-    fn default() -> Self {
-        SeedStrategy::Monomers
-    }
-}
 
 /// Tunable CC simulation parameters.
 #[derive(Debug, Clone)]
@@ -1016,8 +1013,8 @@ fn build_pc_seeds<R: Rng>(
 
         // Particles 2..PC_SEED_SIZE: placed ballistically against the growing cluster.
         for _ in 1..PC_SEED_SIZE {
-            let pos = place_particle_ballistic(&particles, rng_pc, rp, sintering)
-                .unwrap_or_else(|| {
+            let pos =
+                place_particle_ballistic(&particles, rng_pc, rp, sintering).unwrap_or_else(|| {
                     // Extremely rare: ballistic placement failed 1000 attempts.
                     // Fall back to a monomer at origin (cluster stays connected via
                     // subsequent sintering; does not violate R23 physical connectivity
@@ -1187,7 +1184,16 @@ pub fn run_tunable_cc_internal(
 
         // ── Phase 3 algorithm branch (smart pair selection + adaptive fallback) ──
         if use_phase3 {
-            let smart_result = select_pair_smart(&clusters, df, kf, rp, sintering_coeff, &mut rng, use_low_df_fix, use_high_df_fix);
+            let smart_result = select_pair_smart(
+                &clusters,
+                df,
+                kf,
+                rp,
+                sintering_coeff,
+                &mut rng,
+                use_low_df_fix,
+                use_high_df_fix,
+            );
 
             match smart_result {
                 SmartPairResult::Feasible(pair) => {
@@ -1212,8 +1218,10 @@ pub fn run_tunable_cc_internal(
                         let mut imp_try = clusters[impacted_idx].clone();
                         let mut imr_try = clusters[impactor_idx].clone();
 
-                        let la1 = imp_try.get_candidate_particles(required_distance, imr_try.bounding_radius);
-                        let la2 = imr_try.get_candidate_particles(required_distance, imp_try.bounding_radius);
+                        let la1 = imp_try
+                            .get_candidate_particles(required_distance, imr_try.bounding_radius);
+                        let la2 = imr_try
+                            .get_candidate_particles(required_distance, imp_try.bounding_radius);
 
                         if la1.is_empty() || la2.is_empty() {
                             retries_this_merge = attempt;
@@ -1223,24 +1231,50 @@ pub fn run_tunable_cc_internal(
                         let mut inner_success = false;
                         for _ in 0..params.max_particle_selection_attempts {
                             if let Some((m1, m2)) = select_contact_particles(
-                                &imp_try, &imr_try, &la1, &la2,
-                                required_distance, sintering_coeff, &mut rng,
+                                &imp_try,
+                                &imr_try,
+                                &la1,
+                                &la2,
+                                required_distance,
+                                sintering_coeff,
+                                &mut rng,
                             ) {
                                 let positioned = position_clusters_for_contact(
-                                    &mut imp_try, &mut imr_try, m1, m2,
-                                    required_distance, sintering_coeff, &mut rng,
+                                    &mut imp_try,
+                                    &mut imr_try,
+                                    m1,
+                                    m2,
+                                    required_distance,
+                                    sintering_coeff,
+                                    &mut rng,
                                 );
                                 if positioned {
-                                    let has_contact = has_intercluster_contact(&imp_try, &imr_try, sintering_coeff);
-                                    if has_contact && !check_overlap(&imp_try, &imr_try, sintering_coeff) {
+                                    let has_contact = has_intercluster_contact(
+                                        &imp_try,
+                                        &imr_try,
+                                        sintering_coeff,
+                                    );
+                                    if has_contact
+                                        && !check_overlap(&imp_try, &imr_try, sintering_coeff)
+                                    {
                                         inner_success = true;
                                         impacted = imp_try;
                                         impactor = imr_try;
                                         break;
-                                    } else if has_contact && resolve_overlap_by_rotation(
-                                        &imp_try, &mut imr_try, m2,
-                                        params.max_rotation_attempts, sintering_coeff, &mut rng,
-                                    ) && has_intercluster_contact(&imp_try, &imr_try, sintering_coeff)
+                                    } else if has_contact
+                                        && resolve_overlap_by_rotation(
+                                            &imp_try,
+                                            &mut imr_try,
+                                            m2,
+                                            params.max_rotation_attempts,
+                                            sintering_coeff,
+                                            &mut rng,
+                                        )
+                                        && has_intercluster_contact(
+                                            &imp_try,
+                                            &imr_try,
+                                            sintering_coeff,
+                                        )
                                     {
                                         inner_success = true;
                                         impacted = imp_try;
@@ -1262,7 +1296,9 @@ pub fn run_tunable_cc_internal(
                     if attempt_succeeded {
                         // Tunable merge succeeded
                         tunable_merges += 1;
-                        let actual_distance = impacted.center_of_mass.distance_to(&impactor.center_of_mass);
+                        let actual_distance = impacted
+                            .center_of_mass
+                            .distance_to(&impactor.center_of_mass);
 
                         let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                             (impactor_idx, impacted_idx)
@@ -1298,7 +1334,10 @@ pub fn run_tunable_cc_internal(
                         let march_result = march_inward_merge(
                             &clusters[impacted_idx],
                             &clusters[impactor_idx],
-                            required_distance, rp, sintering_coeff, &mut rng,
+                            required_distance,
+                            rp,
+                            sintering_coeff,
+                            &mut rng,
                         );
 
                         if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1317,9 +1356,13 @@ pub fn run_tunable_cc_internal(
                             merged.merge_with(imr_m);
 
                             merge_trace.push(emit_adaptive_merge_entry(
-                                merge_count, n_po1, n_po2,
-                                actual_distance, required_distance,
-                                merged.radius_of_gyration, rg_target,
+                                merge_count,
+                                n_po1,
+                                n_po2,
+                                actual_distance,
+                                required_distance,
+                                merged.radius_of_gyration,
+                                rg_target,
                                 retries_this_merge,
                                 None,
                             ));
@@ -1334,7 +1377,8 @@ pub fn run_tunable_cc_internal(
 
                             if merge_ballistic(&imp_b, &mut imr_b, sintering_coeff, &mut rng) {
                                 ballistic_merges += 1;
-                                let actual_distance = imp_b.center_of_mass.distance_to(&imr_b.center_of_mass);
+                                let actual_distance =
+                                    imp_b.center_of_mass.distance_to(&imr_b.center_of_mass);
 
                                 let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                                     (impactor_idx, impacted_idx)
@@ -1344,7 +1388,7 @@ pub fn run_tunable_cc_internal(
                                 clusters.remove(higher_idx);
                                 clusters.remove(lower_idx);
 
-                                let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                                let _rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
                                 let mut merged = imp_b;
                                 merged.merge_with(imr_b);
 
@@ -1369,7 +1413,9 @@ pub fn run_tunable_cc_internal(
                         }
                     }
                 }
-                SmartPairResult::AllInfeasible { max_achievable_pair } => {
+                SmartPairResult::AllInfeasible {
+                    max_achievable_pair,
+                } => {
                     // No feasible pair exists — emit event + march-inward adaptive.
                     no_feasible_pair_events += 1;
                     merge_trace.push(emit_no_feasible_pair_entry(merge_count, clusters.len()));
@@ -1389,7 +1435,10 @@ pub fn run_tunable_cc_internal(
                     let march_result = march_inward_merge(
                         &clusters[impacted_idx],
                         &clusters[impactor_idx],
-                        pair.required_distance, rp, sintering_coeff, &mut rng,
+                        pair.required_distance,
+                        rp,
+                        sintering_coeff,
+                        &mut rng,
                     );
 
                     if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1409,11 +1458,19 @@ pub fn run_tunable_cc_internal(
 
                         // R27: when use_high_df_fix=true, tag ALL AllInfeasible events
                         // as "adaptive_high_df_floor" (design §3.4: tag-all-when-flag-on).
-                        let adaptive_tag = if use_high_df_fix { Some("adaptive_high_df_floor") } else { None };
+                        let adaptive_tag = if use_high_df_fix {
+                            Some("adaptive_high_df_floor")
+                        } else {
+                            None
+                        };
                         merge_trace.push(emit_adaptive_merge_entry(
-                            merge_count, n_po1, n_po2,
-                            actual_distance, pair.required_distance,
-                            merged.radius_of_gyration, rg_target,
+                            merge_count,
+                            n_po1,
+                            n_po2,
+                            actual_distance,
+                            pair.required_distance,
+                            merged.radius_of_gyration,
+                            rg_target,
                             0,
                             adaptive_tag,
                         ));
@@ -1428,7 +1485,8 @@ pub fn run_tunable_cc_internal(
                         let mut imr = clusters[impactor_idx].clone();
 
                         if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
-                            let actual_distance = imp.center_of_mass.distance_to(&imr.center_of_mass);
+                            let actual_distance =
+                                imp.center_of_mass.distance_to(&imr.center_of_mass);
 
                             let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
                                 (impactor_idx, impacted_idx)
@@ -1438,7 +1496,7 @@ pub fn run_tunable_cc_internal(
                             clusters.remove(higher_idx);
                             clusters.remove(lower_idx);
 
-                            let rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
+                            let _rg_target = rp * ((n_po1 + n_po2) as f64 / kf).powf(1.0 / df);
                             let n_total = (n_po1 + n_po2) as f64;
                             let mut merged = imp;
                             merged.merge_with(imr);
@@ -1464,226 +1522,234 @@ pub fn run_tunable_cc_internal(
                 }
             }
         } else {
-        // ── Phase 2 algorithm branch (legacy random pair + retry + ballistic) ──
+            // ── Phase 2 algorithm branch (legacy random pair + retry + ballistic) ──
 
-        // Retry loop: each retry picks a NEW random pair (R3 spec)
-        for attempt in 0..=params.max_merge_retries {
-            // Select two clusters randomly (fresh pair each attempt)
-            let indices: Vec<usize> = (0..clusters.len()).collect();
-            let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
-            let idx1 = *selected[0];
-            let idx2 = *selected[1];
+            // Retry loop: each retry picks a NEW random pair (R3 spec)
+            for attempt in 0..=params.max_merge_retries {
+                // Select two clusters randomly (fresh pair each attempt)
+                let indices: Vec<usize> = (0..clusters.len()).collect();
+                let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
+                let idx1 = *selected[0];
+                let idx2 = *selected[1];
 
-            let (impacted_idx, impactor_idx) =
-                if clusters[idx1].n_particles() >= clusters[idx2].n_particles() {
-                    (idx1, idx2)
-                } else {
-                    (idx2, idx1)
-                };
+                let (impacted_idx, impactor_idx) =
+                    if clusters[idx1].n_particles() >= clusters[idx2].n_particles() {
+                        (idx1, idx2)
+                    } else {
+                        (idx2, idx1)
+                    };
 
-            let mut impacted = clusters[impacted_idx].clone();
-            let mut impactor = clusters[impactor_idx].clone();
+                let mut impacted = clusters[impacted_idx].clone();
+                let mut impactor = clusters[impactor_idx].clone();
 
-            let n_po1 = impacted.n_particles();
-            let n_po2 = impactor.n_particles();
+                let n_po1 = impacted.n_particles();
+                let n_po2 = impactor.n_particles();
 
-            let required_distance =
-                match calculate_com_distance(n_po1, n_po2, rp, df, kf, sintering_coeff) {
-                    Some(d) => d,
-                    None => {
-                        retries_this_merge = attempt;
-                        continue; // retry with new pair
-                    }
-                };
+                let required_distance =
+                    match calculate_com_distance(n_po1, n_po2, rp, df, kf, sintering_coeff) {
+                        Some(d) => d,
+                        None => {
+                            retries_this_merge = attempt;
+                            continue; // retry with new pair
+                        }
+                    };
 
-            let can_connect = can_clusters_connect(&impacted, &impactor, required_distance);
-            if !can_connect {
-                retries_this_merge = attempt;
-                continue;
-            }
+                let can_connect = can_clusters_connect(&impacted, &impactor, required_distance);
+                if !can_connect {
+                    retries_this_merge = attempt;
+                    continue;
+                }
 
-            let la1 = impacted.get_candidate_particles(required_distance, impactor.bounding_radius);
-            let la2 = impactor.get_candidate_particles(required_distance, impacted.bounding_radius);
+                let la1 =
+                    impacted.get_candidate_particles(required_distance, impactor.bounding_radius);
+                let la2 =
+                    impactor.get_candidate_particles(required_distance, impacted.bounding_radius);
 
-            if la1.is_empty() || la2.is_empty() {
-                retries_this_merge = attempt;
-                continue;
-            }
+                if la1.is_empty() || la2.is_empty() {
+                    retries_this_merge = attempt;
+                    continue;
+                }
 
-            // Inner particle-selection loop (within this attempt)
-            let mut attempt_succeeded = false;
-            for _ in 0..params.max_particle_selection_attempts {
-                if let Some((m1, m2)) = select_contact_particles(
-                    &impacted,
-                    &impactor,
-                    &la1,
-                    &la2,
-                    required_distance,
-                    sintering_coeff,
-                    &mut rng,
-                ) {
-                    let positioned = position_clusters_for_contact(
-                        &mut impacted,
-                        &mut impactor,
-                        m1,
-                        m2,
+                // Inner particle-selection loop (within this attempt)
+                let mut attempt_succeeded = false;
+                for _ in 0..params.max_particle_selection_attempts {
+                    if let Some((m1, m2)) = select_contact_particles(
+                        &impacted,
+                        &impactor,
+                        &la1,
+                        &la2,
                         required_distance,
                         sintering_coeff,
                         &mut rng,
-                    );
+                    ) {
+                        let positioned = position_clusters_for_contact(
+                            &mut impacted,
+                            &mut impactor,
+                            m1,
+                            m2,
+                            required_distance,
+                            sintering_coeff,
+                            &mut rng,
+                        );
 
-                    if positioned {
-                        let has_contact =
-                            has_intercluster_contact(&impacted, &impactor, sintering_coeff);
+                        if positioned {
+                            let has_contact =
+                                has_intercluster_contact(&impacted, &impactor, sintering_coeff);
 
-                        if has_contact && !check_overlap(&impacted, &impactor, sintering_coeff) {
-                            attempt_succeeded = true;
-                            break;
-                        } else if has_contact
-                            && resolve_overlap_by_rotation(
-                                &impacted,
-                                &mut impactor,
-                                m2,
-                                params.max_rotation_attempts,
-                                sintering_coeff,
-                                &mut rng,
-                            )
-                            && has_intercluster_contact(&impacted, &impactor, sintering_coeff)
-                        {
-                            attempt_succeeded = true;
-                            break;
+                            if has_contact && !check_overlap(&impacted, &impactor, sintering_coeff)
+                            {
+                                attempt_succeeded = true;
+                                break;
+                            } else if has_contact
+                                && resolve_overlap_by_rotation(
+                                    &impacted,
+                                    &mut impactor,
+                                    m2,
+                                    params.max_rotation_attempts,
+                                    sintering_coeff,
+                                    &mut rng,
+                                )
+                                && has_intercluster_contact(&impacted, &impactor, sintering_coeff)
+                            {
+                                attempt_succeeded = true;
+                                break;
+                            }
                         }
                     }
                 }
-            }
 
-            if attempt_succeeded {
-                // Tunable merge succeeded — commit
+                if attempt_succeeded {
+                    // Tunable merge succeeded — commit
+                    retries_this_merge = attempt;
+                    tunable_merges += 1;
+
+                    // R16: Measure actual COM-COM distance before merging clusters.
+                    let actual_distance = impacted
+                        .center_of_mass
+                        .distance_to(&impactor.center_of_mass);
+
+                    let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                        (impactor_idx, impacted_idx)
+                    } else {
+                        (impacted_idx, impactor_idx)
+                    };
+
+                    clusters.remove(higher_idx);
+                    clusters.remove(lower_idx);
+
+                    let mut merged = impacted;
+                    merged.merge_with(impactor);
+
+                    // R16: Record merge trace entry after merge_with (which calls update_properties).
+                    let n_total = (n_po1 + n_po2) as f64;
+                    merge_trace.push(MergeTraceEntry {
+                        step: merge_count,
+                        n1: n_po1,
+                        n2: n_po2,
+                        required_distance,
+                        actual_distance,
+                        rg_after: merged.radius_of_gyration,
+                        rg_target: rp * (n_total / kf).powf(1.0 / df),
+                        merge_type: "tunable".to_string(),
+                        retries: retries_this_merge,
+                        bounding_check_passed: true,
+                        overshoot_pct: None,
+                    });
+                    merge_count += 1;
+
+                    clusters.push(merged);
+
+                    merge_success = true;
+                    break;
+                }
+
                 retries_this_merge = attempt;
-                tunable_merges += 1;
-
-                // R16: Measure actual COM-COM distance before merging clusters.
-                let actual_distance = impacted
-                    .center_of_mass
-                    .distance_to(&impactor.center_of_mass);
-
-                let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
-                    (impactor_idx, impacted_idx)
-                } else {
-                    (impacted_idx, impactor_idx)
-                };
-
-                clusters.remove(higher_idx);
-                clusters.remove(lower_idx);
-
-                let mut merged = impacted;
-                merged.merge_with(impactor);
-
-                // R16: Record merge trace entry after merge_with (which calls update_properties).
-                let n_total = (n_po1 + n_po2) as f64;
-                merge_trace.push(MergeTraceEntry {
-                    step: merge_count,
-                    n1: n_po1,
-                    n2: n_po2,
-                    required_distance,
-                    actual_distance,
-                    rg_after: merged.radius_of_gyration,
-                    rg_target: rp * (n_total / kf).powf(1.0 / df),
-                    merge_type: "tunable".to_string(),
-                    retries: retries_this_merge,
-                    bounding_check_passed: true,
-                    overshoot_pct: None,
-                });
-                merge_count += 1;
-
-                clusters.push(merged);
-
-                merge_success = true;
-                break;
             }
 
-            retries_this_merge = attempt;
-        }
+            // Ballistic fallback after all retries exhausted (R3 scenario 3.3)
+            if !merge_success {
+                // Pick a fresh pair for ballistic
+                let indices: Vec<usize> = (0..clusters.len()).collect();
+                let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
+                let idx1 = *selected[0];
+                let idx2 = *selected[1];
 
-        // Ballistic fallback after all retries exhausted (R3 scenario 3.3)
-        if !merge_success {
-            // Pick a fresh pair for ballistic
-            let indices: Vec<usize> = (0..clusters.len()).collect();
-            let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
-            let idx1 = *selected[0];
-            let idx2 = *selected[1];
+                let (impacted_idx, impactor_idx) =
+                    if clusters[idx1].n_particles() >= clusters[idx2].n_particles() {
+                        (idx1, idx2)
+                    } else {
+                        (idx2, idx1)
+                    };
 
-            let (impacted_idx, impactor_idx) =
-                if clusters[idx1].n_particles() >= clusters[idx2].n_particles() {
-                    (idx1, idx2)
-                } else {
-                    (idx2, idx1)
-                };
+                let impacted = clusters[impacted_idx].clone();
+                let mut impactor = clusters[impactor_idx].clone();
 
-            let impacted = clusters[impacted_idx].clone();
-            let mut impactor = clusters[impactor_idx].clone();
+                let ballistic_n1 = impacted.n_particles();
+                let ballistic_n2 = impactor.n_particles();
 
-            let ballistic_n1 = impacted.n_particles();
-            let ballistic_n2 = impactor.n_particles();
+                if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
+                    ballistic_merges += 1;
 
-            if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
-                ballistic_merges += 1;
+                    // R16: Measure actual COM-COM distance for ballistic merge.
+                    let actual_distance = impacted
+                        .center_of_mass
+                        .distance_to(&impactor.center_of_mass);
 
-                // R16: Measure actual COM-COM distance for ballistic merge.
-                let actual_distance = impacted
-                    .center_of_mass
-                    .distance_to(&impactor.center_of_mass);
+                    let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
+                        (impactor_idx, impacted_idx)
+                    } else {
+                        (impacted_idx, impactor_idx)
+                    };
 
-                let (higher_idx, lower_idx) = if impactor_idx > impacted_idx {
-                    (impactor_idx, impacted_idx)
-                } else {
-                    (impacted_idx, impactor_idx)
-                };
+                    clusters.remove(higher_idx);
+                    clusters.remove(lower_idx);
 
-                clusters.remove(higher_idx);
-                clusters.remove(lower_idx);
+                    let mut merged = impacted;
+                    merged.merge_with(impactor);
 
-                let mut merged = impacted;
-                merged.merge_with(impactor);
-
-                // R16.11: Compute what the tunable path would have targeted,
-                // so merge_trace is complete even for ballistic fallbacks.
-                // R16.12: If calculate_com_distance returns None (degenerate
-                // pair, e.g. exponent overflow), fall back to 0.0 with a
-                // diagnostic warning — ballistic merges must never fail.
-                let required_distance =
-                    calculate_com_distance(ballistic_n1, ballistic_n2, rp, df, kf, sintering_coeff)
-                        .unwrap_or_else(|| {
-                            eprintln!(
-                        "WARNING: calculate_com_distance returned None for ballistic fallback \
+                    // R16.11: Compute what the tunable path would have targeted,
+                    // so merge_trace is complete even for ballistic fallbacks.
+                    // R16.12: If calculate_com_distance returns None (degenerate
+                    // pair, e.g. exponent overflow), fall back to 0.0 with a
+                    // diagnostic warning — ballistic merges must never fail.
+                    let required_distance = calculate_com_distance(
+                        ballistic_n1,
+                        ballistic_n2,
+                        rp,
+                        df,
+                        kf,
+                        sintering_coeff,
+                    )
+                    .unwrap_or_else(|| {
+                        eprintln!(
+                            "WARNING: calculate_com_distance returned None for ballistic fallback \
                          (n1={}, n2={}, df={}, kf={}, rp={}, sintering={})",
-                        ballistic_n1, ballistic_n2, df, kf, rp, sintering_coeff
-                    );
-                            0.0
-                        });
+                            ballistic_n1, ballistic_n2, df, kf, rp, sintering_coeff
+                        );
+                        0.0
+                    });
 
-                let n_total = (ballistic_n1 + ballistic_n2) as f64;
-                merge_trace.push(MergeTraceEntry {
-                    step: merge_count,
-                    n1: ballistic_n1,
-                    n2: ballistic_n2,
-                    required_distance,
-                    actual_distance,
-                    rg_after: merged.radius_of_gyration,
-                    rg_target: rp * (n_total / kf).powf(1.0 / df),
-                    merge_type: "ballistic".to_string(),
-                    retries: retries_this_merge,
-                    bounding_check_passed: false,
-                    overshoot_pct: None,
-                });
-                merge_count += 1;
+                    let n_total = (ballistic_n1 + ballistic_n2) as f64;
+                    merge_trace.push(MergeTraceEntry {
+                        step: merge_count,
+                        n1: ballistic_n1,
+                        n2: ballistic_n2,
+                        required_distance,
+                        actual_distance,
+                        rg_after: merged.radius_of_gyration,
+                        rg_target: rp * (n_total / kf).powf(1.0 / df),
+                        merge_type: "ballistic".to_string(),
+                        retries: retries_this_merge,
+                        bounding_check_passed: false,
+                        overshoot_pct: None,
+                    });
+                    merge_count += 1;
 
-                clusters.push(merged);
+                    clusters.push(merged);
 
-                merge_success = true;
+                    merge_success = true;
+                }
             }
-        }
-
         } // end of Phase 2 else branch
 
         // Track max retries across all merges
@@ -1767,6 +1833,14 @@ pub fn run_tunable_cc_internal(
 }
 
 /// Calculate Df and kf from Rg evolution using power law fitting.
+///
+/// Note (Cycle 3.1, `cc-tunable-rg-fit-fix`): the unweighted OLS over all evolution points is
+/// NOT the source of the kf deficit at `Df_target = 2.9` (mean kf ≈ 0.93). The Phase 0
+/// diagnostic `rg_fit_variants_audit` (engine examples) compared this fit against an
+/// N-weighted OLS and a tail-restricted fit on identical points: no variant reaches kf ≥ 1.0,
+/// and N-weighting is strictly worse there. The deficit is genuine R27-guard geometry
+/// (fallback merges land `rg_after < rg_target` at the feasibility edge). Do not "fix" the
+/// weighting without re-running that diagnostic; see canonical spec R27.4 accepted-deviation note.
 fn calculate_fractal_dimension_from_evolution(
     n_values: &[usize],
     rg_values: &[f64],
@@ -1975,7 +2049,8 @@ pub(crate) fn find_first_contact_distance(
                 let v_dot_dir = v.dot(direction);
                 let v_sq = v.dot(&v);
 
-                let discriminant = 4.0 * v_dot_dir * v_dot_dir - 4.0 * (v_sq - contact_dist * contact_dist);
+                let discriminant =
+                    4.0 * v_dot_dir * v_dot_dir - 4.0 * (v_sq - contact_dist * contact_dist);
                 if discriminant < 0.0 {
                     continue;
                 }
@@ -2022,7 +2097,9 @@ fn march_inward_merge<R: Rng>(
 
     // Cap d_start at a reasonable multiple of max_achievable to avoid
     // runaway march on pathological formula outputs (e.g. Df=0.05).
-    let d_start = max_achievable.max(target_distance).min(max_achievable * 2.0);
+    let d_start = max_achievable
+        .max(target_distance)
+        .min(max_achievable * 2.0);
     let d_floor = (target_distance * 0.3).max(rp * 0.5); // sanity floor
 
     // Normalize sphere positions relative to each cluster's centroid.
@@ -2201,17 +2278,26 @@ pub(crate) fn find_feasible_pairs(
         for j in (i + 1)..k {
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
-            let required = match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
-                Some(d) => d,
-                None => continue, // degenerate geometry, skip
-            };
+            let required =
+                match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
+                    Some(d) => d,
+                    None => continue, // degenerate geometry, skip
+                };
 
             // Cycle 2 (R27): physical-contact guard — exclude geometrically impossible pairs.
             // A pair is impossible when required_distance < 2 * max(rp_i, rp_j): the two
             // bounding spheres would overlap before touching. Guard is additive (AND clause).
             if use_high_df_fix {
-                let rp_i = clusters[i].particles.first().map(|s| s.radius).unwrap_or(rp);
-                let rp_j = clusters[j].particles.first().map(|s| s.radius).unwrap_or(rp);
+                let rp_i = clusters[i]
+                    .particles
+                    .first()
+                    .map(|s| s.radius)
+                    .unwrap_or(rp);
+                let rp_j = clusters[j]
+                    .particles
+                    .first()
+                    .map(|s| s.radius)
+                    .unwrap_or(rp);
                 let rp_max = rp_i.max(rp_j);
                 if required < 2.0 * rp_max {
                     continue; // geometrically impossible — skip (R27.1)
@@ -2253,7 +2339,15 @@ pub(crate) fn select_pair_smart<R: Rng>(
     use_low_df_fix: bool,
     use_high_df_fix: bool,
 ) -> SmartPairResult {
-    let feasible = find_feasible_pairs(clusters, target_df, target_kf, rp, sintering_coeff, use_low_df_fix, use_high_df_fix);
+    let feasible = find_feasible_pairs(
+        clusters,
+        target_df,
+        target_kf,
+        rp,
+        sintering_coeff,
+        use_low_df_fix,
+        use_high_df_fix,
+    );
 
     if !feasible.is_empty() {
         let chosen = feasible.choose(rng).unwrap().clone();
@@ -2268,17 +2362,28 @@ pub(crate) fn select_pair_smart<R: Rng>(
         for j in (i + 1)..k {
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
-            let required = match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
-                Some(d) => d,
-                None => continue,
-            };
+            let required =
+                match calculate_com_distance(n1, n2, rp, target_df, target_kf, sintering_coeff) {
+                    Some(d) => d,
+                    None => continue,
+                };
             let bounding_sum = compute_max_achievable_distance(&clusters[i], &clusters[j]);
             match &best {
                 None => {
-                    best = Some(PairCandidate { idx1: i, idx2: j, required_distance: required, bounding_sum });
+                    best = Some(PairCandidate {
+                        idx1: i,
+                        idx2: j,
+                        required_distance: required,
+                        bounding_sum,
+                    });
                 }
                 Some(b) if bounding_sum > b.bounding_sum => {
-                    best = Some(PairCandidate { idx1: i, idx2: j, required_distance: required, bounding_sum });
+                    best = Some(PairCandidate {
+                        idx1: i,
+                        idx2: j,
+                        required_distance: required,
+                        bounding_sum,
+                    });
                 }
                 _ => {}
             }
@@ -2642,8 +2747,7 @@ mod tests {
 
         // Metadata must be present (R7 scenario 7.3): at least some merge type occurred.
         // With Phase 3, adaptive merges also count toward completion.
-        let total_merges =
-            result.tunable_merges + result.ballistic_merges + result.adaptive_merges;
+        let total_merges = result.tunable_merges + result.ballistic_merges + result.adaptive_merges;
         assert!(total_merges > 0, "At least one merge must have occurred");
 
         // The simulation must have completed (5 dimers → 4 merges to reach 1 cluster)
@@ -4308,7 +4412,10 @@ mod tests {
         let c2 = TunableCluster::new(Sphere::new(Vector3::new(20.0, 0.0, 0.0), 1.0));
         let max_d = compute_max_achievable_distance(&c1, &c2);
         // c1 bounding radius > 1.0 (two particles spread out)
-        assert!(max_d > 2.0, "Expected > 2.0 for multi-particle cluster, got {max_d}");
+        assert!(
+            max_d > 2.0,
+            "Expected > 2.0 for multi-particle cluster, got {max_d}"
+        );
     }
 
     /// T2.4 — find_feasible_pairs with all-feasible pool returns all pairs.
@@ -4327,7 +4434,11 @@ mod tests {
         let rp = 1.0;
         let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
         // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
-        assert_eq!(feasible.len(), 3, "All 3 pairs should be feasible for monomers");
+        assert_eq!(
+            feasible.len(),
+            3,
+            "All 3 pairs should be feasible for monomers"
+        );
     }
 
     /// T2.6 — find_feasible_pairs with all-infeasible pool returns empty.
@@ -4338,20 +4449,20 @@ mod tests {
         // Simplest: create clusters with n_particles >> 1 but bounding_radius ~ rp.
         // We'll use from_particles with overlapping particles at origin.
         let make_compact_cluster = |n: usize| {
-            let particles: Vec<Sphere> = (0..n)
-                .map(|_| Sphere::new(Vector3::zero(), 1.0))
-                .collect();
+            let particles: Vec<Sphere> =
+                (0..n).map(|_| Sphere::new(Vector3::zero(), 1.0)).collect();
             TunableCluster::from_particles(particles)
         };
 
-        let clusters = vec![
-            make_compact_cluster(50),
-            make_compact_cluster(50),
-        ];
+        let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
         // With n1=50, n2=50, df=1.4, the required distance is very large
         // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
         let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false, false);
-        assert_eq!(feasible.len(), 0, "Compact clusters should have no feasible pairs at low Df");
+        assert_eq!(
+            feasible.len(),
+            0,
+            "Compact clusters should have no feasible pairs at low Df"
+        );
     }
 
     /// T2.6 — find_feasible_pairs with partial feasibility.
@@ -4359,16 +4470,15 @@ mod tests {
     fn test_find_feasible_pairs_partial() {
         // Mix of monomers (feasible at Df=1.8) and compact large clusters (infeasible)
         let make_compact_cluster = |n: usize| {
-            let particles: Vec<Sphere> = (0..n)
-                .map(|_| Sphere::new(Vector3::zero(), 1.0))
-                .collect();
+            let particles: Vec<Sphere> =
+                (0..n).map(|_| Sphere::new(Vector3::zero(), 1.0)).collect();
             TunableCluster::from_particles(particles)
         };
 
         let clusters = vec![
-            TunableCluster::new(Sphere::new(Vector3::zero(), 1.0)),         // idx=0, monomer
+            TunableCluster::new(Sphere::new(Vector3::zero(), 1.0)), // idx=0, monomer
             TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), 1.0)), // idx=1, monomer
-            make_compact_cluster(100),                                       // idx=2, large compact
+            make_compact_cluster(100),                              // idx=2, large compact
         ];
         // At Df=1.8, monomer-monomer required_distance < 2.0 (feasible)
         // but monomer+large compact required distance >> 2.0 (infeasible)
@@ -4378,12 +4488,23 @@ mod tests {
         let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
         // Pair (0,1) = monomer+monomer → feasible at Df=1.8
         // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
-        assert!(feasible.len() >= 1, "At least monomer-monomer should be feasible at Df=1.8, got {}", feasible.len());
+        assert!(
+            feasible.len() >= 1,
+            "At least monomer-monomer should be feasible at Df=1.8, got {}",
+            feasible.len()
+        );
         // Verify the feasible pair is indeed the monomer pair
         let monomer_pair = feasible.iter().find(|p| p.idx1 == 0 && p.idx2 == 1);
-        assert!(monomer_pair.is_some(), "Monomer-monomer pair (0,1) should be feasible");
+        assert!(
+            monomer_pair.is_some(),
+            "Monomer-monomer pair (0,1) should be feasible"
+        );
         // The large compact pairs should NOT be in the feasible set
-        assert!(feasible.len() < 3, "Not all pairs should be feasible: got {}", feasible.len());
+        assert!(
+            feasible.len() < 3,
+            "Not all pairs should be feasible: got {}",
+            feasible.len()
+        );
     }
 
     /// T2.8 — select_pair_smart returns Feasible when feasible pairs exist.
@@ -4417,26 +4538,25 @@ mod tests {
         let mut rng = create_rng(42);
 
         let make_compact_cluster = |n: usize| {
-            let particles: Vec<Sphere> = (0..n)
-                .map(|_| Sphere::new(Vector3::zero(), 1.0))
-                .collect();
+            let particles: Vec<Sphere> =
+                (0..n).map(|_| Sphere::new(Vector3::zero(), 1.0)).collect();
             TunableCluster::from_particles(particles)
         };
 
-        let clusters = vec![
-            make_compact_cluster(50),
-            make_compact_cluster(50),
-        ];
+        let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
 
         let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false);
         match result {
-            SmartPairResult::AllInfeasible { max_achievable_pair } => {
+            SmartPairResult::AllInfeasible {
+                max_achievable_pair,
+            } => {
                 assert!(max_achievable_pair.bounding_sum > 0.0);
                 // bounding_sum < required_distance (infeasible)
                 assert!(
                     max_achievable_pair.bounding_sum < max_achievable_pair.required_distance,
                     "Infeasible pair should have bounding_sum < required: {} < {}",
-                    max_achievable_pair.bounding_sum, max_achievable_pair.required_distance
+                    max_achievable_pair.bounding_sum,
+                    max_achievable_pair.required_distance
                 );
             }
             SmartPairResult::Feasible(_) => {
@@ -4451,15 +4571,15 @@ mod tests {
     #[test]
     fn test_emit_adaptive_merge_entry_correct_fields() {
         let entry = emit_adaptive_merge_entry(
-            10,    // step
-            5,     // n1
-            3,     // n2
-            6.0,   // max_achievable
-            5.0,   // required_distance
-            3.5,   // rg_after
-            3.2,   // rg_target
-            100,   // retries
-            None,  // merge_type_override — standard "adaptive"
+            10,   // step
+            5,    // n1
+            3,    // n2
+            6.0,  // max_achievable
+            5.0,  // required_distance
+            3.5,  // rg_after
+            3.2,  // rg_target
+            100,  // retries
+            None, // merge_type_override — standard "adaptive"
         );
         assert_eq!(entry.merge_type, "adaptive");
         assert_eq!(entry.step, 10);
@@ -4469,7 +4589,10 @@ mod tests {
         assert_eq!(entry.required_distance, 5.0);
         // overshoot_pct = (6.0 - 5.0) / 5.0 = 0.2
         assert!((entry.overshoot_pct.unwrap() - 0.2).abs() < 1e-10);
-        assert!(entry.actual_distance >= entry.required_distance, "Overshoot contract");
+        assert!(
+            entry.actual_distance >= entry.required_distance,
+            "Overshoot contract"
+        );
     }
 
     /// T3.1 — Overshoot contract: actual >= required.
@@ -4525,19 +4648,16 @@ mod tests {
             &[sphere_a],
             &[sphere_b],
             &direction,
-            3.0,  // d_start (max_achievable)
-            1.0,  // d_floor (sanity: 0.5 * target)
-            1.0,  // rp
-            1.0,  // sintering_coeff
+            3.0, // d_start (max_achievable)
+            1.0, // d_floor (sanity: 0.5 * target)
+            1.0, // rp
+            1.0, // sintering_coeff
         );
 
         match result {
             MarchResult::Distance(d) => {
                 // Contact should be at ~2.0 (sum of radii), within march resolution
-                assert!(
-                    (d - 2.0).abs() < 0.05,
-                    "Expected contact near 2.0, got {d}"
-                );
+                assert!((d - 2.0).abs() < 0.05, "Expected contact near 2.0, got {d}");
             }
             MarchResult::NoContact => {
                 panic!("Expected contact at ~2.0 for two unit spheres, got NoContact");
@@ -4582,10 +4702,10 @@ mod tests {
             &spheres_a,
             &[sphere_b],
             &direction,
-            8.0,  // d_start
-            1.0,  // d_floor
-            1.0,  // rp
-            1.0,  // sintering_coeff
+            8.0, // d_start
+            1.0, // d_floor
+            1.0, // rp
+            1.0, // sintering_coeff
         );
 
         match result {
@@ -4614,13 +4734,17 @@ mod tests {
             &[sphere_a],
             &[sphere_b],
             &direction,
-            1.0,  // d_start
-            5.0,  // d_floor > d_start
+            1.0, // d_start
+            5.0, // d_floor > d_start
             1.0,
             1.0,
         );
 
-        assert_eq!(result, MarchResult::NoContact, "floor > start should return NoContact");
+        assert_eq!(
+            result,
+            MarchResult::NoContact,
+            "floor > start should return NoContact"
+        );
     }
 
     /// T-MARCH-1 TRIANGULATE: Spheres too far apart — no contact before floor.
@@ -4693,18 +4817,15 @@ mod tests {
             &[sphere_a],
             &[sphere_b],
             &direction,
-            2.5,  // d_start (max_achievable, smaller than impossible target)
-            0.5,  // d_floor
+            2.5, // d_start (max_achievable, smaller than impossible target)
+            0.5, // d_floor
             1.0,
             1.0,
         );
 
         match result {
             MarchResult::Distance(d) => {
-                assert!(
-                    (d - 2.0).abs() < 0.05,
-                    "Expected contact near 2.0, got {d}"
-                );
+                assert!((d - 2.0).abs() < 0.05, "Expected contact near 2.0, got {d}");
             }
             MarchResult::NoContact => {
                 panic!("Expected contact even when target exceeds max");
