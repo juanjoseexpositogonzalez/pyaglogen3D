@@ -2,11 +2,11 @@
 
 > Specs (3 deltas): `specs/fraktal-batch-contract.md` (R12, R13), `specs/fraktal-batch-persistence.md`
 > (MODIFIED R2, restatement completo), `specs/fraktal-batch-distributions.md` (SOLO ADDED
-> R-DELTA-C2 marcador — sin MODIFIED). Design D1-D12: `design.md`. Pendiente: spec-review r5 →
+> R-DELTA-C2 marcador — sin MODIFIED). Design D1-D12: `design.md`. Pendiente: spec-review r6 →
 > approval.md → apply.
 > Provenance: contract commits (1c1bef7, d9b2e79, +this) viven en `feature/batch-windowed-box-counting`
 > (misma sesión de trabajo); al aplicar, T0 crea `feature/fraktal-batch-extensions` desde develop y
-> la rama de applyporta los cambios de contrato (o el apply va sobre esta rama tras el merge de A).
+> la rama de apply porta los cambios de contrato (o el apply va sobre esta rama tras el merge de A).
 
 ## Tasks
 
