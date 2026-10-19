@@ -13,10 +13,11 @@ estimador windowed opt-in (`box_counting_3d_windowed`, binding ya despachando `f
 usa**. Este change expone el estimador windowed en el flujo batch, añade la comparativa
 3-way (Rg-evolution vs BC legacy vs BC windowed) y las distribuciones por config, con UI dedicada.
 
-**Casi cero cambios de engine**: el binding ya despacha `fit_window` (`python/src/lib.rs:755`); el
-único toque en `aglogen_core` es un campo aditivo de solo lectura `effective_levels` en el
-resultado (spec-review B6: el legacy trunca sus vectores y la API no expone la cantidad de niveles
-count-valid). Todo lo demás es backend passthrough + agregación + frontend.
+- **Un campo aditivo de solo lectura en `aglogen_core`** (spec-review B6): `effective_levels` en
+  `BoxCountingResult3D` (espejado en `PyFractalResult`) — la cantidad de niveles count-valid ANTES
+  de la truncation Step 4b; el legacy trunca sus vectores, así que la ventana no es derivable del
+  resultado. El dual-run corre legacy primero y lo lee de ahí: cero llamadas extra. Lo demás es
+  backend passthrough + agregación + frontend.
 
 ## Scope
 
@@ -35,14 +36,16 @@ count-valid). Todo lo demás es backend passthrough + agregación + frontend.
 - Agregación por config: endpoint de distribuciones (mean/median/cuartiles/min/max/n por
   estimador y por config, bucketing Sturges [3,30] reutilizando la semántica de
   `fraktal-batch-distributions.md` R2).
-- Columnas CSV aditivas (`BC_Win_Df, BC_Win_R2, BC_Win_Delta, BC_Win_Status`) tras las BC_*
-  existentes, solo cuando exista bloque windowed (R5 de `csv-export-locale.md` intacta).
+- Columnas CSV aditivas (`BC_Win_Df, BC_Win_R2, BC_Win_StdError, BC_Win_Time_ms, BC_Win_Delta,
+  BC_Win_Status`) tras las BC_* existentes, con header gate a nivel estudio (R6), solo cuando
+  exista bloque windowed (R5 de `csv-export-locale.md` intacta).
 - UI: **tab dedicado "Fractal Analysis"** por estudio — tabla comparativa por sim
   (Rg Df, BC legacy Df/R², BC windowed Df/R², Δ, estado), distribuciones por config/estimador,
   export.
 
 ### Out of Scope
-- Cualquier cambio en `aglogen_core/` (engine o bindings).
+- Cualquier OTRO cambio en `aglogen_core/` (engine o bindings) más allá del campo aditivo
+  `effective_levels` de In Scope (B6/D1).
 - Estimador 2D windowed (Change B explícitamente sin él).
 - Picker de ventana en la UI v1 (la ventana lockeada por diagnóstico es única; un picker sin
   diagnóstico viola la regla Fase 0).

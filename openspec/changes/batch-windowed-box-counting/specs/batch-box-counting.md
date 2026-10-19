@@ -12,7 +12,14 @@ The run-box-counting flow SHALL accept an optional boolean `windowed` with prece
 **request body > `study.box_counting_params.windowed` > absent (legacy-only)**. When the
 effective value is `true`, every BC execution for the study runs BOTH the legacy estimator
 and the windowed estimator (design D2/D3), and the study's stored `box_counting_params`
-SHALL be updated preserving `windowed` (not overwritten without it).
+SHALL be updated preserving `windowed` (not overwritten without it). An explicit
+`windowed: false` in the body overrides the study value for that run AND is persisted to
+the study params (explicit values win; absence preserves).
+
+The request body schema is `{points_per_sphere?, precision?, windowed?, force?}`; `force`
+(R2.3) is accepted in the body but is NEVER persisted to `box_counting_params`. The
+unknown-key rejection below applies to the persisted `box_counting_params` shape (i.e.
+`{points_per_sphere, precision, windowed}` after `force` is popped).
 
 This change also ADDS unknown-key rejection to `validate_box_counting_params` (precedent:
 `validate_limiting_cases_config`): keys other than `points_per_sphere`, `precision`,
@@ -37,9 +44,12 @@ This change also ADDS unknown-key rejection to `validate_box_counting_params` (p
 
 - **GIVEN** `study.box_counting_params.windowed = true` and a request body with `windowed` absent
 - **WHEN** the POST completes
-- **THEN** the dual run executed (R2) and the study's stored `box_counting_params` retains
-  `windowed: true` with `points_per_sphere`/`precision` from the request
-- **AND** a request body with `windowed: false` overrides the study value for that run
+- **THEN** the dual run executed for simulations WITHOUT an existing legacy block (or with
+  `force: true`; sims already holding a legacy block are skipped per R2.3)
+- **AND** the study's stored `box_counting_params` retains `windowed: true` with
+  `points_per_sphere`/`precision` from the request
+- **AND** a request body with `windowed: false` overrides the study value for that run and is
+  persisted to the study params
 
 ### Requirement: R2. Dual-estimator results storage
 
@@ -47,7 +57,11 @@ When windowed is enabled, each processed simulation SHALL store the windowed blo
 `metrics["box_counting_windowed"]` with **the same keys as the legacy block plus `status` and
 `fit_window_used`**: `{dimension, r_squared, std_error, confidence_interval, log_scales,
 log_values, execution_time_ms, parameters, status, fit_window_used}` (design D3), and SHALL
-NOT alter `metrics["box_counting"]`.
+NOT alter `metrics["box_counting"]`. The block SHALL be built by a single shared helper
+`build_bc_block(result, params, status, fit_window_used)` — key parity is enforced by code,
+not by prose (spec-review r2). The `status` enum is `ok | insufficient_levels | error`:
+`error` covers any windowed-side failure other than `InsufficientLevels` (engine or pyo3),
+stores the message, NEVER aborts the run, and never overwrites the legacy block.
 
 #### Scenario R2.1 — Successful windowed fit
 
@@ -116,9 +130,9 @@ A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter 
 
 ```json
 {
-  "config": {…study config columns…},
+  "config": {…sim.parameters dict…},
   "estimators": {
-    "rg":         {"n": 12, "mean": …, "median": …, "q1": …, "q3": …, "min": …, "max": …, "values": […], "insufficient_levels": 0},
+    "rg":         {"n": 12, "mean": …, "median": …, "q1": …, "q3": …, "min": …, "max": …, "values": […], "insufficient_levels": 0, "errors": 0},
     "bc_legacy":  {"…same shape…"},
     "bc_windowed": {"…same shape…"}
   }
@@ -126,7 +140,11 @@ A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter 
 ```
 
 - `n` counts only sims with a usable value for that estimator; `insufficient_levels` counts
-  windowed refusals (0 for `rg`/`bc_legacy`); refusals are excluded from `n` and from all stats.
+  windowed refusals (`status: "insufficient_levels"`), `errors` counts `status: "error"`
+  (separate counters, both excluded from `n` and from all stats; 0 for `rg`/`bc_legacy`);
+  refusals/errors are excluded from `n` and from all stats.
+- `config` is the sim's `parameters` dict (the same `param_keys` source the results endpoint
+  reads, `views.py:2005/2064`) — not an unpinned projection.
 - `values` is the raw array; the histogram is computed CLIENT-side with `sturgesBuckets`
   (clamp [3,30], `FraktalBatchDistributions.tsx:52-56`) — the backend does NOT bucket.
 
@@ -151,7 +169,9 @@ The study page SHALL expose a dedicated tab "Fractal Analysis" containing: (a) t
 comparison table (columns: sim, config, `fractal_dimension` labeled "Rg Df", BC Df, BC R²,
 BC Win Df, BC Win R², Δ, status with `insufficient_levels` rendered distinctly), (b) histogram
 panels per config per estimator reusing the `sturgesBuckets` semantics, **inheriting the
-empty-data (R4) and single-value (R5) behaviors of `fraktal-batch-distributions.md`**,
+data-volume behaviors of `fraktal-batch-distributions.md`**: `n = 0` (or all refusals) → R4
+"No data available"; `1 ≤ n < 5` → the "Not enough data" panel the component actually renders
+(`FraktalBatchDistributions.tsx:14-15,168`); single-bar rendering per R5 only at `n ≥ 5`,
 (c) the CSV export of R6. Frontend types: `StudyFractalAnalysisSummary` (distinct from the
 existing `FraktalAnalysisSummary`). Without a windowed run the tab shows legacy + Rg columns
 only, with no error state.
@@ -166,8 +186,8 @@ only, with no error state.
 
 - **GIVEN** a config where `bc_windowed` has `n: 1` (or all refusals)
 - **WHEN** the histogram panel renders
-- **THEN** it follows the single-value / empty-data behaviors inherited from
-  `fraktal-batch-distributions.md` (R5 / R4), never a blank or crashed panel
+- **THEN** `1 ≤ n < 5` shows the inherited "Not enough data" panel and `n: 0` shows the R4
+  "No data available" state — never a blank or crashed panel (single-bar per R5 only at n≥5)
 
 ### Requirement: R8. Single-simulation windowed analysis (opt-in)
 
@@ -182,7 +202,21 @@ dict gains a `box_counting_windowed` key with the R2 shape (or
 - **WHEN** it executes
 - **THEN** the response is byte-identical to pre-change
 
-## Out of scope call sites (documented)
+### Requirement: R9. Engine additive field `effective_levels`
+
+`BoxCountingResult3D` SHALL gain a read-only additive field `effective_levels: usize` (number
+of count-valid levels BEFORE the Step 4b saturation truncation), mirrored in `PyFractalResult`.
+The 2D result's `From` impl populates it as `0` (3D-only semantics). No behavior, signature,
+or existing field changes. For `effective_levels < 3` the backend derives NO window and writes
+`status: "insufficient_levels"` without calling the windowed estimator (avoids the `eff−1`
+underflow and the pyo3 `(usize, usize)` constraint).
+
+#### Scenario R9.1 — Field present on both paths
+
+- **GIVEN** any coordinate set analyzed via the 3D legacy path and via the windowed path
+- **WHEN** results are inspected
+- **THEN** both carry `effective_levels` with the pre-truncation count-valid level count
+- **AND** all existing fields and values are unchanged (byte-identical results otherwise)
 
 - `ai_assistant/tools/analysis_tools.py:89` (AI tool BC path) — legacy only, no `windowed`.
 - `tasks.py:1139` `compute_import_metrics` (import pipeline) — legacy only, no `windowed`.
