@@ -1,6 +1,6 @@
 # Approval: batch-windowed-box-counting
 
-> Estado: **LISTO PARA APROBAR** — pendiente del gate de la persona.
+> Estado: **APROBADO** (2026-10-19, por la persona en sesión — ver Log). Pendiente: issue Jira + apply.
 > Spec-review: r1 (mvez5qdn-9-unqz) → r2 (mvezptvj-a-kxc5) → r3 (mvf0jncf-b-86n0) →
 > confirmaciones r3b (mvf1na34-d-xuh7) y r3c aplicadas. Sin ALTA/BLOCKER/MAJOR abiertos;
 > las 2 BAJA restantes de la r3b se cerraron en r3c (`887385b`).
@@ -42,5 +42,6 @@ Construir el capability `batch-box-counting` (R1–R9) según `specs/batch-box-c
 
 ## Al aprobar
 
-- Marcar este archivo como APROBADO (con fecha), transicionar el issue Jira correspondiente a
-  **En curso** con comentario, y ejecutar `tasks.md` T0–T8+T1b por el flujo Git de la política.
+- **APROBADO 2026-10-19**: la persona seleccionó "Aprobado — a implementar" en el gate del
+  turno; simultáneamente eligió C1+C2+C3 (los tres candidatos) para el Change B.
+- Apply de `tasks.md` T0–T8+T1b por el flujo Git de la política; issue Jira nueva a En curso.
