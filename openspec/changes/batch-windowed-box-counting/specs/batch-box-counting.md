@@ -19,7 +19,8 @@ the study params (explicit values win; absence preserves).
 The request body schema is `{points_per_sphere?, precision?, windowed?, force?}`; `force`
 (R2.3) is accepted in the body but is NEVER persisted to `box_counting_params`. The
 unknown-key rejection below applies to the persisted `box_counting_params` shape (i.e.
-`{points_per_sphere, precision, windowed}` after `force` is popped).
+`{points_per_sphere, precision, windowed}` after `force` is popped); the same rejection
+enforces the request body (which shares the validator) and the persisted shape.
 
 This change also ADDS unknown-key rejection to `validate_box_counting_params` (precedent:
 `validate_limiting_cases_config`): keys other than `points_per_sphere`, `precision`,
@@ -35,7 +36,6 @@ This change also ADDS unknown-key rejection to `validate_box_counting_params` (p
 
 - **GIVEN** a request body or persisted `box_counting_params` containing any key outside
   `{points_per_sphere, precision, windowed}` (after popping `force`, which is never persisted)
-  `{points_per_sphere, precision, windowed}`
 - **WHEN** validation runs
 - **THEN** the response is 400 naming the offending key
 - **AND** pre-change, extra keys in the body were silently ignored and only
@@ -58,14 +58,16 @@ This change also ADDS unknown-key rejection to `validate_box_counting_params` (p
 ### Requirement: R2. Dual-estimator results storage
 
 When windowed is enabled, each processed simulation SHALL store the windowed block at
-`metrics["box_counting_windowed"]` with **the same keys as the legacy block plus `status` and
-`fit_window_used`**: `{dimension, r_squared, std_error, confidence_interval, log_scales,
-log_values, execution_time_ms, parameters, status, fit_window_used}` (design D3), and SHALL
-NOT alter `metrics["box_counting"]`. The block SHALL be built by a single shared helper
+`metrics["box_counting_windowed"]` — **ONE schema for all three statuses** (spec-review r3,
+MEDIA): always the 11 keys `{dimension, r_squared, std_error, confidence_interval, log_scales,
+log_values, execution_time_ms, parameters, status, fit_window_used, error_message}`, where
+`dimension, r_squared, confidence_interval, log_scales, log_values` are `null` when
+`status != "ok"`, and `error_message` is a string only when `status == "error"` (`null`
+otherwise). `status` enum: `ok | insufficient_levels | error` — `error` covers any windowed-side
+failure other than `InsufficientLevels` (engine or pyo3), NEVER aborts the run, and never
+overwrites the legacy block. The block SHALL be built by a single shared helper
 `build_bc_block(result, params, status, fit_window_used)` — key parity is enforced by code,
-not by prose (spec-review r2). The `status` enum is `ok | insufficient_levels | error`:
-`error` covers any windowed-side failure other than `InsufficientLevels` (engine or pyo3),
-stores the message, NEVER aborts the run, and never overwrites the legacy block.
+not by prose (spec-review r2). `metrics["box_counting"]` is not altered.
 
 #### Scenario R2.1 — Successful windowed fit
 
@@ -79,8 +81,9 @@ stores the message, NEVER aborts the run, and never overwrites the legacy block.
 - **GIVEN** a simulation with `effective_levels < 3` (e.g. very small N where the legacy fit
   itself is degenerate)
 - **WHEN** the windowed estimator refuses (`InsufficientLevels`)
-- **THEN** the run completes WITHOUT error, the windowed block stores
-  `status: "insufficient_levels"` with no `dimension`/`r_squared`
+- **THEN** the run completes WITHOUT error; the windowed block stores `status:
+  "insufficient_levels"` with the 11-key schema and `dimension`/`r_squared`/
+  `confidence_interval`/`log_scales`/`log_values` = `null` (R2)
 - **AND** the legacy block is stored normally
 - **NOTE**: with `effective_levels == 3` the clamp (D2) yields window `(0, 2)` → `status: "ok"`
   with a fit equal to the legacy fit (archive Log L4) — refusal only happens below 3 levels
@@ -89,7 +92,8 @@ stores the message, NEVER aborts the run, and never overwrites the legacy block.
 
 - **GIVEN** a simulation that already holds `metrics["box_counting"]` (pre-change or legacy-only run)
 - **WHEN** a windowed run executes with `force` absent (default `false`)
-- **THEN** the simulation is skipped exactly as today (response `processed` counts it as skipped)
+- **THEN** the simulation is skipped exactly as today (the response's `skipped` counter
+  increments, `views.py:2175/2183`)
 - **AND** with `force: true` in the request body, legacy AND windowed blocks are recomputed
   and overwritten for that sim (backfill path)
 
@@ -164,7 +168,7 @@ A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter 
 - **WHEN** the endpoint returns that config's `bc_windowed` stats
 - **THEN** `n: 3, mean: 2.5, median: 2.5, min: 2.30, max: 2.70, insufficient_levels: 1`
   (quartiles with the same percentile formula as the batch stats helper
-  `backend/apps/simulations/services/batch.py:320-343`)
+  `backend/apps/fractal_analysis/services/batch.py:320-343`, `np.percentile(arr, 25/75)`)
 
 ### Requirement: R6. CSV export (study-level header gate)
 
