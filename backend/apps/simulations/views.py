@@ -2,6 +2,7 @@
 
 import csv
 import io
+import json
 import logging
 import zipfile
 from typing import Any
@@ -1933,8 +1934,26 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         "asphericity": sim.metrics.get("asphericity"),
                         "acylindricity": sim.metrics.get("acylindricity"),
                         "box_counting": sim.metrics.get("box_counting"),
+                        "box_counting_windowed": sim.metrics.get(
+                            "box_counting_windowed"
+                        ),
                     }
                 )
+                # R4: delta only when the windowed block exists AND carries a
+                # usable dimension (status ok). No rg_df alias — the Rg-evolution
+                # Df is already returned above as fractal_dimension.
+                windowed_block = sim.metrics.get("box_counting_windowed")
+                legacy_block = sim.metrics.get("box_counting")
+                if (
+                    windowed_block
+                    and windowed_block.get("status") == "ok"
+                    and windowed_block.get("dimension") is not None
+                    and legacy_block
+                    and legacy_block.get("dimension") is not None
+                ):
+                    result_data["bc_delta"] = float(
+                        windowed_block["dimension"]
+                    ) - float(legacy_block["dimension"])
             results.append(result_data)
 
         # Calculate study status based on simulations
@@ -1984,6 +2003,123 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         nonzero = [int(k) for k, v in distribution.items() if v > 0]
         return max(nonzero) if nonzero else 0
 
+    @staticmethod
+    def _estimator_stats(
+        values: list[float],
+        *,
+        insufficient_levels: int = 0,
+        errors: int = 0,
+    ) -> dict:
+        """Descriptive stats for one estimator over raw values (R5).
+
+        Quartiles use the same percentile formula as the batch stats helper
+        (``fractal_analysis/services/batch.py``: ``np.percentile(arr, 25/75)``).
+        NO backend bucketing — the histogram is computed CLIENT-side with
+        sturgesBuckets. Refusals/errors are excluded from ``n`` and from all
+        stats and counted in their separate counters (0 for rg/bc_legacy).
+        """
+        if values:
+            arr = np.array(values, dtype=np.float64)
+            stats = {
+                "n": len(values),
+                "mean": float(np.mean(arr)),
+                "median": float(np.median(arr)),
+                "q1": float(np.percentile(arr, 25)),
+                "q3": float(np.percentile(arr, 75)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+                "values": values,
+            }
+        else:
+            stats = {
+                "n": 0,
+                "mean": None,
+                "median": None,
+                "q1": None,
+                "q3": None,
+                "min": None,
+                "max": None,
+                "values": [],
+            }
+        stats["insufficient_levels"] = insufficient_levels
+        stats["errors"] = errors
+        return stats
+
+    @action(detail=True, methods=["get"], url_path="fractal-analysis")
+    def fractal_analysis_summary(self, request: Request, pk=None, **kwargs) -> Response:
+        """Per-config estimator distributions for the study (R5).
+
+        Returns ``{study_id, configs: [{config, estimators}]}`` where
+        ``config`` is the sim's parameters dict (keys from
+        ``study.parameter_grid.keys()``, values from ``sim.parameters``), and
+        ``estimators`` carries raw value arrays + stats for ``rg`` (reads
+        ``metrics[fractal_dimension]``), ``bc_legacy`` and ``bc_windowed``.
+        """
+        study = self.get_object()
+        simulations = study.simulations.filter(status="completed").order_by(
+            "created_at"
+        )
+        param_keys = list(study.parameter_grid.keys())
+
+        # Group by config (first-seen order preserved)
+        groups: dict[str, dict] = {}
+        for sim in simulations:
+            config = {key: sim.parameters.get(key) for key in param_keys}
+            group_key = json.dumps(config, sort_keys=True, default=str)
+            groups.setdefault(group_key, {"config": config, "sims": []})["sims"].append(
+                sim
+            )
+
+        configs = []
+        for group in groups.values():
+            rg_values: list[float] = []
+            bc_legacy_values: list[float] = []
+            bc_windowed_values: list[float] = []
+            insufficient_levels = 0
+            errors = 0
+            for sim in group["sims"]:
+                metrics = sim.metrics or {}
+
+                rg = metrics.get("fractal_dimension")
+                if rg is not None:
+                    rg_values.append(float(rg))
+
+                legacy = metrics.get("box_counting") or {}
+                if legacy.get("dimension") is not None:
+                    bc_legacy_values.append(float(legacy["dimension"]))
+
+                windowed = metrics.get("box_counting_windowed")
+                if windowed:
+                    win_status = windowed.get("status")
+                    if win_status == "ok" and windowed.get("dimension") is not None:
+                        bc_windowed_values.append(float(windowed["dimension"]))
+                    elif win_status == "insufficient_levels":
+                        insufficient_levels += 1
+                    elif win_status == "error":
+                        errors += 1
+
+            configs.append(
+                {
+                    "config": group["config"],
+                    "estimators": {
+                        "rg": self._estimator_stats(rg_values),
+                        "bc_legacy": self._estimator_stats(bc_legacy_values),
+                        "bc_windowed": self._estimator_stats(
+                            bc_windowed_values,
+                            insufficient_levels=insufficient_levels,
+                            errors=errors,
+                        ),
+                    },
+                }
+            )
+
+        return Response(
+            {
+                "study_id": str(study.id),
+                "configs": configs,
+            }
+        )
+
     @action(detail=True, methods=["get"], url_path="export")
     def export_csv(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Export batch study results as CSV.
@@ -1997,6 +2133,14 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         study = self.get_object()
         simulations = study.simulations.filter(status="completed").order_by(
             "created_at"
+        )
+
+        # R6 header gate (B5): STUDY-level — any completed row carrying a
+        # windowed block turns the BC_Win_* columns on, regardless of the
+        # current include_box_counting flag. A legacy-only study stays
+        # byte-identical to pre-change.
+        has_windowed = any(
+            (sim.metrics or {}).get("box_counting_windowed") for sim in simulations
         )
 
         # Apply user CSV locale prefs (T16). Anonymous callers and fixtures
@@ -2044,6 +2188,21 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Add box-counting columns if enabled
         if study.include_box_counting:
             header.extend(["BC_Df", "BC_R2", "BC_StdError", "BC_Time_ms"])
+
+        # Add windowed box-counting columns (R6): gated by a recorded windowed
+        # run at study level, NOT by include_box_counting — a study with the
+        # flag toggled off after a windowed run keeps its BC_Win_* header.
+        if has_windowed:
+            header.extend(
+                [
+                    "BC_Win_Df",
+                    "BC_Win_R2",
+                    "BC_Win_StdError",
+                    "BC_Win_Time_ms",
+                    "BC_Win_Delta",
+                    "BC_Win_Status",
+                ]
+            )
 
         wrow(header)
 
@@ -2103,6 +2262,44 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             bc.get("execution_time_ms", 0),
                         ]
                     )
+
+                # Add windowed box-counting data (R6): rows without a windowed
+                # block emit empty cells; BC_Win_Delta only when the row's
+                # windowed status is ok.
+                if has_windowed:
+                    windowed_block = sim.metrics.get("box_counting_windowed")
+                    if windowed_block:
+                        win_status = windowed_block.get("status")
+                        win_dimension = windowed_block.get("dimension")
+                        win_delta = ""
+                        if win_status == "ok" and win_dimension is not None:
+                            legacy_block = sim.metrics.get("box_counting") or {}
+                            if legacy_block.get("dimension") is not None:
+                                win_delta = (
+                                    f"{win_dimension - legacy_block['dimension']:.4f}"
+                                )
+                        row.extend(
+                            [
+                                f"{win_dimension:.4f}"
+                                if win_dimension is not None
+                                else "",
+                                (
+                                    f"{windowed_block['r_squared']:.4f}"
+                                    if windowed_block.get("r_squared") is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{windowed_block['std_error']:.6f}"
+                                    if windowed_block.get("std_error") is not None
+                                    else ""
+                                ),
+                                windowed_block.get("execution_time_ms", 0),
+                                win_delta,
+                                win_status or "",
+                            ]
+                        )
+                    else:
+                        row.extend(["", "", "", "", "", ""])
 
                 wrow(row)
 
@@ -2243,6 +2440,61 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 f"{results['skipped']} skipped (already done), {results['failed']} failed",
                 "results": results,
             }
+        )
+
+    def box_counting_job_status(self, request: Request, pk=None, **kwargs) -> Response:
+        """GET status for an async box-counting run (R3, design D5).
+
+        Maps Celery ``AsyncResult`` state onto the canonical payload
+        ``{status: processing|done|failed, progress 0..1, current, total,
+        error?}`` (pattern: ``fractal_analysis/views.py`` fraktal_status_view).
+        NOT Django cache: LocMemCache is per-process and invisible across the
+        Gunicorn workers (spec-review B1/M1).
+        """
+        result = AsyncResult(kwargs["task_id"])
+        state = result.state
+
+        if state == "PENDING":
+            return Response(
+                {
+                    "status": "processing",
+                    "progress": 0.0,
+                    "current": 0,
+                    "total": 0,
+                }
+            )
+        if state == "PROGRESS":
+            meta = result.info if isinstance(result.info, dict) else {}
+            return Response(
+                {
+                    "status": "processing",
+                    "progress": float(meta.get("progress", 0.0)),
+                    "current": int(meta.get("current", 0)),
+                    "total": int(meta.get("total", 0)),
+                }
+            )
+        if state == "SUCCESS":
+            data = result.result if isinstance(result.result, dict) else {}
+            total = int(data.get("total", 0))
+            return Response(
+                {
+                    "status": "done",
+                    "progress": 1.0,
+                    "current": total,
+                    "total": total,
+                }
+            )
+        if state == "FAILURE":
+            return Response(
+                {
+                    "status": "failed",
+                    "error": str(result.info)
+                    if result.info is not None
+                    else "Unknown error",
+                }
+            )
+        return Response(
+            {"status": str(state).lower(), "progress": 0.0, "current": 0, "total": 0}
         )
 
     @action(detail=True, methods=["post"], url_path="export-projections")
