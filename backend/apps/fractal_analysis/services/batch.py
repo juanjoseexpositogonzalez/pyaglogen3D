@@ -17,11 +17,15 @@ import json
 import re
 import uuid
 import zipfile
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from PIL import Image
 
 from .json_safe import json_safe_float
+
+if TYPE_CHECKING:
+    from apps.fractal_analysis.models import FraktalBatch
 
 # ---------------------------------------------------------------------------
 # R11 — Sorensen educational note (fixed text).
@@ -46,7 +50,7 @@ _SIM_ID_FILENAME_RE = re.compile(
 
 def extract_zip_images(
     zip_bytes: bytes,
-) -> tuple[list[np.ndarray], dict | None, list[str]]:
+) -> tuple[list[np.ndarray], dict[str, Any] | None, list[str]]:
     """Open a ZIP, decode PNG images, parse ``metadata.json`` if present.
 
     Returns:
@@ -77,7 +81,7 @@ def extract_zip_images(
         if n.lower().endswith(".png") and not n.lower().endswith(".scientific.png")
     )
 
-    metadata: dict | None = None
+    metadata: dict[str, Any] | None = None
     if "metadata.json" in names:
         try:
             metadata = json.loads(zf.read("metadata.json").decode("utf-8"))
@@ -98,7 +102,7 @@ def extract_zip_images(
 
 def extract_scientific_png_map(
     zip_bytes: bytes,
-    metadata: dict | None,
+    metadata: dict[str, Any] | None,
 ) -> dict[str, bytes]:
     """Extract ``*.scientific.png`` bytes from a ZIP, keyed by presentation filename.
 
@@ -133,7 +137,7 @@ def extract_scientific_png_map(
 
 
 def extract_per_image_scales(
-    metadata: dict | None,
+    metadata: dict[str, Any] | None,
     filenames: list[str],
 ) -> list[float] | None:
     """Extract per-direction ``pixels_per_100nm`` from ``metadata.directions``.
@@ -190,7 +194,7 @@ def extract_per_image_scales(
     return result
 
 
-def extract_scale_from_metadata(metadata: dict | None) -> float | None:
+def extract_scale_from_metadata(metadata: dict[str, Any] | None) -> float | None:
     """Return ``metadata.parameters.pixels_per_100nm`` (nested path per R1).
 
     Returns ``None`` when:
@@ -236,11 +240,110 @@ def detect_sim_id_from_filename(zip_filename: str) -> uuid.UUID | None:
         return None
 
 
+def _build_study_comparison(
+    sim_id: uuid.UUID | None,
+    image_rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Build the additive ``study_comparison`` block (R12, change
+    fraktal-batch-extensions).
+
+    ONE shared helper consumed by ALL THREE summary builders
+    (``_build_batch_response``, ``_serialize_batch_from_db`` and the inline
+    ``batch_detail_view``) so all three emit IDENTICAL content.
+
+    Takes primitives — ``sim_id`` + already-built per-image ``image_rows``
+    (dicts carrying ``quality``, ``fractal_dimension``, ``df_estimate``) —
+    because builder 1 runs BEFORE the ``FraktalBatch`` row exists.
+
+    Population per canonical R7: ``fractal_dimension`` when
+    ``quality == "converged"`` and ``df_estimate`` when
+    ``quality == "approximate"``. Returns ``None`` (block absent) when: no
+    sim, the sim row was deleted, the sim metric is missing or carries the
+    ``0.0`` sentinel, or there are zero contributing image values (D3).
+    """
+    if sim_id is None:
+        return None
+
+    # Imported lazily to keep this module Django-free at import time and to
+    # avoid circular imports from apps.simulations.
+    from apps.simulations.models import Simulation
+
+    try:
+        sim = Simulation.objects.get(id=sim_id)
+    except Simulation.DoesNotExist:
+        return None
+
+    # sim_df.value — the SINGLE source for the C2 reference marker. The 0.0
+    # sentinel counts as MISSING (identical rule in R12, R-DELTA-C2 and D1).
+    metrics = sim.metrics or {}
+    raw_value = metrics.get("fractal_dimension")
+    if isinstance(raw_value, bool) or not isinstance(raw_value, (int, float)):
+        return None
+    sim_value = float(raw_value)
+    if not np.isfinite(sim_value) or sim_value == 0.0:
+        return None
+
+    values: list[float] = []
+    n_converged = 0
+    n_approximate = 0
+    for row in image_rows:
+        quality = row.get("quality")
+        if quality == "converged":
+            raw = row.get("fractal_dimension")
+        elif quality == "approximate":
+            raw = row.get("df_estimate")
+        else:
+            continue
+        if raw is None:
+            continue
+        v = float(raw)
+        if not np.isfinite(v):
+            continue
+        values.append(v)
+        if quality == "converged":
+            n_converged += 1
+        else:
+            n_approximate += 1
+
+    if not values:
+        return None
+
+    arr = np.array(values, dtype=np.float64)
+
+    parameters = sim.parameters or {}
+    raw_target = parameters.get("target_df")
+    if isinstance(raw_target, bool) or not isinstance(raw_target, (int, float)):
+        target_df: float | None = None
+    else:
+        target_df = float(raw_target)
+
+    deltas = [v - sim_value for v in values]
+
+    return {
+        "sim_id": str(sim_id),
+        "images_with_df": len(values),
+        "images_without_df": len(image_rows) - len(values),
+        "image_df": {
+            "n": len(values),
+            "mean": float(np.mean(arr)),
+            "median": float(np.median(arr)),
+            "min": float(np.min(arr)),
+            "max": float(np.max(arr)),
+            "n_converged": n_converged,
+            "n_approximate": n_approximate,
+        },
+        "sim_df": {"value": sim_value, "target_df": target_df},
+        "deltas": deltas,
+        "mean_delta": float(np.mean(deltas)),
+        "show_sorensen_note": True,
+    }
+
+
 def build_comparison_data(
     sim_id: uuid.UUID | None,
     batch_mean_df: float | None,
     batch_std_df: float | None,
-) -> dict | None:
+) -> dict[str, Any] | None:
     """Build the comparison card payload (R9 + R11).
 
     - ``sim_id is None`` → returns ``None`` (no comparison card rendered).
@@ -290,7 +393,7 @@ def build_comparison_data(
 # ---------------------------------------------------------------------------
 
 
-def compute_batch_statistics(results: list[dict]) -> dict:
+def compute_batch_statistics(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Compute descriptive stats over per-image ``fractal_dimension`` values.
 
     Tolerates ``None`` entries (failed images). Returned dict shape:
@@ -317,7 +420,7 @@ def compute_batch_statistics(results: list[dict]) -> dict:
     ]
     n_successful = len(df_values)
 
-    base: dict = {
+    base: dict[str, Any] = {
         "n_images": len(results),
         "n_successful": n_successful,
         "mean_df": None,
@@ -343,7 +446,7 @@ def compute_batch_statistics(results: list[dict]) -> dict:
     return base
 
 
-def compute_metric_stats(images: list[dict], key: str) -> dict:
+def compute_metric_stats(images: list[dict[str, Any]], key: str) -> dict[str, Any]:
     """Compute {mean, std, median, min, max} for a given metric key.
 
     Filters out ``None`` values (failed images). Returns all-null dict
@@ -351,7 +454,7 @@ def compute_metric_stats(images: list[dict], key: str) -> dict:
     """
     values = [img[key] for img in images if img.get(key) is not None]
 
-    null_result: dict = {
+    null_result: dict[str, Any] = {
         "mean": None,
         "std": None,
         "median": None,
@@ -377,7 +480,7 @@ def compute_metric_stats(images: list[dict], key: str) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def compute_histogram(df_values: list[float | None]) -> dict | None:
+def compute_histogram(df_values: list[float | None]) -> dict[str, Any] | None:
     """Build histogram data per R8.
 
     - ``n < 5`` → ``None`` (not enough data to render a meaningful histogram).
@@ -433,8 +536,8 @@ def compute_histogram(df_values: list[float | None]) -> dict | None:
 
 
 def persist_batch_results(
-    batch: "FraktalBatch",
-    image_results: list[dict],
+    batch: FraktalBatch,
+    image_results: list[dict[str, Any]],
     png_list: list[bytes],
     dpo_used: float,
     scientific_png_list: list[bytes | None] | None = None,

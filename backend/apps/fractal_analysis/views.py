@@ -28,6 +28,7 @@ from .serializers import (
     ImageAnalysisSerializer,
 )
 from .services.batch import (
+    _build_study_comparison,
     build_comparison_data,
     compute_batch_statistics,
     compute_histogram,
@@ -596,6 +597,7 @@ def _build_batch_response(
         "stats": stats,
         "histogram": histogram,
         "comparison": comparison,
+        "study_comparison": _build_study_comparison(sim_id, images_out),
         "calibration": calibration,
     }
 
@@ -928,6 +930,7 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         "stats": stats,
         "histogram": histogram,
         "comparison": comparison,
+        "study_comparison": _build_study_comparison(batch.sim_id, images_out),
         "calibration": calibration,
     }
 
@@ -1016,6 +1019,8 @@ def batch_detail_view(
             "rg_nm": json_safe_float(img.rg_nm),
             "error": img.error or None,
             "dpo_used": img.dpo_used,
+            "quality": img.quality,
+            "df_estimate": json_safe_float(img.df_estimate),  # type: ignore[no-untyped-call]
         }
         for img in images
     ]
@@ -1089,6 +1094,7 @@ def batch_detail_view(
             "images": images_data,
             "stats": stats,
             "comparison": comparison,
+            "study_comparison": _build_study_comparison(batch.sim_id, images_data),
             "calibration": calibration,
             "original_zip_filename": batch.original_zip_filename,
         }
