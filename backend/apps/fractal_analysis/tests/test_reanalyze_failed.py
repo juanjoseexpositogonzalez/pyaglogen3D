@@ -577,7 +577,9 @@ class TestFirstAnalysisPixelsPer100nmWriter:
             assert row.pixels_per_100nm == pytest.approx(500.0)
 
     def test_no_backfill_for_pre_migration_rows(self) -> None:
-        """Pre-migration rows keep NULL; re-analysis falls back to batch."""
+        """Pre-migration rows keep NULL; re-analysis falls back to the batch
+        scale AT ANALYSIS TIME ONLY (engine arg) and does NOT persist the
+        fallback into the row (fix round F10 — no backfill)."""
         user = _make_user()
         project = _make_project(user)
         batch = _make_batch(project, user, pixels_per_100nm=3.8)
@@ -591,7 +593,154 @@ class TestFirstAnalysisPixelsPer100nmWriter:
         ) as mock_engine:
             reanalyze_failed_images(batch)
 
+        # The batch fallback IS what the engine ran at...
         assert mock_engine.call_args.args[1] == [3.8]
-        # After re-analysis the row records the scale actually used.
+        # ...but the fallback is NOT persisted: the row stays NULL.
         row = batch.images.get(index=0)
-        assert row.pixels_per_100nm == pytest.approx(3.8)
+        assert row.pixels_per_100nm is None
+
+    def test_persisted_scale_refreshed_null_untouched(self) -> None:
+        """Fix round F10: rows with a persisted scale keep their provenance;
+        NULL rows stay NULL after re-analysis (same batch)."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user, pixels_per_100nm=3.8)
+        _make_row(batch, 0, quality="failed", ppn=4.2)
+        _make_row(batch, 1, quality="failed", ppn=None)
+
+        from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+        with patch(
+            "aglogen_core.analyze_fraktal_batch_per_image_scale",
+            return_value=_fake_engine_result(2),
+        ) as mock_engine:
+            reanalyze_failed_images(batch)
+
+        assert mock_engine.call_args.args[1] == [4.2, 3.8]
+        row_a = batch.images.get(index=0)
+        row_b = batch.images.get(index=1)
+        assert row_a.pixels_per_100nm == pytest.approx(4.2)
+        assert row_b.pixels_per_100nm is None
+
+    def test_engine_receives_input_variants_from_rows(self) -> None:
+        """Fix round F1: the re-analysis call MUST forward each row's
+        ``analysis_input_variant`` — the binding otherwise defaults every
+        image to Presentation, which re-clips scientific (0/255) inputs and
+        deterministically re-fails the row with wrong provenance."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _make_row(
+            batch,
+            0,
+            quality="failed",
+            scientific=_make_png(value=0),
+            variant="scientific",
+        )
+        _make_row(batch, 1, quality="failed", variant="presentation")
+
+        from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+        with patch(
+            "aglogen_core.analyze_fraktal_batch_per_image_scale",
+            return_value=_fake_engine_result(2),
+        ) as mock_engine:
+            reanalyze_failed_images(batch)
+
+        kwargs = mock_engine.call_args.kwargs
+        assert kwargs["input_variants"] == ["scientific", "presentation"]
+        # Rows keep their recorded variant (no silent downgrade).
+        assert batch.images.get(index=0).analysis_input_variant == "scientific"
+        assert batch.images.get(index=1).analysis_input_variant == "presentation"
+
+    def test_row_updates_run_inside_transaction_atomic(self) -> None:
+        """Fix round F5: the row-update loop + aggregate recompute are
+        wrapped in ``transaction.atomic`` (no torn state)."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        _make_row(batch, 0, quality="failed")
+
+        from django.db import transaction as db_transaction
+
+        from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+        with (
+            patch(
+                "aglogen_core.analyze_fraktal_batch_per_image_scale",
+                return_value=_fake_engine_result(1),
+            ),
+            patch(
+                "django.db.transaction.atomic",
+                wraps=db_transaction.atomic,
+            ) as mock_atomic,
+        ):
+            reanalyze_failed_images(batch)
+
+        mock_atomic.assert_called()
+
+    def test_progress_callback_called_per_image(self) -> None:
+        """Fix round F6: the optional progress callback fires once per
+        re-analyzed row with (done, total)."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        for i in range(3):
+            _make_row(batch, i, quality="failed")
+
+        from apps.fractal_analysis.services.batch import reanalyze_failed_images
+
+        ticks: list[tuple[int, int]] = []
+        with patch(
+            "aglogen_core.analyze_fraktal_batch_per_image_scale",
+            return_value=_fake_engine_result(3),
+        ):
+            reanalyze_failed_images(
+                batch, progress_callback=lambda done, total: ticks.append((done, total))
+            )
+
+        assert ticks == [(1, 3), (2, 3), (3, 3)]
+
+    def test_task_reports_progress_via_update_state(self) -> None:
+        """Fix round F6: the async wrapper emits a PROGRESS tick per image
+        through ``update_state`` (meta carries progress/current/total and
+        the ``reanalyzing`` stage)."""
+        user = _make_user()
+        project = _make_project(user)
+        batch = _make_batch(project, user)
+        for i in range(3):
+            _make_row(batch, i, quality="failed")
+
+        with (
+            patch(
+                "aglogen_core.analyze_fraktal_batch_per_image_scale",
+                return_value=_fake_engine_result(3),
+            ),
+            patch.object(reanalyze_failed_batch_task, "update_state") as mock_update,
+        ):
+            # Simulate a queued Celery job context (request.id set) without a
+            # real broker: eager apply() with an explicit task_id gives the
+            # bound task a real request context.
+            try:
+                reanalyze_failed_batch_task.apply(  # pyright: ignore[reportCallIssue, reportAttributeAccessIssue]
+                    args=[str(batch.id)], task_id="job-progress-1"
+                )
+            finally:
+                pass
+
+        assert mock_update.call_count == 3
+        meta = mock_update.call_args.kwargs["meta"]
+        assert meta["progress"] == pytest.approx(1.0)
+        assert meta["current"] == 3
+        assert meta["total"] == 3
+        assert meta["stage"] == "reanalyzing"
+        state = mock_update.call_args.kwargs["state"]
+        assert state == "PROGRESS"
+
+    def test_task_missing_batch_raises_clear_error(self) -> None:
+        """Fix round F8: a batch deleted before the queued job runs must
+        fail with a clear message, not a raw DoesNotExist traceback."""
+        missing_id = str(uuid.uuid4())
+
+        with pytest.raises(ValueError, match="not found"):
+            reanalyze_failed_batch_task(missing_id)  # pyright: ignore[reportCallIssue]

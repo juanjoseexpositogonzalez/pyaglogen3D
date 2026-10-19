@@ -238,10 +238,23 @@ describe('T6/R13 — bulk re-analyze failed button', () => {
   it('shows progress while the async job polls', async () => {
     let resolveJob: (r: FraktalBatchResult) => void = () => {}
     mockReanalyzeFailedBatch.mockImplementationOnce(
-      (_p: string, _b: string, onProgress: (p: { progress: number }) => void) =>
+      (_p: string, _b: string, onProgress: (p: {
+        progress: number
+        current: number
+        total: number
+        stage: 'reanalyzing'
+      }) => void) =>
         new Promise<FraktalBatchResult>((resolve) => {
           resolveJob = resolve
-          onProgress({ progress: 0.45 })
+          // Fix round F6: the async wrapper now emits REAL PROGRESS meta
+          // (update_state per re-analyzed image, stage 'reanalyzing'). The
+          // tick mirrors that shape instead of a bare pinned number.
+          onProgress({
+            progress: 0.45,
+            current: 20,
+            total: 45,
+            stage: 'reanalyzing',
+          })
         })
     )
 

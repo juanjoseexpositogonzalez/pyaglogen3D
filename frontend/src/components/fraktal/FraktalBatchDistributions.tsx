@@ -346,6 +346,25 @@ function DistributionCard({
   // no-data gates are untouched.
   const targetDf = studyComparison?.sim_df.target_df ?? null
   if (simMarkerValue != null && simMarkerEnabled) {
+    // Fix round F9 (judgment-day): Plotly autoranges on the histogram bars
+    // only, so a sim_df.value outside the data span rendered the marker
+    // outside the visible x-range. Extend the axis to include the marker
+    // with 5% padding. No canonical bucketing change — range is a
+    // layout-only concern.
+    const finite: number[] = [
+      ...values,
+      ...(convergedValues ?? []),
+      ...(approximateValues ?? []),
+    ].filter((v) => Number.isFinite(v))
+    const dataMin = finite.length > 0 ? Math.min(...finite) : simMarkerValue
+    const dataMax = finite.length > 0 ? Math.max(...finite) : simMarkerValue
+    const lo = Math.min(dataMin, simMarkerValue)
+    const hi = Math.max(dataMax, simMarkerValue)
+    const pad = (hi - lo) * 0.05 || Math.abs(hi) * 0.05 || 0.05
+    layout.xaxis = {
+      ...layout.xaxis,
+      range: [lo - pad, hi + pad],
+    }
     layout.shapes = [
       {
         type: 'line',

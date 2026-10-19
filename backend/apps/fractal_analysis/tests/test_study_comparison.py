@@ -452,3 +452,163 @@ class TestBuilder1NullBlockNoDb:
                 "metadata",
             )
         assert spy.call_count == 1
+
+
+# ---------------------------------------------------------------------------
+# Judgment-day fix round — F2/F3/F4 builder parity
+# ---------------------------------------------------------------------------
+
+
+def _rows_with_error_approximate() -> list[dict[str, Any]]:
+    """2 converged + 1 APPROXIMATE row that also carries an engine error.
+
+    This is the judge A case (F3): the engine returns quality="approximate"
+    WITH an error string (e.g. NpoTooSmall + df_estimate). Persistence
+    forces quality="failed" (PYA-13 T3.3 safety net); builder 1 must derive
+    the same value or the three builders diverge on ``study_comparison``.
+    """
+    rows = _image_rows()[:2]  # two converged rows keep the block non-null
+    rows.append(
+        {
+            "index": 2,
+            "filename": "proj_002.png",
+            "azimuth": 20.0,
+            "elevation": 0.0,
+            "fractal_dimension": None,
+            "prefactor": 1.5,
+            "r_squared": 0.98,
+            "n_particles_counted": 40,
+            "rg_nm": 148.0,
+            "error": "NpoTooSmall",
+            "quality": "approximate",
+            "bisection_iterations": 30,
+            "bisection_residual": 0.5,
+            "failure_reason": "iteration_limit",
+            "df_estimate": 2.05,
+        }
+    )
+    return rows
+
+
+@pytest.mark.django_db
+class TestFixRoundBuilderParity:
+    def test_triple_builder_equality_with_error_approximate_row(self) -> None:
+        """F3: builder 1 derives quality = 'failed' if error else engine
+        quality, so all three builders emit IDENTICAL study_comparison for
+        error-carrying rows (previously builder 1 said 'approximate' while
+        persistence forced 'failed')."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_sim(project)
+        batch = _make_batch(project, sim.id)
+        rows = _rows_with_error_approximate()
+        # Persist AS persist_batch_results would: the error forces 'failed'.
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=rows[0]["index"],
+            filename=rows[0]["filename"],
+            dpo_used=25.0,
+            image_png=b"\x89PNG-fake",
+            quality="converged",
+            fractal_dimension=rows[0]["fractal_dimension"],
+            prefactor=rows[0]["prefactor"],
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=rows[1]["index"],
+            filename=rows[1]["filename"],
+            dpo_used=25.0,
+            image_png=b"\x89PNG-fake",
+            quality="converged",
+            fractal_dimension=rows[1]["fractal_dimension"],
+            prefactor=rows[1]["prefactor"],
+        )
+        FraktalBatchImage.objects.create(
+            batch=batch,
+            index=2,
+            filename="proj_002.png",
+            dpo_used=25.0,
+            image_png=b"\x89PNG-fake",
+            error="NpoTooSmall",
+            quality="failed",  # what persist_batch_results writes
+            df_estimate=2.05,
+        )
+
+        # Builder 1 gets the RAW engine result (quality='approximate' + error).
+        b1 = _build_batch_response(
+            _fake_rust_result(rows),
+            [r["filename"] for r in rows],
+            None,
+            sim.id,
+            500.0,
+            "metadata",
+        )
+        b2 = _serialize_batch_from_db(str(batch.id))
+        client = APIClient()
+        client.force_authenticate(user=user)
+        b3 = client.get(
+            f"/api/v1/projects/{project.id}/fraktal/batches/{batch.id}/"
+        ).json()  # pyright: ignore[reportAttributeAccessIssue]
+
+        # Builder 1 derived 'failed' for the error row (like persistence).
+        assert b1["images"][2]["quality"] == "failed"
+        # The error row contributes to NEITHER population in any builder,
+        # so the study_comparison blocks are identical.
+        assert b1["study_comparison"] is not None
+        assert b2 is not None and b2["study_comparison"] is not None
+        assert b1["study_comparison"] == b2["study_comparison"]
+        assert b2["study_comparison"] == b3["study_comparison"]
+        # The error-carrying row is excluded from image_df.
+        assert b1["study_comparison"]["image_df"]["n"] == 2
+
+    def test_builder1_stats_carry_n_failed(self) -> None:
+        """F4: builder 1 (sync/async live payload) emits stats.n_failed so
+        the frontend bulk re-analyze button is visible without a reload."""
+        b1 = _build_batch_response(
+            _fake_rust_result(_rows_with_error_approximate()),
+            [r["filename"] for r in _rows_with_error_approximate()],
+            None,
+            None,
+            500.0,
+            "metadata",
+        )
+        assert b1["stats"]["n_failed"] == 1
+
+    def test_db_serializer_stats_carry_quartiles_matching_builder1(
+        self,
+    ) -> None:
+        """F2: _serialize_batch_from_db emits q1_df/q3_df computed with the
+        SAME population + np.percentile(arr, 25/75) formula as builder 1's
+        compute_batch_statistics, so the frontend Q1/Q3 cards do not flip
+        to '-' on a DB-shaped payload."""
+        from apps.fractal_analysis.services.batch import (  # noqa: PLC0415
+            compute_batch_statistics,
+        )
+
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_sim(project)
+        batch = _make_batch(project, sim.id)
+        rows = _image_rows()
+        _persist_rows(batch, rows)
+
+        b2 = _serialize_batch_from_db(str(batch.id))
+        assert b2 is not None
+        b1 = _build_batch_response(
+            _fake_rust_result(rows),
+            [r["filename"] for r in rows],
+            None,
+            sim.id,
+            500.0,
+            "metadata",
+        )
+
+        # Exact parity with the shared helper for the same rows.
+        expected = compute_batch_statistics(b2["images"])
+        assert b2["stats"]["q1_df"] is not None
+        assert b2["stats"]["q1_df"] == pytest.approx(expected["q1_df"])
+        assert b2["stats"]["q3_df"] is not None
+        assert b2["stats"]["q3_df"] == pytest.approx(expected["q3_df"])
+        # And identical to builder 1's payload for the same rows.
+        assert b2["stats"]["q1_df"] == pytest.approx(b1["stats"]["q1_df"])
+        assert b2["stats"]["q3_df"] == pytest.approx(b1["stats"]["q3_df"])

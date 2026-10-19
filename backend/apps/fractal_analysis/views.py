@@ -567,7 +567,13 @@ def _build_batch_response(
                 "rg_nm": json_safe_float(r.get("rg_nm")),
                 "error": r.get("error"),
                 # PYA-13: bisection diagnostic fields from engine result.
-                "quality": r.get("quality"),
+                # Fix round F3: builder 1 derives quality with the SAME rule
+                # persist_batch_results applies ("failed" when the engine
+                # surfaced an error) so all three summary builders emit
+                # IDENTICAL study_comparison for error-carrying rows (R12.1).
+                "quality": (
+                    "failed" if r.get("error") else (r.get("quality") or "converged")
+                ),
                 "bisection_iterations": r.get("bisection_iterations"),
                 "bisection_residual": json_safe_float(r.get("bisection_residual")),
                 "failure_reason": r.get("failure_reason"),
@@ -579,6 +585,10 @@ def _build_batch_response(
     stats["kf"] = compute_metric_stats(images_out, "prefactor")
     stats["rg"] = compute_metric_stats(images_out, "rg_nm")
     stats["npo"] = compute_metric_stats(images_out, "n_particles_counted")
+    # Fix round F4: builder 1 (sync/async live payload) must carry the
+    # failed-image counter so the frontend bulk re-analyze button is
+    # visible without a reload (builders 2/3 already emit it from DB).
+    stats["n_failed"] = sum(1 for e in images_out if e["quality"] == "failed")
     df_values = [
         e["fractal_dimension"] for e in images_out if e["fractal_dimension"] is not None
     ]
@@ -899,6 +909,14 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         "mean_df": mean_df,
         "std_df": json_safe_float(batch.std_df),
         "median_df": json_safe_float(batch.median_df),
+        # Fix round F2: builder 2 (DB-serialized payloads — sync re-analysis
+        # 200 and async results endpoint) must carry q1_df/q3_df with the
+        # SAME np.percentile(arr, 25/75) population as builder 1's
+        # compute_batch_statistics, otherwise the frontend Q1/Q3 stat cards
+        # flip to "—" until reload. Population: non-null fractal_dimension
+        # over ALL rows (identical to compute_batch_statistics(images_out)).
+        "q1_df": compute_batch_statistics(images_out)["q1_df"],
+        "q3_df": compute_batch_statistics(images_out)["q3_df"],
         "min_df": json_safe_float(batch.min_df),
         "max_df": json_safe_float(batch.max_df),
         "kf": compute_metric_stats(images_out, "prefactor"),

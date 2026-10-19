@@ -10,8 +10,8 @@
  *      successful images — R7).
  *   3. A per-image results table with client-side sorting (R9).
  *      Rows are clickable — each links to the drill-down route (T6.1).
- *   4. Optional Sorensen comparison card when the batch was linked to a
- *      simulation (R11 via FraktalComparisonCard).
+ *   4. The R12 study comparison card when the batch was linked to a
+ *      simulation (R11 via BatchStudyComparisonCard).
  *   5. Download CSV button (T6.2) and Delete batch button (T6.3).
  */
 import { useCallback, useMemo, useState } from 'react'

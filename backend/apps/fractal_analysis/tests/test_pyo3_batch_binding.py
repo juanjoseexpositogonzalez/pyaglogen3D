@@ -8,10 +8,9 @@ policy is covered by Rust unit tests in
 
 from __future__ import annotations
 
+import aglogen_core
 import numpy as np
 import pytest
-
-import aglogen_core
 
 
 def _make_grayscale_with_particles(size: int = 64) -> np.ndarray:
@@ -109,3 +108,58 @@ class TestAnalyzeFraktalBatchBinding:
                 25.0,
                 "granulated_2012",
             )
+
+
+class TestAnalyzeFraktalBatchPerImageScaleInputVariants:
+    """Judgment-day fix round F1 — real-engine proof that the input
+    variant decides convergence for scientific (0/255) bytes.
+
+    The same binary image FAILS as Presentation (pixel_min=10 / pixel_max=240
+    clipping eats the 0/255 mask → 'No object pixels found') and CONVERGES
+    as Scientific (pixel range widened to 0/255). This is why the
+    re-analysis path MUST forward each row's analysis_input_variant.
+    """
+
+    @staticmethod
+    def _binary_image_with_particles(size: int = 64) -> np.ndarray:
+        """Clean binary render: dark particle disks on white background."""
+        img = np.full((size, size), 255, dtype=np.uint8)
+        radius = 3.0
+        for r in range(6):
+            for c in range(6):
+                cy, cx = 8 + r * 8, 8 + c * 8
+                yy, xx = np.ogrid[:size, :size]
+                mask = (yy - cy) ** 2 + (xx - cx) ** 2 <= radius**2
+                img[mask] = 0
+        return img
+
+    def test_scientific_converges_where_presentation_fails(self) -> None:
+        img = self._binary_image_with_particles()
+
+        presentation = aglogen_core.analyze_fraktal_batch_per_image_scale(
+            [img],
+            [12.0],
+            False,
+            25.0,
+            "granulated_2012",
+            input_variants=["presentation"],
+        )
+        p0 = presentation["results"][0]
+        # Presentation downgrades the binary input: error + no Df.
+        assert p0["error"] is not None
+        assert p0["fractal_dimension"] is None
+
+        scientific = aglogen_core.analyze_fraktal_batch_per_image_scale(
+            [img],
+            [12.0],
+            False,
+            25.0,
+            "granulated_2012",
+            input_variants=["scientific"],
+        )
+        s0 = scientific["results"][0]
+        # The SAME bytes converge when fed as scientific.
+        assert s0["error"] is None
+        assert s0["quality"] == "converged"
+        assert s0["fractal_dimension"] is not None
+        assert s0["n_particles_counted"] == 36

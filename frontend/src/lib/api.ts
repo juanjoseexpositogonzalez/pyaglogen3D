@@ -820,7 +820,7 @@ export interface FraktalBatchProgress {
   progress: number // 0..1
   current: number
   total: number
-  stage: 'autocalibrate' | 'analyzing' | 'aggregating'
+  stage: 'autocalibrate' | 'analyzing' | 'aggregating' | 'reanalyzing'
 }
 
 export interface FraktalBatchOptions {

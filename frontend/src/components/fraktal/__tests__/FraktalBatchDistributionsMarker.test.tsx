@@ -270,4 +270,39 @@ describe('R-DELTA-C2.2 — marker hidden', () => {
     }
     expect(otherPanels).toBe(3)
   })
+
+  it('extends the x-axis range to include sim_df.value (fix round F9)', () => {
+    // Data spans 1.7-1.82; the sim marker at 2.42 lies OUTSIDE the bars'
+    // autorange — Plotly would render it outside the visible plot. The
+    // xaxis range must be extended to include the marker with padding.
+    render(
+      <FraktalBatchDistributions
+        images={makeImages(30)}
+        studyComparison={makeStudyComparison()}
+      />
+    )
+
+    const layout = dfPlotCall()!.layout as {
+      xaxis?: { range?: [number, number] }
+    }
+    const range = layout.xaxis?.range
+    expect(range).toBeTruthy()
+    const [lo, hi] = range as [number, number]
+    expect(lo).toBeLessThan(1.7)
+    expect(hi).toBeGreaterThan(2.42)
+    // The marker stays strictly inside the padded range.
+    expect(lo).toBeLessThan(2.42)
+    expect(hi).toBeGreaterThan(2.42)
+  })
+
+  it('does NOT set an explicit x-range when the marker is hidden (fix round F9)', () => {
+    render(
+      <FraktalBatchDistributions images={makeImages(30)} studyComparison={null} />
+    )
+
+    const layout = dfPlotCall()!.layout as {
+      xaxis?: { range?: [number, number] }
+    }
+    expect(layout.xaxis?.range).toBeUndefined()
+  })
 })

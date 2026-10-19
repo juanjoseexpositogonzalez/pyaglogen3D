@@ -603,12 +603,39 @@ def reanalyze_failed_batch_task(self, batch_id: str) -> dict:
 
     Reports ``{"batch_id": ...}`` on completion so the existing
     ``fraktal_status_view`` polling endpoint stays reusable (same contract
-    as ``analyze_fraktal_batch_task``)."""
+    as ``analyze_fraktal_batch_task``). Progress is reported per re-analyzed
+    image via ``update_state`` (fix round F6) so the poller sees real
+    ``PROGRESS`` ticks instead of a pinned 0.
+    """
     from apps.fractal_analysis.models import FraktalBatch
     from apps.fractal_analysis.services.batch import reanalyze_failed_images
 
-    batch = FraktalBatch.objects.get(id=batch_id)
-    summary = reanalyze_failed_images(batch)
+    def _report_progress(done: int, total: int) -> None:
+        if self.request.id:
+            self.update_state(
+                state="PROGRESS",
+                meta={
+                    "progress": (done / total) if total else 0.0,
+                    "current": done,
+                    "total": total,
+                    "stage": "reanalyzing",
+                },
+            )
+
+    # Fix round F8: a batch deleted while the job sat in the queue must
+    # surface a CLEAR failure to the poller, not a raw
+    # ``FraktalBatch.DoesNotExist`` traceback.
+    try:
+        batch = FraktalBatch.objects.get(id=batch_id)
+    except FraktalBatch.DoesNotExist:
+        msg = (
+            f"FRAKTAL batch {batch_id} not found — it was deleted before "
+            "the failed-image re-analysis ran."
+        )
+        logger.warning("Re-analysis aborted: %s", msg)
+        raise ValueError(msg) from None
+
+    summary = reanalyze_failed_images(batch, progress_callback=_report_progress)
 
     logger.info(
         "FRAKTAL batch %s failed-image re-analysis completed: "
