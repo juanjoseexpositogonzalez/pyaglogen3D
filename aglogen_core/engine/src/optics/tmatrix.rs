@@ -65,7 +65,7 @@ fn translation_coefficients(
 
                     // A coefficient (regular translation)
                     let mut sum_a = Complex64::new(0.0, 0.0);
-                    let mut sum_b = Complex64::new(0.0, 0.0);
+                    let sum_b = Complex64::new(0.0, 0.0);
 
                     let nu_min = (n as i32 - np as i32).abs().max((m - mp).abs()) as usize;
                     let nu_max = n + np;
@@ -82,7 +82,7 @@ fn translation_coefficients(
                             continue;
                         }
 
-                        let mu = (m - mp) as i32;
+                        let mu = m - mp;
                         let mu_abs = mu.unsigned_abs() as usize;
 
                         if nu < p_lm.len() && mu_abs < p_lm[nu].len() {
@@ -222,7 +222,7 @@ pub fn compute_tmatrix(
     n_imag: f64,
     medium_index: f64,
     n_max_override: Option<usize>,
-    orientation_averaging: bool,
+    _orientation_averaging: bool,
     n_angles: usize,
 ) -> OpticalResult {
     let start = Instant::now();
@@ -260,12 +260,12 @@ pub fn compute_tmatrix(
 
     for &r in radii {
         let key = r.to_bits();
-        if !radius_coeffs.contains_key(&key) {
+        radius_coeffs.entry(key).or_insert_with(|| {
             let x = size_parameter(r, wavelength, medium_index);
             let m = m_particle / Complex64::new(medium_index, 0.0);
             let (an, bn) = mie_coefficients(n_max, x, m);
-            radius_coeffs.insert(key, (an, bn));
-        }
+            (an, bn)
+        });
     }
 
     // Build interaction matrix
@@ -283,12 +283,12 @@ pub fn compute_tmatrix(
 
     // Sum contributions from each sphere (zeroth-order approximation)
     for (i, &r) in radii.iter().enumerate() {
-        let (c_ext, c_sca, c_abs, _, _, _, g) = mie_sphere(r, wavelength, m_particle, medium_index);
+        let (c_ext, c_sca, _c_abs, _, _, _, g) = mie_sphere(r, wavelength, m_particle, medium_index);
 
         // Apply interaction correction factor based on neighbors
         let mut interaction_factor = 1.0;
 
-        for (j, (&rj, coord_j)) in radii.iter().zip(coords.iter()).enumerate() {
+        for (j, (&_rj, coord_j)) in radii.iter().zip(coords.iter()).enumerate() {
             if i != j {
                 let dx = coords[i][0] - coord_j[0];
                 let dy = coords[i][1] - coord_j[1];

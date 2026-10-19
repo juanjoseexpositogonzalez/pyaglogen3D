@@ -187,11 +187,10 @@ impl Cluster {
                         continue;
                     };
 
-                    if t <= max_distance {
-                        if best_collision.is_none() || t < best_collision.unwrap().0 {
+                    if t <= max_distance
+                        && (best_collision.is_none() || t < best_collision.unwrap().0) {
                             best_collision = Some((t, i, j, contact_dist));
                         }
-                    }
                 }
             }
         }
@@ -358,7 +357,7 @@ pub fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simula
         0.0
     };
 
-    let rg_final = if !coords.is_empty() {
+    let _rg_final = if !coords.is_empty() {
         calculate_radius_of_gyration(&coords, &radii)
     } else {
         0.0

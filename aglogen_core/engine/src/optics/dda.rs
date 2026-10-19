@@ -72,7 +72,7 @@ fn dyadic_green(k: f64, r: [f64; 3]) -> [[Complex64; 3]; 3] {
     let kr2 = kr * kr;
     let r2 = r_norm * r_norm;
     let r3 = r2 * r_norm;
-    let r5 = r3 * r2;
+    let _r5 = r3 * r2;
 
     // exp(ikr)
     let exp_ikr = Complex64::from_polar(1.0, kr);
@@ -207,7 +207,7 @@ fn bicgstab_solve(
         if s_norm / b_norm < tol {
             // x = x + α * p
             for i in 0..n {
-                x[i] = x[i] + alpha * p[i];
+                x[i] += alpha * p[i];
             }
             break;
         }

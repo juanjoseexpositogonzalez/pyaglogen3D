@@ -263,14 +263,13 @@ pub fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
                         &clusters[j],
                         effective_box_size,
                         sintering_coeff,
-                    ) {
-                        if params.sticking_probability >= 1.0
-                            || rng.gen::<f64>() < params.sticking_probability
+                    )
+                        && (params.sticking_probability >= 1.0
+                            || rng.gen::<f64>() < params.sticking_probability)
                         {
                             merges.push((i, j));
                             merged_indices.push(j);
                         }
-                    }
                 }
             }
         }

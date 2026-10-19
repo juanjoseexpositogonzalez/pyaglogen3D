@@ -246,7 +246,7 @@ pub fn calculate_inertia_tensor(coordinates: &[[f64; 3]], radii: &[f64]) -> Iner
 
     // Compute eigendecomposition
     let eigen = SymmetricEigen::new(inertia_matrix);
-    let mut eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
+    let eigenvalues: Vec<f64> = eigen.eigenvalues.iter().copied().collect();
     let eigenvectors = eigen.eigenvectors;
 
     // Sort eigenvalues (and track indices for eigenvectors)

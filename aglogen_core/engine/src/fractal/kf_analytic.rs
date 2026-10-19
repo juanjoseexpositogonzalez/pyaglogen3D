@@ -78,7 +78,7 @@ pub fn radius_of_gyration(mode: &PackingMode, n_spheres: usize, dp: f64) -> Opti
                 return None;
             }
             let esferas = n_spheres;
-            if esferas % 2 != 0 {
+            if !esferas.is_multiple_of(2) {
                 // Odd: n = 2*esferas - 1
                 let n = (2 * esferas - 1) as f64;
                 let dg = 2.0 * d * (3.0 / 20.0 + ((n * n - 1.0) * (n + 3.0)) / (48.0 * n)).sqrt();
@@ -96,7 +96,7 @@ pub fn radius_of_gyration(mode: &PackingMode, n_spheres: usize, dp: f64) -> Opti
             }
         }
         PackingMode::Asterisk => {
-            let esferas = if n_spheres % 2 == 0 {
+            let esferas = if n_spheres.is_multiple_of(2) {
                 n_spheres + 1
             } else {
                 n_spheres
@@ -111,7 +111,7 @@ pub fn radius_of_gyration(mode: &PackingMode, n_spheres: usize, dp: f64) -> Opti
             Some(dg)
         }
         PackingMode::Cross3D => {
-            let esferas = if n_spheres % 2 == 0 {
+            let esferas = if n_spheres.is_multiple_of(2) {
                 n_spheres + 1
             } else {
                 n_spheres
@@ -251,14 +251,14 @@ pub fn kf_analytic(mode: &PackingMode, n_spheres: usize, dp: f64, df: f64) -> Op
     let n: f64 = match mode {
         PackingMode::Line => n_spheres as f64,
         PackingMode::Cross2D => {
-            if n_spheres % 2 != 0 {
+            if !n_spheres.is_multiple_of(2) {
                 (2 * n_spheres - 1) as f64
             } else {
                 (2 * n_spheres) as f64
             }
         }
         PackingMode::Asterisk | PackingMode::Cross3D => {
-            let eff = if n_spheres % 2 == 0 {
+            let eff = if n_spheres.is_multiple_of(2) {
                 n_spheres + 1
             } else {
                 n_spheres

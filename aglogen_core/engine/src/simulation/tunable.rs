@@ -277,7 +277,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
             // particle, which maintains connectivity while accepting some Df deviation.
             if !placed {
                 let anchor_idx = last_ref_idx.unwrap_or(0);
-                let anchor = particles[anchor_idx].clone();
+                let anchor = particles[anchor_idx];
                 let contact = sintered_contact_distance(new_radius, anchor.radius, sintering_coeff);
 
                 let mut fallback_placed = false;
@@ -352,7 +352,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         .collect();
     let radii: Vec<f64> = particles.iter().map(|s| s.radius).collect();
 
-    let final_rg = calculate_radius_of_gyration(&coords, &radii);
+    let _final_rg = calculate_radius_of_gyration(&coords, &radii);
 
     // Calculate actual Df and kf from the evolution
     let (actual_df, actual_kf, _r2) =
