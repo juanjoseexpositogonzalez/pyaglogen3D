@@ -1,5 +1,3 @@
-'use client'
-
 /**
  * FractalAnalysisTab — dedicated "Fractal Analysis" study tab (spec R7 of
  * change batch-windowed-box-counting; design D7, persona-locked P3).
@@ -34,7 +32,6 @@ import type {
   ParametricStudyResult,
   ParametricStudyResults,
   StudyEstimatorStats,
-  WindowedBlock,
   WindowedBlockStatus,
 } from '@/lib/types'
 
