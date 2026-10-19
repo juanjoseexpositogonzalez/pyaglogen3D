@@ -49,12 +49,24 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 - `failure_reason: CharField max_length=20, null=True` —
   choices: `no_sign_change | kf_negative | iteration_limit | none | null`
 - `df_estimate: FloatField, null=True`
+- `pixels_per_100nm: FloatField, null=True, blank=True` — per-image calibration scale in
+  pixels per 100 nm; populated at analysis time from `directions[i].pixels_per_100nm` when
+  the corresponding ZIP `directions[]` entry carries it, and from the batch-level broadcast
+  value when it does not (same two sources as the calibration semantics of
+  `fraktal-batch-contract.md` R1)
 **AND** existing rows written before migration `0011` have `quality = "converged"` (column
 default) and all four new nullable fields as NULL; they MUST remain fully accessible
 without error.
 
+**AND** the bulk re-analysis defined in R13 (capability `fraktal-batch-contract`, change
+`fraktal-batch-extensions`) uses the persisted per-image `pixels_per_100nm` value when
+present and falls back to the batch scale when NULL, leaving the batch-level
+`calibration_source` unchanged (per-image provenance is observable through this field only),
+**AND** rows written before this migration have `pixels_per_100nm = NULL` and keep it (no
+backfill) — their re-analysis (R13) falls back to the batch scale,
+
 (Previously: R2 did not include `quality`, `bisection_iterations`, `bisection_residual`,
-`failure_reason`, `df_estimate`, `analysis_input_variant` or `rg_nm`; which PNG variant was
+`failure_reason`, `df_estimate`, `analysis_input_variant`, `rg_nm` or `pixels_per_100nm`; which PNG variant was
 fed to the analyzer was not recorded anywhere, and per-image Rg values and bisection diagnostic
 data were not persisted.)
 
@@ -127,6 +139,21 @@ data were not persisted.)
 - GIVEN a new-mode batch
 - WHEN two rows with the same `(batch, index)` are attempted
 - THEN the unique constraint is violated; second insert is rejected (unchanged behavior)
+
+#### Scenario 2.11 — Re-analysis uses persisted per-image scale
+
+- GIVEN a failed image whose row carries `pixels_per_100nm = 4.2` (populated at first analysis)
+- WHEN the bulk re-analysis of R13 processes that image
+- THEN the analysis runs at scale 4.2 pixels per 100 nm (not the batch broadcast value)
+- AND the batch-level `calibration_source` is unchanged after the re-analysis
+
+#### Scenario 2.12 — Mixed population at first analysis (r4 minor 6)
+
+- GIVEN a grid-mode ZIP where direction `i` carries `directions[i].pixels_per_100nm = 4.2`
+  and direction `j` does not (batch-level `parameters.pixels_per_100nm = 3.8`)
+- WHEN the batch task stores both rows
+- THEN row `i` has `pixels_per_100nm = 4.2` (per-direction source)
+- AND row `j` has `pixels_per_100nm = 3.8` (batch broadcast source)
 
 ### R3. Drill-down endpoint returns single-image detail
 

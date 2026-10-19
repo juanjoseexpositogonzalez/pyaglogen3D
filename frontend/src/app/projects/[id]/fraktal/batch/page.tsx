@@ -152,6 +152,7 @@ export default function FraktalBatchPage({
               projectId={id}
               batchId={result.batch_id ?? ''}
               onDeleted={() => setResult(null)}
+              onResultUpdate={setResult}
             />
           </div>
         )}

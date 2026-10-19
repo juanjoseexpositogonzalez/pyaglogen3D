@@ -17,13 +17,14 @@
  *  - Stats block missing on response (legacy server) → compute inline as fallback
  */
 import dynamic from 'next/dynamic'
-import { useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { PlotParams } from 'react-plotly.js'
 
 import type {
   FraktalBatchImageResult,
   FraktalBatchStats,
   FraktalMetricStats,
+  FraktalStudyComparison,
 } from '@/lib/api'
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
@@ -35,6 +36,12 @@ const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 export interface FraktalBatchDistributionsProps {
   images: FraktalBatchImageResult[]
   stats?: FraktalBatchStats
+  /** R-DELTA-C2 (fraktal-batch-extensions): non-null study_comparison
+   *  enables the Sim-Df reference marker on the Df histogram. The marker
+   *  reads `sim_df.value` from this block ONLY (single source; no separate
+   *  top-level key exists). Hidden when null/undefined, toggle OFF, or the
+   *  Df panel is in a no-data / "Not enough data" state. */
+  studyComparison?: FraktalStudyComparison | null
   className?: string
 }
 
@@ -127,6 +134,7 @@ function computeMetricStats(values: number[]): FraktalMetricStats {
 export function FraktalBatchDistributions({
   images,
   stats,
+  studyComparison,
   className,
 }: FraktalBatchDistributionsProps) {
   // Pluck successful values per metric. "Successful" = error == null AND
@@ -198,6 +206,7 @@ export function FraktalBatchDistributions({
           convergedValues={convergedValues}
           approximateValues={approximateValues}
           batchStats={stats}
+          studyComparison={spec.key === 'df' ? (studyComparison ?? null) : null}
         />
       ))}
     </div>
@@ -219,6 +228,10 @@ interface DistributionCardProps {
   approximateValues?: number[]
   /** Batch-level stats for mean_df_inclusive dual-display. */
   batchStats?: FraktalBatchStats
+  /** R-DELTA-C2: non-null ONLY for the Df panel when the batch summary
+   *  carries a study_comparison block (its sim_df.value is the single
+   *  marker source). Null for every other metric. */
+  studyComparison?: FraktalStudyComparison | null
 }
 
 /** Primary trace color (blue-500). */
@@ -234,9 +247,21 @@ function DistributionCard({
   convergedValues,
   approximateValues,
   batchStats,
+  studyComparison = null,
 }: DistributionCardProps) {
   const nSucc = values.length
   const title = `${spec.label} (${nSucc} succ / ${totalImages} total)`
+
+  // R-DELTA-C2: per-batch toggle, component-local state, default ON, NOT
+  // persisted (the component has no persistence and this change adds none).
+  // The marker renders ONLY when: studyComparison is non-null (same absence
+  // rule as R12 — no sim / deleted sim / missing metric / 0.0 sentinel),
+  // the toggle is ON, and the histogram itself renders (the no-data and
+  // "Not enough data" branches below return before any Plot exists, so no
+  // marker floats over a plotless panel).
+  const [simMarkerEnabled, setSimMarkerEnabled] = useState(true)
+  const simMarkerValue =
+    spec.key === 'df' && studyComparison ? studyComparison.sim_df.value : null
 
   if (nSucc < MIN_N_SUCCESSFUL) {
     return (
@@ -314,11 +339,86 @@ function DistributionCard({
     ...(useOverlay ? { barmode: 'overlay' as const } : {}),
   }
 
+  // R-DELTA-C2 marker: dashed vertical line at x = study_comparison.
+  // sim_df.value + a chip label near the top. PURELY ADDITIVE to the
+  // layout — bucket computation (R2), degenerate rendering (R5), tooltip
+  // breakdowns (R-DELTA-M), the "N successful of M total" label and the
+  // no-data gates are untouched.
+  const targetDf = studyComparison?.sim_df.target_df ?? null
+  if (simMarkerValue != null && simMarkerEnabled) {
+    // Fix round F9 (judgment-day): Plotly autoranges on the histogram bars
+    // only, so a sim_df.value outside the data span rendered the marker
+    // outside the visible x-range. Extend the axis to include the marker
+    // with 5% padding. No canonical bucketing change — range is a
+    // layout-only concern.
+    const finite: number[] = [
+      ...values,
+      ...(convergedValues ?? []),
+      ...(approximateValues ?? []),
+    ].filter((v) => Number.isFinite(v))
+    const dataMin = finite.length > 0 ? Math.min(...finite) : simMarkerValue
+    const dataMax = finite.length > 0 ? Math.max(...finite) : simMarkerValue
+    const lo = Math.min(dataMin, simMarkerValue)
+    const hi = Math.max(dataMax, simMarkerValue)
+    const pad = (hi - lo) * 0.05 || Math.abs(hi) * 0.05 || 0.05
+    layout.xaxis = {
+      ...layout.xaxis,
+      range: [lo - pad, hi + pad],
+    }
+    layout.shapes = [
+      {
+        type: 'line',
+        x0: simMarkerValue,
+        x1: simMarkerValue,
+        y0: 0,
+        y1: 1,
+        yref: 'paper',
+        line: { color: '#dc2626', width: 1.5, dash: 'dash' },
+      },
+    ]
+    layout.annotations = [
+      {
+        x: simMarkerValue,
+        y: 1,
+        yref: 'paper',
+        yanchor: 'bottom',
+        showarrow: false,
+        text: `Sim Df: ${simMarkerValue.toFixed(2)}`,
+        font: { size: 11, color: '#dc2626' },
+        hovertext:
+          targetDf != null
+            ? `Sim Df: ${simMarkerValue.toFixed(2)} (target: ${targetDf.toFixed(2)})`
+            : `Sim Df: ${simMarkerValue.toFixed(2)}`,
+        // @ts-expect-error hoverinfo exists at runtime but is missing from
+        // @types/plotly.js Annotations (same idiom as nbinsx above).
+        hoverinfo: 'text',
+      },
+    ]
+  }
+
   return (
     <div
       className="rounded border bg-card p-2"
       data-testid={`distribution-${spec.key}`}
     >
+      {spec.key === 'df' && studyComparison && (
+        <div className="px-2 pt-1 flex items-center gap-2">
+          <input
+            type="checkbox"
+            id={`sim-marker-toggle-${spec.key}`}
+            checked={simMarkerEnabled}
+            onChange={(e) => setSimMarkerEnabled(e.target.checked)}
+            data-testid="sim-marker-toggle"
+            className="h-3 w-3"
+          />
+          <label
+            htmlFor={`sim-marker-toggle-${spec.key}`}
+            className="text-xs text-muted-foreground select-none"
+          >
+            Show Sim Df marker
+          </label>
+        </div>
+      )}
       <Plot
         data={data}
         layout={layout}

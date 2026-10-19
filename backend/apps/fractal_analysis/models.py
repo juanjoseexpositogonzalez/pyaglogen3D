@@ -413,6 +413,17 @@ class FraktalBatchImage(models.Model):
         verbose_name="Analysis quality",
     )
 
+    # Per-image calibration scale (pixels per 100 nm) — populated at FIRST
+    # analysis from directions[i].pixels_per_100nm when the ZIP direction
+    # carries it, else from the batch-level broadcast value. Nullable with
+    # no backfill: pre-migration rows keep NULL and fall back to the batch
+    # scale on re-analysis (R13, change fraktal-batch-extensions).
+    pixels_per_100nm = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Pixels per 100 nm",
+    )
+
     class Meta:
         db_table = "fraktal_batch_images"
         unique_together = [("batch", "index")]

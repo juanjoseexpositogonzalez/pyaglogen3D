@@ -751,6 +751,35 @@ export interface FraktalBatchComparison {
   sorensen_note: string
 }
 
+export interface FraktalStudyComparisonImageDf {
+  n: number
+  mean: number
+  median: number
+  min: number
+  max: number
+  n_converged: number
+  n_approximate: number
+}
+
+/**
+ * Batch-vs-linked-simulation comparison block (R12, change
+ * fraktal-batch-extensions). Additive to FraktalBatchResult; null when the
+ * batch has no linked sim, the sim row was deleted, the sim metric is
+ * missing / carries the 0.0 sentinel, or there are zero contributing image
+ * values. `sim_df.value` is the SINGLE source for the Df reference marker
+ * (R-DELTA-C2) — no top-level duplicate key exists.
+ */
+export interface FraktalStudyComparison {
+  sim_id: string
+  images_with_df: number
+  images_without_df: number
+  image_df: FraktalStudyComparisonImageDf
+  sim_df: { value: number; target_df: number | null }
+  mean_delta: number | null
+  deltas: number[]
+  show_sorensen_note: boolean
+}
+
 export interface FraktalBatchCalibration {
   source: 'manual' | 'metadata' | 'autocalibrate'
   pixels_per_100nm: number
@@ -765,6 +794,9 @@ export interface FraktalBatchResult {
   stats: FraktalBatchStats
   histogram: FraktalBatchHistogram | null
   comparison: FraktalBatchComparison | null
+  /** R12 study_comparison block. Optional for backward compat with legacy
+   *  server responses that predate fraktal-batch-extensions. */
+  study_comparison?: FraktalStudyComparison | null
   calibration: FraktalBatchCalibration
 }
 
@@ -791,7 +823,7 @@ export interface FraktalBatchProgress {
   progress: number // 0..1
   current: number
   total: number
-  stage: 'autocalibrate' | 'analyzing' | 'aggregating'
+  stage: 'autocalibrate' | 'analyzing' | 'aggregating' | 'reanalyzing'
 }
 
 export interface FraktalBatchOptions {
@@ -1163,6 +1195,59 @@ export const fraktalApi = {
       `/projects/${projectId}/fraktal/batches/${batchId}/images/${index}/reanalyze/`,
       { method: 'POST' }
     ),
+
+  /**
+   * Bulk re-analysis of the batch's failed images (R13, change
+   * fraktal-batch-extensions). In place by UPDATE per pk; preserves the PNG
+   * bytes (hash-equal — no re-rasterization), analysis_input_variant and
+   * orientation. Boundary: <=30 failed -> backend responds 200 with the
+   * updated batch summary payload (including study_comparison); >30 -> 202
+   * {job_id, status: "queued"} and this method polls
+   * /fraktal-status/{job_id}/ (the re-analysis task reports {batch_id}, so
+   * the existing results endpoint resolves) until done. Zero failed -> 400
+   * {code: "no_failed_images"}; non-shared user -> 403.
+   *
+   * `onProgress` fires on every poll tick (async path only).
+   */
+  reanalyzeFailedBatch: async (
+    projectId: string,
+    batchId: string,
+    onProgress?: (progress: FraktalBatchProgress) => void
+  ): Promise<FraktalBatchResult> => {
+    const res = await authFetch(
+      `${API_BASE}/projects/${projectId}/fraktal/batches/${batchId}/reanalyze-failed/`,
+      { method: 'POST' }
+    )
+
+    // Sync path — backend already produced the updated summary payload.
+    if (res.status === 200) {
+      return (await res.json()) as FraktalBatchResult
+    }
+
+    // Async path — poll until the Celery job settles.
+    if (res.status === 202) {
+      const data = (await res.json().catch(() => ({}))) as { job_id?: string }
+      if (!data.job_id) {
+        throw new ApiError(
+          'Async re-analysis job accepted but no job_id returned',
+          502
+        )
+      }
+      return pollFraktalBatchUntilDone(data.job_id, onProgress)
+    }
+
+    const contentType = res.headers.get('Content-Type') || ''
+    if (contentType.includes('application/json')) {
+      const error = await res.json().catch(() => ({}))
+      throw new ApiError(
+        error.detail || error.message || 'Bulk re-analysis failed',
+        res.status,
+        error.details
+      )
+    }
+    const text = await res.text().catch(() => '')
+    throw new ApiError(text || 'Bulk re-analysis failed', res.status)
+  },
 
   /**
    * Delete a batch and all its images (cascade).
