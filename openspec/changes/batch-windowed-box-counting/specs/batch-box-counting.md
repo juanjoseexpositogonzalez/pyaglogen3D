@@ -61,9 +61,10 @@ When windowed is enabled, each processed simulation SHALL store the windowed blo
 `metrics["box_counting_windowed"]` — **ONE schema for all three statuses** (spec-review r3,
 MEDIA): always the 11 keys `{dimension, r_squared, std_error, confidence_interval, log_scales,
 log_values, execution_time_ms, parameters, status, fit_window_used, error_message}`, where
-`dimension, r_squared, confidence_interval, log_scales, log_values` are `null` when
+`dimension, r_squared, std_error, confidence_interval, log_scales, log_values` are `null` when
 `status != "ok"`, and `error_message` is a string only when `status == "error"` (`null`
-otherwise). `status` enum: `ok | insufficient_levels | error` — `error` covers any windowed-side
+otherwise); `fit_window_used` is `[s, e]` only when `status == "ok"` (no window is derived for
+the other statuses), `null` otherwise. `status` enum: `ok | insufficient_levels | error` — `error` covers any windowed-side
 failure other than `InsufficientLevels` (engine or pyo3), NEVER aborts the run, and never
 overwrites the legacy block. The block SHALL be built by a single shared helper
 `build_bc_block(result, params, status, fit_window_used)` — key parity is enforced by code,
@@ -83,7 +84,7 @@ not by prose (spec-review r2). `metrics["box_counting"]` is not altered.
 - **WHEN** the windowed estimator refuses (`InsufficientLevels`)
 - **THEN** the run completes WITHOUT error; the windowed block stores `status:
   "insufficient_levels"` with the 11-key schema and `dimension`/`r_squared`/
-  `confidence_interval`/`log_scales`/`log_values` = `null` (R2)
+  `std_error`/`confidence_interval`/`log_scales`/`log_values`/`fit_window_used` = `null` (R2)
 - **AND** the legacy block is stored normally
 - **NOTE**: with `effective_levels == 3` the clamp (D2) yields window `(0, 2)` → `status: "ok"`
   with a fit equal to the legacy fit (archive Log L4) — refusal only happens below 3 levels
