@@ -72,12 +72,16 @@ exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes pr
   `sim_box_counting_df` and the Sorensen note) — note: `build_comparison_data` does NOT apply
   the 0.0-sentinel rule, so the same sim could render `0.0` there and `null` here
 - **WHEN** this change ships
-- **THEN** `BatchStudyComparisonCard` REPLACES `FraktalComparisonCard` on the SummaryPage:
-  it renders when `study_comparison` is non-null (applying the sentinel rule) and the legacy
-  card does not render alongside it
-- **AND** the canonical R11 Sorensen note is rendered EXACTLY ONCE on the page (by the new
-  card, when `show_sorensen_note`); drill-down views keep the legacy card unchanged (out of
-  scope)
+- **THEN** `BatchStudyComparisonCard` REPLACES `FraktalComparisonCard` at its SWAP POINT —
+  `FraktalBatchResultsView.tsx:279` (the shared component mounted by BOTH the SummaryPage
+  `FraktalBatchSummaryPage.tsx:120` AND the live page `app/projects/[id]/fraktal/batch/page.tsx:150`;
+  r5 minor 2: both pages swap, no prop fork). It renders when `study_comparison` is non-null
+  (applying the sentinel rule) and the legacy card does not render alongside it
+- **AND** the canonical R11 Sorensen note is rendered EXACTLY ONCE per page (by the new card,
+  when `show_sorensen_note`)
+- **AND** the legacy `comparison` block stays UNCHANGED (canonical R9/R11, no sentinel rule)
+  but is NOT a marker source — `study_comparison.sim_df.value` is the only permitted source
+  for the marker and the new card (r5 nit 8)
 
 ### Requirement: R13. In-place bulk re-analysis of failed images (C3)
 
@@ -106,10 +110,14 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
 - **Aggregate recompute (r1 MAJOR / r2-r4 corrections):** after the row updates, batch aggregates are
   recomputed over the FULL row set. Persisted columns — EXACTLY the 7 `persist_batch_results`
   writes (`n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `min_df`, `max_df`;
-  `services/batch.py:519-520,537-546`) — plus the READ-DERIVED stats (`q1_df`, `q3_df` via
-  `compute_metric_stats` `batch.py:304-340`; `mean_df_inclusive` computed at read,
-  `views.py:889-892,1050-1052`) which are NOT model columns and recompute themselves from the
-  rows. Populations: canonical R7 (`mean_df` converged-only over `fractal_dimension`,
+  `services/batch.py:519-520,537-546`) — plus the READ-DERIVED stats (r5 MAJOR-1):
+  `q1_df`/`q3_df` are emitted ONLY by builder 1 (`compute_batch_statistics`,
+  `batch.py:293-341`, percentiles `:339-340`) from in-memory rust results — they are NOT
+  model columns and the two DB read builders do NOT emit them (`views.py:895-908`,
+  `views.py:1055-1071`): the re-analysis sync 200 payload carries NO quartiles (today's
+  SummaryPage already renders them as "—") and the re-analysis service MUST NOT write or
+  recompute them. `mean_df_inclusive` is computed at read (`views.py:889-892`, `:1050-1052`).
+  Populations: canonical R7 (`mean_df` converged-only over `fractal_dimension`,
   `mean_df_inclusive` inclusive incl. `df_estimate`), `ddof=0`; `n_successful` = non-null
   `fractal_dimension` count (the `persist_batch_results` semantics — the Df histogram's own
   `n_successful`, converged+approximate per the distributions spec, is a DIFFERENT quantity

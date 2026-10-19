@@ -40,6 +40,8 @@ without error.
 `fraktal-batch-extensions`) uses the persisted per-image `pixels_per_100nm` value when
 present and falls back to the batch scale when NULL, leaving the batch-level
 `calibration_source` unchanged (per-image provenance is observable through this field only),
+**AND** rows written before this migration have `pixels_per_100nm = NULL` and keep it (no
+backfill) — their re-analysis (R13) falls back to the batch scale,
 
 (Previously: R2 did not include `quality`, `bisection_iterations`, `bisection_residual`,
 `failure_reason`, `df_estimate`, `analysis_input_variant`, `rg_nm` or `pixels_per_100nm`; which PNG variant was
@@ -131,6 +133,3 @@ data were not persisted.)
 - THEN row `i` has `pixels_per_100nm = 4.2` (per-direction source)
 - AND row `j` has `pixels_per_100nm = 3.8` (batch broadcast source)
 
-**AND** rows written before this migration have `pixels_per_100nm = NULL` and keep it (no
-backfill) — their re-analysis (R13) falls back to the batch scale, as stated in the R2
-re-analysis clause above.
