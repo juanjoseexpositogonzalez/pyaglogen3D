@@ -86,7 +86,7 @@ exists — `views.py:666→672`, `tasks.py:718→740` — so the helper takes pr
   case where a sim IS linked but its metric is missing/`0.0`/deleted, since
   `build_comparison_data` renders the legacy card whenever `sim_id` is non-null
   (`services/batch.py:255-270`) — the SummaryPage shows **NO comparison card and NO legacy
-  fallback** (a legacy fallback would reintroduce the `0.0` rendering D4 exists to fix); the
+  fallback** — as a legacy fallback would reintroduce the `0.0` rendering D4 exists to fix); the
   sim/target info is simply absent, and a test MUST distinguish this case from the non-null
   one
 
@@ -125,6 +125,10 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
   `views.py:1055-1071`): the re-analysis sync 200 payload carries NO quartiles (today's
   SummaryPage already renders them as "—") and the re-analysis service MUST NOT write or
   recompute them. `mean_df_inclusive` is computed at read (`views.py:889-892`, `:1050-1052`).
+  SCOPING (r7): this pin records unchanged current DB-builder behavior; the canonical R7/R8
+  quartile coverage gap (canonical contract R7 and persistence R8 list `q1_df`/`q3_df` as
+  fields though the model has no such columns) is PRE-EXISTING and not addressed by this
+  change.
   Populations: canonical R7 (`mean_df` converged-only over `fractal_dimension`,
   `mean_df_inclusive` inclusive incl. `df_estimate`), `ddof=0`; `n_successful` = non-null
   `fractal_dimension` count (the `persist_batch_results` semantics — the Df histogram's own
@@ -137,9 +141,9 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
 - **Boundary:** ≤30 failed images → sync, response `200` with the updated batch summary
   payload (including `study_comparison`); >30 → async via a thin Celery wrapper, response
   `202 {job_id, status: "queued"}` (canonical shape, r1 B4; `fraktal_status_view` reusable
-  if the wrapper reports `{"batch_id": …}` as `tasks.py:770-773` does).
+  if the wrapper reports `{"batch_id": …}` as `tasks.py:775-777` does).
 - **Errors:** zero failed images → `400 {"detail": …, "code": "no_failed_images"}` (r2 minor:
-  body shape pinned to the sibling `{"detail": …}` convention, `views.py:1247-1252`). Any
+  body shape pinned to the sibling `{"detail": …}` convention, `views.py:1246-1249`). Any
   other failure → the canonical `failed` job payload (async) or a 500 (sync).
 - **Calibration (r1 M6 / r2 minor):** the new nullable per-image `pixels_per_100nm` (see the
   persistence delta) is used when present, else the batch scale; batch-level
