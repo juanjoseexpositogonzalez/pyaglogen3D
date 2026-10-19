@@ -1509,8 +1509,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         Query params:
         - points_per_sphere: int (default: 100) - surface points per particle
         - precision: int (default: 18) - bits per dimension (max: 21)
+        - windowed: only the literal "true" engages the windowed estimator
+          (R8); absent or any other value keeps the response byte-identical
+          to pre-change.
 
         Returns fractal dimension estimate with statistics and log-log data.
+        With windowed=true the flat dict additionally gains
+        "box_counting_windowed" with the R2 11-key schema.
         """
         simulation = self.get_object()
 
@@ -1555,24 +1560,39 @@ class SimulationViewSet(viewsets.ModelViewSet):
             precision=precision,
         )
 
-        return Response(
-            {
-                "dimension": result.dimension,
-                "r_squared": result.r_squared,
-                "std_error": result.std_error,
-                "confidence_interval": list(result.confidence_interval),
-                "log_scales": result.log_scales.tolist(),
-                "log_values": result.log_values.tolist(),
-                "residuals": result.residuals.tolist(),
-                "linear_region_start": result.linear_region_start,
-                "execution_time_ms": result.execution_time_ms,
-                "parameters": {
-                    "points_per_sphere": points_per_sphere,
-                    "precision": precision,
-                    "n_particles": len(coords),
-                },
-            }
-        )
+        payload = {
+            "dimension": result.dimension,
+            "r_squared": result.r_squared,
+            "std_error": result.std_error,
+            "confidence_interval": list(result.confidence_interval),
+            "log_scales": result.log_scales.tolist(),
+            "log_values": result.log_values.tolist(),
+            "residuals": result.residuals.tolist(),
+            "linear_region_start": result.linear_region_start,
+            "execution_time_ms": result.execution_time_ms,
+            "parameters": {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "n_particles": len(coords),
+            },
+        }
+
+        # R8: opt-in windowed analysis. ONLY the literal "true" engages it;
+        # absent (or any other value) keeps the response byte-identical to
+        # pre-change (R8.1).
+        if request.query_params.get("windowed") == "true":
+            from .tasks import run_windowed_bc
+
+            payload["box_counting_windowed"] = run_windowed_bc(
+                coords,
+                radii,
+                points_per_sphere,
+                precision,
+                result.effective_levels,
+                {"points_per_sphere": points_per_sphere, "precision": precision},
+            )
+
+        return Response(payload)
 
     @action(detail=True, methods=["post"], url_path="optical")
     def optical(self, request: Request, pk=None, **kwargs) -> Response:
