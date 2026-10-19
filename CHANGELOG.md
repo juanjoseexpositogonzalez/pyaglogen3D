@@ -28,13 +28,25 @@ The measured mean `kf = 0.929` at `Df_target = 2.9` falls below the `≥ 1.0` ta
   has a short tail that slightly underestimates the final aggregate Rg, biasing the
   power-law prefactor fit downward.
 - The Df convergence itself is correct (`abs_err = 0.032 ≤ 0.15`).
-- At larger N (N=500+), the estimator stabilizes and kf rises above 1.0.
+- At larger N the deficit persists: the Cycle 3.1 diagnostic `rg_fit_variants_audit` measured
+  mean `kf = 0.941` at `Df_target = 2.9 / N = 500` (vs 0.929 at N=100) — the earlier claim that
+  "kf rises above 1.0 at N=500+" was incorrect.
 - The R27.4 `kf ≥ 1.0` assertion is enforced only for `Df_target ≤ 2.7` in the N=100 test
-  (see `cc_tunable_high_df_test.rs`). At `Df_target = 2.9 / N=100`, it is treated as a
-  known limitation, documented here for transparency.
+  (see `cc_tunable_high_df_test.rs`). At `Df_target = 2.9`, an accepted-deviation floor of
+  `mean(prefactor) ≥ 0.85` applies (see canonical spec R27.4 accepted-deviation note).
+- **Root cause refined (Cycle 3.1, commit `6e13c5f`)**: the deficit is NOT a fit-methodology
+  artifact. The Phase 0 diagnostic compared the unweighted OLS against an N-weighted OLS and a
+  tail-restricted fit on identical Rg-evolution points: no variant reaches `kf ≥ 1.0`
+  (0.929/0.941 unweighted, 0.879/0.941 weighted, 0.921/0.990 tail-restricted), and weighting
+  toward large-N makes it *worse*. The large-N tail sits genuinely below the ideal scaling line
+  because the R27 physical-contact guard (correctly) lands fallback merges at
+  `rg_after < rg_target` — finite-N geometric feasibility at the extreme high-Df edge.
 
-**Follow-up**: Cycle 3 (`cc-tunable-estimator-overhaul`) is planned to address kf estimation
-accuracy at the edge of geometric feasibility (`Df ∈ [2.7, 2.9]`) independently of this guard fix.
+**Follow-up RESOLVED (Cycle 3.1, `cc-tunable-rg-fit-fix`)**: the planned estimator overhaul was
+investigated and closed with no estimator change — the diagnostic proved the deficit is a
+property of the recorded point cloud, not of the fit. Canonical R27.4 now documents the accepted
+deviation with the ≥ 0.85 floor. Cycle 3.2 (`cc-tunable-bc-alignment`) targets the box-counting
+estimator instead, which has a separately documented, fixable fit-window bias.
 
 ### Fixed
 
