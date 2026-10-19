@@ -434,7 +434,9 @@ export interface WindowedBlock {
   confidence_interval: [number, number] | null
   log_scales: number[] | null
   log_values: number[] | null
-  execution_time_ms: number | null
+  /** Backend always emits a number (0 for non-ok statuses) — never null
+   *  (F6g, JD-B-008). */
+  execution_time_ms: number
   parameters: Record<string, unknown>
   status: WindowedBlockStatus
   /** [s, e] only when status === 'ok'; null otherwise. */

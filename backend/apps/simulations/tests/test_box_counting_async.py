@@ -10,6 +10,7 @@ Covers spec requirements of `batch-windowed-box-counting`:
 from __future__ import annotations
 
 import io
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -212,7 +213,11 @@ class TestR32AsyncPath:
             "total": 31,
         }
 
-    def test_status_endpoint_reports_pending_as_processing(self, user, project):
+    def test_status_endpoint_reports_unknown_task_as_failed(self, user, project):
+        """JD-B-004: a bare PENDING (unknown / never-dispatched task id) maps
+        to ``failed`` with a clear error instead of processing/total-0
+        forever. Dispatch stamps PROGRESS meta immediately, so PENDING can
+        only mean a task that was never dispatched (F2 reconciliation)."""
         study = _make_study(project)
         client = _authed_client(user)
 
@@ -221,8 +226,13 @@ class TestR32AsyncPath:
             response = client.get(_status_url(study, "task-abc-123"))
 
         assert response.status_code == 200
-        assert response.data["status"] == "processing"
+        assert response.data["status"] == "failed"
+        assert "never-dispatched" in response.data["error"]
+        # Canonical shape: all R3 fields present
+        assert set(response.data) == {"status", "progress", "current", "total", "error"}
         assert response.data["progress"] == 0.0
+        assert response.data["current"] == 0
+        assert response.data["total"] == 0
 
     def test_status_endpoint_reports_done(self, user, project):
         study = _make_study(project)
@@ -251,8 +261,282 @@ class TestR32AsyncPath:
             response = client.get(_status_url(study, "task-abc-123"))
 
         assert response.status_code == 200
+        # F2: FAILURE carries the full canonical shape, not just error
+        assert set(response.data) == {
+            "status",
+            "progress",
+            "current",
+            "total",
+            "error",
+        }
         assert response.data["status"] == "failed"
         assert "boom" in response.data["error"]
+
+    def test_status_endpoint_maps_revoked_to_failed(self, user, project):
+        """F2: a revoked task must terminate the poller — the verbatim
+        'revoked' state must NOT leak outside the canonical union."""
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        with patch("apps.simulations.views.AsyncResult") as mock_result:
+            mock_result.return_value.state = "REVOKED"
+            mock_result.return_value.info = None
+            response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "failed"
+        assert "REVOKED" in response.data["error"]
+        assert set(response.data) == {
+            "status",
+            "progress",
+            "current",
+            "total",
+            "error",
+        }
+
+    def test_status_endpoint_maps_retry_to_failed(self, user, project):
+        """F2: non-terminal Celery states never echo verbatim."""
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        with patch("apps.simulations.views.AsyncResult") as mock_result:
+            mock_result.return_value.state = "RETRY"
+            mock_result.return_value.info = None
+            response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "failed"
+        assert "RETRY" in response.data["error"]
+
+    def test_status_success_surfaces_windowed_counters(self, user, project):
+        """JD-B-009: the async run stores the windowed refusal/error counters
+        in its return value (task meta); the status endpoint surfaces them."""
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        with patch("apps.simulations.views.AsyncResult") as mock_result:
+            mock_result.return_value.state = "SUCCESS"
+            mock_result.return_value.result = {
+                "total": 31,
+                "processed": 29,
+                "skipped": 0,
+                "failed": 2,
+                "errors": [],
+                "windowed": True,
+                "windowed_insufficient_levels": 7,
+                "windowed_errors": 1,
+            }
+            response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "done"
+        assert response.data["windowed_insufficient_levels"] == 7
+        assert response.data["windowed_errors"] == 1
+
+    def test_status_success_without_windowed_keys_stays_canonical(self, user, project):
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        with patch("apps.simulations.views.AsyncResult") as mock_result:
+            mock_result.return_value.state = "SUCCESS"
+            mock_result.return_value.result = {"total": 5, "processed": 5}
+            response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code == 200
+        assert response.data == {
+            "status": "done",
+            "progress": 1.0,
+            "current": 5,
+            "total": 5,
+        }
+
+
+# ── F1 — job-status endpoint is object-permission gated ───────────────
+
+
+@pytest.mark.django_db
+class TestJobStatusObjectPermission:
+    """F1/BOLA: the status endpoint must run ``get_object()`` so
+    ``IsProjectOwnerOrShared`` rejects cross-project task ids BEFORE any
+    ``AsyncResult`` metadata is read or echoed."""
+
+    def test_foreign_user_gets_denied(self, user, project):
+        other = _make_user(1)
+        study = _make_study(project)
+        client = _authed_client(other)
+
+        response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code in (403, 404)
+
+    def test_get_object_is_on_the_path(self, user, project):
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.ParametricStudyViewSet.get_object",
+                autospec=True,
+            ) as mock_get_object,
+            patch("apps.simulations.views.AsyncResult") as mock_result,
+        ):
+            mock_result.return_value.state = "SUCCESS"
+            mock_result.return_value.result = {"total": 0}
+            client.get(_status_url(study, "task-abc-123"))
+
+        mock_get_object.assert_called_once()
+
+    def test_read_only_share_can_poll(self, user, project):
+        """A read-only share keeps GET access (SAFE_METHODS) — the F1 fix
+        must not break legitimate shared-read polling."""
+        from apps.accounts.sharing import ProjectShare
+
+        reader = _make_user(2)
+        ProjectShare.objects.create(
+            project=project,
+            user=reader,
+            permission=ProjectShare.Permission.VIEW,
+        )
+        study = _make_study(project)
+        client = _authed_client(reader)
+
+        with patch("apps.simulations.views.AsyncResult") as mock_result:
+            mock_result.return_value.state = "PROGRESS"
+            mock_result.return_value.info = {
+                "current": 3,
+                "total": 31,
+                "progress": 3 / 31,
+            }
+            response = client.get(_status_url(study, "task-abc-123"))
+
+        assert response.status_code == 200
+        assert response.data["status"] == "processing"
+
+
+# ── JD-B-006 — double-submit guard ────────────────────────────────────
+
+
+def _fake_async_result_factory(
+    states: dict[str, dict[str, Any]],
+) -> type:
+    """Build a patchable AsyncResult whose instances dispatch on task id."""
+
+    class _FakeAsyncResult:
+        def __init__(self, task_id: str) -> None:
+            self._task_id = task_id
+            spec = states.get(task_id, {"state": "PENDING", "info": None})
+            self.state = spec["state"]
+            self.info = spec.get("info")
+
+    return _FakeAsyncResult
+
+
+@pytest.mark.django_db
+class TestDoubleSubmitGuard:
+    def test_second_post_while_in_flight_returns_409(self, user, project):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory(
+            {
+                f"bc-inflight-{study.id}": {
+                    "state": "PROGRESS",
+                    "info": {"task_id": "task-real-1", "study_id": str(study.id)},
+                },
+                "task-real-1": {"state": "PROGRESS", "info": None},
+            }
+        )
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+        ):
+            mock_delay.return_value = MagicMock(id="task-new-2")
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 409
+        assert response.data["task_id"] == "task-real-1"
+        mock_delay.assert_not_called()
+
+    def test_stale_marker_with_terminal_task_allows_new_run(self, user, project):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory(
+            {
+                f"bc-inflight-{study.id}": {
+                    "state": "PROGRESS",
+                    "info": {"task_id": "task-old", "study_id": str(study.id)},
+                },
+                "task-old": {"state": "SUCCESS", "info": None},
+            }
+        )
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            mock_delay.return_value = MagicMock(id="task-new-2")
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        mock_delay.assert_called_once()
+
+    def test_no_marker_allows_dispatch(self, user, project):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory({})
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            mock_delay.return_value = MagicMock(id="task-new-3")
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+
+    def test_dispatch_stamps_total_and_inflight_marker(self, user, project):
+        """F2: the 202-time total is stamped into the task meta right after
+        dispatch; JD-B-006: the in-flight marker is stamped too."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory({})
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            task = MagicMock(id="task-stamp-1")
+            mock_delay.return_value = task
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        stamped = task.backend.store_result.call_args_list
+        # First stamp: the dispatch meta carrying the 202-time total (F2)
+        assert stamped[0].args[0] == "task-stamp-1"
+        assert stamped[0].args[1] == {"current": 0, "total": 31, "progress": 0.0}
+        assert stamped[0].kwargs["state"] == "PROGRESS"
+        # Second stamp: the per-study in-flight marker (JD-B-006)
+        assert stamped[1].args[0] == f"bc-inflight-{study.id}"
+        assert stamped[1].args[1] == {
+            "task_id": "task-stamp-1",
+            "study_id": str(study.id),
+        }
+        assert stamped[1].kwargs["state"] == "PROGRESS"
 
 
 # ── Async task producer behavior ───────────────────────────────────────

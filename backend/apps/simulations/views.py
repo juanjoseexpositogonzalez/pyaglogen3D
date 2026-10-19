@@ -2423,6 +2423,22 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         study.box_counting_params = persisted_params
         study.save(update_fields=["include_box_counting", "box_counting_params"])
 
+        # JD-B-006: per-study double-submit guard — a second POST while a
+        # box-counting run is in flight is rejected with 409. The marker is
+        # a synthetic entry in the Celery result backend (NOT Django cache:
+        # LocMemCache is per-process — spec-review B1).
+        in_flight_task_id = _bc_in_flight_task_id(study)
+        if in_flight_task_id is not None:
+            return Response(
+                {
+                    "detail": (
+                        "A box-counting run is already in flight for this study"
+                    ),
+                    "task_id": in_flight_task_id,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
+
         # Work set: completed simulations WITH geometry — the same filter as
         # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
         # count toward the sync/async boundary.
@@ -2440,6 +2456,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 effective_windowed,
                 force,
             )
+            # F2: surface the 202-time total to the status endpoint before
+            # the worker picks the task up. Best-effort: the task re-stamps
+            # its meta via update_state once it starts, and the final return
+            # value lands under SUCCESS.
+            _stamp_bc_dispatch_meta(task, total)
+            # JD-B-006: stamp the per-study in-flight marker (best-effort).
+            _stamp_bc_inflight_marker(task, str(study.id))
             return Response(
                 {"task_id": task.id, "total": total},
                 status=status.HTTP_202_ACCEPTED,
@@ -2470,21 +2493,43 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         error?}`` (pattern: ``fractal_analysis/views.py`` fraktal_status_view).
         NOT Django cache: LocMemCache is per-process and invisible across the
         Gunicorn workers (spec-review B1/M1).
+
+        Judgment-day fix round A:
+        - ``self.get_object()`` runs FIRST (F1/BOLA): the object-permission
+          gate (``IsProjectOwnerOrShared``) must reject a cross-project task
+          id BEFORE any ``AsyncResult`` metadata is read or echoed.
+        - every branch returns the canonical shape (F2); non-terminal Celery
+          states (REVOKED/RETRY/...) map to ``failed`` instead of leaking
+          verbatim outside the union.
+        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): the dispatch path
+          stamps PROGRESS meta carrying ``total`` immediately after
+          ``delay()`` (F2), so a PENDING without meta can only be a
+          never-dispatched or expired task id — never a legitimately queued
+          run.
         """
+        # F1: object-permission gate — must run before touching AsyncResult.
+        self.get_object()
+
         result = AsyncResult(kwargs["task_id"])
         state = result.state
+        meta = result.info if isinstance(result.info, dict) else {}
 
         if state == "PENDING":
+            # JD-B-004: Celery reports PENDING for unknown ids too. Dispatch
+            # stamps PROGRESS meta right away, so a bare PENDING is a task
+            # that was never dispatched (or whose result already expired).
+            # Mapping it to `failed` lets the poller terminate instead of
+            # spinning on total=0 forever.
             return Response(
                 {
-                    "status": "processing",
+                    "status": "failed",
                     "progress": 0.0,
                     "current": 0,
                     "total": 0,
+                    "error": "Unknown or never-dispatched task id",
                 }
             )
         if state == "PROGRESS":
-            meta = result.info if isinstance(result.info, dict) else {}
             return Response(
                 {
                     "status": "processing",
@@ -2496,25 +2541,41 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         if state == "SUCCESS":
             data = result.result if isinstance(result.result, dict) else {}
             total = int(data.get("total", 0))
-            return Response(
-                {
-                    "status": "done",
-                    "progress": 1.0,
-                    "current": total,
-                    "total": total,
-                }
-            )
+            payload: dict[str, Any] = {
+                "status": "done",
+                "progress": 1.0,
+                "current": total,
+                "total": total,
+            }
+            # JD-B-009: surface the windowed refusal/error counters collected
+            # by the run (they live in the task meta as its return value).
+            for key in ("windowed_insufficient_levels", "windowed_errors"):
+                if key in data:
+                    payload[key] = data[key]
+            return Response(payload)
         if state == "FAILURE":
             return Response(
                 {
                     "status": "failed",
+                    "progress": 0.0,
+                    "current": int(meta.get("current", 0)),
+                    "total": int(meta.get("total", 0)),
                     "error": str(result.info)
                     if result.info is not None
                     else "Unknown error",
                 }
             )
+        # F2: REVOKED / RETRY / any other state must not leak verbatim
+        # outside the union — the frontend poller would spin for 30 minutes
+        # with zero feedback. Everything unknown terminates as `failed`.
         return Response(
-            {"status": str(state).lower(), "progress": 0.0, "current": 0, "total": 0}
+            {
+                "status": "failed",
+                "progress": float(meta.get("progress", 0.0)),
+                "current": int(meta.get("current", 0)),
+                "total": int(meta.get("total", 0)),
+                "error": f"Task ended in state {state}",
+            }
         )
 
     @action(detail=True, methods=["post"], url_path="export-projections")
@@ -2577,6 +2638,74 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
 from celery.result import AsyncResult  # noqa: E402
 from rest_framework.decorators import api_view, permission_classes  # noqa: E402
+
+# ============================================================================
+# Box-counting async run helpers (R3/D5 — judgment-day fix round A)
+# ============================================================================
+
+#: Synthetic result-backend id prefix for the per-study in-flight marker
+#: (JD-B-006). The marker lives in the Celery result backend, NOT Django
+#: cache: LocMemCache is per-process and invisible across the Gunicorn
+#: workers (spec-review B1/M1).
+_BC_INFLIGHT_PREFIX = "bc-inflight-"
+
+
+def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
+    """Return the id of the box-counting task currently in flight for
+    ``study``, or ``None`` (JD-B-006).
+
+    The marker is stamped at dispatch (see :func:`_stamp_bc_inflight_marker`)
+    and released by the task itself when it finishes. A marker whose
+    referenced task has already reached a terminal state (SUCCESS/FAILURE/
+    REVOKED) is stale and does NOT block a new run. Best-effort: any backend
+    failure degrades to "nothing in flight" — the guard must never break the
+    run path.
+    """
+    try:
+        marker = AsyncResult(f"{_BC_INFLIGHT_PREFIX}{study.id}")
+        if marker.state != "PROGRESS":
+            return None
+        meta = marker.info if isinstance(marker.info, dict) else {}
+        task_id = meta.get("task_id")
+        if not task_id:
+            return None
+        if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
+            return None
+        return str(task_id)
+    except Exception:  # noqa: BLE001 — guard must never break the run path
+        logger.debug("box-counting in-flight marker check failed", exc_info=True)
+        return None
+
+
+def _stamp_bc_dispatch_meta(task: Any, total: int) -> None:
+    """Stamp the freshly dispatched task with initial PROGRESS meta (F2).
+
+    Surfaces the 202-time ``total`` to the status endpoint before the worker
+    picks the task up (the frontend learns ``total`` at 202 time; the status
+    endpoint must echo it instead of 0). Best-effort: the task re-stamps its
+    meta via ``update_state`` once it starts, and the final return value
+    lands under SUCCESS.
+    """
+    try:
+        task.backend.store_result(
+            task.id,
+            {"current": 0, "total": total, "progress": 0.0},
+            state="PROGRESS",
+        )
+    except Exception:  # noqa: BLE001 — stamping must never break dispatch
+        logger.debug("box-counting dispatch stamping skipped", exc_info=True)
+
+
+def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
+    """Stamp the per-study in-flight marker (JD-B-006). Best-effort."""
+    try:
+        task.backend.store_result(
+            f"{_BC_INFLIGHT_PREFIX}{study_id}",
+            {"task_id": task.id, "study_id": study_id},
+            state="PROGRESS",
+        )
+    except Exception:  # noqa: BLE001 — stamping must never break dispatch
+        logger.debug("box-counting in-flight marker stamping skipped", exc_info=True)
 
 
 @api_view(["GET"])

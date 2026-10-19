@@ -49,6 +49,7 @@ import type {
   StudyEstimatorStats,
   StudyFractalAnalysisSummary,
   WindowedBlock,
+  WindowedBlockStatus,
 } from '@/lib/types'
 
 // ---------------------------------------------------------------------------
@@ -296,7 +297,14 @@ describe('FractalAnalysisTab — distributions', () => {
   it('n=0 (all refusals) renders the "No data available" state', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([])))
 
-    renderTab(makeResults([makeRow('sim-1')]))
+    renderTab(
+      makeResults([
+        makeRow('sim-1', {
+          box_counting_windowed: makeWindowedOk(),
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
 
     expect(await screen.findByText(/No data available/i)).toBeTruthy()
     // The refusal counter is surfaced
@@ -306,7 +314,14 @@ describe('FractalAnalysisTab — distributions', () => {
   it('1≤n<5 renders the inherited "Not enough data" panel', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.4, 2.5])))
 
-    renderTab(makeResults([makeRow('sim-1')]))
+    renderTab(
+      makeResults([
+        makeRow('sim-1', {
+          box_counting_windowed: makeWindowedOk(),
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
 
     expect(await screen.findByText(/Not enough data/i)).toBeTruthy()
   })
@@ -314,7 +329,14 @@ describe('FractalAnalysisTab — distributions', () => {
   it('n≥5 buckets client-side; zero variance collapses to a single bar', async () => {
     fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
 
-    renderTab(makeResults([makeRow('sim-1')]))
+    renderTab(
+      makeResults([
+        makeRow('sim-1', {
+          box_counting_windowed: makeWindowedOk(),
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
 
     const panel = await screen.findByTestId('fa-dist-0-bc_windowed')
     expect(panel.getAttribute('data-bin-count')).toBe('1')
@@ -325,7 +347,14 @@ describe('FractalAnalysisTab — distributions', () => {
       jsonResponse(200, oneConfig([2.3, 2.4, 2.5, 2.6, 2.7])),
     )
 
-    renderTab(makeResults([makeRow('sim-1')]))
+    renderTab(
+      makeResults([
+        makeRow('sim-1', {
+          box_counting_windowed: makeWindowedOk(),
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
 
     const panel = await screen.findByTestId('fa-dist-0-bc_windowed')
     expect(Number(panel.getAttribute('data-bin-count'))).toBeGreaterThan(1)
@@ -346,6 +375,112 @@ describe('FractalAnalysisTab — CSV export', () => {
     const user = fireEvent
     user.click(await screen.findByRole('button', { name: /export csv/i }))
     expect(onExportCsv).toHaveBeenCalledTimes(1)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F3 — windowed run entry point (JD-A-003)
+// ---------------------------------------------------------------------------
+
+describe('FractalAnalysisTab — windowed run entry point (F3)', () => {
+  it('offers "Run windowed BC" on a legacy-only study and posts windowed:true + force:true', async () => {
+    const calls: Array<{ url: string; method?: string; body?: string }> = []
+    fetchMock.mockImplementation((url: string | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(url),
+        method: init?.method,
+        body: typeof init?.body === 'string' ? init.body : undefined,
+      })
+      if (init?.method === 'POST') {
+        return Promise.resolve(
+          jsonResponse(200, {
+            status: 'completed',
+            message: 'ok',
+            results: { total: 1, processed: 1, skipped: 0, failed: 0, errors: [] },
+          }),
+        )
+      }
+      return Promise.resolve(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
+    })
+
+    renderTab(makeResults([makeRow('sim-1')]))
+
+    const button = await screen.findByTestId('run-windowed-bc')
+    fireEvent.click(button)
+
+    await waitFor(() => {
+      const post = calls.find((c) => c.method === 'POST')
+      expect(post).toBeDefined()
+      expect(post!.url).toContain('/run-box-counting/')
+      expect(post!.body).toContain('"windowed":true')
+      expect(post!.body).toContain('"force":true')
+    })
+  })
+
+  it('hides the control once the study HAS windowed data', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
+
+    renderTab(
+      makeResults([
+        makeRow('sim-1', { box_counting_windowed: makeWindowedOk(), bc_delta: 0.02 }),
+      ]),
+    )
+
+    await screen.findByText('BC Win Df')
+    expect(screen.queryByTestId('run-windowed-bc')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// F6c / F6i — windowed panel gating and safe status badge
+// ---------------------------------------------------------------------------
+
+describe('FractalAnalysisTab — windowed panel gating (F6c)', () => {
+  it('hides the bc_windowed distribution panel on a legacy-only study', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
+
+    renderTab(makeResults([makeRow('sim-1')]))
+
+    // rg + bc_legacy panels render; bc_windowed does not
+    expect(await screen.findByTestId('fa-dist-0-rg')).toBeTruthy()
+    expect(screen.getByTestId('fa-dist-0-bc_legacy')).toBeTruthy()
+    expect(screen.queryByTestId('fa-dist-0-bc_windowed')).toBeNull()
+  })
+
+  it('renders the bc_windowed panel when the study has windowed data', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
+
+    renderTab(
+      makeResults([
+        makeRow('sim-1', { box_counting_windowed: makeWindowedOk(), bc_delta: 0.02 }),
+      ]),
+    )
+
+    expect(await screen.findByTestId('fa-dist-0-bc_windowed')).toBeTruthy()
+  })
+})
+
+describe('FractalAnalysisTab — safe status badge (F6i)', () => {
+  it('renders an unexpected windowed status without crashing', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([2.5, 2.5, 2.5, 2.5, 2.5])))
+
+    const weird = makeWindowedOk()
+    renderTab(
+      makeResults([
+        makeRow('sim-1', {
+          box_counting_windowed: {
+            ...weird,
+            // Simulate a future backend status not in WIN_STATUS_META.
+            status: 'future_status' as WindowedBlockStatus,
+          },
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
+
+    await screen.findByText('BC Win Df')
+    // The raw status text renders with the neutral fallback badge.
+    expect(screen.getByText('future_status')).toBeTruthy()
   })
 })
 

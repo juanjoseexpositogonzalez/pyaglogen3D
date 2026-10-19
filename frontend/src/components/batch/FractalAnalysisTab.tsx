@@ -20,10 +20,10 @@
  *      study level) when the study has a windowed run.
  */
 import { useMemo } from 'react'
-import { useQuery } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Download } from 'lucide-react'
 
-import { studiesApi } from '@/lib/api'
+import { pollBoxCountingJobStatus, studiesApi } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
 import { sturgesBuckets } from '@/components/fraktal/FraktalBatchDistributions'
 import { Button } from '@/components/ui/button'
@@ -81,6 +81,22 @@ const WIN_STATUS_META: Record<
     label: 'error',
     className: 'bg-red-100 text-red-800 dark:bg-red-900/40 dark:text-red-300',
   },
+}
+
+/**
+ * Safe status lookup (F6i, JD-B-010): an unexpected backend status must not
+ * crash the tab — fall back to a neutral badge carrying the raw status text.
+ */
+function winStatusMeta(status: WindowedBlockStatus): {
+  label: string
+  className: string
+} {
+  return (
+    WIN_STATUS_META[status] ?? {
+      label: status,
+      className: 'bg-muted text-muted-foreground',
+    }
+  )
 }
 
 /** Project the config label from the varying grid keys (falls back to all). */
@@ -142,6 +158,8 @@ export function FractalAnalysisTab({
   onExportCsv,
   isExporting = false,
 }: FractalAnalysisTabProps) {
+  const queryClient = useQueryClient()
+
   const paramKeys = useMemo(
     () => Object.keys(results.parameter_grid ?? {}),
     [results.parameter_grid],
@@ -152,6 +170,37 @@ export function FractalAnalysisTab({
     () => results.results.some((r) => r.box_counting_windowed != null),
     [results.results],
   )
+
+  // F3 (JD-A-003 entry point): without a windowed run the deliverable is
+  // inert — offer the forced dual-estimator run. Posts windowed:true +
+  // force:true and reuses the dual-response handling + canonical poller
+  // (R3); results/distributions are refreshed on completion.
+  const runWindowed = useMutation({
+    mutationFn: async () => {
+      const result = await studiesApi.runBoxCounting(projectId, studyId, {
+        windowed: true,
+        force: true,
+      })
+      if ('task_id' in result) {
+        const final = await pollBoxCountingJobStatus(
+          projectId,
+          studyId,
+          result.task_id,
+        )
+        if (final.status === 'failed') {
+          throw new Error(final.error ?? 'Box-counting job failed')
+        }
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({
+        queryKey: ['study-results', projectId, studyId],
+      })
+      void queryClient.invalidateQueries({
+        queryKey: ['study-fractal-analysis', projectId, studyId],
+      })
+    },
+  })
 
   // Per-config distributions (R5) — raw values, bucketed client-side below.
   const {
@@ -169,10 +218,30 @@ export function FractalAnalysisTab({
       <CardContent className="p-4">
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-medium">Fractal Analysis</h3>
-          <Button variant="outline" size="sm" onClick={onExportCsv} disabled={isExporting}>
-            <Download className="h-4 w-4 mr-1" />
-            Export CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            {runWindowed.isError && (
+              <span className="text-xs text-destructive" data-testid="run-windowed-error">
+                {runWindowed.error instanceof Error
+                  ? runWindowed.error.message
+                  : 'Windowed run failed'}
+              </span>
+            )}
+            {!hasWindowed && (
+              <Button
+                variant="outline"
+                size="sm"
+                data-testid="run-windowed-bc"
+                onClick={() => runWindowed.mutate()}
+                disabled={runWindowed.isPending}
+              >
+                {runWindowed.isPending ? 'Running…' : 'Run windowed BC'}
+              </Button>
+            )}
+            <Button variant="outline" size="sm" onClick={onExportCsv} disabled={isExporting}>
+              <Download className="h-4 w-4 mr-1" />
+              Export CSV
+            </Button>
+          </div>
         </div>
 
         {/* (a) Per-sim comparison table (R7a) */}
@@ -235,7 +304,9 @@ export function FractalAnalysisTab({
                   .join(', ')}
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
-                {ESTIMATORS.map((est) => (
+                {ESTIMATORS.filter(
+                  (est) => est.key !== 'bc_windowed' || hasWindowed,
+                ).map((est) => (
                   <EstimatorPanel
                     key={est.key}
                     testId={`fa-dist-${configIndex}-${est.key}`}
@@ -294,9 +365,9 @@ function ComparisonRow({
             {win ? (
               <span
                 title={win.error_message ?? undefined}
-                className={`inline-block rounded px-2 py-0.5 text-xs ${WIN_STATUS_META[win.status].className}`}
+                className={`inline-block rounded px-2 py-0.5 text-xs ${winStatusMeta(win.status).className}`}
               >
-                {WIN_STATUS_META[win.status].label}
+                {winStatusMeta(win.status).label}
               </span>
             ) : (
               <span className="text-xs text-muted-foreground">—</span>

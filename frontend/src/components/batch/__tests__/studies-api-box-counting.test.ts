@@ -203,6 +203,29 @@ describe('pollBoxCountingJobStatus', () => {
     expect(final.error).toBe('celery worker exploded')
   })
 
+  it('terminates when the backend maps REVOKED to failed (F2)', async () => {
+    // The status endpoint maps REVOKED/RETRY onto `failed` with a clear
+    // error; the poller must resolve on that payload, not spin until the
+    // 30-minute deadline.
+    fetchMock.mockResolvedValueOnce(
+      jsonResponse(200, {
+        status: 'failed',
+        progress: 0.0,
+        current: 0,
+        total: 0,
+        error: 'Task ended in state REVOKED',
+      }),
+    )
+
+    const final = await pollBoxCountingJobStatus(PROJECT_ID, STUDY_ID, TASK_ID, {
+      intervalMs: 1,
+    })
+
+    expect(final.status).toBe('failed')
+    expect(final.error).toBe('Task ended in state REVOKED')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
   it('throws ApiError when the polling deadline passes', async () => {
     // Fresh Response per call — a Response body can only be consumed once.
     fetchMock.mockImplementation(() =>

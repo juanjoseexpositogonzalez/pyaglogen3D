@@ -42,10 +42,18 @@ def validate_box_counting_params_dict(value: dict[str, Any]) -> None:
 
     - unknown keys are rejected with the offending key named (NEW behavior,
       documented in R1.2 — pre-change extras were silently ignored);
+    - non-dict values are rejected with a 400, never a 500 (JD-B-007 —
+      a JSONField accepts any JSON, so the guard lives here);
     - `points_per_sphere` within [10, 1000];
     - `precision` within [8, 21];
     - `windowed` must be a bool when present.
     """
+    if not isinstance(value, dict):
+        raise ValidationError(
+            "box_counting_params must be an object with keys "
+            f"{list(BOX_COUNTING_PARAM_KEYS)}, got {type(value).__name__}"
+        )
+
     for key in value:
         if key not in BOX_COUNTING_PARAM_KEYS:
             raise ValidationError(

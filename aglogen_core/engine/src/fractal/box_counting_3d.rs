@@ -664,6 +664,29 @@ mod tests {
         // The legacy path may truncate; the field reports the pre-truncation
         // count, so it is never smaller than the returned vectors.
         assert!(result.log_scales.len() <= eff);
+
+        // JD-A-008 (fix round A): strengthen the truncation side — mirror the
+        // plateau fixture used by `test_effective_levels_reports_pre_truncation_count`
+        // and assert the STRICT inequality when Step 4b truncation fires, not
+        // just the weak `<=` above.
+        let mut plateau: Vec<[f64; 3]> = Vec::new();
+        for i in 0..8 {
+            for j in 0..8 {
+                for k in 0..8 {
+                    for r in 0..20 {
+                        let jitter = r as f64 * 1e-9;
+                        plateau.push([i as f64 + jitter, j as f64 + jitter, k as f64 + jitter]);
+                    }
+                }
+            }
+        }
+        let truncated = box_counting_3d_morton(&plateau, 16);
+        assert!(
+            truncated.effective_levels > truncated.log_scales.len(),
+            "truncation must fire in the plateau fixture: log_scales.len()={}, effective_levels={}",
+            truncated.log_scales.len(),
+            truncated.effective_levels
+        );
     }
 
     #[test]

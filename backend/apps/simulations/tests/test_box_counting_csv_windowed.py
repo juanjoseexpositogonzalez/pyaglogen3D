@@ -254,3 +254,46 @@ class TestR6CsvWindowedColumns:
 
         assert "BC_Df" not in header  # flag off → legacy BC columns off
         assert all(col in header for col in _WIN_COLUMNS)
+
+
+# ── F6j (JD-A-008) — EU-locale windowed CSV rows ───────────────────────
+
+
+@pytest.mark.django_db
+def test_eu_locale_export_swaps_decimals_in_windowed_columns(user, project):
+    """EU locale (`,` decimal / `;` delimiter): the BC_Win_* numeric cells —
+    including BC_Win_Delta and BC_Win_Df — carry comma decimals via
+    ``write_localized_row``, mirroring the legacy BC_* behavior."""
+    eu_user = user
+    eu_user.csv_decimal_separator = ","
+    eu_user.csv_column_delimiter = ";"
+    eu_user.save(update_fields=["csv_decimal_separator", "csv_column_delimiter"])
+
+    study = _make_study(project)
+    _make_sim(
+        project,
+        study,
+        metrics={
+            "box_counting": _legacy_block(2.0),
+            "box_counting_windowed": _windowed_block(2.3, "ok"),
+        },
+    )
+    client = _authed_client(eu_user)
+
+    response = client.get(_export_url(study))
+    assert response.status_code == 200
+
+    text = response.content.decode("utf-8")
+    assert ";" in text, f"expected ';' delimiter in EU export; got {text!r}"
+
+    rows = _parse_csv_bytes = list(csv.reader(io.StringIO(text), delimiter=";"))
+    header = rows[0]
+    bc_idx = header.index("BC_Time_ms")
+    row = rows[1]
+
+    # BC_Win_Df = 2.3 → "2,3000"; BC_Win_Delta = 0.3 → "0,3000" (decimal swap)
+    assert row[bc_idx + 1] == "2,3000"
+    assert row[bc_idx + 5] == "0,3000"
+    # Parseable back to float by swapping , → .
+    assert float(row[bc_idx + 1].replace(",", ".")) == pytest.approx(2.3)
+    assert float(row[bc_idx + 5].replace(",", ".")) == pytest.approx(0.3)

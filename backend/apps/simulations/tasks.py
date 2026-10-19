@@ -1167,6 +1167,11 @@ def run_box_counting_for_study(
                         results["windowed_insufficient_levels"] += 1
                     elif block["status"] == "error":
                         results["windowed_errors"] += 1
+                elif force:
+                    # JD-A-004: a forced legacy-only re-run must not leave a
+                    # stale windowed block computed under earlier parameters
+                    # or an earlier windowed flag.
+                    metrics.pop("box_counting_windowed", None)
                 sim.metrics = metrics
                 sim.save(update_fields=["metrics"])
                 results["processed"] += 1
@@ -1213,14 +1218,31 @@ def run_box_counting_async(
             },
         )
 
-    return run_box_counting_for_study(
-        study_id,
-        points_per_sphere,
-        precision,
-        windowed,
-        force,
-        progress_cb=_report,
-    )
+    # JD-B-006: release the per-study in-flight marker stamped at dispatch
+    # (views.py _stamp_bc_inflight_marker). Runs in a finally so a raising
+    # run can never wedge the marker into a permanent 409; only cleared
+    # while it still references THIS task id — a newer dispatch may already
+    # own the marker. Best-effort: the marker also self-expires via the
+    # result backend's RESULT_EXPIRES, and the view treats a marker whose
+    # referenced task is terminal as stale.
+    marker_id = f"bc-inflight-{study_id}"
+    try:
+        return run_box_counting_for_study(
+            study_id,
+            points_per_sphere,
+            precision,
+            windowed,
+            force,
+            progress_cb=_report,
+        )
+    finally:
+        try:
+            marker = self.AsyncResult(marker_id)
+            meta = marker.info if isinstance(marker.info, dict) else {}
+            if meta.get("task_id") == self.request.id:
+                self.backend.store_result(marker_id, None, state="SUCCESS")
+        except Exception:  # noqa: BLE001 — cleanup must never mask the result
+            logger.debug("box-counting in-flight marker cleanup skipped", exc_info=True)
 
 
 def fit_power_law_rg(

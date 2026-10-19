@@ -459,3 +459,113 @@ class TestR2DualEstimatorStorage:
         sim.refresh_from_db()
         assert sim.metrics["box_counting"]["dimension"] == 2.5
         assert sim.metrics["box_counting_windowed"]["dimension"] == 2.7
+
+
+# ── JD-A-004 — forced legacy-only re-run drops the stale windowed block ─
+
+
+class TestForcedLegacyOnlyRemovesStaleWindowedBlock:
+    """F6a (JD-A-004): windowed=false + force re-runs the legacy estimator
+    and must REMOVE the stale ``box_counting_windowed`` block computed under
+    earlier parameters / an earlier windowed flag — never leave it behind."""
+
+    def test_force_without_windowed_removes_stale_block(self, user, project):
+        study = _make_study(project)
+        stale_windowed = {
+            "dimension": 9.9,
+            "r_squared": 0.5,
+            "std_error": 9.9,
+            "confidence_interval": [9.0, 10.0],
+            "log_scales": [1.0],
+            "log_values": [2.0],
+            "execution_time_ms": 1,
+            "parameters": {"points_per_sphere": 42, "precision": 9},
+            "status": "ok",
+            "fit_window_used": [0, 0],
+            "error_message": None,
+        }
+        sim = _make_sim(
+            project,
+            study,
+            metrics={
+                "box_counting": {"dimension": 1.9, "status": "old"},
+                "box_counting_windowed": stale_windowed,
+            },
+        )
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.side_effect = [_FakeResult(5)]
+            response = client.post(_run_url(study), {"force": True}, format="json")
+
+        assert response.status_code == 200
+        assert response.data["results"]["processed"] == 1
+        sim.refresh_from_db()
+        # Legacy block recomputed...
+        assert sim.metrics["box_counting"]["dimension"] == 2.5
+        # ...and the stale windowed block is GONE (not stale-marked)
+        assert "box_counting_windowed" not in sim.metrics
+
+    def test_windowed_run_keeps_its_own_block(self, user, project):
+        """Guard against over-removal: a windowed run still stores the block."""
+        study = _make_study(project)
+        sim = _make_sim(
+            project,
+            study,
+            metrics={"box_counting": {"dimension": 1.9, "status": "old"}},
+        )
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.side_effect = [_FakeResult(5), _FakeResult(5, dimension=2.7)]
+            response = client.post(
+                _run_url(study), {"windowed": True, "force": True}, format="json"
+            )
+
+        assert response.status_code == 200
+        sim.refresh_from_db()
+        assert sim.metrics["box_counting_windowed"]["status"] == "ok"
+
+
+# ── JD-B-007 — non-dict box_counting_params → 400, never 500 ───────────
+
+
+class TestNonDictParamsRejected:
+    """F6f (JD-B-007): the JSONField accepts any JSON, so a non-dict
+    box_counting_params (e.g. 42) must be rejected with a 400 by the shared
+    validator — at the study serializer AND the run-box-counting body."""
+
+    def test_validator_rejects_non_dict(self):
+        from rest_framework.exceptions import ValidationError
+
+        from apps.simulations.serializers import (
+            validate_box_counting_params_dict,
+        )
+
+        for bad in (42, "nope", ["list"], True, 3.14):
+            with pytest.raises(ValidationError):
+                validate_box_counting_params_dict(bad)
+
+    def test_patch_with_non_dict_params_returns_400(self, user, project):
+        study = _make_study(project)
+        client = _authed_client(user)
+
+        response = client.patch(
+            reverse(
+                "project-studies-detail",
+                kwargs={"project_pk": project.id, "pk": study.id},
+            ),
+            {"box_counting_params": 42},
+            format="json",
+        )
+
+        assert response.status_code == 400
+
+    def test_run_body_with_non_dict_params_returns_400(self, user, project):
+        study = _make_study(project)
+        _make_sim(project, study)
+        client = _authed_client(user)
+
+        response = client.post(_run_url(study), {"windowed": 42}, format="json")
+
+        assert response.status_code == 400
