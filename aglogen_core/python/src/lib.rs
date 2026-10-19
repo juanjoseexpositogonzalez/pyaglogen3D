@@ -71,6 +71,10 @@ pub struct PyFractalResult {
     pub execution_time_ms: u64,
     #[pyo3(get)]
     pub linear_region_start: usize,
+    /// Count-valid levels before Step 4b truncation (design D1, R9). 3D-only
+    /// semantics: the 2D `From` impl populates it as 0.
+    #[pyo3(get)]
+    pub effective_levels: usize,
     pub log_scales_data: Vec<f64>,
     pub log_values_data: Vec<f64>,
     pub residuals_data: Vec<f64>,
@@ -101,6 +105,7 @@ impl From<FractalResult> for PyFractalResult {
             confidence_interval: r.confidence_interval,
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
+            effective_levels: 0,
             log_scales_data: r.log_scales,
             log_values_data: r.log_values,
             residuals_data: r.residuals,
@@ -117,6 +122,7 @@ impl From<BoxCountingResult3D> for PyFractalResult {
             confidence_interval: r.confidence_interval,
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
+            effective_levels: r.effective_levels,
             log_scales_data: r.log_scales,
             log_values_data: r.log_counts,
             residuals_data: r.residuals,
