@@ -903,6 +903,9 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         float(np.mean(inclusive_values)) if inclusive_values else None
     )
 
+    # Fix round 2 (fresh-pass JD-A-004): hoisted — compute once, not twice.
+    batch_stats = compute_batch_statistics(images_out)
+
     stats = {
         "n_images": batch.n_images,
         "n_successful": batch.n_successful,
@@ -915,8 +918,8 @@ def _serialize_batch_from_db(batch_id: str) -> dict | None:
         # compute_batch_statistics, otherwise the frontend Q1/Q3 stat cards
         # flip to "—" until reload. Population: non-null fractal_dimension
         # over ALL rows (identical to compute_batch_statistics(images_out)).
-        "q1_df": compute_batch_statistics(images_out)["q1_df"],
-        "q3_df": compute_batch_statistics(images_out)["q3_df"],
+        "q1_df": batch_stats["q1_df"],
+        "q3_df": batch_stats["q3_df"],
         "min_df": json_safe_float(batch.min_df),
         "max_df": json_safe_float(batch.max_df),
         "kf": compute_metric_stats(images_out, "prefactor"),
@@ -1083,6 +1086,13 @@ def batch_detail_view(
         "median_df": json_safe_float(batch.median_df),
         "min_df": json_safe_float(batch.min_df),
         "max_df": json_safe_float(batch.max_df),
+        # Fix round 2 (fresh-pass JD-A-002): builder 3 (batch_detail_view —
+        # the page-load path) must carry q1_df/q3_df with the same
+        # np.percentile(arr, 25/75) population as builders 1/2, otherwise
+        # the Q1/Q3 stat cards flip to "—" on EVERY reload after a sync
+        # re-analysis (the flapping F2 claimed to remove).
+        "q1_df": compute_batch_statistics(images_data)["q1_df"],
+        "q3_df": compute_batch_statistics(images_data)["q3_df"],
         "kf": compute_metric_stats(images_data, "prefactor"),
         "rg": compute_metric_stats(images_data, "rg_nm"),
         "npo": compute_metric_stats(images_data, "n_particles_counted"),

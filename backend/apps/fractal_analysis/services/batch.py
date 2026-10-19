@@ -849,39 +849,44 @@ def reanalyze_failed_images(
             if progress_callback is not None:
                 progress_callback(done, total)
 
-    # Aggregate recompute over the FULL row set — exactly the 7 persisted
-    # columns of persist_batch_results (populations: mean over non-null
-    # fractal_dimension, ddof=0; n_successful = non-null count).
-    all_rows = list(FraktalBatchImage.objects.filter(batch=batch))
-    df_values = [
-        r.fractal_dimension for r in all_rows if r.fractal_dimension is not None
-    ]
-    batch.n_images = len(all_rows)
-    batch.n_successful = len(df_values)
-    if df_values:
-        arr = np.array(df_values, dtype=np.float64)
-        batch.mean_df = float(np.mean(arr))
-        batch.std_df = float(np.std(arr, ddof=0))
-        batch.median_df = float(np.median(arr))
-        batch.min_df = float(np.min(arr))
-        batch.max_df = float(np.max(arr))
-    else:
-        batch.mean_df = None
-        batch.std_df = None
-        batch.median_df = None
-        batch.min_df = None
-        batch.max_df = None
-    batch.save(
-        update_fields=[
-            "n_images",
-            "n_successful",
-            "mean_df",
-            "std_df",
-            "median_df",
-            "min_df",
-            "max_df",
+        # Aggregate recompute over the FULL row set — exactly the 7 persisted
+        # columns of persist_batch_results (populations: mean over non-null
+        # fractal_dimension, ddof=0; n_successful = non-null count).
+        # Fix round 2 (fresh-pass JD-A-001): this MUST live inside the same
+        # transaction.atomic as the row updates — otherwise a failure between
+        # the row saves and batch.save leaves per-image values with stale
+        # aggregates (the "no min_df > mean_df-class incoherence" pin of
+        # R13).
+        all_rows = list(FraktalBatchImage.objects.filter(batch=batch))
+        df_values = [
+            r.fractal_dimension for r in all_rows if r.fractal_dimension is not None
         ]
-    )
+        batch.n_images = len(all_rows)
+        batch.n_successful = len(df_values)
+        if df_values:
+            arr = np.array(df_values, dtype=np.float64)
+            batch.mean_df = float(np.mean(arr))
+            batch.std_df = float(np.std(arr, ddof=0))
+            batch.median_df = float(np.median(arr))
+            batch.min_df = float(np.min(arr))
+            batch.max_df = float(np.max(arr))
+        else:
+            batch.mean_df = None
+            batch.std_df = None
+            batch.median_df = None
+            batch.min_df = None
+            batch.max_df = None
+        batch.save(
+            update_fields=[
+                "n_images",
+                "n_successful",
+                "mean_df",
+                "std_df",
+                "median_df",
+                "min_df",
+                "max_df",
+            ]
+        )
 
     return {
         "reanalyzed": len(failed_rows),

@@ -117,18 +117,21 @@ minor — replaces the delete/reinsert wording; avoids `unique_together` churn e
 - **Aggregate recompute (r1 MAJOR / r2-r4 corrections):** after the row updates, batch aggregates are
   recomputed over the FULL row set. Persisted columns — EXACTLY the 7 `persist_batch_results`
   writes (`n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `min_df`, `max_df`;
-  `services/batch.py:519-520,537-546`) — the READ-DERIVED stats are foreign to the service
-  (r6 MINOR-2):
-  `q1_df`/`q3_df` are emitted ONLY by builder 1 (`compute_batch_statistics`,
-  `batch.py:293-341`, percentiles `:339-340`) from in-memory rust results — they are NOT
-  model columns and the two DB read builders do NOT emit them (`views.py:895-908`,
-  `views.py:1055-1071`): the re-analysis sync 200 payload carries NO quartiles (today's
-  SummaryPage already renders them as "—") and the re-analysis service MUST NOT write or
-  recompute them. `mean_df_inclusive` is computed at read (`views.py:889-892`, `:1050-1052`).
-  SCOPING (r7): this pin records unchanged current DB-builder behavior; the canonical R7/R8
-  quartile coverage gap (canonical contract R7 and persistence R8 list `q1_df`/`q3_df` as
-  fields though the model has no such columns) is PRE-EXISTING and not addressed by this
-  change.
+  `services/batch.py:519-520,537-546`).
+- **READ-DERIVED stats (AMENDED by fix round 2, fresh-pass JD-A-002/JD-A-003):** `q1_df`/`q3_df`
+  and `mean_df_inclusive` are NOT model columns (canonical persistence R8 lists them but the
+  model never had them — pre-existing canonical/code gap, out of scope). They are computed at
+  READ time by ALL THREE payload builders with the SAME `np.percentile(arr, 25/75)` population
+  (`compute_batch_statistics`: builder 1 `views.py:584` + `batch.py:293-341,339-340`; builders
+  2/3 `views.py:918-919` and `views.py:1079-1096` via `compute_batch_statistics(images_data)`) —
+  payload parity across builders so the Q1/Q3 stat cards do NOT flap between the sync
+  re-analysis response and the next page load (the defect the fix round closed). The
+  re-analysis SERVICE does not persist them as columns (they are read-derived), and does not
+  compute them at all — it only writes the 7 persisted columns.
+- **SCOPING (r7/r2-amended):** the canonical R7/R8 quartile coverage gap (canonical contract R7
+  and persistence R8 list `q1_df`/`q3_df` as fields though the model has no such columns) is
+  PRE-EXISTING and not addressed by this change; the builder parity above ALIGNS the payloads
+  with canonical R8's field list as closely as the schema allows.
   Populations: canonical R7 (`mean_df` converged-only over `fractal_dimension`,
   `mean_df_inclusive` inclusive incl. `df_estimate`), `ddof=0`; `n_successful` = non-null
   `fractal_dimension` count (the `persist_batch_results` semantics — the Df histogram's own
