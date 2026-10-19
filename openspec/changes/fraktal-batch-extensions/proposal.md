@@ -14,20 +14,24 @@ gaps de empaquetado y comparación que no requieren engine work. Este change cie
 
 | # | Candidato | Qué añade | Superficie |
 |---|---|---|---|
-| C1 | **Comparativa agregada batch ↔ estudio** a nivel batch (hoy la comparación sim↔imágenes es por imagen, R9; falta el agregado: media/mediana de Df de imágenes vs media de `sim_box_counting_df` por config, Δ, y el estado de la nota Sorensen a nivel batch) | Nuevo bloque en el payload de resumen + tarjeta en la SummaryPage | `fractal_analysis/views.py` (payload), `FraktalBatchSummaryPage` |
-| C2 | **Overlay de distribuciones cruzadas**: histograma de Df de imágenes vs histograma de `sim_box_counting_df` de las sims enlazadas, en el mismo gráfico (reutiliza la maquinaria R-DELTA de overlays) | Toggle en `FraktalBatchDistributions.tsx` + campo agregado en payload | frontend + payload |
+| C1 | **Comparativa batch ↔ su simulación enlazada** (reencaminada 2026-10-19 tras spec-review r1 B1: el modelo enlaza UNA sim por batch; la persona eligió "C1 contra la sim del batch"): stats de Df de imágenes (población canonical R7: converged→`fractal_dimension`, approximate→`df_estimate`) vs el Df de la sim, Δ, `deltas` por imagen, nota Sorensen a nivel batch | Bloque `study_comparison` en el payload de resumen (helper único para los 3 builders) + tarjeta en la SummaryPage | `fractal_analysis/views.py` (payload), `FraktalBatchSummaryPage` |
+| C2 | **Marcador de referencia del Df de la sim** (reencaminada 2026-10-19 tras spec-review r3 BLOCKER-1: con una sim por batch, `n_sim ≤ 1` — el overlay multi-valor era inimplementable): línea vertical en el histograma de Df de imágenes, chip `Sim Df: X.XX`, toggle por batch, sin tocar R2/R5/R-DELTA-M canónicos | Clave `sim_df_value` en payload + render del marcador en `FraktalBatchDistributions.tsx` | frontend + payload |
 | C3 | **Re-análisis masivo de fallidas**: acción a nivel batch para re-correr solo las imágenes con `quality: failed` (hoy el reanalyze es por imagen) | Endpoint de acción + botón con progreso | views + task existente + UI |
 
 ### Out of Scope (lockeado por la persona)
 - Estimador 2D windowed nuevo (engine work explícitamente excluido).
 - Cualquier cambio en `aglogen_core/`.
-- Cambios de contrato en las especificaciones R1–R8 existentes (solo extensiones aditivas).
+- **ÚNICA excepción de contrato (r3):** MODIFIED R2 de `fraktal-batch-persistence` (columna
+  nullable `pixels_per_100nm`, restatement completo — r2 BLOCKER-2). Distributions: SOLO ADDED
+  (marcador C2) — R1–R11 / R-DELTA-I..M intactos.
+- Enlace imagen→sim por imagen (FK) — rechazado por la persona; la comparativa multi-config
+  vive en el tab del Change A.
 
 ## Capabilities
 
 ### Modified Capabilities
-- `fraktal-batch-contract` (payloads aditivos de C1/C3), `fraktal-batch-distributions` (overlay C2)
-  — delta spec se escribe tras la elección de candidatos en approval.md.
+- `fraktal-batch-contract` (ADDED R12/R13), `fraktal-batch-persistence` (MODIFIED R2 — única
+  excepción), `fraktal-batch-distributions` (ADDED R-DELTA-C2) — deltas en `specs/`.
 
 ## Nota de proceso
 
