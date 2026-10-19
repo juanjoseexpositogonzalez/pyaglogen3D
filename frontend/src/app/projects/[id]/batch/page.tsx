@@ -4,9 +4,10 @@ import { useState } from 'react'
 import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useProject } from '@/hooks/useProjects'
-import { studiesApi } from '@/lib/api'
+import { studiesApi, pollBoxCountingJobStatus } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
+import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -26,6 +27,8 @@ export default function BatchSimulationsPage({
   const [isExporting, setIsExporting] = useState(false)
   const [isRunningBoxCounting, setIsRunningBoxCounting] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
+  // Dedicated Fractal Analysis tab (P3, spec R7) — additive to the existing Results view.
+  const [activeTab, setActiveTab] = useState<'results' | 'fractal'>('results')
 
   // Fetch studies list (polls while any study has running simulations)
   const { data: studiesData, isLoading: isLoadingStudies } = useQuery({
@@ -105,7 +108,22 @@ export default function BatchSimulationsPage({
         points_per_sphere: 100,
         precision: 18,
       })
-      console.log('Box-counting result:', result)
+      // Dual response (R3): ≤30 sims return the sync summary; >30 return 202
+      // {task_id, total} and the job must be polled to completion.
+      if ('task_id' in result) {
+        console.log(
+          `Box-counting dispatched async (${result.total} sims), polling task ${result.task_id}`,
+        )
+        const final = await pollBoxCountingJobStatus(id, selectedStudyId, result.task_id, {
+          onProgress: (s) =>
+            console.log(`Box-counting job: ${s.current}/${s.total} (${Math.round(s.progress * 100)}%)`),
+        })
+        if (final.status === 'failed') {
+          console.error('Box-counting job failed:', final.error)
+        }
+      } else {
+        console.log('Box-counting result:', result)
+      }
       // Refresh results to show new BC Df values
       refetchResults()
     } catch (err) {
@@ -242,15 +260,51 @@ export default function BatchSimulationsPage({
           <div className="lg:col-span-2 space-y-6">
             {selectedStudyId && studyResults ? (
               <>
-                <BatchResultsTable
-                  data={studyResults}
-                  projectId={id}
-                  onExport={handleExport}
-                  onRefresh={() => refetchResults()}
-                  onRunBoxCounting={handleRunBoxCounting}
-                  isExporting={isExporting}
-                  isRunningBoxCounting={isRunningBoxCounting}
-                />
+                {/* Tab bar (P3): Results | Fractal Analysis — additive; the
+                    Results tab content below is unchanged. */}
+                <div className="flex gap-1 border-b">
+                  <button
+                    onClick={() => setActiveTab('results')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                      activeTab === 'results'
+                        ? 'border-primary text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Results
+                  </button>
+                  <button
+                    onClick={() => setActiveTab('fractal')}
+                    className={`px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors ${
+                      activeTab === 'fractal'
+                        ? 'border-primary text-foreground'
+                        : 'border-transparent text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    Fractal Analysis
+                  </button>
+                </div>
+                {activeTab === 'fractal' ? (
+                  <FractalAnalysisTab
+                    projectId={id}
+                    studyId={selectedStudyId}
+                    results={studyResults}
+                    onExportCsv={handleExport}
+                    isExporting={isExporting}
+                  />
+                ) : (
+                  <>
+                    <BatchResultsTable
+                      data={studyResults}
+                      projectId={id}
+                      onExport={handleExport}
+                      onRefresh={() => refetchResults()}
+                      onRunBoxCounting={handleRunBoxCounting}
+                      isExporting={isExporting}
+                      isRunningBoxCounting={isRunningBoxCounting}
+                    />
+                  </>
+                )}
                 {/* Batch Projection Export — visible when ≥1 completed sim */}
                 {studyResults.results.filter((r) => r.status === 'completed').length > 0 && (
                   <BatchProjectionExportPanel

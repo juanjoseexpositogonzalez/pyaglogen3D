@@ -399,6 +399,8 @@ export interface ParametricStudy {
 export interface BatchBoxCountingParams {
   points_per_sphere?: number
   precision?: number
+  /** Windowed dual-estimator flag (R1) — request body > study params > absent. */
+  windowed?: boolean
 }
 
 export interface CreateParametricStudyInput {
@@ -422,6 +424,27 @@ export interface BoxCountingResult {
   execution_time_ms?: number
 }
 
+// Windowed box-counting block (R2 — one 11-key schema for all three statuses).
+export type WindowedBlockStatus = 'ok' | 'insufficient_levels' | 'error'
+
+export interface WindowedBlock {
+  dimension: number | null
+  r_squared: number | null
+  std_error: number | null
+  confidence_interval: [number, number] | null
+  log_scales: number[] | null
+  log_values: number[] | null
+  /** Backend always emits a number (0 for non-ok statuses) — never null
+   *  (F6g, JD-B-008). */
+  execution_time_ms: number
+  parameters: Record<string, unknown>
+  status: WindowedBlockStatus
+  /** [s, e] only when status === 'ok'; null otherwise. */
+  fit_window_used: [number, number] | null
+  /** String only when status === 'error'; null otherwise. */
+  error_message: string | null
+}
+
 export interface ParametricStudyResult {
   simulation_id: string
   status: SimulationStatus
@@ -439,6 +462,11 @@ export interface ParametricStudyResult {
   asphericity?: number
   acylindricity?: number
   box_counting?: BoxCountingResult
+  /** Windowed block (R4) — present only after a windowed run. */
+  box_counting_windowed?: WindowedBlock
+  /** box_counting_windowed.dimension − box_counting.dimension, only when the
+   *  windowed block exists AND its status is 'ok' (R4). */
+  bc_delta?: number
 }
 
 export interface ParametricStudyResults {
@@ -456,6 +484,75 @@ export interface ParametricStudyResults {
     running: number
   }
   results: ParametricStudyResult[]
+}
+
+// --- Batch box-counting: async job + per-config estimator distributions ---
+// (change batch-windowed-box-counting: R3/R4/R5; design D5/D7)
+
+/** Canonical async job status payload (R3, design D5). */
+export interface BoxCountingJobStatus {
+  status: 'processing' | 'done' | 'failed'
+  progress: number
+  current: number
+  total: number
+  /** Present only on status === 'failed'. */
+  error?: string
+}
+
+/** Sync response of POST .../run-box-counting/ (R3.1, ≤30 work set). */
+export interface BatchBoxCountingSyncResponse {
+  status: string
+  message: string
+  results: {
+    total: number
+    processed: number
+    skipped: number
+    failed: number
+    errors: Array<{ simulation_id: string; error: string }>
+  }
+}
+
+/** 202 Accepted response when the work set exceeds the async boundary (R3.2). */
+export interface BatchBoxCountingAcceptedResponse {
+  task_id: string
+  total: number
+}
+
+/** runBoxCounting may return either shape — discriminate with `'task_id' in result`. */
+export type BatchBoxCountingRunResponse =
+  | BatchBoxCountingSyncResponse
+  | BatchBoxCountingAcceptedResponse
+
+/** Descriptive stats + raw values for one estimator over one config (R5). */
+export interface StudyEstimatorStats {
+  n: number
+  mean: number | null
+  median: number | null
+  q1: number | null
+  q3: number | null
+  min: number | null
+  max: number | null
+  /** Raw values — the histogram is computed CLIENT-side (sturgesBuckets). */
+  values: number[]
+  /** Windowed refusals (status "insufficient_levels"), 0 for rg/bc_legacy. */
+  insufficient_levels: number
+  /** Windowed errors (status "error"), 0 for rg/bc_legacy. */
+  errors: number
+}
+
+export interface StudyFractalAnalysisConfig {
+  config: Record<string, unknown>
+  estimators: {
+    rg: StudyEstimatorStats
+    bc_legacy: StudyEstimatorStats
+    bc_windowed: StudyEstimatorStats
+  }
+}
+
+/** GET .../fractal-analysis/ envelope (R5). Distinct from FraktalAnalysisSummary. */
+export interface StudyFractalAnalysisSummary {
+  study_id: string
+  configs: StudyFractalAnalysisConfig[]
 }
 
 // FRAKTAL Analysis Types

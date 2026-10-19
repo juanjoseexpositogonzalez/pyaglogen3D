@@ -17,6 +17,9 @@ import type {
   CreateParametricStudyInput,
   ParametricStudyResults,
   BoxCounting3DResult,
+  BoxCountingJobStatus,
+  BatchBoxCountingRunResponse,
+  StudyFractalAnalysisSummary,
   AnalysisStatus,
 } from './types'
 import { tokenStorage } from './token-storage'
@@ -1255,26 +1258,86 @@ export const studiesApi = {
 
   /**
    * Run box-counting analysis on all completed simulations in the study.
+   *
+   * Dual response (R3): with a work set ≤30 the backend responds 200 with the
+   * sync summary; with >30 it responds 202 `{task_id, total}` and the job must
+   * be polled via `boxCountingJobStatus`. Discriminate with `'task_id' in result`.
    */
   runBoxCounting: (
     projectId: string,
     id: string,
-    params?: { points_per_sphere?: number; precision?: number }
+    params?: {
+      points_per_sphere?: number
+      precision?: number
+      windowed?: boolean
+      force?: boolean
+    }
   ) =>
-    request<{
-      status: string
-      message: string
-      results: {
-        total: number
-        processed: number
-        skipped: number
-        failed: number
-        errors: Array<{ simulation_id: string; error: string }>
-      }
-    }>(`/projects/${projectId}/studies/${id}/run-box-counting/`, {
-      method: 'POST',
-      body: JSON.stringify(params || {}),
-    }),
+    request<BatchBoxCountingRunResponse>(
+      `/projects/${projectId}/studies/${id}/run-box-counting/`,
+      {
+        method: 'POST',
+        body: JSON.stringify(params || {}),
+      },
+    ),
+
+  /**
+   * Poll the status of an async box-counting run (R3, design D5).
+   * Canonical payload: `{status: processing|done|failed, progress, current, total, error?}`.
+   */
+  boxCountingJobStatus: (projectId: string, id: string, taskId: string) =>
+    request<BoxCountingJobStatus>(
+      `/projects/${projectId}/studies/${id}/run-box-counting/${taskId}/`,
+    ),
+
+  /**
+   * Per-config estimator distributions for the study (R5). Raw value arrays
+   * are returned — histogram bucketing happens CLIENT-side (sturgesBuckets).
+   */
+  fractalAnalysisSummary: (projectId: string, id: string) =>
+    request<StudyFractalAnalysisSummary>(
+      `/projects/${projectId}/studies/${id}/fractal-analysis/`,
+    ),
+}
+
+// --- Box-counting async job polling (R3, design D5) ---
+
+export interface PollBoxCountingJobOptions {
+  /** Delay between polls in ms (default 2000). */
+  intervalMs?: number
+  /** Overall deadline in ms (default 30 min). */
+  timeoutMs?: number
+  /** Called with every observed status payload, including the final one. */
+  onProgress?: (status: BoxCountingJobStatus) => void
+}
+
+/**
+ * Poll a box-counting job until it reaches `done` or `failed` (R3.2).
+ *
+ * Resolves with the FINAL status payload (a `failed` payload resolves — it is
+ * an expected terminal state, not a transport error). Throws ApiError only on
+ * HTTP failure or when the deadline passes.
+ */
+export async function pollBoxCountingJobStatus(
+  projectId: string,
+  studyId: string,
+  taskId: string,
+  options: PollBoxCountingJobOptions = {},
+): Promise<BoxCountingJobStatus> {
+  const intervalMs = options.intervalMs ?? 2000
+  const deadline = Date.now() + (options.timeoutMs ?? 30 * 60 * 1000)
+
+  for (;;) {
+    const status = await studiesApi.boxCountingJobStatus(projectId, studyId, taskId)
+    options.onProgress?.(status)
+    if (status.status === 'done' || status.status === 'failed') {
+      return status
+    }
+    if (Date.now() + intervalMs > deadline) {
+      throw new ApiError('Box-counting job polling timed out', 408)
+    }
+    await new Promise((resolve) => setTimeout(resolve, intervalMs))
+  }
 }
 
 // Project Sharing API

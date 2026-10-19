@@ -17,7 +17,6 @@ from apps.simulations.models import (
 )
 from apps.simulations.tasks import run_simulation_task
 
-from .base import ToolResult
 from .decorators import tool
 
 
@@ -98,6 +97,21 @@ def create_parametric_study_handler(
     """
     if project_id is None:
         raise ValueError("project_id is required")
+
+    # JD-A-006: route box_counting_params through the shared R1.2 validator
+    # (same shape/ranges as the API) so a tool call cannot persist junk —
+    # or a non-dict (JD-B-007) — straight to the ORM.
+    if box_counting_params is not None:
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        from apps.simulations.serializers import validate_box_counting_params_dict
+
+        try:
+            validate_box_counting_params_dict(box_counting_params)
+        except DRFValidationError as exc:
+            detail = exc.detail
+            message = detail[0] if isinstance(detail, list) and detail else detail
+            raise ValueError(str(message)) from exc
 
     # Validate project exists
     try:
@@ -301,8 +315,12 @@ def get_study_results_handler(
                     parameter_values[param].add(sim.parameters[param])
 
     # Calculate summary statistics
-    df_values = [m.get("fractal_dimension") for m in all_metrics if m.get("fractal_dimension")]
-    rg_values = [m.get("radius_of_gyration") for m in all_metrics if m.get("radius_of_gyration")]
+    df_values = [
+        m.get("fractal_dimension") for m in all_metrics if m.get("fractal_dimension")
+    ]
+    rg_values = [
+        m.get("radius_of_gyration") for m in all_metrics if m.get("radius_of_gyration")
+    ]
 
     summary = {
         "completed_simulations": len(all_metrics),
@@ -328,7 +346,9 @@ def get_study_results_handler(
         "study_name": study.name,
         "algorithm": study.base_algorithm,
         "varied_parameters": list(study.parameter_grid.keys()),
-        "parameter_values_used": {k: sorted(list(v)) for k, v in parameter_values.items()},
+        "parameter_values_used": {
+            k: sorted(list(v)) for k, v in parameter_values.items()
+        },
         "summary": summary,
     }
 
@@ -384,18 +404,22 @@ def list_studies_handler(
     study_list = []
     for study in studies:
         sim_count = study.simulations.count()
-        completed_count = study.simulations.filter(status=SimulationStatus.COMPLETED).count()
+        completed_count = study.simulations.filter(
+            status=SimulationStatus.COMPLETED
+        ).count()
 
-        study_list.append({
-            "study_id": str(study.id),
-            "name": study.name,
-            "algorithm": study.base_algorithm,
-            "status": study.status,
-            "total_simulations": sim_count,
-            "completed_simulations": completed_count,
-            "varied_parameters": list(study.parameter_grid.keys()),
-            "created_at": study.created_at.isoformat(),
-        })
+        study_list.append(
+            {
+                "study_id": str(study.id),
+                "name": study.name,
+                "algorithm": study.base_algorithm,
+                "status": study.status,
+                "total_simulations": sim_count,
+                "completed_simulations": completed_count,
+                "varied_parameters": list(study.parameter_grid.keys()),
+                "created_at": study.created_at.isoformat(),
+            }
+        )
 
     return {
         "project_id": str(project.id),

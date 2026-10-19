@@ -83,6 +83,16 @@ urlpatterns = [
         name="project-studies-run-box-counting",
     ),
     path(
+        "projects/<uuid:project_pk>/studies/<uuid:pk>/run-box-counting/<str:task_id>/",
+        ParametricStudyViewSet.as_view({"get": "box_counting_job_status"}),
+        name="project-studies-bc-job-status",
+    ),
+    path(
+        "projects/<uuid:project_pk>/studies/<uuid:pk>/fractal-analysis/",
+        ParametricStudyViewSet.as_view({"get": "fractal_analysis_summary"}),
+        name="project-studies-fractal-analysis",
+    ),
+    path(
         "projects/<uuid:project_pk>/studies/<uuid:pk>/export-projections/",
         ParametricStudyViewSet.as_view({"post": "export_projections"}),
         name="project-studies-export-projections",

@@ -5,8 +5,10 @@ from __future__ import annotations
 import base64
 import random
 from math import prod
+from typing import Any
 
 from rest_framework import serializers
+from rest_framework.exceptions import ValidationError
 
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
@@ -26,8 +28,52 @@ from .utils import generate_simulation_name
 # the check cheap (no decode required).
 _CSV_MAX_BASE64_BYTES = 14 * 1024 * 1024
 
+#: Allowed keys of the box-counting params dict (batch-windowed-box-counting
+#: R1). `force` is accepted in the run-box-counting request body but is
+#: popped there and NEVER persisted, so it is not part of this set.
+BOX_COUNTING_PARAM_KEYS = ("points_per_sphere", "precision", "windowed")
 
-def generate_seed():
+
+def validate_box_counting_params_dict(value: dict[str, Any]) -> None:
+    """Validate a box-counting params dict (R1, R1.2).
+
+    Shared by the study serializer field and the run-box-counting action so
+    the request body and the persisted shape are enforced identically:
+
+    - unknown keys are rejected with the offending key named (NEW behavior,
+      documented in R1.2 — pre-change extras were silently ignored);
+    - non-dict values are rejected with a 400, never a 500 (JD-B-007 —
+      a JSONField accepts any JSON, so the guard lives here);
+    - `points_per_sphere` within [10, 1000];
+    - `precision` within [8, 21];
+    - `windowed` must be a bool when present.
+    """
+    if not isinstance(value, dict):
+        raise ValidationError(
+            "box_counting_params must be an object with keys "
+            f"{list(BOX_COUNTING_PARAM_KEYS)}, got {type(value).__name__}"
+        )
+
+    for key in value:
+        if key not in BOX_COUNTING_PARAM_KEYS:
+            raise ValidationError(
+                f"Invalid key '{key}'. Valid keys: {list(BOX_COUNTING_PARAM_KEYS)}"
+            )
+
+    points = value.get("points_per_sphere", 100)
+    if not (10 <= points <= 1000):
+        raise ValidationError("points_per_sphere must be between 10 and 1000")
+
+    precision = value.get("precision", 18)
+    if not (8 <= precision <= 21):
+        raise ValidationError("precision must be between 8 and 21")
+
+    windowed = value.get("windowed")
+    if windowed is not None and not isinstance(windowed, bool):
+        raise ValidationError("windowed must be a boolean")
+
+
+def generate_seed() -> int:
     """Generate a random seed."""
     return random.randint(0, 2**31 - 1)
 
@@ -352,19 +398,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         return value
 
     def validate_box_counting_params(self, value):
-        """Validate box-counting parameters."""
+        """Validate box-counting parameters (delegates to the shared R1
+        validator, also used by the run-box-counting action)."""
         if value is None:
             return value
 
-        points = value.get("points_per_sphere", 100)
-        if not (10 <= points <= 1000):
-            raise serializers.ValidationError(
-                "points_per_sphere must be between 10 and 1000"
-            )
-
-        precision = value.get("precision", 18)
-        if not (8 <= precision <= 21):
-            raise serializers.ValidationError("precision must be between 8 and 21")
+        validate_box_counting_params_dict(value)
 
         return value
 
@@ -404,7 +443,9 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         """Cross-field validation for parameter_grid entries + batch size."""
         grid = data.get("parameter_grid") or {}
         allowed_dist_types = ("fixed", "uniform", "normal")
-        valid_seed_types = {c[0] for c in Simulation._meta.get_field("seed_type").choices}
+        valid_seed_types = {
+            c[0] for c in Simulation._meta.get_field("seed_type").choices
+        }
 
         # --- Validate distribution grid keys ---
         for key, constraints in self._DISTRIBUTION_GRID_KEYS.items():
@@ -430,7 +471,9 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         if sintering_entries is not None:
             if not isinstance(sintering_entries, list):
                 raise serializers.ValidationError(
-                    {"parameter_grid.sintering_config": "Must be a list of sintering configs."}
+                    {
+                        "parameter_grid.sintering_config": "Must be a list of sintering configs."
+                    }
                 )
             for i, entry in enumerate(sintering_entries):
                 if not isinstance(entry, dict):
@@ -543,9 +586,7 @@ class BatchProjectionExportRequestSerializer(serializers.Serializer):
             try:
                 n = int(n)
             except (TypeError, ValueError):
-                raise serializers.ValidationError(
-                    {"config": "'n' must be an integer"}
-                )
+                raise serializers.ValidationError({"config": "'n' must be an integer"})
             if n < 1 or n > 1000:
                 raise serializers.ValidationError(
                     {"config": "'n' must be between 1 and 1000"}

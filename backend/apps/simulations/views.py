@@ -2,7 +2,9 @@
 
 import csv
 import io
+import json
 import logging
+import time
 import zipfile
 from typing import Any
 
@@ -24,17 +26,17 @@ from .serializers import (
     SimulationDetailSerializer,
     SimulationSerializer,
 )
+from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
     get_scale_factor_nm,
 )
 from .services.projection import (
+    create_projection_filename,
     render_projection_png,
     render_projection_svg,
-    create_projection_filename,
 )
-from .services.projections import build_projection_zip, compute_per_direction_scales
-from .services.mat_parser import MatParseError, parse_mat_geometry
+from .services.projections import build_projection_zip
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
 
@@ -82,9 +84,10 @@ logger = logging.getLogger(__name__)
 
 from apps.core.services.csv_locale import (
     get_user_csv_locale as _get_user_csv_locale,
+)
+from apps.core.services.csv_locale import (
     write_localized_row as _write_localized_row,
 )
-
 
 # --- Shared projection rendering --------------------------------------------
 
@@ -1507,8 +1510,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         Query params:
         - points_per_sphere: int (default: 100) - surface points per particle
         - precision: int (default: 18) - bits per dimension (max: 21)
+        - windowed: only the literal "true" engages the windowed estimator
+          (R8); absent or any other value keeps the response byte-identical
+          to pre-change.
 
         Returns fractal dimension estimate with statistics and log-log data.
+        With windowed=true the flat dict additionally gains
+        "box_counting_windowed" with the R2 11-key schema.
         """
         simulation = self.get_object()
 
@@ -1553,24 +1561,39 @@ class SimulationViewSet(viewsets.ModelViewSet):
             precision=precision,
         )
 
-        return Response(
-            {
-                "dimension": result.dimension,
-                "r_squared": result.r_squared,
-                "std_error": result.std_error,
-                "confidence_interval": list(result.confidence_interval),
-                "log_scales": result.log_scales.tolist(),
-                "log_values": result.log_values.tolist(),
-                "residuals": result.residuals.tolist(),
-                "linear_region_start": result.linear_region_start,
-                "execution_time_ms": result.execution_time_ms,
-                "parameters": {
-                    "points_per_sphere": points_per_sphere,
-                    "precision": precision,
-                    "n_particles": len(coords),
-                },
-            }
-        )
+        payload = {
+            "dimension": result.dimension,
+            "r_squared": result.r_squared,
+            "std_error": result.std_error,
+            "confidence_interval": list(result.confidence_interval),
+            "log_scales": result.log_scales.tolist(),
+            "log_values": result.log_values.tolist(),
+            "residuals": result.residuals.tolist(),
+            "linear_region_start": result.linear_region_start,
+            "execution_time_ms": result.execution_time_ms,
+            "parameters": {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "n_particles": len(coords),
+            },
+        }
+
+        # R8: opt-in windowed analysis. ONLY the literal "true" engages it;
+        # absent (or any other value) keeps the response byte-identical to
+        # pre-change (R8.1).
+        if request.query_params.get("windowed") == "true":
+            from .tasks import run_windowed_bc
+
+            payload["box_counting_windowed"] = run_windowed_bc(
+                coords,
+                radii,
+                points_per_sphere,
+                precision,
+                result.effective_levels,
+                {"points_per_sphere": points_per_sphere, "precision": precision},
+            )
+
+        return Response(payload)
 
     @action(detail=True, methods=["post"], url_path="optical")
     def optical(self, request: Request, pk=None, **kwargs) -> Response:
@@ -1932,8 +1955,26 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         "asphericity": sim.metrics.get("asphericity"),
                         "acylindricity": sim.metrics.get("acylindricity"),
                         "box_counting": sim.metrics.get("box_counting"),
+                        "box_counting_windowed": sim.metrics.get(
+                            "box_counting_windowed"
+                        ),
                     }
                 )
+                # R4: delta only when the windowed block exists AND carries a
+                # usable dimension (status ok). No rg_df alias — the Rg-evolution
+                # Df is already returned above as fractal_dimension.
+                windowed_block = sim.metrics.get("box_counting_windowed")
+                legacy_block = sim.metrics.get("box_counting")
+                if (
+                    windowed_block
+                    and windowed_block.get("status") == "ok"
+                    and windowed_block.get("dimension") is not None
+                    and legacy_block
+                    and legacy_block.get("dimension") is not None
+                ):
+                    result_data["bc_delta"] = float(
+                        windowed_block["dimension"]
+                    ) - float(legacy_block["dimension"])
             results.append(result_data)
 
         # Calculate study status based on simulations
@@ -1983,6 +2024,123 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         nonzero = [int(k) for k, v in distribution.items() if v > 0]
         return max(nonzero) if nonzero else 0
 
+    @staticmethod
+    def _estimator_stats(
+        values: list[float],
+        *,
+        insufficient_levels: int = 0,
+        errors: int = 0,
+    ) -> dict:
+        """Descriptive stats for one estimator over raw values (R5).
+
+        Quartiles use the same percentile formula as the batch stats helper
+        (``fractal_analysis/services/batch.py``: ``np.percentile(arr, 25/75)``).
+        NO backend bucketing — the histogram is computed CLIENT-side with
+        sturgesBuckets. Refusals/errors are excluded from ``n`` and from all
+        stats and counted in their separate counters (0 for rg/bc_legacy).
+        """
+        if values:
+            arr = np.array(values, dtype=np.float64)
+            stats = {
+                "n": len(values),
+                "mean": float(np.mean(arr)),
+                "median": float(np.median(arr)),
+                "q1": float(np.percentile(arr, 25)),
+                "q3": float(np.percentile(arr, 75)),
+                "min": float(np.min(arr)),
+                "max": float(np.max(arr)),
+                "values": values,
+            }
+        else:
+            stats = {
+                "n": 0,
+                "mean": None,
+                "median": None,
+                "q1": None,
+                "q3": None,
+                "min": None,
+                "max": None,
+                "values": [],
+            }
+        stats["insufficient_levels"] = insufficient_levels
+        stats["errors"] = errors
+        return stats
+
+    @action(detail=True, methods=["get"], url_path="fractal-analysis")
+    def fractal_analysis_summary(self, request: Request, pk=None, **kwargs) -> Response:
+        """Per-config estimator distributions for the study (R5).
+
+        Returns ``{study_id, configs: [{config, estimators}]}`` where
+        ``config`` is the sim's parameters dict (keys from
+        ``study.parameter_grid.keys()``, values from ``sim.parameters``), and
+        ``estimators`` carries raw value arrays + stats for ``rg`` (reads
+        ``metrics[fractal_dimension]``), ``bc_legacy`` and ``bc_windowed``.
+        """
+        study = self.get_object()
+        simulations = study.simulations.filter(status="completed").order_by(
+            "created_at"
+        )
+        param_keys = list(study.parameter_grid.keys())
+
+        # Group by config (first-seen order preserved)
+        groups: dict[str, dict] = {}
+        for sim in simulations:
+            config = {key: sim.parameters.get(key) for key in param_keys}
+            group_key = json.dumps(config, sort_keys=True, default=str)
+            groups.setdefault(group_key, {"config": config, "sims": []})["sims"].append(
+                sim
+            )
+
+        configs = []
+        for group in groups.values():
+            rg_values: list[float] = []
+            bc_legacy_values: list[float] = []
+            bc_windowed_values: list[float] = []
+            insufficient_levels = 0
+            errors = 0
+            for sim in group["sims"]:
+                metrics = sim.metrics or {}
+
+                rg = metrics.get("fractal_dimension")
+                if rg is not None:
+                    rg_values.append(float(rg))
+
+                legacy = metrics.get("box_counting") or {}
+                if legacy.get("dimension") is not None:
+                    bc_legacy_values.append(float(legacy["dimension"]))
+
+                windowed = metrics.get("box_counting_windowed")
+                if windowed:
+                    win_status = windowed.get("status")
+                    if win_status == "ok" and windowed.get("dimension") is not None:
+                        bc_windowed_values.append(float(windowed["dimension"]))
+                    elif win_status == "insufficient_levels":
+                        insufficient_levels += 1
+                    elif win_status == "error":
+                        errors += 1
+
+            configs.append(
+                {
+                    "config": group["config"],
+                    "estimators": {
+                        "rg": self._estimator_stats(rg_values),
+                        "bc_legacy": self._estimator_stats(bc_legacy_values),
+                        "bc_windowed": self._estimator_stats(
+                            bc_windowed_values,
+                            insufficient_levels=insufficient_levels,
+                            errors=errors,
+                        ),
+                    },
+                }
+            )
+
+        return Response(
+            {
+                "study_id": str(study.id),
+                "configs": configs,
+            }
+        )
+
     @action(detail=True, methods=["get"], url_path="export")
     def export_csv(self, request: Request, pk=None, **kwargs) -> HttpResponse:
         """Export batch study results as CSV.
@@ -1996,6 +2154,14 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         study = self.get_object()
         simulations = study.simulations.filter(status="completed").order_by(
             "created_at"
+        )
+
+        # R6 header gate (B5): STUDY-level — any completed row carrying a
+        # windowed block turns the BC_Win_* columns on, regardless of the
+        # current include_box_counting flag. A legacy-only study stays
+        # byte-identical to pre-change.
+        has_windowed = any(
+            (sim.metrics or {}).get("box_counting_windowed") for sim in simulations
         )
 
         # Apply user CSV locale prefs (T16). Anonymous callers and fixtures
@@ -2043,6 +2209,21 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Add box-counting columns if enabled
         if study.include_box_counting:
             header.extend(["BC_Df", "BC_R2", "BC_StdError", "BC_Time_ms"])
+
+        # Add windowed box-counting columns (R6): gated by a recorded windowed
+        # run at study level, NOT by include_box_counting — a study with the
+        # flag toggled off after a windowed run keeps its BC_Win_* header.
+        if has_windowed:
+            header.extend(
+                [
+                    "BC_Win_Df",
+                    "BC_Win_R2",
+                    "BC_Win_StdError",
+                    "BC_Win_Time_ms",
+                    "BC_Win_Delta",
+                    "BC_Win_Status",
+                ]
+            )
 
         wrow(header)
 
@@ -2103,6 +2284,44 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         ]
                     )
 
+                # Add windowed box-counting data (R6): rows without a windowed
+                # block emit empty cells; BC_Win_Delta only when the row's
+                # windowed status is ok.
+                if has_windowed:
+                    windowed_block = sim.metrics.get("box_counting_windowed")
+                    if windowed_block:
+                        win_status = windowed_block.get("status")
+                        win_dimension = windowed_block.get("dimension")
+                        win_delta = ""
+                        if win_status == "ok" and win_dimension is not None:
+                            legacy_block = sim.metrics.get("box_counting") or {}
+                            if legacy_block.get("dimension") is not None:
+                                win_delta = (
+                                    f"{win_dimension - legacy_block['dimension']:.4f}"
+                                )
+                        row.extend(
+                            [
+                                f"{win_dimension:.4f}"
+                                if win_dimension is not None
+                                else "",
+                                (
+                                    f"{windowed_block['r_squared']:.4f}"
+                                    if windowed_block.get("r_squared") is not None
+                                    else ""
+                                ),
+                                (
+                                    f"{windowed_block['std_error']:.6f}"
+                                    if windowed_block.get("std_error") is not None
+                                    else ""
+                                ),
+                                windowed_block.get("execution_time_ms", 0),
+                                win_delta,
+                                win_status or "",
+                            ]
+                        )
+                    else:
+                        row.extend(["", "", "", "", "", ""])
+
                 wrow(row)
 
         output.seek(0)
@@ -2122,19 +2341,39 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         Request body (optional):
         - points_per_sphere: int (default: 100)
         - precision: int (default: 18)
+        - windowed: bool (optional) — overrides the study's persisted flag
+          for this run AND is persisted (explicit values win; absence
+          preserves — R1.3)
+        - force: bool (optional, default False) — re-run sims that already
+          hold a legacy block; accepted but NEVER persisted (M5/R2.3)
 
-        Returns progress and results summary.
+        Work set ≤ 30 → runs synchronously (full per-sim summary in the
+        response, as today); > 30 → 202 with a Celery task id (R3, design D5).
         """
-        from .tasks import run_box_counting_if_configured
-        import aglogen_core
+        from rest_framework.exceptions import ValidationError as DRFValidationError
+
+        from .serializers import validate_box_counting_params_dict
+        from .tasks import (
+            BC_ASYNC_THRESHOLD,
+            run_box_counting_async,
+            run_box_counting_for_study,
+        )
 
         study = self.get_object()
 
-        # Get parameters from request
-        points_per_sphere = request.data.get("points_per_sphere", 100)
-        precision = request.data.get("precision", 18)
+        body = request.data if isinstance(request.data, dict) else {}
 
-        # Validate
+        # `force` is accepted in the body but never persisted (R1/R2.3): pop
+        # it before the shared key validation, which enforces the persisted
+        # shape {points_per_sphere, precision, windowed} (R1.2).
+        force = bool(body.get("force", False))
+        body_wo_force = {k: v for k, v in body.items() if k != "force"}
+
+        # Get parameters from request
+        points_per_sphere = body_wo_force.get("points_per_sphere", 100)
+        precision = body_wo_force.get("precision", 18)
+        windowed = body_wo_force.get("windowed")
+
         try:
             points_per_sphere = int(points_per_sphere)
             precision = int(precision)
@@ -2144,87 +2383,102 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if not (10 <= points_per_sphere <= 1000):
+        # Shared validation with the study serializer (R1.2): the FULL body
+        # (minus `force`) is validated against the persisted shape — unknown
+        # keys are rejected naming the offending key; ranges and windowed
+        # bool-ness too. Coerced numerics are substituted so string inputs
+        # pass the range check.
+        try:
+            candidate_params = dict(body_wo_force)
+            candidate_params["points_per_sphere"] = points_per_sphere
+            candidate_params["precision"] = precision
+            validate_box_counting_params_dict(candidate_params)
+        except DRFValidationError as exc:
+            detail = exc.detail
+            message = detail[0] if isinstance(detail, list) and detail else detail
             return Response(
-                {"error": "points_per_sphere must be between 10 and 1000"},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-        if not (8 <= precision <= 21):
-            return Response(
-                {"error": "precision must be between 8 and 21"},
+                {"error": str(message)},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        # Update study to enable box-counting for future reference
-        study.include_box_counting = True
-        study.box_counting_params = {
+        # Precedence (R1): request body > study.box_counting_params.windowed
+        # > absent. Explicit values win and are persisted; absence preserves
+        # the stored flag (B2).
+        study_params = (
+            study.box_counting_params
+            if isinstance(study.box_counting_params, dict)
+            else {}
+        )
+        persisted_params: dict = {
             "points_per_sphere": points_per_sphere,
             "precision": precision,
         }
+        if windowed is not None:
+            persisted_params["windowed"] = windowed
+        elif "windowed" in study_params:
+            persisted_params["windowed"] = study_params["windowed"]
+        effective_windowed = bool(persisted_params.get("windowed", False))
+
+        # Update study to enable box-counting for future reference. Fix
+        # round 2 (fresh-pass JD-B-NEW-001): this save happens AFTER the
+        # in-flight guard — a 409-rejected double-submit must not overwrite
+        # the study's stored params with the rejected request's values.
+        study.include_box_counting = True
+        study.box_counting_params = persisted_params
+
+        # JD-B-006: per-study double-submit guard — a second POST while a
+        # box-counting run is in flight is rejected with 409. The marker is
+        # a synthetic entry in the Celery result backend (NOT Django cache:
+        # LocMemCache is per-process — spec-review B1).
+        in_flight_task_id = _bc_in_flight_task_id(study)
+        if in_flight_task_id is not None:
+            return Response(
+                {
+                    "detail": (
+                        "A box-counting run is already in flight for this study"
+                    ),
+                    "task_id": in_flight_task_id,
+                },
+                status=status.HTTP_409_CONFLICT,
+            )
         study.save(update_fields=["include_box_counting", "box_counting_params"])
 
-        # Get completed simulations without box-counting results
-        simulations = study.simulations.filter(
+        # Work set: completed simulations WITH geometry — the same filter as
+        # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
+        # count toward the sync/async boundary.
+        work_set = study.simulations.filter(
             status="completed",
             geometry__isnull=False,
         )
+        total = work_set.count()
 
-        results = {
-            "total": simulations.count(),
-            "processed": 0,
-            "skipped": 0,
-            "failed": 0,
-            "errors": [],
-        }
+        if total > BC_ASYNC_THRESHOLD:
+            task = run_box_counting_async.delay(
+                str(study.id),
+                points_per_sphere,
+                precision,
+                effective_windowed,
+                force,
+            )
+            # F2: surface the 202-time total to the status endpoint before
+            # the worker picks the task up. Best-effort: the task re-stamps
+            # its meta via update_state once it starts, and the final return
+            # value lands under SUCCESS.
+            _stamp_bc_dispatch_meta(task, total)
+            # JD-B-006: stamp the per-study in-flight marker (best-effort).
+            _stamp_bc_inflight_marker(task, str(study.id))
+            return Response(
+                {"task_id": task.id, "total": total},
+                status=status.HTTP_202_ACCEPTED,
+            )
 
-        for sim in simulations:
-            # Check if already has box-counting
-            if sim.metrics and sim.metrics.get("box_counting"):
-                results["skipped"] += 1
-                continue
-
-            try:
-                # Load geometry
-                buf = io.BytesIO(sim.geometry)
-                geometry_array = np.load(buf)
-                coords = np.ascontiguousarray(geometry_array[:, :3])
-                radii = np.ascontiguousarray(geometry_array[:, 3])
-
-                # Run box-counting
-                bc_result = aglogen_core.box_counting_agglomerate(
-                    coords,
-                    radii,
-                    points_per_sphere=points_per_sphere,
-                    precision=precision,
-                )
-
-                # Update metrics
-                metrics = sim.metrics or {}
-                metrics["box_counting"] = {
-                    "dimension": float(bc_result.dimension),
-                    "r_squared": float(bc_result.r_squared),
-                    "std_error": float(bc_result.std_error),
-                    "confidence_interval": list(bc_result.confidence_interval),
-                    "log_scales": bc_result.log_scales.tolist(),
-                    "log_values": bc_result.log_values.tolist(),
-                    "execution_time_ms": int(bc_result.execution_time_ms),
-                    "parameters": {
-                        "points_per_sphere": points_per_sphere,
-                        "precision": precision,
-                    },
-                }
-                sim.metrics = metrics
-                sim.save(update_fields=["metrics"])
-                results["processed"] += 1
-
-            except Exception as e:
-                results["failed"] += 1
-                results["errors"].append(
-                    {
-                        "simulation_id": str(sim.id),
-                        "error": str(e),
-                    }
-                )
+        results = run_box_counting_for_study(
+            str(study.id),
+            points_per_sphere,
+            precision,
+            effective_windowed,
+            force,
+        )
 
         return Response(
             {
@@ -2232,6 +2486,99 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "message": f"Box-counting completed: {results['processed']} processed, "
                 f"{results['skipped']} skipped (already done), {results['failed']} failed",
                 "results": results,
+            }
+        )
+
+    def box_counting_job_status(self, request: Request, pk=None, **kwargs) -> Response:
+        """GET status for an async box-counting run (R3, design D5).
+
+        Maps Celery ``AsyncResult`` state onto the canonical payload
+        ``{status: processing|done|failed, progress 0..1, current, total,
+        error?}`` (pattern: ``fractal_analysis/views.py`` fraktal_status_view).
+        NOT Django cache: LocMemCache is per-process and invisible across the
+        Gunicorn workers (spec-review B1/M1).
+
+        Judgment-day fix round A:
+        - ``self.get_object()`` runs FIRST (F1/BOLA): the object-permission
+          gate (``IsProjectOwnerOrShared``) must reject a cross-project task
+          id BEFORE any ``AsyncResult`` metadata is read or echoed.
+        - every branch returns the canonical shape (F2); non-terminal Celery
+          states (REVOKED/RETRY/...) map to ``failed`` instead of leaking
+          verbatim outside the union.
+        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): the dispatch path
+          stamps PROGRESS meta carrying ``total`` immediately after
+          ``delay()`` (F2), so a PENDING without meta can only be a
+          never-dispatched or expired task id — never a legitimately queued
+          run.
+        """
+        # F1: object-permission gate — must run before touching AsyncResult.
+        self.get_object()
+
+        result = AsyncResult(kwargs["task_id"])
+        state = result.state
+        meta = result.info if isinstance(result.info, dict) else {}
+
+        if state == "PENDING":
+            # JD-B-004: Celery reports PENDING for unknown ids too. Dispatch
+            # stamps PROGRESS meta right away, so a bare PENDING is a task
+            # that was never dispatched (or whose result already expired).
+            # Mapping it to `failed` lets the poller terminate instead of
+            # spinning on total=0 forever.
+            return Response(
+                {
+                    "status": "failed",
+                    "progress": 0.0,
+                    "current": 0,
+                    "total": 0,
+                    "error": "Unknown or never-dispatched task id",
+                }
+            )
+        if state == "PROGRESS":
+            return Response(
+                {
+                    "status": "processing",
+                    "progress": float(meta.get("progress", 0.0)),
+                    "current": int(meta.get("current", 0)),
+                    "total": int(meta.get("total", 0)),
+                }
+            )
+        if state == "SUCCESS":
+            data = result.result if isinstance(result.result, dict) else {}
+            total = int(data.get("total", 0))
+            payload: dict[str, Any] = {
+                "status": "done",
+                "progress": 1.0,
+                "current": total,
+                "total": total,
+            }
+            # JD-B-009: surface the windowed refusal/error counters collected
+            # by the run (they live in the task meta as its return value).
+            for key in ("windowed_insufficient_levels", "windowed_errors"):
+                if key in data:
+                    payload[key] = data[key]
+            return Response(payload)
+        if state == "FAILURE":
+            return Response(
+                {
+                    "status": "failed",
+                    "progress": 0.0,
+                    "current": int(meta.get("current", 0)),
+                    "total": int(meta.get("total", 0)),
+                    "error": str(result.info)
+                    if result.info is not None
+                    else "Unknown error",
+                }
+            )
+        # F2: REVOKED / RETRY / any other state must not leak verbatim
+        # outside the union — the frontend poller would spin for 30 minutes
+        # with zero feedback. Everything unknown terminates as `failed`.
+        return Response(
+            {
+                "status": "failed",
+                "progress": float(meta.get("progress", 0.0)),
+                "current": int(meta.get("current", 0)),
+                "total": int(meta.get("total", 0)),
+                "error": f"Task ended in state {state}",
             }
         )
 
@@ -2295,6 +2642,93 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
 from celery.result import AsyncResult  # noqa: E402
 from rest_framework.decorators import api_view, permission_classes  # noqa: E402
+
+# ============================================================================
+# Box-counting async run helpers (R3/D5 — judgment-day fix round A)
+# ============================================================================
+
+#: Synthetic result-backend id prefix for the per-study in-flight marker
+#: (JD-B-006). The marker lives in the Celery result backend, NOT Django
+#: cache: LocMemCache is per-process and invisible across the Gunicorn
+#: workers (spec-review B1/M1).
+_BC_INFLIGHT_PREFIX = "bc-inflight-"
+
+
+def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
+    """Return the id of the box-counting task currently in flight for
+    ``study``, or ``None`` (JD-B-006).
+
+    The marker is stamped at dispatch (see :func:`_stamp_bc_inflight_marker`)
+    and released by the task itself when it finishes. A marker whose
+    referenced task has already reached a terminal state (SUCCESS/FAILURE/
+    REVOKED) is stale and does NOT block a new run. Best-effort: any backend
+    failure degrades to "nothing in flight" — the guard must never break the
+    run path.
+    """
+    try:
+        marker = AsyncResult(f"{_BC_INFLIGHT_PREFIX}{study.id}")
+        if marker.state != "PROGRESS":
+            return None
+        meta = marker.info if isinstance(marker.info, dict) else {}
+        task_id = meta.get("task_id")
+        if not task_id:
+            return None
+        # Fix round 2 (fresh-pass JD-B-NEW-002): a worker hard death
+        # (SIGKILL/OOM) never runs the task's ``finally`` release and never
+        # reaches a terminal state, so the marker would block new runs until
+        # RESULT_EXPIRES. Stamp a wall-clock dispatch time and treat markers
+        # older than one hour as stale (generous vs the 30-min poller
+        # deadline and the 16-48 min worst-case run ceiling).
+        dispatched_at = meta.get("dispatched_at")
+        if isinstance(dispatched_at, (int, float)):
+            import time as _time
+
+            if _time.time() - float(dispatched_at) > 3600:
+                return None
+        if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
+            return None
+        return str(task_id)
+    except Exception:  # noqa: BLE001 — guard must never break the run path
+        logger.debug("box-counting in-flight marker check failed", exc_info=True)
+        return None
+
+
+def _stamp_bc_dispatch_meta(task: Any, total: int) -> None:
+    """Stamp the freshly dispatched task with initial PROGRESS meta (F2).
+
+    Surfaces the 202-time ``total`` to the status endpoint before the worker
+    picks the task up (the frontend learns ``total`` at 202 time; the status
+    endpoint must echo it instead of 0). Best-effort: the task re-stamps its
+    meta via ``update_state`` once it starts, and the final return value
+    lands under SUCCESS.
+    """
+    try:
+        task.backend.store_result(
+            task.id,
+            {
+                "current": 0,
+                "total": total,
+                "progress": 0.0,
+                # Fix round 2 (fresh-pass JD-B-NEW-002): wall-clock dispatch
+                # time for the stale-marker bound (worker hard death).
+                "dispatched_at": time.time(),
+            },
+            state="PROGRESS",
+        )
+    except Exception:  # noqa: BLE001 — stamping must never break dispatch
+        logger.debug("box-counting dispatch stamping skipped", exc_info=True)
+
+
+def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
+    """Stamp the per-study in-flight marker (JD-B-006). Best-effort."""
+    try:
+        task.backend.store_result(
+            f"{_BC_INFLIGHT_PREFIX}{study_id}",
+            {"task_id": task.id, "study_id": study_id},
+            state="PROGRESS",
+        )
+    except Exception:  # noqa: BLE001 — stamping must never break dispatch
+        logger.debug("box-counting in-flight marker stamping skipped", exc_info=True)
 
 
 @api_view(["GET"])
