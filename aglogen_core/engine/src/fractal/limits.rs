@@ -69,7 +69,7 @@ pub fn cross_2d(n_per_arm: usize) -> LimitCase {
     let n = n_per_arm;
     let mut pts: Vec<[f64; 3]> = Vec::new();
 
-    if !n.is_multiple_of(2) {
+    if n % 2 != 0 {
         // Odd case
         let ultima = n as f64 * 2.0 * r;
         // Horizontal spine
@@ -127,7 +127,7 @@ pub fn cross_2d(n_per_arm: usize) -> LimitCase {
 /// (matching MATLAB behaviour).
 pub fn asterisk(n_per_arm: usize) -> LimitCase {
     let r = 1.0;
-    let n = if n_per_arm.is_multiple_of(2) {
+    let n = if n_per_arm % 2 == 0 {
         n_per_arm + 1
     } else {
         n_per_arm
@@ -172,7 +172,7 @@ pub fn asterisk(n_per_arm: usize) -> LimitCase {
 /// If `n_per_arm` is even, it is silently incremented to odd.
 pub fn cross_3d(n_per_arm: usize) -> LimitCase {
     let r = 1.0;
-    let n = if n_per_arm.is_multiple_of(2) {
+    let n = if n_per_arm % 2 == 0 {
         n_per_arm + 1
     } else {
         n_per_arm

@@ -1,0 +1,5 @@
+# MSRV matching the Docker builder (backend/Dockerfile.worker: rust:1.80-slim-bookworm).
+# Prevents clippy from suggesting APIs stabilized after 1.80 (e.g.
+# manual_is_multiple_of / usize::is_multiple_of, stable in 1.87) which
+# break the Docker wheel build.
+msrv = "1.80"

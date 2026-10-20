@@ -1030,7 +1030,7 @@ fn run_dda(
 ) -> PyResult<PyOpticalResult> {
     let coords_flat: Vec<f64> = coordinates.as_slice()?.to_vec();
     let radii_vec: Vec<f64> = radii.as_slice()?.to_vec();
-    if !coords_flat.len().is_multiple_of(3) {
+    if coords_flat.len() % 3 != 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));
@@ -1073,7 +1073,7 @@ fn run_tmatrix(
 ) -> PyResult<PyOpticalResult> {
     let coords_flat: Vec<f64> = coordinates.as_slice()?.to_vec();
     let radii_vec: Vec<f64> = radii.as_slice()?.to_vec();
-    if !coords_flat.len().is_multiple_of(3) {
+    if coords_flat.len() % 3 != 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));
@@ -1575,7 +1575,7 @@ fn structure_factor(
     q_max: f64,
     n_q: usize,
 ) -> PyResult<(Vec<f64>, Vec<f64>)> {
-    if !coordinates.len().is_multiple_of(3) {
+    if coordinates.len() % 3 != 0 {
         return Err(pyo3::exceptions::PyValueError::new_err(
             "coordinates must have length divisible by 3",
         ));
