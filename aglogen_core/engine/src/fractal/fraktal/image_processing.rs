@@ -416,7 +416,7 @@ pub fn estimate_particle_count_adaptive(binary: ArrayView2<bool>) -> (usize, f64
     let estimated_radius = if all_distances.len() >= 2 {
         // Use median over ALL peaks
         let mid = all_distances.len() / 2;
-        if all_distances.len().is_multiple_of(2) {
+        if all_distances.len() % 2 == 0 {
             (all_distances[mid - 1] + all_distances[mid]) / 2.0
         } else {
             all_distances[mid]
