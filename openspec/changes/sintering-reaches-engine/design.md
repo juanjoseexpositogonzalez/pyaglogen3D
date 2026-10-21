@@ -5,7 +5,25 @@
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
 > `DD1`…`DD5` son las **decisiones de diseño** de este documento.
 
-## DD1 — Una sola regla de forma, aplicada en las cinco superficies
+## DD0 — La garantía vive en el cuello de botella, no en la lista
+
+**Decisión.** El invariante de R11 se enuncia y se hace cumplir en la **única función que
+construye los parámetros de un hijo**. Verificado que existe: `views.py:1867` pasa los casos
+límite por `create_simulation`, igual que las combinaciones del grid, y los extremos teóricos
+son casos límite. Todos los hijos de la expansión pasan por ahí.
+
+**Por qué.** Dos rondas de revisión refutaron dos enumeraciones de superficies (tres, luego
+cinco, luego una sexta). Una lista de entradas sólo garantiza lo que la lista contiene; el
+invariante de salida garantiza también lo que no supe enumerar.
+
+**Qué sigue haciendo la lista.** Dar un 400 útil antes de escribir nada (R12). Un fallo del
+invariante en el chokepoint es un error de programación, no de usuario: si el usuario pudo
+provocarlo, es que falta una superficie en la capa de entrada, y ese es el síntoma que hay que
+arreglar.
+
+**Alternativa descartada.** Seguir alargando la lista. Es lo que ya falló dos veces.
+
+## DD1 — Una sola regla de forma, aplicada en las seis superficies
 
 **Decisión.** `validate_sintering_config` (`serializers.py:360`) pasa a exigir, sobre un dict
 **no vacío**:
@@ -15,25 +33,36 @@
    `normal`→`mean`,`std`);
 3. ninguna clave fuera de `{distribution_type, coefficient, min, max, mean, std}`.
 
-Se invoca sobre las **cinco** superficies (R3): la entrada de grid, el campo de estudio,
-`base_parameters["sintering_config"]`, y los **escalares planos** `sintering_*` tanto en
-`base_parameters` como en `parameter_grid`. Hoy las tres últimas no las valida nadie.
+Se invoca sobre las **seis** superficies de R3: las tres de clave `sintering_config` (grid,
+campo de estudio y `base_parameters`), los **escalares planos** en `base_parameters` y en
+`parameter_grid`, y los de `limiting_cases_config.theoretical_extremes`. Hoy las cuatro
+últimas no las valida nadie.
 
 **Por qué cinco y no tres.** La primera versión de este diseño mapeaba por nombre de clave; el
 worker lee escalares planos (`tasks.py:1592-1598`), así que una regla escrita sólo para
 `sintering_config` deja la puerta abierta. Verificado: `fracval` +
 `base_parameters={"sintering_coeff":0.8}` pasaba todas las reglas de la versión anterior.
 
-**Escalares planos.** Claves aceptadas: `sintering_type`, `sintering_coeff`, `sintering_min`,
-`sintering_max`, `sintering_std`, con los mismos rangos. Cualquier otra `sintering_*` se
-rechaza, en particular `sintering_mean`, que no tiene lector.
+**Escalares planos.** Tienen su **propia** tabla de campos requeridos por tipo (R3), no "los
+mismos rangos" del dict: `fixed`→`sintering_coeff`; `uniform`→`sintering_min`,`sintering_max`;
+`normal`→`sintering_coeff` (que hace de media) y `sintering_std`, con `0 < std <= 0.2`.
+Cualquier otra `sintering_*` se rechaza, en particular `sintering_mean`, que no tiene lector.
 
-**Precedencia.** `views.py:1804` popea `sintering_config` del dict **ya fusionado**
-(`dict(base_parameters) | combo`), así que `base_parameters` gana al campo de estudio. El orden
-real, verificado con probe, es `grid > base_parameters > estudio > default`, y así queda
-escrito en R3. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
+**Un `sintering_coeff` plano sin `sintering_type` significa `fixed`.** No es una concesión:
+es lo que envía el formulario en **todos** los envíos de `limiting` (`BatchSimulationForm.tsx:220`),
+y exigir el tipo convertiría cada uno de ellos en un 400.
+
+**Precedencia, por forma.** Entre los **dicts**, `views.py:1804` popea `sintering_config` del
+dict ya fusionado (`dict(base_parameters) | combo`), así que el orden es
+`grid > base_parameters > estudio > default`. Entre los **planos** gana el último que escribe
+en el orden de expansión. Y cualquier dict que aplique gana a todos los planos. La versión
+anterior daba un solo orden de cuatro niveles como si valiera para ambas formas: no vale. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
 exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
-sobrevive. Eso cierra también el paso del `sintering_mean` legado.
+sobrevive. **Esa limpieza la hace `apply_sintering_config`**, que es quien sabe que un dict
+aplica a ese hijo; no el serializer, porque limpiar en el serializer afectaría también a los
+hijos de casos límite, que copian `base_parameters` y nunca reciben el dict del grid
+(`utils.py:185-203`) — les cambiaría la física. Eso cierra también el paso del `sintering_mean`
+legado.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en
 el campo de estudio y en `base_parameters`. En una entrada de `parameter_grid` se **rechazan**:
@@ -118,7 +147,8 @@ allow-list: lo no listado se rechaza. Una denylist dejaba `imported` sin definir
 La regla se aplica a las **cinco** superficies: ofrecer o aceptar un sinterizado que el engine
 va a ignorar es la misma mentira que este change elimina. En particular, el barrido plano
 `sintering_coeff` que el formulario ofrece para `limiting` (`BatchSimulationForm.tsx:293`) es
-su única entrada de sinterizado y pasa a validarse con los mismos rangos.
+una de sus dos entradas de sinterizado — la otra es el campo "Base Sintering Coeff."
+(`:409-418`), que se envía siempre (`:220`) — y ambas pasan a validarse.
 
 **Cambio de algoritmo en el formulario.** `setAlgorithm` (`BatchSimulationForm.tsx:358`) no
 resetea `variations`: tras T6.2 un usuario puede configurar sinterizado en `ballistic`, cambiar

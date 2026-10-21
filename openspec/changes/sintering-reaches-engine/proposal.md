@@ -24,12 +24,30 @@ Cada afirmación está verificada con probe ejecutada o grep, anclada en el mapa
 | **D5b** | Hay **superficies de entrada sin validar**: `base_parameters.sintering_config` y, sobre todo, los **escalares planos** `sintering_*` tanto en `base_parameters` como en `parameter_grid` | probes: `base_parameters={"sintering_config":{"distribution_type":"fixed"}}` → 201 y `sintering_coeff = 1.0`; `base_parameters={"sintering_coeff":0.6,...}` → ACEPTADO; `parameter_grid={"sintering_coeff":[-5.0, 42.0]}` → ACEPTADO |
 | **D6** | La UI ofrece barrido de sinterizado para `fracval`, `gcca` y `box_rfa`, cuyas llamadas al engine **no reciben ningún kwarg de sinterizado** | `tasks.py:1729,1740,1781` sin `sintering_coeff=` |
 
-## Las cinco superficies de entrada
+## Dónde se enuncia la garantía, y por qué
 
-La primera versión de este contrato decía "tres". Era falso, y el error de método merece
-quedar escrito: **mapeé por nombre de clave (`sintering_config`) en vez de por lo que lee el
-consumidor.** El worker lee **escalares planos** (`tasks.py:1592-1598`), y esos entran por dos
-puertas más que ninguna regla vigilaba.
+La primera versión de este contrato decía "tres superficies". La segunda decía "cinco". Las
+dos eran falsas, y la segunda revisión encontró una **sexta**:
+`limiting_cases_config.theoretical_extremes` es un dict del usuario cuyas claves se escriben
+**literalmente** en los parámetros de cada hijo (`utils.py:199-203`) y cuyo contenido no mira
+ningún validador. Verificado: `{"sintering_coeff":[42.0], "sintering_mean":[0.9]}` → 201, y el
+hijo se lleva ambas.
+
+**Enumerar superficies ha fallado dos veces, así que deja de ser la fuente de la garantía.**
+Una lista sólo vale lo que valga la imaginación del siguiente lector. Lo que sí se puede
+sostener es que **todos los hijos de la expansión se construyen en una sola función**:
+combinaciones del grid, casos límite y extremos teóricos pasan igual por `create_simulation`
+(`views.py:1867`). Verificado.
+
+De ahí el reenfoque de R11: la garantía se enuncia como **invariante del hijo en ese cuello de
+botella** — sus claves de sinterizado están dentro del conjunto que el worker lee y forman una
+forma completa y en rango, venga de donde venga. La lista de superficies se conserva, pero con
+el papel que le corresponde: decir dónde hay que devolver un 400 útil antes de escribir nada
+(R3 y R12), no sostener la promesa.
+
+El error de método original merece quedar escrito: **mapée por nombre de clave
+(`sintering_config`) en vez de por lo que lee el consumidor.** El worker lee **escalares
+planos** (`tasks.py:1592-1598`).
 
 | # | Superficie | Forma | Validada hoy |
 | --- | --- | --- | --- |
@@ -38,13 +56,18 @@ puertas más que ninguna regla vigilaba.
 | 3 | `base_parameters["sintering_config"]` | dict de dominio | **no** |
 | 4 | `base_parameters["sintering_*"]` | escalares planos | **no** |
 | 5 | `parameter_grid["sintering_*"]` | escalares planos, barridos | **no** |
+| 6 | `limiting_cases_config.theoretical_extremes["sintering_*"]` | escalares planos, barridos | **no** |
 
 Lo que eso significa, verificado con probe propia:
 
 - **La allow-list por algoritmo se burla en una línea**: `fracval` + `base_parameters={"sintering_coeff":0.8}` pasa todas las reglas y aterriza en D6 por la otra puerta.
 - **Un `sintering_mean` heredado pasa tal cual**, violando el conjunto de claves con lector.
-- Para `limiting`, el desplegable del formulario ofrece `sintering_coeff` como **barrido plano**
-  (`BatchSimulationForm.tsx:293`): es su única entrada de sinterizado y acepta `-5.0` y `42.0`.
+- Para `limiting` hay **dos** entradas de sinterizado, no una: el barrido plano del desplegable
+  (`BatchSimulationForm.tsx:294`) y un campo dedicado "Base Sintering Coeff." (`:409-418`) que
+  se envía como `base_parameters.sintering_coeff` en **todos** sus envíos (`:220`). La segunda
+  es la que siempre aplica, y ninguna se valida hoy.
+- Un `sintering_coeff` plano **sin** `sintering_type` significa `fixed`: así lo envía el
+  formulario de `limiting`, y rechazarlo rompería su única entrada.
 
 **Precedencia real** (también distinta de lo que decía la primera versión): `views.py:1804`
 popea `sintering_config` del dict ya fusionado, así que `base_parameters` **gana al campo de
@@ -60,6 +83,13 @@ Explícitamente, y cada uno con su contrato en la cadena:
 
 - **D1, D3, D8** (las claves `kf_distribution` y `particle_radius_config`: forma `{mode}`,
   cableado al engine, semántica honesta) → `distribution-grid-wiring`.
+- **Las rutas de simulación individual** (`POST`/`PATCH` de `/simulations/`) aceptan claves de
+  sinterizado arbitrarias, incluidas `sintering_mean` y valores fuera de rango. R11 acota su
+  invariante a los hijos creados por **expansión de estudio**; esas rutas pertenecen al change
+  del formulario single.
+- **El admin de Django** (`apps/simulations/admin.py:6-31`) expone los JSONField sin
+  `readonly_fields`, así que permite editar `parameters` de un hijo existente saltándose el
+  serializer. No crea hijos, así que no puede producir expansiones; declarado, no arreglado.
 - **D9** (la herramienta del asistente IA crea estudios por ORM sin validar ni traducir) →
   `study-expansion-single-source`. **Este change no la arregla**: un estudio creado por esa
   ruta con sinterizado sigue sin pasar por la validación. Queda declarado, no silenciado.
@@ -83,10 +113,11 @@ Explícitamente, y cada uno con su contrato en la cadena:
 
 ### Modified Capabilities
 
-- `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (forma del sinterizado, rechazo
-  explícito, las tres superficies) y R10 **sólo en su fila de sinterizado** (alcance por
-  algoritmo y forma del payload); **ADDED** R11 (el sinterizado llega al engine) y R12
-  (integridad de la expansión). Delta en `specs/`.
+- `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, seis superficies
+  de entrada, precedencia por forma, rechazo explícito), **R7** (carve-out: la compatibilidad
+  hacia atrás no ampara sinterizado malformado) y R10 **sólo en su fila de sinterizado**;
+  **ADDED** R11 (invariante del hijo en el cuello de botella, más alcance por algoritmo) y
+  R12 (integridad de la expansión). Delta en `specs/`.
 
 El restatement de R10 conserva literalmente lo que el canónico dice de las otras tres opciones:
 `distribution-grid-wiring` las reescribirá sobre el canónico ya archivado por este change.
