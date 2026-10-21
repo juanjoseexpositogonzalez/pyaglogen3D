@@ -77,3 +77,6 @@ scripts/
 # Local agent state (Engram/SDD client data)
 .atl/
 .venv/
+
+# CodeGraph local index
+.codegraph/
