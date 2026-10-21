@@ -6,8 +6,13 @@
 > (`CORRECTIONS REQUIRED — 3 blockers, 8 majors`) demostró que una de las evidencias de r2 era
 > **falsa** y que tres tests rotos seguían sin declarar.
 >
-> Decisiones de la persona: **alcance A** ampliado a D5, D6, D7 y D8; **fix-forward** sin
-> marcado retroactivo; polidispersidad real a **change de seguimiento**.
+> La **spec-review r3** (`1 blocker, 3 majors`) encontró una segunda puerta de entrada que el
+> contrato ignoraba y una contradicción con un requisito canónico que no estaba en la lista de
+> MODIFIED.
+>
+> Decisiones de la persona: **alcance A** ampliado a D5, D6, D7, D8 y, tras la r3, **D9**
+> (ruta del asistente IA); **fix-forward** sin marcado retroactivo; polidispersidad real a
+> **change de seguimiento**.
 
 ## Intent
 
@@ -30,6 +35,18 @@ completo, no por lectura.
 | **D6** | La UI ofrece barrido de sinterizado para `fracval`, `gcca` y `box_rfa`, cuyas llamadas al engine **no reciben ningún kwarg de sinterizado**. Lo mismo vale para el `sintering_config` **de estudio**, que se aplica a todos los hijos sin mirar el algoritmo (`views.py:1806-1808`) | `tasks.py:1705,1738,1752` sin `sintering_coeff=` |
 | **D7** | Combinar casos límite con entradas de distribución revienta: `generate_limiting_cases` hace `sorted(values)` sobre dicts (`utils.py:178`) | `TypeError: '<' not supported between instances of 'dict' and 'dict'` |
 | **D8** | `particle_radius_config` se ofrece como "polidispersidad", pero `tunable_cc` es **monodisperso por construcción** | `tunable_cc.rs:1121-1128`: `radius_min = dpo_used, radius_max = dpo_used, // monodisperse per run` |
+| **D9** | **Hay una segunda puerta de entrada.** La herramienta del asistente IA crea estudios y sus hijos **directamente por ORM**, sin pasar por el serializer ni por la expansión de la vista: se salta la validación, la traducción a parámetros de engine, `apply_sintering_config` y hasta el `seed_type` → campo de modelo | `apps/ai_assistant/tools/study_tools.py:144` (`ParametricStudy.objects.create`) y `:165` (`Simulation.objects.create`), registrada en `tools/registration.py:45,87` |
+
+**D9 significa que D3 sobreviviría intacto en una ruta alcanzable por el usuario** si el
+contrato sólo arreglase la ruta REST: un estudio creado por el asistente con
+`particle_radius_config` seguiría guardando la clave en crudo y el engine seguiría sin verla.
+Por decisión de la persona (2026-10-21), esta ruta **entra en el alcance**: las dos puertas
+quedan cubiertas por R11 y R12.
+
+El repositorio ya tiene precedente de exactamente esta corrección: `study_tools.py:103-118`
+enruta `box_counting_params` por el validador compartido de la API tras el hallazgo JD-A-006,
+"so a tool call cannot persist junk straight to the ORM". D9 es el mismo problema con las
+claves de distribución.
 
 **D5 es el hallazgo más grave de la spec-review r1.** Sin él, este contrato bendecía una forma
 de sinterizado que seguía produciendo "sin sinterizado" en silencio: el mismo defecto D2 una
@@ -58,6 +75,10 @@ primaria entre hijos**, no la dispersión dentro de un agregado (canónica
   `tunable_cc` (`SimulationForm.tsx:716-718` y, si el modo no es `fixed`, el propio engine).
   Change de seguimiento `polydispersity-single-source`.
 - **Polidispersidad real en batch** — change de seguimiento (decisión de la persona).
+- **Las otras divergencias de la herramienta del asistente IA**: su tope propio de 10 000
+  simulaciones frente al de 1 000 del serializer (`serializers.py:_BATCH_HARD_CAP`), y su
+  propio `_generate_parameter_combinations`. Este change le impone la validación y la
+  traducción de las claves de distribución (D9), no unifica toda su superficie.
 - **Asimetrías del formulario single**, ambas gemelas de defectos que aquí sí se corrigen:
   `SimulationSerializer` acepta `dpo_distribution`/`target_kf_distribution` para cualquier
   algoritmo (`serializers.py:101-110`), y `SimulationForm.tsx:688-695` envía `sintering_*` para
@@ -76,7 +97,7 @@ esconderlo, y su test compartido se declara en T6.6.
 
 ## Decisión de vocabulario
 
-Hoy conviven **cinco** deletreos del mismo concepto repartidos en cuatro capas:
+Hoy conviven **tres** deletreos del mismo concepto repartidos en cinco sitios:
 
 | Capa | Clave discriminadora |
 | --- | --- |
@@ -127,7 +148,18 @@ D2 y D5 cambian el comportamiento a propósito. **Los resultados batch anteriore
 `sintering_config`, y los de cualquier estudio con sinterizado `normal`, no son lo que sus
 parámetros dicen**; consta en el comentario de entrega de Jira.
 
-Para `kf_distribution` y `particle_radius_config` no hay datos históricos creados desde la
-aplicación: la UI nunca consiguió crearlos (400). Un cliente que llame a la API directamente sí
-pudo almacenarlos con la forma antigua; esos estudios quedarán no editables (cualquier
+Para `kf_distribution` y `particle_radius_config` no hay datos históricos creados desde el
+**formulario**: la UI nunca consiguió crearlos (400). Sí pudieron crearlos un cliente directo
+de la API (con la forma `{distribution_type:…}`) y la herramienta del asistente IA (con
+cualquier forma, al saltarse la validación). Esos estudios quedarán no editables (cualquier
 PUT/PATCH revalida y devuelve 400). Se acepta como fix-forward.
+
+Dos efectos menores y deliberados, enumerados para que esta sección sea completa:
+
+- El export CSV (`views.py:2267-2271`) escribe las columnas `Sintering_Type`/`Sintering_Coeff`
+  desde `sim.parameters`. En estudios `normal` hoy imprime el `1.0` por defecto, porque sólo
+  se escribía `sintering_mean`; tras DD4 imprimirá la media real. Es el comportamiento
+  correcto, y cambia lo que ve quien compare exports antiguos con nuevos.
+- `particle_radius_config` con modo `uniform` se **acepta hoy** por la API (el canónico nunca
+  lo permitió, pero la validación no lo impedía) y R2.4 pasa a rechazarlo. Afecta sólo a
+  clientes directos de la API; la UI nunca lo ofreció.

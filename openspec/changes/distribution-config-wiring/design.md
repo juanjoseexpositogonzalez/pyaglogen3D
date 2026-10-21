@@ -2,7 +2,7 @@
 
 > Decisiones de implementación del contrato. Anclas verificadas sobre `develop` @ `8423c4f`.
 >
-> **Nomenclatura**: `D1`…`D8` son los **defectos** (ver `proposal.md`); `DD1`…`DD8` son las
+> **Nomenclatura**: `D1`…`D9` son los **defectos** (ver `proposal.md`); `DD1`…`DD9` son las
 > **decisiones de diseño** de este documento.
 
 ## DD1 — Un solo validador para distribuciones `{mode}`
@@ -116,8 +116,9 @@ que hoy funciona, para acomodar una clave que nadie más usa.
 
 ## DD5 — Cableado grid key → kwargs de engine (D3)
 
-**Decisión.** La traducción ocurre en `create_simulation` (`views.py:1784`), donde ya viven las
-otras dos (`seed_type` → campo de modelo, `sintering_config` → parámetros):
+**Decisión.** La traducción ocurre en el helper compartido de DD9, invocado desde
+`create_simulation` (`views.py:1784`), donde ya viven las otras dos (`seed_type` → campo de
+modelo, `sintering_config` → parámetros):
 
 ```text
 particle_radius_config  →  dpo_distribution
@@ -186,8 +187,9 @@ defecto preexistente alcanzable por clientes directos de la API, que adoptamos a
 superficie.
 
 **Alcance verificado.** `generate_limiting_cases` se invoca sólo desde `views.py:1859` (más
-tests); la rama de extremos teóricos (`utils.py:196-206`) itera `THEORETICAL_EXTREMES`, nunca
-el grid, así que no puede sufrir el fallo. El único punto de caída es `sorted(values)`.
+tests); la rama de extremos teóricos (`utils.py:194-203`) itera `THEORETICAL_EXTREMES`, nunca
+el grid, así que no puede sufrir el fallo. El único punto de caída es `sorted(values)` dentro
+del bloque de fronteras (`utils.py:176-192`).
 
 ## DD8 — Nombrar lo que la cosa hace (D8)
 
@@ -206,6 +208,46 @@ lo que configura. Lo que miente es el paréntesis de la etiqueta.
 **Polidispersidad real**: fuera de alcance por decisión de la persona, con change de
 seguimiento. El único algoritmo que la implementa es FracVAL (`fracval.rs:108-121`).
 
+## DD9 — Una sola expansión para las dos puertas de entrada (D9)
+
+**Problema.** Hay dos caminos que crean estudios y sus hijos:
+
+| Camino | Validación | Traducción |
+| --- | --- | --- |
+| API REST: `ParametricStudyViewSet.perform_create` → `create_simulation` (`views.py:1784`) | `ParametricStudySerializer.validate()` | sí (tras DD5) |
+| Asistente IA: `create_parametric_study_handler` (`study_tools.py:144,165`) | **ninguna** | **ninguna** |
+
+El segundo escribe en el ORM directamente. Arreglar sólo el primero dejaría D3 vivo en una
+ruta alcanzable.
+
+**Decisión.** Extraer a `apps/simulations/services/study_expansion.py` dos funciones puras,
+consumidas por **ambos** caminos:
+
+1. `validate_grid_for_algorithm(parameter_grid, algorithm, sintering_config)` — la allow-list
+   de R11 y las reglas de forma de R1/R2/R3. La invoca `ParametricStudySerializer.validate()`
+   y la invoca el handler de la herramienta.
+2. `build_child_parameters(base_parameters, combo, study_sintering_config)` — la traducción de
+   DD5, `apply_sintering_config` y el pop de `seed_type`, devolviendo los parámetros del hijo
+   y el valor de `seed_type`.
+
+**Por qué extraer y no duplicar.** Dos copias de la regla es precisamente el mecanismo que
+produjo D1 (dos validadores de forma) y D3 (dos vocabularios). Una regla, un sitio.
+
+**Precedente del propio repositorio.** `study_tools.py:103-118` ya enruta
+`box_counting_params` por `validate_box_counting_params_dict`, el validador compartido de la
+API, tras el hallazgo JD-A-006: *"so a tool call cannot persist junk straight to the ORM"*.
+DD9 aplica el mismo patrón a las claves de distribución.
+
+**Efecto colateral declarado.** Al pasar por `build_child_parameters`, la ruta del asistente
+gana también el pop de `seed_type` → campo de modelo, que hoy se salta (el hijo queda con el
+`seed_type` por defecto y la clave suelta en `parameters`). Es un defecto preexistente de esa
+ruta, distinto de los nuestros; se corrige por venir incluido en el helper compartido, y se
+declara aquí en vez de aparecer sin explicación en el diff.
+
+**Fuera de esta decisión.** El tope de 10 000 simulaciones del handler frente a los 1 000 del
+serializer, y su `_generate_parameter_combinations` propio. Unificar toda la superficie de la
+herramienta es otro trabajo.
+
 ## Riesgos
 
 - **Cambio de comportamiento deliberado (D2, D5).** Un estudio batch que "funcionaba" con
@@ -218,6 +260,14 @@ seguimiento. El único algoritmo que la implementa es FracVAL (`fracval.rs:108-1
   en `PATCH` sin `base_algorithm`, la regla de DD6 se evalúa contra
   `self.instance.base_algorithm`. Especificado en R11.5.
 - **Componente compartido.** T6.4 toca `DistributionSelector.tsx`, usado también por el
-  formulario single; declarado como excepción explícita en `proposal.md`.
+  formulario single; declarado como excepción explícita en `proposal.md`. El rango que
+  proponga por defecto para `uniform` debe cumplir **a la vez** `min < max` (exigido por
+  `fields.py:59` para dpo/kf) y `0.5 <= min,max <= 1.0` (exigido por `serializers.py:382-385`
+  para el sinterizado), porque el mismo componente alimenta las tres opciones y su valor base
+  es `1.0` (`DistributionGridInput.tsx:17`). Un `max = base * 1.2` cumpliría lo primero y
+  produciría un 400 en el sinterizado sin que el usuario tocase nada: el fallo exacto que este
+  change abole.
+- **Dos puertas de entrada.** Tras DD9 la regla vive en un helper compartido; cualquier tercer
+  camino que cree hijos por ORM volvería a abrir el mismo agujero.
 - **Sin CI.** `.github/workflows/` está vacío; toda la verificación es local, y la suite de
   backend tiene un rojo preexistente documentado en T7.1.

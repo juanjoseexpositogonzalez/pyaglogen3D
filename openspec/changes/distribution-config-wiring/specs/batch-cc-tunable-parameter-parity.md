@@ -3,10 +3,14 @@
 > Los bloques MODIFIED son **restatements completos** (lección del ciclo 2): sustituyen al
 > requisito canónico entero.
 >
-> ## Inventario completo de cambios respecto al canónico
+> ## Inventario de cambios respecto al canónico
 >
-> Ninguna garantía canónica desaparece en silencio. Las ocho entradas siguientes son la lista
-> exhaustiva.
+> Ninguna garantía canónica desaparece en silencio. Esta lista cubre **todo punto en que el
+> canónico y la delta se contradicen**, más los endurecimientos y relajaciones deliberados.
+> No pretende inventariar cada requisito nuevo: los MUST que la delta añade sin contrapartida
+> canónica (forma del payload, defaults válidos en R10; campos por tipo, claves desconocidas y
+> entrada vacía en R3; rechazo de `null`, claves desconocidas y persistencia normalizada en
+> R1) viven en sus requisitos y se leen allí.
 >
 > **Divergencias que la implementación nunca siguió** (el canónico describe algo que no existe):
 >
@@ -34,16 +38,24 @@
 > **Cambios de garantía deliberados, consecuencia del defecto D3** (el canónico afirmaba lo
 > contrario y era justamente el defecto):
 >
-> 8. R1.1 canónico exigía que el hijo conservara su objeto `kf_distribution`, y R2.3 que
->    conservara `particle_radius_config`. Ahora se exige lo contrario: el hijo recibe
->    **solo** la clave de engine (R11). Eso es la corrección de D3, no una pérdida.
+> 8. R1.1 canónico exigía que el hijo conservara su objeto `kf_distribution`, **R5.2** que lo
+>    conservara en el caso de clave de valor único, y R2.3 que conservara
+>    `particle_radius_config`. Ahora se exige lo contrario en los tres: el hijo recibe **solo**
+>    la clave de engine (R11). Eso es la corrección de D3, no una pérdida. Por eso **R5 entra
+>    en el bloque MODIFIED**: sin restatement, el canónico archivado afirmaría en R5.2 una
+>    clave que R11 prohíbe.
+> 9. R10 canónico (`:283`) exige literalmente la opción *"Particle radius (polydispersity)"* y
+>    ordena las cuatro opciones **sin condición de algoritmo**. La delta renombra la etiqueta
+>    (D8) y condiciona tres de las cuatro por algoritmo (D6). Es el cambio visible de la UI.
 >
 > **Escenarios retirados o renumerados:**
 >
 > - R1.2 canónico (atajo escalar) **se retira**; su identificador NO se reutiliza. El escenario
 >   nuevo de rechazo de la forma antigua es R1.6.
 > - R10.3 canónico (no-regresión de parámetro escalar) **se conserva** con su significado y su
->   número; los escenarios nuevos son R10.4 a R10.7.
+>   número; los escenarios nuevos son R10.4 a R10.8.
+> - R5.1, R5.3, R5.4 y R5.5 canónicos **se conservan íntegros**; sólo R5.2 cambia su cláusula
+>   final.
 
 ## MODIFIED Requirements
 
@@ -70,6 +82,10 @@ Esta clave SOLO es válida para los algoritmos que R11 permite.
 
 La expansión DEBE producir un sim hijo por entry x `seeds_per_combination`, y cada hijo DEBE
 recibir la configuración traducida a `target_kf_distribution` (R11).
+
+Las reglas de rechazo de este requisito (no-dict, `null`, campos ausentes, claves desconocidas)
+son las mismas que aplica R2; ninguno de los dos requisitos delega en el otro: ambos las
+enuncian.
 
 #### Scenario R1.1 — Happy path: dos normales expanden correctamente
 
@@ -122,10 +138,13 @@ configuraciones del **tamaño de partícula primaria (dpo)** en la forma canóni
 | `{mode: "fixed", value}` | `value > 0` |
 | `{mode: "normal", mean, std}` | `mean > 0`, `std > 0`, `std/mean <= 0.3` |
 
-El modo `uniform` NO se acepta en esta clave. La cota `std/mean <= 0.3` se conserva del
-canónico: con el truncado `μ±3σ` del engine (`dpo_distribution.rs:57-74`) garantiza radios
-positivos. Se aplican las mismas reglas de rechazo que R1 (no-dict, `null`, campos ausentes,
-claves desconocidas).
+El modo `uniform` NO se acepta en esta clave (hoy la API lo acepta, aunque el canónico nunca lo
+permitió). La cota `std/mean <= 0.3` se conserva del canónico: con el truncado `μ±3σ` del
+engine (`dpo_distribution.rs:57-74`) garantiza radios positivos.
+
+Un entry DEBE rechazarse con 400 cuando: no sea un dict (incluido `null`); su `mode` no esté
+entre los permitidos; falte un campo requerido por ese modo; o contenga claves desconocidas
+para ese modo. Lo que se persiste es la salida normalizada del validador.
 
 **Semántica (alineada con la canónica `cc-tunable-aggregation` R12, que este change NO
 modifica):** el engine muestrea **un** valor de dpo por ejecución y fija
@@ -186,8 +205,13 @@ Cualquier violación DEBE producir 400.
 
 **Una entrada vacía `{}` en `parameter_grid.sintering_config` DEBE rechazarse con 400.** La
 exención que devuelve los parámetros intactos ante `None` o `{}` aplica SOLO al
-`sintering_config` de estudio, donde significa "este estudio no configura sinterizado". Dentro
-del grid sería un punto del barrido que corre sin sinterizado sin declararlo.
+`sintering_config` **de estudio**, donde significa "este estudio no configura sinterizado" y
+DEBE seguir aceptándose. Dentro del grid sería un punto del barrido que corre sin sinterizado
+sin declararlo.
+
+La validación DEBE por tanto distinguir sus dos contextos de llamada: como validador del campo
+de estudio acepta `None` y `{}`; como validador de una entrada de `parameter_grid` los
+rechaza. El resto de las reglas es idéntico en ambos.
 
 Complementariamente, `apply_sintering_config` DEBE lanzar un error ante un dict no vacío que
 incumpla lo anterior, **incluido un `distribution_type` desconocido**, en lugar de propagarlo
@@ -235,6 +259,7 @@ Esta clave SOLO es válida para los algoritmos que R11 permite.
 - **THEN** 400 identificando el campo `coefficient` ausente
 - **AND** lo mismo para `{distribution_type:"uniform"}` sin `min`/`max` y `{distribution_type:"normal"}` sin `mean`/`std`
 - **AND** `parameter_grid = {sintering_config: [{}]}` produce 400
+- **AND** un `sintering_config` **de estudio** igual a `{}` o a `null` se sigue aceptando
 
 #### Scenario R3.7 — El helper no inventa un default
 
@@ -244,6 +269,45 @@ Esta clave SOLO es válida para los algoritmos que R11 permite.
 - **AND** NO devuelve `{"sintering_type": "fixed", "sintering_coeff": 1.0}`
 - **AND** `apply_sintering_config(params, {"distribution_type":"lognormal", "mean":0.9, "std":0.1})` lanza igualmente
 - **AND** `apply_sintering_config(params, None)` y `apply_sintering_config(params, {})` siguen devolviendo los parámetros intactos
+
+---
+
+### Requirement: R5 — Combinatorial Expansion Semantics
+
+La expansión DEBE ser el producto cartesiano de todas las claves de `parameter_grid` x
+`seeds_per_combination`. El orden de iteración de claves DEBE ser alfabético, para una
+expansión determinista.
+
+#### Scenario R5.1 — Producto cruzado multi-clave
+
+- **GIVEN** `parameter_grid = {kf_distribution: [d1, d2], seed_type: ["monomers", "dimers"]}` y `seeds_per_combination = 3`
+- **WHEN** se crea el ParametricStudy
+- **THEN** se crean 12 sims hijos (2 x 2 x 3)
+
+#### Scenario R5.2 — Una clave de valor único es la identidad
+
+- **GIVEN** `parameter_grid = {kf_distribution: [d1]}` y `seeds_per_combination = 5`
+- **WHEN** se crea el ParametricStudy
+- **THEN** 5 sims hijos (1 x 5), cada uno con `target_kf_distribution = d1`
+- **AND** ninguno conserva la clave `kf_distribution` en `parameters` (R11)
+
+#### Scenario R5.3 — Array vacío en una clave rechazado
+
+- **GIVEN** `parameter_grid = {kf_distribution: []}`
+- **WHEN** el serializer valida
+- **THEN** 400 (se requiere al menos una entrada por clave)
+
+#### Scenario R5.4 — Mezcla de claves antiguas y nuevas
+
+- **GIVEN** `parameter_grid = {n_particles: [100, 350], seed_type: ["dimers", "trimers"]}` y `seeds_per_combination = 1`
+- **WHEN** se crea el ParametricStudy
+- **THEN** 4 sims hijos (2 x 2 x 1), cada uno con su `n_particles` correcto Y su campo de modelo `seed_type` correcto
+
+#### Scenario R5.5 — Semilla RNG única por hijo
+
+- **GIVEN** cualquier grid multi-combinación
+- **WHEN** se crean los sims hijos
+- **THEN** cada hijo recibe una semilla RNG única
 
 ---
 
@@ -270,7 +334,9 @@ El payload enviado DEBE usar la forma que acepta la API: `{mode, …}` para `kf_
 (traducción en una única función pura).
 
 Los valores por defecto que proponga la UI DEBEN ser válidos para la API sin edición previa del
-usuario.
+usuario, **para las tres opciones de distribución**. El componente selector es compartido, así
+que un rango propuesto para `uniform` debe cumplir a la vez `max > min` (R1) y permanecer
+dentro de `[0.5, 1.0]` cuando alimenta a `sintering_config` (R3).
 
 #### Scenario R10.1 — Seleccionar kf distribution muestra DistributionGridInput
 
@@ -303,7 +369,8 @@ usuario.
 - **WHEN** el usuario abre el desplegable de parámetro a variar
 - **THEN** NO aparecen "kf distribution" ni "Primary particle size (dpo)"
 - **AND** sí aparece "Sintering coefficient distribution"
-- **AND** con `fracval`, `gcca` o `box_rfa` tampoco aparece "Sintering coefficient distribution"
+- **AND** con `fracval`, `gcca`, `box_rfa` o `imported` tampoco aparece "Sintering coefficient distribution"
+- **AND** con `limiting` el desplegable mantiene su lista propia, sin ninguna de las cuatro opciones
 
 #### Scenario R10.6 — El payload de sinterizado usa la forma de dominio
 
@@ -317,6 +384,13 @@ usuario.
 - **GIVEN** el algoritmo es `tunable_cc` y el usuario añade una variación de `kf_distribution`
 - **WHEN** cambia el modo a `uniform` y envía el formulario sin editar los valores propuestos
 - **THEN** el payload cumple `max > min` y la API lo acepta
+
+#### Scenario R10.8 — El default de uniform también vale para el sinterizado
+
+- **GIVEN** el algoritmo es `ballistic` y el usuario añade una variación de `sintering_config`
+- **WHEN** cambia el modo a `uniform` y envía el formulario sin editar los valores propuestos
+- **THEN** el payload cumple `0.5 <= min <= max <= 1.0` y la API lo acepta
+- **AND** no se produce un 400 sobre un valor que el usuario no eligió
 
 ---
 
@@ -347,8 +421,15 @@ algoritmos, `models.py:8-21`; cualquiera no listado se rechaza con 400):
 | `sintering_config` con `distribution_type: "fixed"` únicamente | `limiting` (lee `sintering_coeff` en `tasks.py:1800` pero ignora `sintering_type/min/max/std`) |
 
 La misma regla de algoritmo DEBE aplicarse al `sintering_config` **de estudio**
-(`ParametricStudy.sintering_config`), no sólo a la clave de grid: ese campo se aplica a todos
-los hijos sin mirar el algoritmo (`views.py:1806-1808`).
+(`ParametricStudy.sintering_config`), no sólo a la clave de grid: ese campo se aplica a
+todos los hijos sin mirar el algoritmo (`views.py:1806-1808`). En particular, un
+`sintering_config` de estudio de tipo `uniform` o `normal` con `base_algorithm = "limiting"`
+DEBE rechazarse igual que su equivalente de grid.
+
+**Ambas puertas de entrada.** Los requisitos de este bloque y de R12 obligan a **todo** camino
+que cree estudios y sus hijos, no sólo al del API REST: también a la herramienta
+`create_parametric_study` del asistente IA (`apps/ai_assistant/tools/study_tools.py:144,165`),
+que hoy escribe en el ORM sin validar ni traducir nada.
 
 #### Scenario R11.1 — particle_radius_config llega al engine
 
@@ -372,7 +453,7 @@ los hijos sin mirar el algoritmo (`views.py:1806-1808`).
 
 #### Scenario R11.4 — Sin grid key, el comportamiento legado no cambia
 
-- **GIVEN** un estudio `tunable_cc` sin `particle_radius_config` ni `kf_distribution`
+- **GIVEN** un estudio `tunable_cc` sin `particle_radius_config` ni `kf_distribution` en el grid, y sin `dpo_distribution` ni `target_kf_distribution` en `base_parameters`
 - **WHEN** se ejecuta la tarea del sim hijo
 - **THEN** el binding se invoca sin kwargs `dpo_*` ni `kf_*`
 - **AND** el engine usa el escalar legado `radius_min` como valor fijo de dpo y `target_kf` como kf
@@ -398,11 +479,21 @@ los hijos sin mirar el algoritmo (`views.py:1806-1808`).
 - **THEN** 400 indicando que `limiting` sólo admite `distribution_type: "fixed"`
 - **AND** `{distribution_type:"fixed", coefficient:0.9}` sí se acepta
 
+#### Scenario R11.8 — La herramienta del asistente IA obedece las mismas reglas
+
+- **GIVEN** una llamada a `create_parametric_study` con `algorithm = "tunable_cc"` y `parameter_grid = {particle_radius_config: [{mode:"normal", mean:1.0, std:0.2}]}`
+- **WHEN** la herramienta crea el estudio y sus hijos
+- **THEN** cada hijo lleva `dpo_distribution` y NO la clave `particle_radius_config`
+- **AND** el binding del engine recibe `dpo_mode="normal"`, `dpo_mean=1.0`, `dpo_std=0.2`
+- **AND** una llamada con `algorithm = "ballistic"` y esa misma clave se rechaza con un error de validación
+- **AND** una llamada con `parameter_grid = {seed_type: ["dimers"]}` deja el `seed_type` en el campo de modelo del hijo, no suelto en `parameters`
+
 ---
 
 ### Requirement: R12 — El sinterizado llega al engine
 
-La configuración de sinterizado DEBE alcanzar el engine con los valores que el usuario declaró.
+La configuración de sinterizado DEBE alcanzar el engine con los valores que el usuario declaró,
+por cualquiera de las dos puertas de entrada (API REST y herramienta del asistente IA).
 Para `distribution_type: "normal"` la media DEBE viajar en el parámetro que el worker envía y el
 engine interpreta como media (`sintering_coeff`, leído en `parse_sintering`, `lib.rs:602`).
 
@@ -422,7 +513,7 @@ sinterizado fuera de ese conjunto.
 
 - **GIVEN** estudios con `{distribution_type:"fixed", coefficient:0.9}` y con `{distribution_type:"uniform", min:0.7, max:0.95}`
 - **WHEN** se ejecutan las tareas de los sims hijos
-- **THEN** el binding recibe `sintering_coeff=0.9` en el primero, y `sintering_min=0.7`/`sintering_max=0.95` en el segundo
+- **THEN** el binding recibe `sintering_type="fixed"` y `sintering_coeff=0.9` en el primero, y `sintering_type="uniform"` con `sintering_min=0.7`/`sintering_max=0.95` en el segundo
 
 #### Scenario R12.3 — Ninguna clave de sinterizado sin lector
 
@@ -436,8 +527,9 @@ sinterizado fuera de ese conjunto.
 
 ### Requirement: R13 — Casos límite con claves de distribución
 
-La generación de casos límite DEBE ignorar, al construir fronteras, las claves de
-`parameter_grid` cuyos valores sean de tipo `dict` o `list`. Los valores `int`, `float`, `bool`
+La generación de casos límite DEBE ignorar, al construir fronteras, toda clave de
+`parameter_grid` **alguna de cuyas entradas** sea de tipo `dict` o `list` (basta una para que
+ordenar el valor carezca de sentido). Los valores `int`, `float`, `bool`
 y `str` DEBEN seguir produciendo fronteras como hasta ahora. El hijo de frontera usa, para el
 concepto ignorado, el valor que traiga `base_parameters`.
 
