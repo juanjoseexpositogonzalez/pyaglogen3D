@@ -17,12 +17,15 @@
 - [x] T0.6 spec-review r2 → `CORRECTIONS REQUIRED (1 blocker, 7 majors)`
 - [x] T0.7 Decisión de la persona: **invariante en el chokepoint** + validación de entrada
 - [x] T0.8 Corrección r3 (este commit)
-- [ ] T0.9 spec-review r3 en agente fresco
-- [ ] T0.10 Correcciones hasta ronda sin hallazgos semánticos
-- [ ] T0.11 `approval.md` — **sólo la persona aprueba**
-- [ ] T0.12 Crear issue AGLO y pasarla a En curso (transición 21)
+- [x] T0.9 spec-review r3 → `CORRECTIONS REQUIRED (1 blocker, 8 majors)`
+- [x] T0.10 Decisión de la persona: **unificar los dos sitios de creación**
+- [x] T0.11 Corrección r4 (este commit)
+- [ ] T0.12 spec-review r4 en agente fresco
+- [ ] T0.13 Correcciones hasta ronda sin hallazgos semánticos
+- [ ] T0.14 `approval.md` — **sólo la persona aprueba**
+- [ ] T0.15 Crear issue AGLO y pasarla a En curso (transición 21)
 
-## T1 — Regla única de forma, en las seis superficies (D2, D5b, R3)
+## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
 - [ ] T1.1 `validate_sintering_config` (`serializers.py:360`): exigir `distribution_type`
       conocido, exigir los campos requeridos por tipo, rechazar claves fuera de
@@ -35,8 +38,11 @@
       `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
       5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
       `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
-- [ ] T1.5 Precedencia **por forma** (R3): dicts `grid > base_parameters > estudio > default`;
-      planos, el último que escribe; cualquier dict gana a todos los planos
+- [ ] T1.5 Precedencia **por niveles** (R3): lo decidido para ese hijo > `base_parameters` >
+      campo de estudio > default; dentro de un nivel, el dict gana al plano. **Cambio de
+      comportamiento**: hoy el dict de estudio pisa el valor barrido, y los hijos
+      `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio
+- [ ] T1.5b Rechazar el barrido de un **dict** por `theoretical_extremes` (superficie 7, R3.12)
 - [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
       `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos) y **R3.10**
       (precedencia)
@@ -61,15 +67,21 @@
 
 ## T3 — El invariante del hijo y el engine (D5, R11)
 
-- [ ] T3.0 Implementar el **invariante de R11** en la función que construye los parámetros del
-      hijo, por la que pasan grid, casos límite y extremos teóricos (`views.py:1867`): claves
-      dentro del conjunto que el worker lee, forma completa y en rango, y exactamente las que
-      produjo el dict cuando un dict aplica
-- [ ] T3.0b La limpieza de `sintering_*` heredadas la hace `apply_sintering_config`, no el
-      serializer: limpiar en el serializer cambiaría la física de los hijos de casos límite,
-      que copian `base_parameters` y nunca reciben el dict del grid (`utils.py:185-203`)
-- [ ] T3.0c Test **R11.3**: el invariante se cumple para hijos de grid, de caso límite y de
-      extremo teórico en la misma expansión
+- [ ] T3.0 **Unificar los dos sitios de creación**: encaminar el bloque inline de extremos de
+      sinterizado (`views.py:1869-1906`) por `create_simulation`, con un parámetro explícito
+      "el sinterizado de este hijo ya está decidido" para que conserve su coeficiente. Esos
+      hijos pasan a llevar `seed_type`, cerrando la violación de `cc-tunable-aggregation` R17
+- [ ] T3.0a Implementar el **invariante de R11** en ese constructor único: claves dentro del
+      conjunto que el worker lee, campos del tipo declarado presentes y en rango (vacío si el
+      hijo no lleva ninguna), y exactamente las del dict cuando un dict aplica
+- [ ] T3.0b La limpieza de `sintering_*` heredadas la hace el **constructor único**, no el
+      serializer: sólo él sabe si un dict aplica a ese hijo. Un hijo de caso límite hereda los
+      planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
+      (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
+      ningún dict
+- [ ] T3.0c Tests **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+      misma expansión) y **R11.7** (los extremos de sinterizado pasan por el constructor,
+      conservan su coeficiente y llevan `seed_type`)
 
 - [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
       tipo `normal`; retirar `sintering_mean`, que ningún consumidor de producción lee
@@ -84,7 +96,7 @@
 
 - [ ] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
       consumen; sólo `fixed` para `limiting`; rechazo para `fracval`/`gcca`/`box_rfa`/`imported`
-- [ ] T4.2 Aplicar la regla a las **seis** superficies de R3, incluidos los extremos teóricos
+- [ ] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
 - [ ] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
       `fracval` + `theoretical_extremes`), R11.5 (barrido plano de `limiting` y sus extremos
       por defecto del servidor) y R11.6 (actualización parcial contra el
@@ -138,17 +150,22 @@
       `test_distribution_serializer`, `tests/integration/test_parametric_values_pipeline.py`)
       quedan fuera porque no tocan sinterizado (`test_distribution_plumbing.py:7` sólo lo
       menciona en un docstring). **Sí entra** `apps/simulations/tests/test_sintering_plumbing.py`,
-      que es justo quien afirma los kwargs worker→engine de sinterizado
+      que es justo quien afirma los kwargs worker→engine de sinterizado. **Guarda declarada**:
+      `test_sintering_plumbing.py:132-151` postea `{sintering_coeff:0.85, sintering_type:"uniform"}`
+      sin `min`/`max`; es ruta single, fuera del alcance de R11, pero se pondría en rojo si la
+      validación plana se extendiera a esa ruta — cosa que este change NO hace
 - [ ] T7.2 Gates de frontend, con su línea base:
-      - `npm test` → base **55 ficheros, 597 tests**, en verde
+      - `npm test` → base **55 ficheros, 597 tests**. Ojo: hay un test **flaky** preexistente,
+        `FraktalBatchImageDetail.test.tsx > comprehensive variant toggle (T6.5)`, que falla por
+        timeout en la corrida completa y pasa 47/47 aislado. No atribuirlo a este change
       - `npm run type-check` → base **13 errores TS preexistentes**, salida **2**. Aceptación:
         cero nuevos
       - `npm run lint` existe (`next lint`) pero el repo no tiene configuración de ESLint, así
         que lanza el asistente interactivo: condición preexistente declarada
       - Nota: `npm run type-check` ensucia `frontend/tsconfig.tsbuildinfo`, que está trackeado.
         Restaurarlo tras correr el gate
-- [ ] T7.3 Engine: sin cambios en `aglogen_core/`; se corre la suite como control de
-      no-regresión
+- [ ] T7.3 Engine: este change **no toca `aglogen_core/`**, así que no se declara línea base.
+      Se corre la suite una vez como control de no-regresión y se reporta el resultado
 - [ ] T7.4 Verificación manual: estudio batch `ballistic` con sinterizado normal(0.8, 0.05) →
       comprobar en los parámetros del hijo y en el resultado que la media aplicada es **0.8**
 
@@ -217,7 +234,27 @@
   `fixed`, precedencia por forma, dueño explícito de la limpieza (`apply_sintering_config`,
   no el serializer, para no cambiar la física de los casos límite), **R7 MODIFIED** con
   carve-out, y las dos entradas de sinterizado de `limiting`.
-- L9 (2026-10-21): Decisiones de diseño con su alternativa descartada: regla única en las tres
+- L10 (2026-10-21): **spec-review r3**: `CORRECTIONS REQUIRED (1 blocker, 8 majors)`. Las seis
+  líneas base declaradas se reprodujeron exactas.
+  - **BLOCKER: la premisa del chokepoint era falsa.** `perform_create` crea hijos en **dos**
+    sitios: `views.py:1826` (dentro de `create_simulation`) y `views.py:1889` (inline, extremos
+    de sinterizado). Confirmado por mí. Lo afirmé como "verificado" tras leer sólo `:1867`, y
+    este mismo contrato describía el segundo sitio en su sección de fuera de alcance.
+  - Majors: la cláusula 2 del invariante era insatisfacible para los hijos sin sinterizado; la
+    superficie 6 también admite **dict** (y eso reintroduce D2 entero); el bullet 2 de
+    precedencia era falso y contradecía al bullet 3; la canónica R7.2 se retiraba en silencio
+    mientras el inventario decía "ninguno"; R7.2 chocaba con el cambio de la media `normal`;
+    el alcance de R11 vivía sólo en `proposal.md`, que **no se archiva**; el rationale de la
+    limpieza era medio falso; y la forma plana no decía qué pasa con claves extra del conjunto.
+- L11 (2026-10-21): Decisión de la persona: **unificar los dos sitios de creación**.
+- L12 (2026-10-21): **Corrección r4** (este commit). R11 exige **un solo constructor** y lo
+  convierte en requisito en vez de premisa; el bloque de extremos de sinterizado entra en
+  alcance y gana `seed_type` (cierra R17). Añadidos: superficie 7 (dict por extremos teóricos,
+  R3.12), precedencia **por niveles** con la inversión declarada, cláusula 2 con guarda, R7.2
+  canónica restaurada verbatim con las nuevas como R7.3/R7.4, alcance de R11 con sus
+  exclusiones **dentro de la spec**, regla de claves extra del conjunto, y R11.7. Anclas
+  corregidas (`views.py:1750`, `tsx:294`, R7 canónica en `:213-227`).
+- L13 (2026-10-21): Decisiones de diseño con su alternativa descartada: regla única en las tres
   superficies (DD1); el helper lanza pero nunca es el primero en enterarse (DD2); validar antes
   de escribir en vez de `transaction.atomic`, porque una tarea Celety ya despachada no se
   deshace con un rollback (DD3); `sintering_coeff` es la media (DD4); allow-list de once

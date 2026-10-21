@@ -33,14 +33,24 @@ dos eran falsas, y la segunda revisión encontró una **sexta**:
 ningún validador. Verificado: `{"sintering_coeff":[42.0], "sintering_mean":[0.9]}` → 201, y el
 hijo se lleva ambas.
 
-**Enumerar superficies ha fallado dos veces, así que deja de ser la fuente de la garantía.**
-Una lista sólo vale lo que valga la imaginación del siguiente lector. Lo que sí se puede
-sostener es que **todos los hijos de la expansión se construyen en una sola función**:
-combinaciones del grid, casos límite y extremos teóricos pasan igual por `create_simulation`
-(`views.py:1867`). Verificado.
+**Enumerar superficies ha fallado tres veces, así que deja de ser la fuente de la garantía.**
+Una lista sólo vale lo que valga la imaginación del siguiente lector.
 
-De ahí el reenfoque de R11: la garantía se enuncia como **invariante del hijo en ese cuello de
-botella** — sus claves de sinterizado están dentro del conjunto que el worker lee y forman una
+La tercera revisión refutó además la premisa con la que intenté sustituirla. Afirmé que todos
+los hijos se construían en una sola función y lo marqué como **"verificado"**; no lo estaba.
+`perform_create` crea hijos en **dos** sitios: `views.py:1826`, dentro del constructor
+compartido, y `views.py:1889`, un bloque inline para los extremos de sinterizado que duplica el
+bucle, se salta `apply_sintering_config` y omite `seed_type`. El único sitio que se me escapaba
+era, precisamente, el de sinterizado — y este mismo documento lo describía dos secciones más
+abajo, como una nota sobre `seed_type`.
+
+**Decisión de la persona: unificar los dos sitios** en vez de debilitar la promesa. R11 exige
+**un solo constructor** para todo hijo de la expansión, con un modo explícito "el sinterizado
+de este hijo ya está decidido" para que un extremo conserve su coeficiente. Así la premisa pasa
+a ser cierta en vez de supuesta, y de paso se cierra la violación de `cc-tunable-aggregation`
+R17 (esos hijos se crean hoy sin `seed_type`).
+
+Sobre esa base, la garantía se enuncia como **invariante del hijo en el constructor único** — sus claves de sinterizado están dentro del conjunto que el worker lee y forman una
 forma completa y en rango, venga de donde venga. La lista de superficies se conserva, pero con
 el papel que le corresponde: decir dónde hay que devolver un 400 útil antes de escribir nada
 (R3 y R12), no sostener la promesa.
@@ -57,6 +67,7 @@ planos** (`tasks.py:1592-1598`).
 | 4 | `base_parameters["sintering_*"]` | escalares planos | **no** |
 | 5 | `parameter_grid["sintering_*"]` | escalares planos, barridos | **no** |
 | 6 | `limiting_cases_config.theoretical_extremes["sintering_*"]` | escalares planos, barridos | **no** |
+| 7 | `limiting_cases_config.theoretical_extremes["sintering_config"]` | **dict**, barrido | **no** |
 
 Lo que eso significa, verificado con probe propia:
 
@@ -67,7 +78,12 @@ Lo que eso significa, verificado con probe propia:
   se envía como `base_parameters.sintering_coeff` en **todos** sus envíos (`:220`). La segunda
   es la que siempre aplica, y ninguna se valida hoy.
 - Un `sintering_coeff` plano **sin** `sintering_type` significa `fixed`: así lo envía el
-  formulario de `limiting`, y rechazarlo rompería su única entrada.
+  formulario de `limiting`, y rechazarlo rompería su entrada más usada.
+- La superficie 7 reintroduce **D2 entero**: barrer un `sintering_config` con la forma `{mode}`
+  por `theoretical_extremes` devuelve 201 hoy y el hijo corre a `sintering_coeff = 1.0`.
+- **Los nombres mienten**: hoy un hijo `limiting` llamado `theoretical: sintering_coeff=0.5`
+  corre al coeficiente del estudio, porque el dict de estudio gana al valor barrido. Este change
+  invierte esa precedencia; es un cambio de comportamiento declarado.
 
 **Precedencia real** (también distinta de lo que decía la primera versión): `views.py:1804`
 popea `sintering_config` del dict ya fusionado, así que `base_parameters` **gana al campo de
@@ -93,11 +109,6 @@ Explícitamente, y cada uno con su contrato en la cadena:
 - **D9** (la herramienta del asistente IA crea estudios por ORM sin validar ni traducir) →
   `study-expansion-single-source`. **Este change no la arregla**: un estudio creado por esa
   ruta con sinterizado sigue sin pasar por la validación. Queda declarado, no silenciado.
-- **Los casos extremos de sinterizado** (`views.py:1870-1897`) crean hijos **sin** `seed_type=`,
-  al contrario que `create_simulation` (`views.py:1833`), lo que contradice `cc-tunable-aggregation`
-  R17. Es un bloque hermano dentro de la funcionalidad de sinterizado, pero su arreglo pertenece
-  a `study-expansion-single-source`, que es quien unifica la expansión. Declarado aquí para que
-  no aparezca después como hallazgo nuevo.
 - **El export CSV sólo emite las columnas de sinterizado cuando el estudio tiene
   `study.sintering_config`** (`views.py:2206,2267`): un estudio cuyo sinterizado venga sólo del
   grid no las exporta, ni antes ni después de este change.
@@ -114,10 +125,15 @@ Explícitamente, y cada uno con su contrato en la cadena:
 ### Modified Capabilities
 
 - `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, seis superficies
-  de entrada, precedencia por forma, rechazo explícito), **R7** (carve-out: la compatibilidad
-  hacia atrás no ampara sinterizado malformado) y R10 **sólo en su fila de sinterizado**;
-  **ADDED** R11 (invariante del hijo en el cuello de botella, más alcance por algoritmo) y
-  R12 (integridad de la expansión). Delta en `specs/`.
+  de entrada, precedencia por niveles, rechazo explícito), **R7** (carve-out: la compatibilidad
+  hacia atrás no ampara sinterizado malformado, ni el cambio de la media `normal`) y R10
+  **sólo en su fila de sinterizado**; **ADDED** R11 (un solo constructor, invariante del hijo y
+  alcance por algoritmo) y R12 (integridad de la expansión). Delta en `specs/`.
+
+El change **sí** toca ahora el bloque de extremos de sinterizado (`views.py:1869-1906`): al
+unificarlo con el constructor común, esos hijos pasan a llevar `seed_type`, lo que cierra una
+violación existente de `cc-tunable-aggregation` R17. Esa capability no se modifica: se empieza
+a cumplir.
 
 El restatement de R10 conserva literalmente lo que el canónico dice de las otras tres opciones:
 `distribution-grid-wiring` las reescribirá sobre el canónico ya archivado por este change.

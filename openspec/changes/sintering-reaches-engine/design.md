@@ -5,25 +5,40 @@
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
 > `DD1`…`DD5` son las **decisiones de diseño** de este documento.
 
-## DD0 — La garantía vive en el cuello de botella, no en la lista
+## DD0 — Un solo constructor, y el invariante en él
 
-**Decisión.** El invariante de R11 se enuncia y se hace cumplir en la **única función que
-construye los parámetros de un hijo**. Verificado que existe: `views.py:1867` pasa los casos
-límite por `create_simulation`, igual que las combinaciones del grid, y los extremos teóricos
-son casos límite. Todos los hijos de la expansión pasan por ahí.
+**Decisión.** Primero **unificar**, luego enunciar. `perform_create` crea hijos en dos sitios:
+`views.py:1826`, dentro de `create_simulation`, y `views.py:1889`, un bloque inline para los
+extremos de sinterizado que duplica el bucle (nombre, semilla, `delay`, `try/except`), se salta
+`apply_sintering_config` y omite `seed_type`. Ese bloque se encamina por el mismo constructor,
+que recibe un modo explícito **"el sinterizado de este hijo ya está decidido"**. Sobre esa base,
+el invariante de R11 se enuncia y se exige ahí.
 
-**Por qué.** Dos rondas de revisión refutaron dos enumeraciones de superficies (tres, luego
-cinco, luego una sexta). Una lista de entradas sólo garantiza lo que la lista contiene; el
-invariante de salida garantiza también lo que no supe enumerar.
+**Por qué unificar en vez de acotar.** Acotar el invariante a los hijos de `create_simulation`
+habría sido honesto, pero concede que cuatro hijos por estudio con sinterizado quedan fuera de
+la garantía — y son justo los hijos *de sinterizado*. Unificar hace cierta la premisa en vez de
+suponerla, y cierra de paso una violación existente de `cc-tunable-aggregation` R17: esos hijos
+se crean hoy sin `seed_type`.
+
+**Por qué el modo explícito.** El bloque lleva el comentario *"Don't apply the study's sintering
+config for extreme cases since they define their own sintering"* (`views.py:1875-1876`). Sin ese
+modo, encaminarlo por el constructor le aplicaría el dict de estudio y borraría su coeficiente:
+exactamente el colapso que hoy sufren los extremos teóricos, cuyos nombres mienten.
+
+**Por qué el invariante y no sólo la lista.** Tres rondas refutaron tres enumeraciones (tres
+superficies, cinco, una sexta). Una lista de entradas sólo garantiza lo que la lista contiene;
+el invariante de salida garantiza también lo que no supe enumerar. Y la premisa de que existía
+un constructor único la di por **"verificada"** sin probarla: de ahí que ahora la exija el
+contrato en vez de asumirla.
 
 **Qué sigue haciendo la lista.** Dar un 400 útil antes de escribir nada (R12). Un fallo del
 invariante en el chokepoint es un error de programación, no de usuario: si el usuario pudo
 provocarlo, es que falta una superficie en la capa de entrada, y ese es el síntoma que hay que
 arreglar.
 
-**Alternativa descartada.** Seguir alargando la lista. Es lo que ya falló dos veces.
+**Alternativa descartada.** Seguir alargando la lista. Es lo que ya falló tres veces.
 
-## DD1 — Una sola regla de forma, aplicada en las seis superficies
+## DD1 — Una sola regla de forma, aplicada en las siete superficies
 
 **Decisión.** `validate_sintering_config` (`serializers.py:360`) pasa a exigir, sobre un dict
 **no vacío**:
@@ -36,9 +51,10 @@ arreglar.
 Se invoca sobre las **seis** superficies de R3: las tres de clave `sintering_config` (grid,
 campo de estudio y `base_parameters`), los **escalares planos** en `base_parameters` y en
 `parameter_grid`, y los de `limiting_cases_config.theoretical_extremes`. Hoy las cuatro
-últimas no las valida nadie.
+últimas no las valida nadie. La séptima es la misma de los extremos teóricos cuando lo que se
+barre es un **dict**: hoy eso reintroduce D2 entero (201, y el hijo corre a `1.0`).
 
-**Por qué cinco y no tres.** La primera versión de este diseño mapeaba por nombre de clave; el
+**Por qué siete y no tres.** La primera versión de este diseño mapeaba por nombre de clave; el
 worker lee escalares planos (`tasks.py:1592-1598`), así que una regla escrita sólo para
 `sintering_config` deja la puerta abierta. Verificado: `fracval` +
 `base_parameters={"sintering_coeff":0.8}` pasaba todas las reglas de la versión anterior.
@@ -52,16 +68,20 @@ Cualquier otra `sintering_*` se rechaza, en particular `sintering_mean`, que no 
 es lo que envía el formulario en **todos** los envíos de `limiting` (`BatchSimulationForm.tsx:220`),
 y exigir el tipo convertiría cada uno de ellos en un 400.
 
-**Precedencia, por forma.** Entre los **dicts**, `views.py:1804` popea `sintering_config` del
-dict ya fusionado (`dict(base_parameters) | combo`), así que el orden es
-`grid > base_parameters > estudio > default`. Entre los **planos** gana el último que escribe
-en el orden de expansión. Y cualquier dict que aplique gana a todos los planos. La versión
-anterior daba un solo orden de cuatro niveles como si valiera para ambas formas: no vale. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
+**Precedencia, por niveles.** Lo decidido **para ese hijo** (entrada de grid, barrido, extremo
+teórico, extremo de sinterizado) gana a `base_parameters`, que gana al campo de estudio, que
+gana al default; dentro de un nivel, un dict gana a un plano. La versión anterior decía que un
+extremo teórico ganaba a todo: **falso**, hoy gana el dict de estudio, y por eso los cuatro
+hijos `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio. Invertir
+esa precedencia es un cambio de comportamiento declarado, y es lo que hace que el nombre del
+hijo y su física coincidan. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
 exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
-sobrevive. **Esa limpieza la hace `apply_sintering_config`**, que es quien sabe que un dict
-aplica a ese hijo; no el serializer, porque limpiar en el serializer afectaría también a los
-hijos de casos límite, que copian `base_parameters` y nunca reciben el dict del grid
-(`utils.py:185-203`) — les cambiaría la física. Eso cierra también el paso del `sintering_mean`
+sobrevive. **Esa limpieza la hace el constructor único**, que es el que sabe si un dict aplica a
+ese hijo; no el serializer. El motivo exacto: un hijo de caso límite hereda las claves planas de
+`base_parameters` (`utils.py:185-203`) y **sí** puede recibir un dict, el de estudio, en
+`views.py:1808`. Limpiar en el serializer le quitaría sus planos aunque ningún dict aplique, y
+ese caso existe. La condición correcta es "cuando un dict aplica a este hijo", y sólo el
+constructor la conoce. Eso cierra también el paso del `sintering_mean`
 legado.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en
@@ -89,7 +109,7 @@ un helper que lanza sin validación previa convierte el problema en uno peor: ve
 
 ## DD3 — La expansión no puede dejar estudios a medias
 
-**El riesgo, verificado.** `perform_create` (`views.py:1749`) crea el `ParametricStudy`, y
+**El riesgo, verificado.** `perform_create` (`views.py:1750`) crea el `ParametricStudy`, y
 después, por cada combinación, crea cada `Simulation` y la encola con
 `run_simulation_task.delay(...)`. No hay `try/except`, el proyecto **no define
 `ATOMIC_REQUESTS`** y no hay `transaction.atomic`. Si `apply_sintering_config` lanzara a mitad
@@ -144,9 +164,9 @@ allow-list: lo no listado se rechaza. Una denylist dejaba `imported` sin definir
 | Sinterizado, sólo `fixed` | `limiting` | Lee `sintering_coeff` (`tasks.py:1800`) y lo pasa a los generadores de geometría, pero **ignora** `sintering_type/min/max/std`: `uniform` y `normal` se descartarían en silencio |
 | Rechazado | `fracval`, `gcca`, `box_rfa`, `imported` | Sus ramas no reciben ningún kwarg de sinterizado (`tasks.py:1729,1740,1781`); `imported` no tiene rama (`:1971` lanza `Unknown algorithm`) |
 
-La regla se aplica a las **cinco** superficies: ofrecer o aceptar un sinterizado que el engine
+La regla se aplica a las **siete** superficies: ofrecer o aceptar un sinterizado que el engine
 va a ignorar es la misma mentira que este change elimina. En particular, el barrido plano
-`sintering_coeff` que el formulario ofrece para `limiting` (`BatchSimulationForm.tsx:293`) es
+`sintering_coeff` que el formulario ofrece para `limiting` (`BatchSimulationForm.tsx:294`) es
 una de sus dos entradas de sinterizado — la otra es el campo "Base Sintering Coeff."
 (`:409-418`), que se envía siempre (`:220`) — y ambas pasan a validarse.
 
