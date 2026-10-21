@@ -385,11 +385,10 @@ pub fn estimate_particle_count_adaptive(binary: ArrayView2<bool>) -> (usize, f64
                 for dj in 0..=neighborhood * 2 {
                     let ni = i + di - neighborhood;
                     let nj = j + dj - neighborhood;
-                    if ni < rows && nj < cols && (ni != i || nj != j)
-                        && distance[[ni, nj]] > val {
-                            is_max = false;
-                            break 'outer;
-                        }
+                    if ni < rows && nj < cols && (ni != i || nj != j) && distance[[ni, nj]] > val {
+                        is_max = false;
+                        break 'outer;
+                    }
                 }
             }
 
