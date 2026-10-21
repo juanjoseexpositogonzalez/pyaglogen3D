@@ -21,19 +21,34 @@ Cada afirmación está verificada con probe ejecutada o grep, anclada en el mapa
 | --- | --- | --- |
 | **D2** | La UI batch emite `{mode, …}`; el validador del sinterizado espera `{distribution_type, …}`. La forma **se acepta** y `apply_sintering_config` cae a `fixed/1.0` | probe: `apply({mode:'normal',mean:0.8,std:0.05})` → `{'sintering_type':'fixed','sintering_coeff':1.0}` |
 | **D5** | Con la forma **correcta**, el `normal` tampoco llega: `apply_sintering_config` escribe `sintering_mean` (`utils.py:268`) y ningún consumidor de producción lo lee; el engine toma `sintering_coeff` como media (`lib.rs:602`), que sigue valiendo 1.0 | `grep -rn sintering_mean backend frontend aglogen_core` → 2 ocurrencias: la escritura y una aserción de test (`tests/test_utils.py:316`) |
-| **D5b** | Hay una **tercera superficie de entrada sin validar**: `base_parameters.sintering_config`, que `views.py:1804` consume igual que las otras dos | probe: estudio con `base_parameters = {"sintering_config": {"distribution_type":"fixed"}}` **valida hoy** y produce `sintering_coeff = 1.0` |
+| **D5b** | Hay **superficies de entrada sin validar**: `base_parameters.sintering_config` y, sobre todo, los **escalares planos** `sintering_*` tanto en `base_parameters` como en `parameter_grid` | probes: `base_parameters={"sintering_config":{"distribution_type":"fixed"}}` → 201 y `sintering_coeff = 1.0`; `base_parameters={"sintering_coeff":0.6,...}` → ACEPTADO; `parameter_grid={"sintering_coeff":[-5.0, 42.0]}` → ACEPTADO |
 | **D6** | La UI ofrece barrido de sinterizado para `fracval`, `gcca` y `box_rfa`, cuyas llamadas al engine **no reciben ningún kwarg de sinterizado** | `tasks.py:1729,1740,1781` sin `sintering_coeff=` |
 
-## Las tres superficies de entrada
+## Las cinco superficies de entrada
 
-El sinterizado llega a un sim hijo por tres caminos, y hoy **sólo dos se validan**, con un
-validador laxo que acepta `{}`, claves desconocidas y campos ausentes:
+La primera versión de este contrato decía "tres". Era falso, y el error de método merece
+quedar escrito: **mapeé por nombre de clave (`sintering_config`) en vez de por lo que lee el
+consumidor.** El worker lee **escalares planos** (`tasks.py:1592-1598`), y esos entran por dos
+puertas más que ninguna regla vigilaba.
 
-| Superficie | Validada hoy | Consumida en |
-| --- | --- | --- |
-| `parameter_grid.sintering_config[i]` | sí, laxamente | `views.py:1804` |
-| `ParametricStudy.sintering_config` | sí, laxamente | `views.py:1806` |
-| `base_parameters.sintering_config` | **no** | `views.py:1804`, vía `dict(base_parameters) \| combo` |
+| # | Superficie | Forma | Validada hoy |
+| --- | --- | --- | --- |
+| 1 | `parameter_grid.sintering_config[i]` | dict de dominio | sí, laxamente |
+| 2 | `ParametricStudy.sintering_config` | dict de dominio | sí, laxamente |
+| 3 | `base_parameters["sintering_config"]` | dict de dominio | **no** |
+| 4 | `base_parameters["sintering_*"]` | escalares planos | **no** |
+| 5 | `parameter_grid["sintering_*"]` | escalares planos, barridos | **no** |
+
+Lo que eso significa, verificado con probe propia:
+
+- **La allow-list por algoritmo se burla en una línea**: `fracval` + `base_parameters={"sintering_coeff":0.8}` pasa todas las reglas y aterriza en D6 por la otra puerta.
+- **Un `sintering_mean` heredado pasa tal cual**, violando el conjunto de claves con lector.
+- Para `limiting`, el desplegable del formulario ofrece `sintering_coeff` como **barrido plano**
+  (`BatchSimulationForm.tsx:293`): es su única entrada de sinterizado y acepta `-5.0` y `42.0`.
+
+**Precedencia real** (también distinta de lo que decía la primera versión): `views.py:1804`
+popea `sintering_config` del dict ya fusionado, así que `base_parameters` **gana al campo de
+estudio**. El orden es `grid > base_parameters > estudio > default`.
 
 Endurecer el helper sin validar antes **las tres** convertiría un fallo silencioso en un fallo
 peor: `perform_create` (`views.py:1750`) no tiene `try/except`, el proyecto no define
@@ -47,8 +62,15 @@ Explícitamente, y cada uno con su contrato en la cadena:
   cableado al engine, semántica honesta) → `distribution-grid-wiring`.
 - **D9** (la herramienta del asistente IA crea estudios por ORM sin validar ni traducir) →
   `study-expansion-single-source`. **Este change no la arregla**: un estudio creado por esa
-  ruta con `sintering_config` sigue sin pasar por la validación. Queda declarado, no
-  silenciado.
+  ruta con sinterizado sigue sin pasar por la validación. Queda declarado, no silenciado.
+- **Los casos extremos de sinterizado** (`views.py:1870-1897`) crean hijos **sin** `seed_type=`,
+  al contrario que `create_simulation` (`views.py:1833`), lo que contradice `cc-tunable-aggregation`
+  R17. Es un bloque hermano dentro de la funcionalidad de sinterizado, pero su arreglo pertenece
+  a `study-expansion-single-source`, que es quien unifica la expansión. Declarado aquí para que
+  no aparezca después como hallazgo nuevo.
+- **El export CSV sólo emite las columnas de sinterizado cuando el estudio tiene
+  `study.sintering_config`** (`views.py:2206,2267`): un estudio cuyo sinterizado venga sólo del
+  grid no las exporta, ni antes ni después de este change.
 - **D7** (casos límite + entradas dict → 500 preexistente, alcanzable por API) →
   `distribution-grid-wiring` o carril corto propio.
 - **D4** y la polidispersidad real → changes de seguimiento.

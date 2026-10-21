@@ -5,7 +5,7 @@
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
 > `DD1`…`DD5` son las **decisiones de diseño** de este documento.
 
-## DD1 — Una sola regla de forma, aplicada en las tres superficies
+## DD1 — Una sola regla de forma, aplicada en las cinco superficies
 
 **Decisión.** `validate_sintering_config` (`serializers.py:360`) pasa a exigir, sobre un dict
 **no vacío**:
@@ -15,8 +15,25 @@
    `normal`→`mean`,`std`);
 3. ninguna clave fuera de `{distribution_type, coefficient, min, max, mean, std}`.
 
-Se invoca sobre las **tres** superficies: la entrada de grid, el campo de estudio y
-`base_parameters["sintering_config"]` — hoy esta última no la valida nadie (D5b).
+Se invoca sobre las **cinco** superficies (R3): la entrada de grid, el campo de estudio,
+`base_parameters["sintering_config"]`, y los **escalares planos** `sintering_*` tanto en
+`base_parameters` como en `parameter_grid`. Hoy las tres últimas no las valida nadie.
+
+**Por qué cinco y no tres.** La primera versión de este diseño mapeaba por nombre de clave; el
+worker lee escalares planos (`tasks.py:1592-1598`), así que una regla escrita sólo para
+`sintering_config` deja la puerta abierta. Verificado: `fracval` +
+`base_parameters={"sintering_coeff":0.8}` pasaba todas las reglas de la versión anterior.
+
+**Escalares planos.** Claves aceptadas: `sintering_type`, `sintering_coeff`, `sintering_min`,
+`sintering_max`, `sintering_std`, con los mismos rangos. Cualquier otra `sintering_*` se
+rechaza, en particular `sintering_mean`, que no tiene lector.
+
+**Precedencia.** `views.py:1804` popea `sintering_config` del dict **ya fusionado**
+(`dict(base_parameters) | combo`), así que `base_parameters` gana al campo de estudio. El orden
+real, verificado con probe, es `grid > base_parameters > estudio > default`, y así queda
+escrito en R3. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
+exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
+sobrevive. Eso cierra también el paso del `sintering_mean` legado.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en
 el campo de estudio y en `base_parameters`. En una entrada de `parameter_grid` se **rechazan**:
@@ -43,21 +60,26 @@ un helper que lanza sin validación previa convierte el problema en uno peor: ve
 
 ## DD3 — La expansión no puede dejar estudios a medias
 
-**El riesgo, verificado.** `perform_create` (`views.py:1750`) crea el `ParametricStudy`, y
+**El riesgo, verificado.** `perform_create` (`views.py:1749`) crea el `ParametricStudy`, y
 después, por cada combinación, crea cada `Simulation` y la encola con
 `run_simulation_task.delay(...)`. No hay `try/except`, el proyecto **no define
 `ATOMIC_REQUESTS`** y no hay `transaction.atomic`. Si `apply_sintering_config` lanzara a mitad
 del bucle, quedaría un estudio creado con parte de sus hijos ya encolados y una respuesta 500.
+(Sí hay un `try/except` alrededor del `.delay()` en `views.py:1837-1844`, que se traga fallos
+del broker; no cubre la expansión ni deshace filas.)
 
 **Decisión.** Toda configuración de sinterizado alcanzable por la expansión — grid, campo de
 estudio y `base_parameters` — se valida en `ParametricStudySerializer.validate()`, es decir
 **antes de la primera escritura**. Una configuración inválida produce **400 y cero filas**.
 
-**Alternativa descartada.** Envolver `perform_create` en `transaction.atomic`. No basta por sí
-sola: las tareas Celery ya despachadas no se deshacen con el rollback de la transacción, así
-que seguiría habiendo trabajo encolado para un estudio que no existe. Validar antes es la
-única opción que no deja residuo. (Hacer ambas cosas sería defendible; esta delta sólo exige
-la primera, y lo dice.)
+**Alternativa descartada.** `transaction.atomic` a secas no basta: una tarea Celery ya
+despachada no se deshace con el rollback, así que seguiría habiendo trabajo encolado para un
+estudio que no existe. **Sí existe una forma que también funciona**: `transaction.atomic` más
+`transaction.on_commit(lambda: run_simulation_task.delay(...))`, que no publica nada hasta que
+la transacción confirma. Se descarta no por incorrecta sino por alcance: cambia el modelo de
+despacho de toda la expansión, incluidos los casos límite y los extremos de sinterizado, que
+este contrato no toca. Validar antes resuelve el problema de este change sin tocar esa
+mecánica. (La versión anterior decía "la única opción": era falso.)
 
 ## DD4 — `sintering_coeff` es la media (D5)
 
@@ -93,8 +115,15 @@ allow-list: lo no listado se rechaza. Una denylist dejaba `imported` sin definir
 | Sinterizado, sólo `fixed` | `limiting` | Lee `sintering_coeff` (`tasks.py:1800`) y lo pasa a los generadores de geometría, pero **ignora** `sintering_type/min/max/std`: `uniform` y `normal` se descartarían en silencio |
 | Rechazado | `fracval`, `gcca`, `box_rfa`, `imported` | Sus ramas no reciben ningún kwarg de sinterizado (`tasks.py:1729,1740,1781`); `imported` no tiene rama (`:1971` lanza `Unknown algorithm`) |
 
-La regla se aplica a las **tres** superficies: ofrecer o aceptar un sinterizado que el engine
-va a ignorar es la misma mentira que este change elimina.
+La regla se aplica a las **cinco** superficies: ofrecer o aceptar un sinterizado que el engine
+va a ignorar es la misma mentira que este change elimina. En particular, el barrido plano
+`sintering_coeff` que el formulario ofrece para `limiting` (`BatchSimulationForm.tsx:293`) es
+su única entrada de sinterizado y pasa a validarse con los mismos rangos.
+
+**Cambio de algoritmo en el formulario.** `setAlgorithm` (`BatchSimulationForm.tsx:358`) no
+resetea `variations`: tras T6.2 un usuario puede configurar sinterizado en `ballistic`, cambiar
+a `fracval` y quedarse con una variación que el backend rechazará con un 400 que la UI no sabe
+explicar. R10.6 exige limpiarla o marcarla.
 
 **Adaptador de UI.** `BatchSimulationForm` traduce en el submit `DistributionValue` → forma de
 dominio del sinterizado, en **una** función pura `toSinteringConfig`. La tabla es total:
