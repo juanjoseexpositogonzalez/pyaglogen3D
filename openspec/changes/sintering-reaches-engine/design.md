@@ -31,7 +31,7 @@ el invariante de salida garantiza también lo que no supe enumerar.
 
 
 **Qué sigue haciendo la lista.** Dar un 400 útil antes de escribir nada (R12). Un fallo del
-invariante en el chokepoint es un error de programación, no de usuario: si el usuario pudo
+invariante donde se escriben los parámetros del hijo es un error de programación, no de usuario: si el usuario pudo
 provocarlo, es que falta una superficie en la capa de entrada, y ese es el síntoma que hay que
 arreglar.
 
@@ -67,10 +67,15 @@ Cualquier otra `sintering_*` se rechaza, en particular `sintering_mean`, que no 
 es lo que envía el formulario en **todos** los envíos de `limiting` (`BatchSimulationForm.tsx:220`),
 y exigir el tipo convertiría cada uno de ellos en un 400.
 
-**Precedencia: se describe, no se cambia.** Hoy **cualquier dict gana a cualquier clave plana**,
-venga de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
-`apply_sintering_config` sobrescribe los planos (`views.py:1808`). Entre dicts el orden es grid,
-luego `base_parameters`, luego el campo de estudio.
+**Precedencia: se describe, no se cambia.** En el camino que pasa por `create_simulation`,
+**cualquier dict gana a cualquier clave plana**: `views.py:1804` popea `sintering_config` del
+dict ya fusionado y `apply_sintering_config` sobrescribe los planos (`views.py:1808`). Entre
+dicts el orden es grid, luego `base_parameters`, luego el campo de estudio.
+
+**Y hay una ruta exenta de ese orden**, que sigue exenta: el bloque de extremos
+(`views.py:1869-1906`) corre sólo si existe el dict de estudio y aun así no llama a
+`apply_sintering_config`, así que ahí el plano sobrevive al dict. Exenta del orden, no de R11:
+por eso R11.7 le retira el `sintering_config` heredado.
 
 **Por qué no la tocamos.** Seis rondas de revisión sobre este contrato produjeron tres
 inversiones de precedencia sin declarar, cada una descubierta al arreglar la anterior: la
@@ -91,9 +96,11 @@ están en el Log de `tasks.md`. Aquí sólo queda lo que el diseño necesita sab
 `apply_sintering_config` lo pisa (`views.py:1808`). Esa asimetría no se corrige en este
 contrato.
 
-Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
-exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
-sobrevive. **Esa limpieza la hace `apply_sintering_config`**, que es el que sabe si un dict aplica a
+Cuando un dict de dominio aplica, las claves que ese dict produce son las que mandan.
+No se exige retirar las `sintering_*` **planas** heredadas de `base_parameters`: están dentro
+del conjunto que el worker lee y ningún requisito vigente pide quitarlas — eso lo exigía la
+R11.7 en su versión recortada. Lo que sí se retira es `sintering_config`, porque R11 prohíbe
+escribir claves fuera de ese conjunto. **Esa limpieza la hace `apply_sintering_config`**, que es el que sabe si un dict aplica a
 ese hijo; no el serializer. El motivo exacto: un hijo de caso límite hereda las claves planas de
 `base_parameters` (`utils.py:185-203`) y **sí** puede recibir un dict, el de estudio, en
 `views.py:1808`. Limpiar en el serializer le quitaría sus planos aunque ningún dict aplique, y

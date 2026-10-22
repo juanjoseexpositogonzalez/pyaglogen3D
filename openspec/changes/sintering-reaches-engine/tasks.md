@@ -16,10 +16,13 @@
 - [x] T0.4 Decisión de la persona: las superficies planas **entran** en alcance
 - [x] T0.5 Corrección r2 (este commit)
 - [x] T0.6 spec-review r2 → `CORRECTIONS REQUIRED (1 blocker, 7 majors)`
-- [x] T0.7 Decisión de la persona: **invariante en el chokepoint** + validación de entrada
+- [x] T0.7 Decisión de la persona: **invariante donde se escriben los parámetros del hijo**
+      + validación de entrada (dicho antes «el chokepoint», en singular, cuando son dos sitios)
 - [x] T0.8 Corrección r3 (este commit)
 - [x] T0.9 spec-review r3 → `CORRECTIONS REQUIRED (1 blocker, 8 majors)`
 - [x] T0.10 Decisión de la persona: **unificar los dos sitios de creación**
+      — **revocada** por el recorte de 14d0b13: no se unifican. El bloque inline ya escribe el
+      sinterizado donde el engine lo lee; sólo se le retira el `sintering_config` heredado (R11.7)
 - [x] T0.11 Corrección r4 (este commit)
 - [x] T0.12 spec-review r4 → `CORRECTIONS REQUIRED (1 blocker, 4 majors)`
 - [x] T0.13 Decisión de la persona: `base_parameters` **gana siempre**, inversión declarada
@@ -28,7 +31,13 @@
 - [x] T0.14 Corrección r5 (este commit)
 - [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
 - [x] T0.16 Corrección r6 (este commit)
-- [ ] T0.17 spec-review r6 en agente fresco
+- [x] T0.17 spec-review r6 en agente fresco
+- [x] T0.20 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
+      sitios; la superficie 7 conserva el camino que funciona hoy
+- [x] T0.21 spec-review r7 → `CORRECTIONS REQUIRED (3 blockers, 3 majors, 3 minors)`; corregida
+      en 1d8b4fb tras alinear sólo media parte del recorte en 6f52d05
+- [x] T0.22 spec-review r8 → `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`
+- [ ] T0.23 spec-review r9 en agente fresco
 - [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
 - [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
 - [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
@@ -46,15 +55,17 @@
       `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
       5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
       `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
-- [ ] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual — cualquier
-      dict gana a cualquier clave plana venga de donde venga, y entre dicts manda grid, luego
-      `base_parameters`, luego el campo de estudio. La tarea es **validar** los ajustes sin
-      reordenarlos; si al implementar aparece la tentación de invertir algo, es señal de que
-      pertenece al contrato de seguimiento
-- [ ] T1.5a Verificar con un test de regresión que el orden **no cambia**: el mismo payload que
-      hoy resuelve a un ganador debe seguir resolviendo al mismo. No lo respalda ningún
-      escenario de la delta, y es deliberado: la delta dice que la precedencia no cambia, así
-      que lo que se protege es la ausencia de cambio
+- [ ] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual. En el camino
+      que pasa por `create_simulation`, cualquier dict gana a cualquier clave plana, y entre
+      dicts manda grid, luego `base_parameters`, luego el campo de estudio. El bloque de
+      extremos (`views.py:1869-1906`) está **exento de ese orden** y sigue estándolo: ahí el
+      plano sobrevive al dict. La tarea es **validar** los ajustes sin reordenarlos; si al
+      implementar aparece la tentación de invertir algo, es señal de que pertenece al contrato
+      de seguimiento
+- [ ] T1.5a Verificar con un test de regresión que el orden **no cambia**, en los dos caminos:
+      el mismo payload que hoy resuelve a un ganador debe seguir resolviendo al mismo, y el
+      hijo de extremos debe seguir corriendo a su propio plano. No lo respalda ningún escenario
+      de la delta, y es deliberado: lo que se protege es la ausencia de cambio
 - [ ] T1.5b Superficie 7: un dict **bien formado** barrido por `theoretical_extremes` funciona
       hoy y **debe seguir funcionando** (R3.9); lo que se rechaza es la forma `{mode, …}`
       malformada, como en cualquier otra superficie
@@ -88,22 +99,32 @@
 
 ## T3 — El invariante del hijo y el engine (D5, R11)
 
-- [ ] T3.0 **No unificar los sitios de creación.** El bloque inline de extremos
-      (`views.py:1869-1906`) se queda como está: ya escribe `sintering_type` y `sintering_coeff`
-      planos vía `generate_sintering_extreme_cases` (`utils.py:227-231`), que son claves que el
-      worker lee (`tasks.py:1592-1598`). Que esos hijos se creen sin `seed_type` viola
-      `cc-tunable-aggregation` R17, pero **no** es uno de los cuatro defectos: va al contrato de
-      seguimiento
+- [ ] T3.0 **No unificar los sitios de creación**, pero sí cerrar R11 en el bloque inline.
+      No se unifica: `generate_sintering_extreme_cases` (`utils.py:227-231`) ya escribe
+      `sintering_type` y `sintering_coeff` planos, claves que el worker lee
+      (`tasks.py:1592-1598`). Lo que sí hay que arreglar es que copia `base_parameters` entera
+      (`utils.py:228`) y el pop de `sintering_config` vive sólo en `create_simulation`
+      (`views.py:1804`), así que esos hijos almacenan un `sintering_config` que **contradice** el
+      coeficiente al que corren. Retirarlo (R11.7). Verificado con probe: base con
+      `coefficient: 0.7` produce un hijo que corre a `0.5` y guarda `0.7`
+- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
+      conserva el plano de su propio extremo
+- [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
+      **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
 - [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
-      claves dentro del conjunto que el worker lee, campos del tipo declarado presentes y en
-      rango (vacío si el hijo no lleva ninguna), y exactamente las del dict cuando un dict aplica
+      claves **contenidas** en el conjunto que el worker lee, y campos del tipo declarado
+      presentes y en rango (vacío si el hijo no lleva ninguna). «Contenidas», no «exactamente
+      las del dict»: eso último lo exigía R11.7 en su versión recortada y ningún requisito
+      vigente lo pide
 - [ ] T3.0b La limpieza de `sintering_*` heredadas la hace `apply_sintering_config`, no el
       serializer: es quien sabe si un dict aplica a ese hijo. Un hijo de caso límite hereda los
       planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
       (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
       ningún dict
-- [ ] T3.0d Retirar `sintering_config` de los parámetros del hijo, y retirar las `sintering_*`
-      heredadas cuando un dict fija el sinterizado de ese hijo
+- [ ] T3.0d Retirar `sintering_config` de los parámetros del hijo — eso **sí** lo exige R11,
+      que prohíbe escribir claves de sinterizado fuera del conjunto del worker. No se retiran
+      las `sintering_*` planas heredadas: están dentro del conjunto y ningún requisito vigente
+      pide quitarlas
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
       también `views.py:1766,1871` y `tests/test_utils.py:369`, pero ese último sólo afirma la
@@ -125,6 +146,8 @@
 - [ ] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
       consumen; sólo `fixed` para `limiting`; rechazo para `fracval`/`gcca`/`box_rfa`/`imported`
 - [ ] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
+- [ ] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
+      `base_algorithm` guardado en la instancia, no contra el ausente (R11, R11.6)
 - [ ] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
       `fracval` + `theoretical_extremes`), R11.5 (barrido plano de `limiting` y sus extremos
       por defecto del servidor) y R11.6 (actualización parcial contra el
@@ -329,3 +352,18 @@
   de escribir en vez de `transaction.atomic`, porque una tarea Celery ya despachada no se
   deshace con un rollback (DD3); `sintering_coeff` es la media (DD4); allow-list de once
   algoritmos con `limiting` sólo-`fixed` (DD5).
+- L21 (2026-10-22): **Recorte de alcance** (`14d0b13`): fuera la precedencia y la unificación de
+  los dos sitios de creación. `6f52d05` alineó sólo la precedencia, porque el último párrafo de
+  `14d0b13` sólo avisaba de ella: un mensaje que infradescribe su propio alcance envenena el
+  commit siguiente.
+- L22 (2026-10-22): **spec-review r7** (`1d8b4fb`): `CORRECTIONS REQUIRED (3 blockers, 3 majors,
+  3 minors)`. B1 fue el recorte a medias. Comprobado que no dejaba agujero en D5: el bloque
+  inline ya escribe los planos que lee el worker (`utils.py:227-231`). El `seed_type` que le
+  falta viola `cc-tunable-aggregation` R17, pero no es uno de los cuatro defectos: al
+  seguimiento, que acumula ya tres puntos.
+- L23 (2026-10-22): **spec-review r8**: `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`.
+  Declaró limpios el formato, las referencias a escenarios y lo derivado al seguimiento. Su M3
+  no era residuo sino defecto nuevo: el `pop` de `sintering_config` vive sólo en
+  `create_simulation`, así que los hijos de extremos almacenan un dict que **contradice** el
+  coeficiente al que corren. Probe: base con `coefficient: 0.7` → hijo que corre a `0.5` y
+  guarda `0.7`. Decisión de la persona: arreglarlo aquí, no derivarlo. De ahí R11.7.

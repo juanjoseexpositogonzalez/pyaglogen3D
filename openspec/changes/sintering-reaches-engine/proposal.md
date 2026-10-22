@@ -173,8 +173,8 @@ parámetros dicen.** Consta en el comentario de entrega de Jira.
 
 Cambios de comportamiento adicionales, declarados:
 
-- **La precedencia no cambia, y eso es deliberado.** Hoy **cualquier dict gana a cualquier clave
-  plana**, venga de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
+- **La precedencia no cambia, y eso es deliberado.** En el camino que pasa por
+  `create_simulation`, **cualquier dict gana a cualquier clave plana**: `views.py:1804` popea `sintering_config` del dict ya fusionado y
   `apply_sintering_config` sobrescribe los planos; entre dicts el orden es grid, luego
   `base_parameters`, luego el campo de estudio. Este change **valida** esos ajustes y **no los
   reordena**. Seis rondas de revisión sobre este contrato produjeron tres inversiones de

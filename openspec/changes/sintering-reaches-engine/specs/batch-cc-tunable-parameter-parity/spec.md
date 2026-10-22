@@ -118,11 +118,18 @@ setting wins over any flat key regardless of where it came from, because `views.
 `sintering_config` from the merged parameters and `apply_sintering_config` then overwrites the
 flat keys; among dicts the order is grid, then `base_parameters`, then the study field.
 
-One path is exempt and MUST stay that way: the sintering-extremes block (`views.py:1869-1906`)
-runs only when a study dict exists, yet deliberately does not call `apply_sintering_config`, so
-each child keeps the flat `sintering_coeff` that `generate_sintering_extreme_cases` wrote for
-it. A dict exists there and the flat key still wins. This contract validates these settings and
-reorders none of them.
+One path is exempt from that ordering and MUST stay that way: the sintering-extremes block
+(`views.py:1869-1906`) runs only when a study dict exists, yet deliberately does not call
+`apply_sintering_config`, so each child keeps the flat `sintering_coeff` that
+`generate_sintering_extreme_cases` wrote for it. A dict exists there and the flat key still
+wins. This contract validates these settings and reorders none of them.
+
+Being exempt from the ordering does **not** exempt that path from R11. Because it copies
+`base_parameters` verbatim (`utils.py:228`) and the `sintering_config` pop lives only in
+`create_simulation` (`views.py:1804`), its children today store a `sintering_config` dict that
+**contradicts** the coefficient they run at — surface 3 with `coefficient: 0.7` yields a child
+running the `0.5` extreme while storing `0.7`. That is a stored parameter that does not describe
+what ran, which is what this contract exists to close. R11.7 requires it removed.
 
 **Explicit rejection, never a silent default.** The system MUST NOT accept an incomplete or
 unrecognised sintering setting and then apply defaults: the result would be a simulation whose
@@ -356,6 +363,15 @@ contract `study-expansion-single-source` covers the last one.
 - **WHEN** it is expanded into a child's parameters
 - **THEN** the sintering keys written are contained in the set the worker reads
 - **AND** `sintering_mean` is never written
+
+#### Scenario R11.7 — Sintering-extreme children carry no sintering_config
+
+- **GIVEN** a study whose `base_parameters` carry a `sintering_config` dict, with
+  `include_limiting_cases` and a study-level sintering config, so the sintering-extremes block
+  (`views.py:1869-1906`) runs
+- **WHEN** its children are created
+- **THEN** no child's parameters contain `sintering_config`
+- **AND** each child keeps the flat `sintering_coeff` of its own extreme
 
 #### Scenario R11.4 — Rejected for algorithms that do not consume sintering
 
