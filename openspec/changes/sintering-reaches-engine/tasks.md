@@ -43,21 +43,20 @@
       `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
       5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
       `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
-- [ ] T1.5 Precedencia **por niveles** (R3): lo decidido para ese hijo (entrada de grid,
-      barrido, **frontera de rango**, extremo teórico, extremo de sinterizado) >
-      `base_parameters` > campo de estudio > default; dentro de un nivel, el dict gana al plano.
-      **Tres cambios de comportamiento**, porque hoy cualquier dict gana a cualquier plano
-      venga de donde venga
-- [ ] T1.5a La **resolución** de la precedencia vive en el llamante que conoce la procedencia
-      (expansión de grid, casos límite, extremos), no en el constructor: el dict fusionado no
-      distingue un plano de `base_parameters` de uno barrido para ese hijo
+- [ ] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual — cualquier
+      dict gana a cualquier clave plana venga de donde venga, y entre dicts manda grid, luego
+      `base_parameters`, luego el campo de estudio. La tarea es **validar** los ajustes sin
+      reordenarlos; si al implementar aparece la tentación de invertir algo, es señal de que
+      pertenece al contrato de seguimiento
+- [ ] T1.5a Verificar con un test que el orden **no cambia**: el mismo payload que hoy resuelve
+      a un ganador debe seguir resolviendo al mismo después de este change
 - [ ] T1.5b Rechazar el barrido de un **dict** por `theoretical_extremes` (superficie 7, R3.12)
 - [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
       sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
       desconocidas, por clave
 - [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
       `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos) y **R3.10**
-      (precedencia)
+      (la precedencia de hoy, sin cambios)
 - [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
 - [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
       sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y

@@ -68,32 +68,31 @@ Cualquier otra `sintering_*` se rechaza, en particular `sintering_mean`, que no 
 es lo que envía el formulario en **todos** los envíos de `limiting` (`BatchSimulationForm.tsx:220`),
 y exigir el tipo convertiría cada uno de ellos en un 400.
 
-**Precedencia, por niveles.** Lo decidido **para ese hijo** (entrada de grid, barrido, extremo
-teórico, extremo de sinterizado) gana a `base_parameters`, que gana al campo de estudio, que
-gana al default; dentro de un nivel, un dict gana a un plano.
+**Precedencia: se describe, no se cambia.** Hoy **cualquier dict gana a cualquier clave plana**,
+venga de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
+`apply_sintering_config` sobrescribe los planos (`views.py:1808`). Entre dicts el orden es grid,
+luego `base_parameters`, luego el campo de estudio.
 
-Eso son **tres** cambios de comportamiento, no uno. El tercero lo encontré yo con una probe
-mientras corría la r5, y la r5 lo confirmó: hoy **cualquier dict gana a cualquier plano**, así
-que un dict en `base_parameters` pisa un valor barrido para ese hijo. El eje dict/plano domina
-al de niveles, y mi modelo suponía lo contrario.
+**Por qué no la tocamos.** Seis rondas de revisión sobre este contrato produjeron tres
+inversiones de precedencia sin declarar, cada una descubierta al arreglar la anterior: la
+tercera la encontré yo con una probe durante la r5, y echaba abajo el modelo con el que había
+escrito las dos correcciones previas. Ninguno de los cuatro defectos en alcance necesita
+reordenarla: D2 y D5b se cierran validando la forma, D5 mandando la media donde el engine la
+lee, y D6 acotando los algoritmos. Reordenarla es un contrato propio, con sus propios
+escenarios y su propia aprobación.
 
-**Consecuencia de diseño, no cosmética.** Si manda el nivel, el constructor **no puede
-resolverlo solo**: `base_parameters = {sintering_config: D, sintering_coeff: 0.8}` y
-`base_parameters = {sintering_config: D}` con un barrido `{"sintering_coeff":[0.8]}` llegan como
-el mismo dict fusionado y exigen resultados opuestos. Por eso R11 obliga a que **el llamante
-resuelva la precedencia y pase el ajuste ganador**: él sí sabe la procedencia. El constructor
-hace cumplir el invariante; no adivina de dónde vino cada clave.
+**Consecuencia para el constructor.** Como el orden no cambia, el constructor **no resuelve
+precedencia**: recibe el ajuste que el llamante ya fusionó, tal y como se fusiona hoy, y hace
+cumplir el invariante de qué claves puede escribir en el hijo. No adivina de dónde vino cada
+clave porque no necesita saberlo.
 
-Lo anterior: El segundo me lo encontró la r4: hoy
-`base_parameters` gana al estudio sólo en forma **dict**; en forma **plana**
-`apply_sintering_config` lo pisa (`views.py:1808`). Lo metí en la misma frase con la que
-corregía el primero, sin declararlo y sin escenario que lo detectara — R3.10 sólo ejercitaba el
-caso dict, que ya gana hoy, así que habría pasado antes y después. Decisión de la persona:
-`base_parameters` gana siempre, declarado como cambio. La versión anterior decía que un
-extremo teórico ganaba a todo: **falso**, hoy gana el dict de estudio, y por eso los cuatro
-hijos `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio. Invertir
-esa precedencia es un cambio de comportamiento declarado, y es lo que hace que el nombre del
-hijo y su física coincidan. Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
+**Dónde está escrita la historia.** Las tres inversiones, quién las encontró y en qué ronda
+están en el Log de `tasks.md`. Aquí sólo queda lo que el diseño necesita saber: hoy
+`base_parameters` gana al campo de estudio **sólo en forma dict**; en forma plana
+`apply_sintering_config` lo pisa (`views.py:1808`). Esa asimetría no se corrige en este
+contrato.
+
+Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
 exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
 sobrevive. **Esa limpieza la hace el constructor único**, que es el que sabe si un dict aplica a
 ese hijo; no el serializer. El motivo exacto: un hijo de caso límite hereda las claves planas de

@@ -4,7 +4,7 @@
 > mapa `openspec/changes/_explore-only/distribution-config-surface.md` (§7), consolidado de la
 > exploración y de cuatro rondas de spec-review.
 
-## Intent
+## Why
 
 Hoy, un estudio batch con sinterizado **se acepta y se ejecuta sin sinterizado, sin un solo
 error**. Este change cierra esa mentira y sólo esa.
@@ -83,7 +83,8 @@ Lo que eso significa, verificado con probe propia:
   por `theoretical_extremes` devuelve 201 hoy y el hijo corre a `sintering_coeff = 1.0`.
 - **Los nombres mienten**: hoy un hijo `limiting` llamado `theoretical: sintering_coeff=0.5`
   corre al coeficiente del estudio, porque el dict de estudio gana al valor barrido. Este change
-  invierte esa precedencia; es un cambio de comportamiento declarado.
+  **no** invierte esa precedencia: la deja como está y la describe. Arreglarla es el contrato de
+  seguimiento, por la razón que explica «Fuera de alcance».
 
 **Precedencia real, y es asimétrica.** `views.py:1804` popea `sintering_config` del dict ya
 fusionado, así que un **dict** en `base_parameters` gana al campo de estudio. Pero sus claves
@@ -138,12 +139,12 @@ Explícitamente, y cada uno con su contrato en la cadena:
 - `DistributionSelector.tsx`: su default de `uniform` emite `min == max`, que **es válido** para
   el sinterizado (`min <= max`, ambos dentro de `[0.5, 1.0]`). No se toca aquí.
 
-## Capabilities
+## What Changes
 
 ### Modified Capabilities
 
 - `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, siete superficies
-  de entrada, precedencia por niveles, rechazo explícito), **R7** (carve-out: la compatibilidad
+  de entrada, la precedencia de hoy descrita y no cambiada, rechazo explícito), **R7** (carve-out: la compatibilidad
   hacia atrás no ampara sinterizado malformado, ni el cambio de la media `normal`) y R10
   **sólo en su fila de sinterizado**; **ADDED** R11 (un solo constructor, invariante del hijo y
   alcance por algoritmo) y R12 (integridad de la expansión). Delta en `specs/`.
@@ -171,14 +172,14 @@ parámetros dicen.** Consta en el comentario de entrega de Jira.
 
 Cambios de comportamiento adicionales, declarados:
 
-- **Precedencia, tres inversiones.** Hoy **cualquier dict gana a cualquier clave plana**, venga
-  de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
-  `apply_sintering_config` sobrescribe los planos. El eje dict/plano domina al de niveles. Tras
-  este change manda el nivel: (1) un valor barrido o extremo para un hijo gana al dict de
-  estudio — hoy los `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del
-  estudio, con el nombre mintiendo; (2) las claves planas de `base_parameters` ganan al campo de
-  estudio, que hoy las pisa; (3) un valor decidido para el hijo gana al dict de
-  `base_parameters`, que hoy lo pisa.
+- **La precedencia no cambia, y eso es deliberado.** Hoy **cualquier dict gana a cualquier clave
+  plana**, venga de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
+  `apply_sintering_config` sobrescribe los planos; entre dicts el orden es grid, luego
+  `base_parameters`, luego el campo de estudio. Este change **valida** esos ajustes y **no los
+  reordena**. Seis rondas de revisión sobre este contrato produjeron tres inversiones de
+  precedencia sin declarar, cada una descubierta al arreglar la anterior, y ninguno de los cuatro
+  defectos en alcance necesita tocarla: se cierran validando la forma y mandando la media donde
+  el engine la lee.
 - **El payload `fixed` que documenta la propia canónica pasa a dar 400.**
   `{distribution_type:"fixed", value:0.9}` devuelve 201 hoy y el hijo corre **sin sinterizar**,
   porque nadie lee `value`. Canonizar `coefficient` lo convierte en un rechazo visible.
