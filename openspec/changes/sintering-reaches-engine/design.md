@@ -1,9 +1,11 @@
 # Design: sintering-reaches-engine
 
-> Decisiones de implementación. Anclas verificadas sobre `develop` @ `f5c93b4`.
+> Decisiones de implementación. Anclas verificadas sobre la rama con `develop` @ `f586946`
+> fusionado (el merge es `f5c93b4`, que sólo existe aquí).
 >
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
-> `DD1`…`DD5` son las **decisiones de diseño** de este documento.
+> `DD0`…`DD5` son las **decisiones de diseño** de este documento. Son **seis**: `DD0` nació
+> con el recorte (`1d8b4fb`) y es la que lo carga — no unificar los dos sitios de creación.
 
 ## DD0 — El invariante del hijo, sin unificar constructores
 

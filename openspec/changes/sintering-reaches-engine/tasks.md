@@ -4,8 +4,9 @@
 > Desde el 2026-10-22 (issue #82) el gate es una **issue de GitHub con la etiqueta
 > `status:approved`**, no un `approval.md`. **No se escribe código hasta que exista.**
 >
-> Rama: `feature/sintering-reaches-engine` (base `develop` @ `f5c93b4`). La base original era
-> `c3ff055`; dos merges de `develop` la movieron, y con ella la línea base de frontend.
+> Rama: `feature/sintering-reaches-engine`, con `develop` @ `f586946` ya fusionado (el merge
+> es `f5c93b4`, que sólo existe en esta rama). La base original era `c3ff055`; dos merges de
+> `develop` la movieron, y con ella la línea base de frontend.
 > Mapa de origen: `openspec/changes/_explore-only/distribution-config-surface.md` §7.1.
 > Jira: pendiente de crear al aprobar (issue AGLO, transición 21 → En curso).
 
@@ -45,7 +46,9 @@
 - [x] T0.25 spec-review r10 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 6 minors)`
 - [x] T0.26 spec-review r11 → `0 blockers, 2 majors, 8 minors`; primera ronda que pudo correr
       las suites, tras destrackear `tsconfig.tsbuildinfo` (PR #96)
-- [ ] T0.27 spec-review r12 en agente fresco
+- [x] T0.27 spec-review r12 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 9 minors)`; la
+      barrida de residuos del recorte salió **vacía** por primera vez en seis rondas
+- [ ] T0.28 spec-review r13 en agente fresco, si procede
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
@@ -191,9 +194,11 @@
       enviado siempre en `:220`) no puede emitir `NaN`/`null` cuando se vacía
 - [ ] T6.4 Tests R10.4 (opción ausente para `fracval`/`gcca`/`box_rfa`, presente para
       `ballistic`), R10.5 (forma del payload, y que el default de `uniform` del selector
-      produce un payload aceptable sin edición) y R10.6 (cambio de algoritmo)
-- [ ] T6.5 **Ningún test existente pasa a rojo por esta tarea** (verificado: los seis casos de
-      `BatchSimulationForm.test.tsx` (son **9**, no 6) seleccionan `tunable_cc`, ninguno afirma
+      produce un payload aceptable sin edición) y R10.6 **entera**: el payload tras cambiar de
+      algoritmo no lleva `sintering_coeff`, o lleva uno válido, nunca `null` ni `NaN` (primer
+      THEN), y el cambio limpia o marca lo que ya no aplica (el AND)
+- [ ] T6.5 **Ningún test existente pasa a rojo por esta tarea** (verificado: los **nueve** casos
+      de `BatchSimulationForm.test.tsx` seleccionan `tunable_cc`, ninguno afirma
       la forma del payload enviado y ninguno cambia de algoritmo tras configurar una variación)
 - [ ] T6.6 **No se toca** `DistributionSelector.tsx`: su default `min == max` con base `1.0` es
       válido para el sinterizado. Pertenece a `distribution-grid-wiring`
@@ -222,8 +227,9 @@
       de la ronda anterior era **falsa**: ese test sí aporta `sintering_min`/`sintering_max`
       en `:142-143` y no postea nada, escribe por ORM. No hay riesgo que declarar.)
 - [ ] T7.2 Gates de frontend, con su línea base:
-      - `npm test` → base **58 ficheros, 624 tests**, medida sobre `f5c93b4`. La base anterior
-        (55/597) era la de `c3ff055`: los merges de `develop` añadieron `chart-theme.test.ts`
+      - `npm test` → base **58 ficheros, 624 tests**, medida sobre la rama con `f586946` dentro. La base anterior
+        (55/597) era la de `c3ff055`: los merges de `develop` (hasta `f586946`) añadieron
+        `chart-theme.test.ts`
         (16), `globals-tokens.test.ts` (6) y `tailwind-config.test.ts` (5), que son los 3
         ficheros y 27 tests de diferencia. Nota sobre `FraktalBatchImageDetail.test.tsx >
         comprehensive variant toggle (T6.5)`: una ronda anterior declaró **dos** tests
@@ -237,9 +243,15 @@
       - Nota: `frontend/tsconfig.tsbuildinfo` **ya no está trackeado** (PR #96), así que correr
         los gates no ensucia el árbol. Antes sí, y por eso cuatro rondas de revisión no
         pudieron reproducir estas cifras.
-        Restaurarlo tras correr el gate
-- [ ] T7.3 Engine: este change **no toca `aglogen_core/`**, así que no se declara línea base.
-      Se corre la suite una vez como control de no-regresión y se reporta el resultado
+- [ ] T7.3 Engine: este change **no toca `aglogen_core/`** (`git diff c3ff055..HEAD --
+      aglogen_core` sale vacío), pero la línea base **sí** se declara, porque medirla no cuesta
+      nada y cuatro rondas la arrastraron como duda. Medida sobre `39207e0` con
+      `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test -p aglogen-engine --release`, salida
+      **0**: **374 passed, 0 failed, 5 ignored** en seis binarios — `src/lib.rs` 329 de 330
+      (1 ignorado), `bc_windowed_test` 11 de 12 (1), `cc_tunable_high_df_test` 9, 
+      `cc_tunable_low_df_test` 12, `integration_cc_tunable` 13 de 14 (1) y doc-tests 0 de 1 (1).
+      Aceptación: **cero nuevos fallos**. Tarda unos 7 minutos en release; tres tests de
+      rollback pasan de 60 s cada uno, así que no es un gate para correr a cada commit
 - [ ] T7.4 Verificación manual: estudio batch `ballistic` con sinterizado normal(0.8, 0.05) →
       comprobar en los parámetros del hijo y en el resultado que la media aplicada es **0.8**
 
@@ -260,12 +272,19 @@
 ## Log
 
 > **Sobre los huecos L5, L9, L13, L17 y L20.** No falta nada. Eran los números que fue
-> ocupando, y vacando, el resumen de decisiones de diseño: al ser siempre la última entrada,
-> cada ronda insertaba sus entradas antes y lo renumeraba (L5 en `89079e0`, L9 en `fa0563c`,
-> L13 en `f977d3a`, L17 en `4ec9b5e`, L20 en `c82cb77`). Recuperable entero con
-> `git show 89079e0:openspec/changes/sintering-reaches-engine/tasks.md`. Ahora vive sin número,
-> que es lo que era desde el principio, y los huecos se quedan: renumerar las 26 entradas
-> rompería las referencias cruzadas que ya las citan.
+> ocupando, y vacando, el resumen de decisiones de diseño: mientras fue la última entrada,
+> cada ronda insertaba las suyas antes y lo renumeraba (L5 en `89079e0`, L9 en `fa0563c`,
+> L13 en `f977d3a`, L17 en `4ec9b5e`, L20 en `c82cb77`). Dejó de serlo en `262e08d`, y desde
+> entonces no se abrió ningún hueco más. Recuperable entero con
+> `git show 89079e0:openspec/changes/sintering-reaches-engine/tasks.md`. Ahora vive **sin
+> número**, porque no es un suceso con fecha: eso es lo que debió ser desde el principio,
+> aunque llevara número desde `89079e0`.
+>
+> Los huecos se quedan. Las entradas numeradas son **21**, con L26 como número más alto —
+> confundir el número más alto con el recuento es justo el error que los creó. Renumerarlas
+> reescribiría la historia de un registro cuyo valor es ser inmutable, y los mensajes de
+> commit de este change ya citan rondas por su número; dentro del repositorio no hay ninguna
+> referencia cruzada a estos L.
 
 - **Decisiones de diseño vigentes** (resumen permanente, sin número de entrada: no es un
   suceso con fecha sino el estado actual de las decisiones, y se actualiza en el sitio).
@@ -410,3 +429,12 @@
   **correr las suites**. Las cinco cifras de backend salieron exactas; la de frontend estaba
   obsoleta por los merges de `develop`. Su M2 fue un superviviente de `95d41ca`: DD3 seguía
   enumerando tres superficies cuando el contrato exige siete desde hace cinco commits.
+- L27 (2026-10-22): **spec-review r12**: `0 blockers, 2 majors, 9 minors`. Primer dato nuevo en
+  seis rondas: la barrida de residuos del recorte de `14d0b13` salió **vacía**, declarada así de
+  forma explícita. Los dos majors son el patrón del superviviente por sexta vez, y ambos los
+  introduje o los dejé yo: una orden sin objeto en T7.2 (*"Restaurarlo tras correr el gate"*),
+  superviviente de `89079e0` bajo el párrafo que `79d2e87` reescribió para decir lo contrario; y
+  la clave de **Nomenclatura** de `design.md`, que seguía diciendo `DD1…DD5` cuando `DD0` nació
+  en `1d8b4fb` y es la decisión que carga el recorte. Cuatro de los nueve minors eran errores de
+  la nota de huecos que yo mismo escribí en `39207e0`, incluido confundir el número más alto
+  (L26) con el recuento (21) — el mismo error que creó los huecos.

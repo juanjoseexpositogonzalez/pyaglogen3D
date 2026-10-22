@@ -97,8 +97,9 @@ Lo que eso significa, verificado con probe propia:
   por `theoretical_extremes` devuelve 201 hoy y el hijo corre a `sintering_coeff = 1.0`.
 - **Los nombres mienten**: hoy un hijo `limiting` llamado `theoretical: sintering_coeff=0.5`
   corre al coeficiente del estudio, porque el dict de estudio gana al valor barrido. Este change
-  **no** invierte esa precedencia: la deja como está y la describe. Arreglarla es el contrato de
-  seguimiento. La razón está en «Impacto en comportamiento ya desplegado» y en la nota de
+  **no** invierte esa precedencia: la deja como está y la describe. Arreglarla pide un contrato
+  **nuevo**, el de la precedencia y los nombres que mienten, distinto de los tres del mapa §7 y
+  distinto de `study-expansion-single-source`. La razón está en «Impacto en comportamiento ya desplegado» y en la nota de
   alcance de la delta: seis rondas produjeron tres inversiones sin declarar, y ninguno de los
   cuatro defectos necesita reordenarla.
 
