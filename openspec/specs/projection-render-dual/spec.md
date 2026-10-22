@@ -13,7 +13,7 @@ image pixels — not internal implementation.
 
 ## Requirements
 
-### R1. Presentation render MUST emit a styled PNG with red color, alpha, AA, and border
+### Requirement: R1. Presentation render MUST emit a styled PNG with red color, alpha, AA, and border
 
 **GIVEN** a direction is rendered in presentation mode,
 **WHEN** the PNG is written to the ZIP as `{filename}.png`,
@@ -47,7 +47,7 @@ pure-pixel-staircase),
 
 ---
 
-### R2. Scientific render MUST emit a solid-black-on-white PNG with no AA, no border, no alpha
+### Requirement: R2. Scientific render MUST emit a solid-black-on-white PNG with no AA, no border, no alpha
 
 **GIVEN** a direction is rendered in scientific mode,
 **WHEN** the PNG is written to the ZIP as `{filename}.scientific.png`,
@@ -85,7 +85,7 @@ pure-pixel-staircase),
 
 ---
 
-### R3. Presentation and scientific PNGs MUST share identical 2D bbox and pixel dimensions
+### Requirement: R3. Presentation and scientific PNGs MUST share identical 2D bbox and pixel dimensions
 
 **GIVEN** a direction is rendered in both presentation and scientific mode,
 **WHEN** the two PNGs are compared,
@@ -119,7 +119,7 @@ visual style differs),
 
 ---
 
-### R4. ZIP MUST include BOTH PNGs per direction with locked filename pattern
+### Requirement: R4. ZIP MUST include BOTH PNGs per direction with locked filename pattern
 
 **GIVEN** a projection ZIP produced in `grid` or `fibonacci` mode,
 **WHEN** the ZIP contents are listed,
@@ -165,7 +165,7 @@ reference the scientific PNG name (`{base}.scientific.png`),
 
 ---
 
-### R5. Legacy mode (single-PNG) MUST emit presentation only for backward compat
+### Requirement: R5. Legacy mode (single-PNG) MUST emit presentation only for backward compat
 
 **GIVEN** a request using `mode=legacy` OR a caller that does not request scientific render,
 **WHEN** the ZIP is produced,

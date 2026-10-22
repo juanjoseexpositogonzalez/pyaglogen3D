@@ -10,7 +10,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 
 ## Requirements
 
-### R1. Shared csv_locale module exposes user-pref accessors
+### Requirement: R1. Shared csv_locale module exposes user-pref accessors
 
 **GIVEN** a Request,
 **WHEN** `csv_locale.get_user_csv_locale(request)` is called,
@@ -27,7 +27,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 - **Input**: `csv_decimal_separator='.'`, `csv_column_delimiter=';'`.
 - **Expected**: `('.', ';')`.
 
-### R2. Localized row writer formats numbers per locale
+### Requirement: R2. Localized row writer formats numbers per locale
 
 **GIVEN** a `csv.writer`-like writer, a row of mixed-type values, and a decimal separator,
 **WHEN** `csv_locale.write_localized_row(writer, row, decimal)` runs,
@@ -49,7 +49,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 - **Input**: row `["x", None, 3.14]`.
 - **Expected**: middle cell is the empty string.
 
-### R3. Single-image CSV endpoint returns one data row with full columns
+### Requirement: R3. Single-image CSV endpoint returns one data row with full columns
 
 **GIVEN** a `FraktalAnalysis` row owned by the requester,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/{analysisId}/csv/`,
@@ -90,7 +90,7 @@ diagnostic columns were present.)
 - WHEN CSV endpoint is called
 - THEN HTTP 403; no CSV body (unchanged from R3 of main spec)
 
-### R4. Batch CSV endpoint returns N data rows + summary row
+### Requirement: R4. Batch CSV endpoint returns N data rows + summary row
 
 **GIVEN** a `FraktalBatch` with N images,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/csv/`,
@@ -133,7 +133,7 @@ diagnostic columns were present.)
 - AND `mean_df_inclusive` is populated (mean over converged + approximate)
 - AND existing summary fields (`n_images`, `mean_df`, etc.) are present and unchanged
 
-### R5. Existing simulations CSV is byte-equivalent after locale hoist
+### Requirement: R5. Existing simulations CSV is byte-equivalent after locale hoist
 
 **GIVEN** existing simulation export endpoints,
 **WHEN** they run after the `csv_locale` module is hoisted out of `apps/simulations/views.py`,

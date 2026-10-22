@@ -130,9 +130,14 @@ en estos momentos:
 | Cuándo | Qué se hace |
 | --- | --- |
 | Al **aprobar** la issue (paso ★) | La issue AGLO pasa a **En curso** (transición 21), comentando qué se va a construir y que todavía no existe, y enlaza la issue de GitHub que lleva el gate |
-| Al **archivar** | La misma issue recibe el **comentario de entrega** con la evidencia de lo que se comprobó, y pasa a **Finalizada** (transición 41) |
+| Al **entregar** (merge a `develop`) | La misma issue recibe el **comentario de entrega** con la evidencia de lo que se comprobó, y pasa a **Finalizada** (transición 41) |
 | Si el trabajo se **pausa** | La issue lo dice con fecha y por qué. Una issue en curso sin movimiento miente por inercia |
 | Si se **abandona** un trabajo aprobado | El comentario lo registra; la issue vuelve a Por hacer con el motivo y se retira `status:approved` |
+
+**Las issues de GitHub se cierran a mano al mergear a `develop`.** GitHub sólo cierra
+automáticamente contra la rama por defecto (`main`), y aquí se mergea a `develop`, así que
+un `Closes #N` en el PR no basta: el cierre es manual, con un comentario que enlace el PR
+y el commit de merge.
 
 Cada comentario nombra su issue de GitHub y su rama. El
 issue de Cycle 3 es **AGLO-2** (proyecto AGLO en `isilduria.atlassian.net`).

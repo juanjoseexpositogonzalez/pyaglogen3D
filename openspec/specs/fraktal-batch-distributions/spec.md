@@ -11,7 +11,7 @@ component receives as data — not internal implementation.
 
 ## Requirements
 
-### R1. Four metric histograms displayed in batch summary
+### Requirement: R1. Four metric histograms displayed in batch summary
 
 The batch summary view MUST render one histogram for each of the following four metrics:
 `Df` (fractal dimension), `kf` (prefactor), `Rg` (radius of gyration in nm), and `npo`
@@ -45,7 +45,7 @@ transient view).
 
 ---
 
-### R2. Bucket count derived from Sturges' rule, bounded [3, 30]
+### Requirement: R2. Bucket count derived from Sturges' rule, bounded [3, 30]
 
 For each metric histogram, the number of buckets MUST be computed using Sturges' rule:
 `k = ceil(log2(n) + 1)` where `n` is the count of successful (non-null) values for that
@@ -88,7 +88,7 @@ computed independently using its own `n_successful`.
 
 ---
 
-### R3. Failed images excluded from histograms; counted separately
+### Requirement: R3. Failed images excluded from histograms; counted separately
 
 For each metric histogram, only images where that metric's value is non-null
 (successful analysis) MUST contribute to the histogram data. The component MUST
@@ -147,7 +147,7 @@ overlay distinction — all non-null Df values were rendered identically.)
 
 ---
 
-### R4. Empty data (all failures for a metric) → no histogram, show message
+### Requirement: R4. Empty data (all failures for a metric) → no histogram, show message
 
 When `n_successful = 0` for a specific metric (all images failed to produce a value for it),
 the histogram panel for that metric MUST NOT render a chart. Instead, it MUST display a
@@ -177,7 +177,7 @@ the excluded/failed quality states.)
 
 ---
 
-### R5. Single unique value → degenerate histogram with one bar
+### Requirement: R5. Single unique value → degenerate histogram with one bar
 
 When `n_successful ≥ 5` but all successful values for a metric are identical (zero variance),
 the histogram MUST render a single bar spanning that value (bucket of width 0 or minimal
@@ -208,7 +208,7 @@ The "N successful of M total" label MUST still appear.
 
 ## ADDED Requirements
 
-### R-DELTA-L. Df histogram stats display: both mean_df and mean_df_inclusive shown
+### Requirement: R-DELTA-L. Df histogram stats display: both mean_df and mean_df_inclusive shown
 
 **GIVEN** a batch result with a non-empty Df histogram,
 **WHEN** the `FraktalBatchDistributions` component renders the Df histogram panel,
@@ -233,7 +233,7 @@ label SHOULD NOT be shown in that case to avoid visual redundancy.
 - THEN `mean_df = 1.80` is shown as the primary label
 - AND `mean_df_inclusive = 1.74` is shown as the secondary label with visual distinction
 
-### R-DELTA-M. Df histogram tooltip shows per-quality count breakdown
+### Requirement: R-DELTA-M. Df histogram tooltip shows per-quality count breakdown
 
 **GIVEN** a Df histogram bucket that contains both `converged` and `approximate` images,
 **WHEN** the user hovers over that bucket,

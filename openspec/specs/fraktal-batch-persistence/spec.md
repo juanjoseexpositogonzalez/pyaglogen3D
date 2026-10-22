@@ -10,7 +10,7 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 
 ## Requirements
 
-### R1. FraktalBatch row records project, user, and summary metadata
+### Requirement: R1. FraktalBatch row records project, user, and summary metadata
 
 **GIVEN** a batch upload completes (sync or async),
 **WHEN** persistence runs,
@@ -29,7 +29,7 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 - **Input**: User A creates batch in project P; user B (no access to P) requests it.
 - **Expected**: 403; `FraktalBatch` not exposed.
 
-### R2. FraktalBatchImage rows store per-image data + PNG bytes
+### Requirement: R2. FraktalBatchImage rows store per-image data + PNG bytes
 
 **GIVEN** N images in a batch,
 **WHEN** the batch task completes,
@@ -155,7 +155,7 @@ data were not persisted.)
 - THEN row `i` has `pixels_per_100nm = 4.2` (per-direction source)
 - AND row `j` has `pixels_per_100nm = 3.8` (batch broadcast source)
 
-### R3. Drill-down endpoint returns single-image detail
+### Requirement: R3. Drill-down endpoint returns single-image detail
 
 **GIVEN** a batch + image index,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/`,
@@ -207,7 +207,7 @@ This delta adds both fields to the response.)
 - WHEN drill-down is called
 - THEN HTTP 403 (unchanged from R3 of main spec)
 
-### R4. Per-image PNG endpoint streams bytes
+### Requirement: R4. Per-image PNG endpoint streams bytes
 
 **GIVEN** a batch + image index,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/png/`,
@@ -223,7 +223,7 @@ This delta adds both fields to the response.)
 #### Scenario 4.3 — Non-owner
 - **Expected**: 403.
 
-### R5. Re-analyze creates persistent FraktalAnalysis using batch dpo
+### Requirement: R5. Re-analyze creates persistent FraktalAnalysis using batch dpo
 
 **GIVEN** a batch image with PNG bytes,
 **WHEN** `POST /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/reanalyze/`,
@@ -244,7 +244,7 @@ This delta adds both fields to the response.)
 #### Scenario 5.4 — Non-owner
 - **Expected**: 403.
 
-### R6. Delete batch cascades to images, preserves re-analyses
+### Requirement: R6. Delete batch cascades to images, preserves re-analyses
 
 **GIVEN** a `FraktalBatch` with N images,
 **WHEN** `DELETE /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/`,
@@ -261,7 +261,7 @@ This delta adds both fields to the response.)
 #### Scenario 6.3 — Non-owner
 - **Expected**: 403; nothing deleted.
 
-### R7. Polling response shape preserved with batch_id added
+### Requirement: R7. Polling response shape preserved with batch_id added
 
 **GIVEN** an async batch in progress,
 **WHEN** `GET /api/v1/fraktal-status/{job_id}/`,
@@ -278,7 +278,7 @@ This delta adds both fields to the response.)
 #### Scenario 7.3 — Failed
 - **Expected**: `{status: "failed", error: "..."}`; no `batch_id`.
 
-### R8. Batch detail endpoint serves DB-backed results in current shape
+### Requirement: R8. Batch detail endpoint serves DB-backed results in current shape
 
 **GIVEN** an existing `FraktalBatch`,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/`,
@@ -328,7 +328,7 @@ This delta adds both fields to the response.)
 - WHEN the batch detail endpoint returns the new shape
 - THEN the client reads its fields without error; new fields are additive and ignorable
 
-### R9. Persisted PNG matches the analyzer-rendered image (round-trip)
+### Requirement: R9. Persisted PNG matches the analyzer-rendered image (round-trip)
 
 **GIVEN** a batch image with PNG persisted,
 **WHEN** drill-down PNG endpoint serves the bytes,
@@ -338,7 +338,7 @@ This delta adds both fields to the response.)
 - **Input**: Take SHA-256 of analyzer-input PNG at batch time; compare to SHA-256 of bytes returned by R4.
 - **Expected**: Hashes are equal.
 
-### R10. Persistence overhead bounded for sync path
+### Requirement: R10. Persistence overhead bounded for sync path
 
 **GIVEN** a sync batch with N=30 images,
 **WHEN** comparing total response time vs pre-frente-6 baseline,
@@ -350,7 +350,7 @@ This is a soft guarantee documented in the spec, not a CI hard gate.
 
 ---
 
-### R-DELTA-F. Migration 0007 is additive: nullable column, no data loss
+### Requirement: R-DELTA-F. Migration 0007 is additive: nullable column, no data loss
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
 **WHEN** migration `0007_add_scientific_png_field.py` is applied,
@@ -374,7 +374,7 @@ in any other column.
 
 ---
 
-### R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
+### Requirement: R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
 **WHEN** migration `0008_add_analysis_input_variant_field.py` is applied,
@@ -421,7 +421,7 @@ only and SHOULD NOT be relied upon for new batch task code.
 
 ---
 
-### R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
+### Requirement: R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
 **WHEN** migration `0008_add_analysis_input_variant_field.py` is applied,
@@ -468,7 +468,7 @@ only and SHOULD NOT be relied upon for new batch task code.
 
 ---
 
-### R-DELTA-I. Migration adds nullable rg_nm column to FraktalBatchImage
+### Requirement: R-DELTA-I. Migration adds nullable rg_nm column to FraktalBatchImage
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
 **WHEN** migration `0009_add_rg_nm_field.py` (or equivalent) is applied,
@@ -504,7 +504,7 @@ pre-migration state without data loss in any other column.
 
 ---
 
-### R-DELTA-K. Migration 0011 adds 5 bisection quality fields — additive, reversible
+### Requirement: R-DELTA-K. Migration 0011 adds 5 bisection quality fields — additive, reversible
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
 **WHEN** migration `0011_add_bisection_quality_fields.py` is applied,
