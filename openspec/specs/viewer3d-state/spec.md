@@ -1,7 +1,6 @@
 # Spec: viewer3d-state
 
-## Overview
-
+## Purpose
 This capability documents the contract for the 3D viewer's camera state
 (azimuth / elevation / zoom / orbit target) and how that state is scoped across
 the different surfaces that mount `AgglomerateViewer`. It exists because the

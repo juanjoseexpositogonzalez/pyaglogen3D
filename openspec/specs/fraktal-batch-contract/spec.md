@@ -1,7 +1,6 @@
 # Spec: fraktal-batch-contract
 
-## Overview
-
+## Purpose
 New capability defining the observable contract for FRAKTAL batch analysis. Covers ZIP ingestion, metadata-driven auto-calibration, one-shot dpo fallback, sync/async execution boundary, progress reporting, per-image result shape, batch statistics, histogram binning, simulation comparison, and the Sorensen educational note.
 
 Context: see `../proposal.md` for scope and affected areas; see `../explore.md` for background.
