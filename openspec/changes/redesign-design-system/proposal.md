@@ -42,17 +42,36 @@ archive desbloquearía antes de tiempo:
 | --- | --- | --- |
 | `BatchSimulationForm.tsx` | `sintering-reaches-engine` (T6.1–T6.5) **y de nuevo** `distribution-grid-wiring` (desplegable de parámetros, claves de distribución) | archivado **el segundo**, no el primero |
 | `DistributionSelector.tsx` | `distribution-grid-wiring` (planificado en `openspec/changes/_explore-only/distribution-config-surface.md` §7.2; **aún no redactado como change**) únicamente — `sintering-reaches-engine` T6.6 lo declara intacto a propósito | archivado `distribution-grid-wiring` |
-| `SimulationForm.tsx` | `polydispersity-single-source` (toggle de polidispersidad muerto en `tunable_cc`, asimetrías del formulario single) — **change aún no redactado** | ver abajo |
+| `SimulationForm.tsx` | **nadie** — `polydispersity-single-source` queda aparcado por decisión de la persona (2026-10-22) | **libre ya** |
 
 **Protocolo de liberación.** Cada fichero se libera por **aviso explícito de la sesión dueña**,
 no por inferencia desde un archive. Quien implemente la ola 4 no deduce la disponibilidad del
 estado de `openspec/changes/archive/`: espera el aviso, y lo registra en el Log de la ola 4 con
 fecha y change de origen.
 
-**Decisión abierta para la persona.** `polydispersity-single-source` no está escrito. Si se
-aparca, `SimulationForm.tsx` —el mayor de los tres— queda libre antes que los otros dos y la
-ola 4 puede partirse en dos. Si se escribe, es el último en liberarse. El alcance de la ola 4
-no se cierra hasta que esa decisión exista.
+**Decisión tomada (2026-10-22): `polydispersity-single-source` queda aparcado.**
+`SimulationForm.tsx` no lo reserva nadie, así que la ola 4 se parte en dos:
+
+- **4a** — `SimulationForm.tsx`. Puede empezar en cuanto la ola 3 esté integrada.
+- **4b** — `BatchSimulationForm.tsx` y `DistributionSelector.tsx`, al liberarse cada uno.
+
+**Condición que el aparcado impone a la ola 4a, y que no es negociable.** El port no puede ser
+neutral sobre D4: al reescribir esa pantalla, o arrastra el toggle muerto al código nuevo, o
+toca comportamiento. Verificado en el código:
+
+- `SimulationForm.tsx:716-718` sobrescribe `radius_min` y `radius_max` con el mismo valor
+  cuando `dpoDistribution.mode === 'fixed'`, que es el defecto;
+- `simulation/tunable_cc.rs:1121-1128` muestrea **un** dpo por corrida y fuerza
+  `radius_min == radius_max`, con la nota explícita del propio engine en `:2621`;
+- y el texto de `:1011-1012` sigue prometiendo *"Particle sizes will vary from X to Y nm"*.
+
+La ola 4a **debe** retirar ese texto y deshabilitar el control para `tunable_cc` con un callout
+que explique por qué, cumpliendo la regla "un concepto, un control". Es cambio de texto y de
+estado habilitado, no de cálculo.
+
+El arreglo de fondo —si `tunable_cc` debe soportar polidispersidad real— toca el engine Rust,
+necesita su propia Fase 0 y va como change independiente cuando se retome. El toggle sí
+funciona para `dla`, `cca`, `ballistic`, `ballistic_cc` y `tunable`, así que no se borra.
 
 **La reserva es parte del contrato, no un acuerdo verbal entre sesiones.**
 
