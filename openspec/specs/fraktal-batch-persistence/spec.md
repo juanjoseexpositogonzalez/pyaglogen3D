@@ -421,53 +421,6 @@ only and SHOULD NOT be relied upon for new batch task code.
 
 ---
 
-### Requirement: R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
-
-**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
-**WHEN** migration `0008_add_analysis_input_variant_field.py` is applied,
-**THEN** a NOT NULL `CharField` (or equivalent string column) `analysis_input_variant` with
-`default="presentation"` MUST be added to the `fractal_analysis_fraktalbatchimage` table,
-**AND** all existing rows MUST have `analysis_input_variant = "presentation"` after the migration
-(no backfill required — the column default provides this value),
-**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
-**AND** the migration MUST be reversible: the reverse operation drops only `analysis_input_variant`
-and restores the pre-migration table state without data loss in any other column,
-**AND** new rows inserted after migration MUST explicitly set `analysis_input_variant` to either
-`"scientific"` or `"presentation"` — the default `"presentation"` is a fallback for legacy rows
-only and SHOULD NOT be relied upon for new batch task code.
-
-#### Scenario H.1 — Forward migration on production rows
-
-- GIVEN a database with 500 existing `FraktalBatchImage` rows
-- WHEN `manage.py migrate fractal_analysis 0008` runs
-- THEN all 500 rows gain `analysis_input_variant = "presentation"` (column default)
-- AND migration completes without error
-- AND all rows remain queryable via drill-down and PNG endpoints
-
-#### Scenario H.2 — Reverse migration
-
-- GIVEN migration `0008` has been applied
-- WHEN `manage.py migrate fractal_analysis 0007` runs (reverse)
-- THEN the `analysis_input_variant` column is dropped
-- AND all other columns and data are intact
-- AND HTTP endpoints that do not reference `analysis_input_variant` continue to work
-
-#### Scenario H.3 — New batch after migration: variant explicitly set
-
-- GIVEN migration `0008` is applied and a new-mode ZIP is submitted
-- WHEN the batch task stores results
-- THEN new rows with scientific input have `analysis_input_variant = "scientific"` (explicit, not from default)
-- AND new rows with presentation fallback have `analysis_input_variant = "presentation"` (explicit)
-- AND old pre-migration rows still have `analysis_input_variant = "presentation"` (from default)
-
-#### Scenario H.4 — Drill-down during rolling deploy (migration window)
-
-- GIVEN migration `0008` is applied while the app is serving requests
-- WHEN a drill-down request hits a row created before the migration (column default fills in)
-- THEN HTTP 200; `analysis_input_variant = "presentation"`; no AttributeError or column error
-
----
-
 ### Requirement: R-DELTA-I. Migration adds nullable rg_nm column to FraktalBatchImage
 
 **GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
