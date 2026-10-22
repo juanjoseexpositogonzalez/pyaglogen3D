@@ -1116,9 +1116,8 @@ MUST NOT introduce regression.)
 
 ---
 
-## ADDED REQUIREMENTS (cc-tunable-high-df-fix, 2026-06-05 — Cycle 2 of 2)
 
-### R26. High-Df Fix Feature Flag
+### Requirement: R26. High-Df Fix Feature Flag
 
 The engine MUST read the env var `CC_TUNABLE_USE_HIGH_DF_FIX` ONCE per simulation invocation via a helper `read_high_df_fix_flag()` that mirrors `read_low_df_fix_flag()` (R22). Default when absent: `true` (fix active). Accepted off-values (case-insensitive): `"false"`, `"0"`, `"no"`. Any other non-empty value is treated as `true`.
 
@@ -1151,7 +1150,7 @@ The flag is orthogonal to `CC_TUNABLE_USE_LOW_DF_FIX` (R22) and `CC_TUNABLE_USE_
 
 ---
 
-### R27. Physical-Contact Feasibility Guard
+### Requirement: R27. Physical-Contact Feasibility Guard
 
 When `read_high_df_fix_flag()` returns `true`, `find_feasible_pairs` MUST exclude any candidate pair whose CC-formula `required_distance` is **geometrically impossible** — i.e. smaller than the minimum contact distance for the two bounding spheres. The guard is `required_distance >= 2 * max(rp_i, rp_j)` evaluated per-particle (MATLAB-aligned).
 
@@ -1236,9 +1235,8 @@ scope and not planned.
 
 ---
 
-## ADDED REQUIREMENTS (cc-tunable-low-df-fix, 2026-05-29)
 
-### R29. Matlab-Aligned Windowed Box-Counting Estimator (opt-in — added by cc-tunable-bc-alignment, Cycle 3.2)
+### Requirement: R29. Matlab-Aligned Windowed Box-Counting Estimator (opt-in — added by cc-tunable-bc-alignment, Cycle 3.2)
 
 The 3D box-counting estimator SHALL accept an optional inclusive level-index fit window
 `fit_window: Option<(usize, usize)>` in effective-sequence indices (0 = finest count-valid
@@ -1274,7 +1272,7 @@ restricted to levels `[start, end]`, skips the saturation-truncation step, and r
 - THEN `|BC_Df − Df_target|` improves over the default path on the per-config mean across seeds where the window differs from the legacy fit, and satisfies the documented band ±0.35 per-config mean / ±0.45 per-seed locked by the Phase 0 evidence
 - AND seeds where no fit-admitting window exists are refused with a validation error (`InsufficientLevels`), never a panic
 
-### R22. Low-Df Fix Feature Flag
+### Requirement: R22. Low-Df Fix Feature Flag
 
 The engine MUST read the env var `CC_TUNABLE_USE_LOW_DF_FIX` ONCE per simulation invocation
 via a helper `read_low_df_fix_flag()` that mirrors `read_phase3_flag()`. Default value when the
@@ -1307,7 +1305,7 @@ share state, or implicitly toggle each other.
 
 
 
-### R23. PC-Generated Default Seed Pool
+### Requirement: R23. PC-Generated Default Seed Pool
 
 When `read_low_df_fix_flag()` returns `true` AND `seed_type == "monomers"`, the engine MUST
 build the initial pool as `floor(N / PC_SEED_SIZE)` PC-generated sub-clusters of
@@ -1363,7 +1361,7 @@ gaps).
 
 
 
-### R24. Rollback Byte-Identity Guarantee
+### Requirement: R24. Rollback Byte-Identity Guarantee
 
 When `read_low_df_fix_flag()` returns `false`, the code path executed by
 `run_tunable_cc_internal` MUST be byte-identical to the pre-fix algorithm: same RNG draw order,
@@ -1406,7 +1404,7 @@ simulation. See `examples/diagnostics/r24_json_roundtrip` for the empirical boun
 
 
 
-### R25. Box-Counting Sanity in the Low-Df Band
+### Requirement: R25. Box-Counting Sanity in the Low-Df Band
 
 When `read_low_df_fix_flag()` returns `true`, for any run with `target_df ∈ [1.4, 1.7]`,
 `N ≥ 2000`, `seeds ≥ 3`, the final aggregate MUST satisfy a box-counting cross-check against
@@ -1436,7 +1434,6 @@ scan (see `examples/diagnostics/r25_n_sensitivity`) shows max delta 0.1789 at N=
 
 ---
 
-## MODIFIED Requirements
 
 
 
