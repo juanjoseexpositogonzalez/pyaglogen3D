@@ -79,12 +79,12 @@ Reglas que un agente cumple sin que se las recuerden:
 Erratas, dependencias, despliegue y arreglos que restauran un comportamiento ya
 cubierto por un test. Van por PR directo a `develop`. En caso de duda, hay issue.
 
-## OpenSpec: el registro de specs, y sus cinco reglas
+## OpenSpec: el registro de specs, y sus siete reglas
 
 `openspec/` se conserva como registro: las specs canónicas y el archivo de changes.
 Lo que cambió en 2026-10-22 es el **gate de aprobación**, no el registro.
 
-Cuando un trabajo toque specs, estas seis reglas son obligatorias. **Las seis están
+Cuando un trabajo toque specs, estas siete reglas son obligatorias. **Las siete están
 verificadas contra el binario `openspec`, y ninguna es evidente leyendo el documento**:
 
 1. Las deltas van en `specs/<capability>/spec.md`. Un fichero plano
@@ -101,6 +101,13 @@ verificadas contra el binario `openspec`, y ninguna es evidente leyendo el docum
    `## Purpose` el parser reporta **cero requisitos** aunque el fichero esté lleno de
    ellos. Verificado aislando un fichero: renombrar ese único encabezado llevó
    `rg-unit-contract` de `requirements 0` a `requirements 7`.
+7. Un change que **no lleva deltas** a propósito (exploración, tooling, docs) necesita
+   un `.openspec.yaml` con **ambas** líneas: `schema: spec-driven` y
+   `skip_specs: true`. `skip_specs` por su cuenta **se ignora en silencio** —sólo se
+   honra si el fichero parsea como metadata válida, y la metadata exige el campo
+   `schema`—, así que los totales no se mueven y nada apunta a la causa. Y si el valor
+   de `schema` es inválido, el validador recorta del error la lista de nombres
+   válidos: sondear no la revela.
 
 **Gate antes del PR, no en el archive:**
 
