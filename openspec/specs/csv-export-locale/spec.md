@@ -14,7 +14,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 
 **GIVEN** a Request,
 **WHEN** `csv_locale.get_user_csv_locale(request)` is called,
-**THEN** it returns `(decimal: str, delimiter: str)` resolved from `User.csv_decimal_separator` and `User.csv_column_delimiter` for authenticated users, or `('.', ',')` for anonymous requests.
+**THEN** it MUST return `(decimal: str, delimiter: str)` resolved from `User.csv_decimal_separator` and `User.csv_column_delimiter` for authenticated users, or `('.', ',')` for anonymous requests.
 
 #### Scenario 1.1 — Anonymous request
 - **Expected**: `('.', ',')`.
@@ -31,7 +31,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 
 **GIVEN** a `csv.writer`-like writer, a row of mixed-type values, and a decimal separator,
 **WHEN** `csv_locale.write_localized_row(writer, row, decimal)` runs,
-**THEN** floats are rendered with the chosen decimal separator, ints unchanged, strings unchanged, and `None` rendered as an empty string.
+**THEN** floats MUST be rendered with the chosen decimal separator, ints and strings MUST be passed through unchanged, and `None` MUST be rendered as an empty string.
 
 #### Scenario 2.1 — Standard floats with `,`
 - **Input**: row `[1.5, 2.0]`, decimal `,`.
@@ -53,7 +53,7 @@ This spec describes **observable behavior** — locale resolution, CSV bytes, HT
 
 **GIVEN** a `FraktalAnalysis` row owned by the requester,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/{analysisId}/csv/`,
-**THEN** the response is HTTP 200, `Content-Type: text/csv`, with a header row + exactly 1 data row,
+**THEN** the response MUST be HTTP 200, `Content-Type: text/csv`, with a header row + exactly 1 data row,
 **AND** columns are: `analysis_id, created_at, algorithm, image_filename, fractal_dimension, prefactor, r_squared, n_particles_counted, error, dpo_used, autocalibrate_source, scale_factor_nm, pixels_per_100nm, rg, ap, volume, mass, surface_area, sim_id, sim_target_df, sim_box_counting_df, calibration_source, quality, bisection_iterations, bisection_residual, failure_reason, df_estimate`,
 **AND** the 5 new columns are appended AFTER `calibration_source` (end of existing list),
 **AND** numbers + delimiter respect R1; `quality` and `failure_reason` use literal values.
@@ -94,7 +94,7 @@ diagnostic columns were present.)
 
 **GIVEN** a `FraktalBatch` with N images,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/csv/`,
-**THEN** the response is HTTP 200, `Content-Type: text/csv`, with: header row + N image rows + 1 blank row + 1 summary row,
+**THEN** the response MUST be HTTP 200, `Content-Type: text/csv`, with: header row + N image rows + 1 blank row + 1 summary row,
 **AND** image row columns are: `index, filename, azimuth, elevation, fractal_dimension, prefactor, r_squared, n_particles_counted, error, dpo_used, autocalibrate_source, scale_factor_nm, pixels_per_100nm, quality, bisection_iterations, bisection_residual, failure_reason, df_estimate`,
 **AND** the 5 new columns are appended AFTER `pixels_per_100nm` (end of existing image row set),
 **AND** summary row columns extend with: `n_converged, n_approximate, n_excluded, n_failed, mean_df_inclusive` appended after existing summary fields,
@@ -137,7 +137,7 @@ diagnostic columns were present.)
 
 **GIVEN** existing simulation export endpoints,
 **WHEN** they run after the `csv_locale` module is hoisted out of `apps/simulations/views.py`,
-**THEN** the output bytes are identical to pre-hoist output for identical inputs.
+**THEN** the output bytes MUST be identical to pre-hoist output for identical inputs.
 
 #### Scenario 5.1 — Snapshot equivalence
 - **Input**: Known simulation; pre-hoist CSV captured as fixture.

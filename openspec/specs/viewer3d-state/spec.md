@@ -27,14 +27,14 @@ model the compare view requires.
 across different surfaces (single-sim detail page, compare page, future
 contexts)
 **WHEN** any viewer's camera is rotated, panned, or zoomed
-**THEN** that write is isolated to its own scope and does not overwrite another
+**THEN** that write MUST be isolated to its own scope and MUST NOT overwrite another
 scope's camera state.
 
 Observable rules:
 - The camera-state store (or provider) exposes at least two distinguishable keys/slots: one for the single-sim detail page (e.g. `"single"`) and one for each compare session (e.g. `"compare"` or `"compare/{sessionId}"`).
 - A viewer mounted in the single-sim detail context reads/writes only the `"single"` slot.
 - Viewers mounted inside a Compare session read/write only the compare slot (shared across the N viewers in that session — they cooperate per R3 of `multi-aggregate-comparison`, not via the global single-sim slot).
-- Writes to the compare slot do not mutate the single-sim slot, and vice versa.
+- Writes to the compare slot MUST NOT mutate the single-sim slot, and vice versa.
 - The default slot (when no context is specified) keeps the pre-change semantics so legacy callers are unaffected.
 
 #### Scenarios

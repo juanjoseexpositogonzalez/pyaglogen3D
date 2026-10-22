@@ -13,8 +13,8 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 **GIVEN** the caller requests `mode=grid` with integer `n_az ≥ 1` and `n_el ≥ 2`,
 **WHEN** the backend generates projection directions,
-**THEN** the number of unique projections emitted is exactly `n_az · (n_el − 2) + 2`,
-**AND** each pole (elevation = −90° and elevation = +90°) appears exactly once in the output,
+**THEN** the number of unique projections emitted MUST be exactly `n_az · (n_el − 2) + 2`,
+**AND** each pole (elevation = −90° and elevation = +90°) MUST appear exactly once in the output,
 **AND** every intermediate elevation (elevation ∈ `(−90, +90)`) produces exactly `n_az` projections (one per azimuth in the azimuth sweep).
 
 #### Scenario 1.1 — Canonical brief example
@@ -48,8 +48,8 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 **GIVEN** the caller requests `mode=fibonacci` with integer `N ≥ 1`,
 **WHEN** directions are generated via a golden-angle spiral lattice,
-**THEN** exactly `N` projections are emitted,
-**AND** each projection has a unique identity in the output (guaranteed by the index prefix in the filename — see R4),
+**THEN** exactly `N` projections MUST be emitted,
+**AND** each projection MUST have a unique identity in the output (guaranteed by the index prefix in the filename — see R4),
 **AND** the (azimuth, elevation) distribution is approximately uniform over the unit sphere (no clustering at poles, no gaps at equator).
 
 #### Scenario 2.1 — Typical N
@@ -83,7 +83,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 **GIVEN** a client calls the endpoint **without** a `mode` field, **or** with `mode=legacy`,
 **WHEN** the backend processes the request,
-**THEN** the output ZIP is byte-equivalent to the current production endpoint's output for the same inputs (same filename shape, same projection count, same rendered pixels),
+**THEN** the output ZIP MUST be byte-equivalent to the current production endpoint's output for the same inputs (same filename shape, same projection count, same rendered pixels),
 **AND** no new fields in `metadata.json` break pre-existing parsers (see R5 — legacy `metadata.json` shape is permitted to differ from grid/fibonacci).
 
 #### Scenario 3.1 — Mode omitted defaults to legacy
@@ -107,7 +107,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 **GIVEN** projections are generated in `grid` or `fibonacci` mode,
 **WHEN** filenames are assigned in the ZIP,
-**THEN** each filename matches the pattern `proj_{idx:03d}_Az{AAA}_El{±EEE}.{ext}` where:
+**THEN** each filename MUST match the pattern `proj_{idx:03d}_Az{AAA}_El{±EEE}.{ext}` where:
 
 - `idx` is a zero-padded 3-digit sequential index starting at `000`,
 - `AAA` is a zero-padded 3-digit azimuth in the range `[000, 360)` (360° wraps to 000),
@@ -316,10 +316,10 @@ the Celery path.)
 
 **GIVEN** `mode=grid` or `mode=fibonacci`,
 **WHEN** the total projection count `n_generated ≤ 200`,
-**THEN** the endpoint responds **synchronously** with HTTP 200 and a ZIP body (`Content-Type: application/zip`).
+**THEN** the endpoint MUST respond **synchronously** with HTTP 200 and a ZIP body (`Content-Type: application/zip`).
 
 **WHEN** `n_generated > 200`,
-**THEN** the endpoint responds immediately with HTTP 202 and a JSON body `{"job_id": "<string>"}`,
+**THEN** the endpoint MUST respond immediately with HTTP 202 and a JSON body `{"job_id": "<string>"}`,
 **AND** a polling endpoint `GET /api/v1/projections-status/{job_id}/` returns JSON with one of these shapes:
 - `{"status": "processing", "progress": <float in [0, 1]>}` while the job is running,
 - `{"status": "done", "download_url": "<string>"}` when the ZIP is ready,
@@ -349,7 +349,7 @@ the Celery path.)
 
 **GIVEN** a Fibonacci lattice point `(x, y, z)` on the unit sphere (where `y` is the up-axis per the golden-angle construction `y = 1 − (2i+1)/N`),
 **WHEN** it is converted to `(azimuth, elevation)` for the output contract,
-**THEN** `azimuth = atan2(z, x)` in degrees, normalized to the range `[0, 360)` (negative atan2 results are shifted by +360),
+**THEN** `azimuth` MUST be `atan2(z, x)` in degrees, normalized to the range `[0, 360)` (negative atan2 results are shifted by +360),
 **AND** `elevation = asin(y)` in degrees, in the range `[-90, +90]`.
 
 Note: the axis convention is `y`-up; the spec canonicalizes poles to `azimuth = 0` when elevation is exactly ±90 (atan2 at the pole is mathematically underdetermined).
@@ -380,7 +380,7 @@ Note: the axis convention is `y`-up; the spec canonicalizes poles to `azimuth = 
 
 **GIVEN** a request with invalid or missing mode-specific parameters,
 **WHEN** the backend validates the payload,
-**THEN** it responds with HTTP 400 and a JSON error body containing an explicit, field-level message identifying the violation (no silent coercion, no partial run).
+**THEN** it MUST respond with HTTP 400 and a JSON error body containing an explicit, field-level message identifying the violation (no silent coercion, no partial run).
 
 #### Scenario 8.1 — Grid missing `n_el`
 - **Input**: `mode=grid, n_az=5` (no `n_el`)
