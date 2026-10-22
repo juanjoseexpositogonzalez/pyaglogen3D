@@ -4,7 +4,7 @@
 > el rediseño de Base44 (`docs/design/base44-redesign-prompt.md` y sus tres auditorías) al
 > `frontend/` real.
 
-## Intent
+## Why
 
 La interfaz de pyAgloGen3D es hoy una plantilla oscura genérica de shadcn/ui: un único bloque
 de tokens en `globals.css` con valores dark, sin tema claro, sin sistema tipográfico y sin
@@ -75,7 +75,7 @@ funciona para `dla`, `cca`, `ballistic`, `ballistic_cc` y `tunable`, así que no
 
 **La reserva es parte del contrato, no un acuerdo verbal entre sesiones.**
 
-## Alcance de este change
+## What Changes
 
 ### Dentro
 

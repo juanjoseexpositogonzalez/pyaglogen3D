@@ -296,6 +296,10 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
   aparece — solo para `parameters_schema_version` `null` o `"v1"`. Pertenece a las olas 2 y 3.
 - `src/stores/viewerStore.ts:24-29`, cuatro literales de fondo de viewer atados a
   `multi-aggregate-comparison` S7.3.
+- **Los títulos de escenario llevan el sufijo `[test]` / `[manual]` y pasan así a la spec
+  canónica.** El archive empareja los bloques MODIFIED por **título verbatim**, escenario a
+  escenario. Cualquier ola futura que modifique estas dos capacidades debe reproducir el
+  título completo, sufijo incluido, o el tooling dará por omitidos los escenarios sin avisar.
 - Los seis residuales del `base44-port-checklist.md`, que pertenecen a las olas 2–4.
 - El destino del export de Base44 (1,4 MB sin commitear) es decisión de la persona (D11).
 
