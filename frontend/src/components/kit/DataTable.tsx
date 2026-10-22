@@ -49,14 +49,17 @@ export function DataTable<T>({
   emptyMessage = 'No data.',
   className,
 }: DataTableProps<T>) {
-  if (rows.length === 0) {
-    return <p className="hint py-3.5">{emptyMessage}</p>
-  }
 
   return (
     <div
       className={cn('overflow-x-auto', maxHeight && 'overflow-y-auto', className)}
       style={maxHeight ? { maxHeight, scrollbarGutter: 'stable' } : undefined}
+      // A scrolling box with no focusable content cannot be reached by
+      // keyboard, so every row below the fold would be unreachable. R7-S2
+      // requires the opposite.
+      tabIndex={maxHeight ? 0 : undefined}
+      role={maxHeight ? 'region' : undefined}
+      aria-label={maxHeight ? (caption ?? 'Data table') : undefined}
     >
       <table className="w-full border-collapse text-[12px]">
         {caption && <caption className="hint pb-2 text-left">{caption}</caption>}
@@ -79,6 +82,16 @@ export function DataTable<T>({
           </tr>
         </thead>
         <tbody>
+          {rows.length === 0 && (
+            <tr>
+              <td
+                colSpan={columns.length}
+                className="hint border-b-0 px-3 py-3.5 text-center"
+              >
+                {emptyMessage}
+              </td>
+            </tr>
+          )}
           {rows.map((row, i) => (
             <tr key={rowKey ? rowKey(row, i) : i} className="hover:bg-[var(--row-hover)]">
               {columns.map((c) => {

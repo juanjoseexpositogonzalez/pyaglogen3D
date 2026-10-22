@@ -1,7 +1,7 @@
 'use client'
 
 import { Check, Copy } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import { cn } from '@/lib/utils'
 
@@ -21,13 +21,20 @@ export interface CopyTextProps {
 
 export function CopyText({ label, value, className }: CopyTextProps) {
   const [copied, setCopied] = useState(false)
+  const timer = useRef<number | undefined>(undefined)
   const text = String(value)
+
+  // Without this, unmounting the row inside the 1.6s window leaves a setState
+  // on an unmounted component, and repeated clicks stack timers so the first
+  // one resets the icon while the second is still running.
+  useEffect(() => () => window.clearTimeout(timer.current), [])
 
   async function copy() {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
+      window.clearTimeout(timer.current)
+      timer.current = window.setTimeout(() => setCopied(false), 1600)
     } catch {
       // A denied clipboard permission is not worth interrupting the user for;
       // the value stays selectable on screen.

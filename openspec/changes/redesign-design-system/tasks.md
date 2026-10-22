@@ -327,6 +327,53 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L6 — Judgment day del kit: bloque 3, contraste y cobertura (2026-10-22)
+
+**Contraste AA, con valores medidos y no ajustados a ojo.** Calculado el tono más oscuro de
+cada matiz que cruza 4.5:1 sobre blanco, que es el fondo conservador porque los chips pintan su
+tinta sobre fondos `*-soft` translúcidos:
+
+| token | antes | ahora |
+| --- | --- | --- |
+| `--ink-faint` | `#879b9f` · 2.91 | `#64787d` · **4.64** |
+| `--warning` | `#b8761f` · 3.72 | `#a3681b` · **4.61** |
+| `--success` | `#2f8f6d` · 3.98 | `#2b8364` · **4.63** |
+| `--accent` | `#1d858c` · 4.39 | `#1c8188` · **4.62** |
+
+El tema oscuro ya cumplía sus cinco pares; verificado antes de tocarlo, no supuesto.
+
+**T7.5 deja de ser una medición manual y pasa a ser un test.** `src/app/__tests__/contrast.test.ts`,
+20 aserciones: tinta y semánticos en ambos temas, los tres tokens sobre el canvas de
+visualización, y las seis series a 3:1 por ser contraste no textual. Una medición manual es una
+foto; un token puede derivar al día siguiente.
+
+**El test de contraste encontró un defecto en sí mismo antes que en los tokens.** El parser de
+`globals.css` usaba `(--[\w-]+)\s*:\s*([^;]+);`, y un comentario propio que mencionaba
+`--visual-background: 13.2:1` **era tomado por una declaración y se tragaba la siguiente**.
+Afectaba igual al test de tokens de L2. Corregido quitando comentarios antes de parsear, en los
+dos ficheros.
+
+**Dos defectos más del juez A, cerrados:**
+- `DataTable` con `maxHeight` era una caja con scroll sin nada enfocable, así que **las filas
+  bajo el corte eran inalcanzables por teclado** (WCAG 2.1.1). Como `ShowValues` fija
+  `maxHeight` por defecto, afectaba a *todas* las tablas de "Show values" y contradecía R7-S2,
+  que el Log daba por cubierto. Ahora `tabIndex=0`, `role="region"` y `aria-label`.
+- El estado vacío tiraba `caption` y cabecera; vía `ShowValues` el caption es lo único que dice
+  **qué** mostraba la gráfica. Ahora se conservan, con una fila `colSpan`.
+- `CopyText` dejaba el timer vivo: desmontar la fila dentro de 1,6 s provocaba un `setState`
+  sobre un componente desmontado, y los clics repetidos acumulaban timers.
+
+**Cobertura: de 6 a 18 primitivas con test.** 34 tests nuevos en `interactive.test.tsx` y
+`presentational.test.tsx`, centrados en lo que los jueces señalaron como no ejercitado:
+teclado y *roving tabindex* de `SegmentedControl`, modo controlado de `DisclosurePanel`,
+`progress` con `NaN` y fuera de rango, `undefined` en `DetailList`, recuento cero en
+`FilterBar`, y que `VisualPanel` no vuelva a usar modificadores de opacidad.
+
+**Verificación.** Suite **64 ficheros / 715 tests verdes** (base 58/624). Kit: **71 tests**
+(eran 28). `type-check` **13**. Literales de producción **98**.
+
+**T3.8 queda cumplida**: ya no hay primitiva sin test. T7.5 cumplida y automatizada.
+
 ### L5 — Judgment day del kit: ronda de corrección, bloques 1 y 2 (2026-10-22)
 
 Dos jueces ciegos sobre el PR #91, con ángulos distintos: uno mecánico, otro de dominio.

@@ -29,7 +29,7 @@
     --ink: #112c3d;
     --ink-strong: #0a2030;
     --ink-muted: #536a73;
-    --ink-faint: #879b9f;
+    --ink-faint: #64787d;
     --ink-on-dark: #eef8f4;
     /* Hierarchy over the dark visualisation canvas. Declared as whole
        tokens, never as opacity modifiers: Tailwind cannot apply alpha to
@@ -39,7 +39,7 @@
     --ink-on-dark-faint: #a3bdb9;
 
     /* ── accents ───────────────────────────────────────────────────────── */
-    --accent: #1d858c;
+    --accent: #1c8188;
     --accent-strong: #14646f;
     /* focus, hover and active states only; never carries state meaning */
     --accent-bright: #4faea8;
@@ -56,9 +56,13 @@
     --series-6: #3e6584;
 
     /* ── semantic: disjoint from every series colour ───────────────────── */
-    --success: #2f8f6d;
+    /* Light-theme values are the darkest tone of each hue that clears WCAG AA
+       (4.5:1) as 10px text on white, measured rather than eyeballed. The chips
+       render these on translucent *-soft backgrounds over white, so white is
+       the conservative background to measure against. */
+    --success: #2b8364;
     --success-soft: rgba(47, 143, 109, 0.13);
-    --warning: #b8761f;
+    --warning: #a3681b;
     --warning-soft: #fdf2dd;
     --danger: #a34c58;
     --danger-soft: #fff0f1;
