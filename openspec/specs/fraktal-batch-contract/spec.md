@@ -632,7 +632,6 @@ the component MUST fall back to external mode and MUST NOT throw or show an erro
 
 ---
 
-## ADDED REQUIREMENTS (fraktal-batch-extensions, 2026-10-19)
 
 
 ### Requirement: R12. Batch-vs-linked-simulation comparison (C1)
