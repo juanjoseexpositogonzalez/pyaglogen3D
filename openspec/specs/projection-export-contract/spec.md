@@ -1,7 +1,6 @@
 # Spec: projection-export-contract
 
-## Overview
-
+## Purpose
 New capability defining the observable contract for the projection batch export endpoint. Covers direction-generation semantics (grid pole dedup, Fibonacci lattice), filename convention, `metadata.json` shape, mode switching, input validation, and the sync/async execution boundary.
 
 Context: see `../proposal.md` for scope and affected areas; see `../explore.md` for diagnosis of the existing bugs this contract replaces.

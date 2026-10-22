@@ -1,7 +1,6 @@
 # Spec: batch-box-counting
 
-## Overview
-
+## Purpose
 Opt-in dual-estimator box-counting over parametric-study runs: the study's
 box-counting flow gains a Matlab-aligned **windowed estimator** executed
 alongside the legacy one, with a three-way comparison surface (Rg-evolution

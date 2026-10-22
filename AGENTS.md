@@ -84,7 +84,7 @@ cubierto por un test. Van por PR directo a `develop`. En caso de duda, hay issue
 `openspec/` se conserva como registro: las specs canónicas y el archivo de changes.
 Lo que cambió en 2026-10-22 es el **gate de aprobación**, no el registro.
 
-Cuando un trabajo toque specs, estas cinco reglas son obligatorias. **Las cinco están
+Cuando un trabajo toque specs, estas seis reglas son obligatorias. **Las seis están
 verificadas contra el binario `openspec`, y ninguna es evidente leyendo el documento**:
 
 1. Las deltas van en `specs/<capability>/spec.md`. Un fichero plano
@@ -97,6 +97,10 @@ verificadas contra el binario `openspec`, y ninguna es evidente leyendo el docum
    escenario y el recuento miente.
 5. `proposal.md` necesita las secciones `## Why` y `## What Changes`, con ese nombre
    exacto, o `openspec show` no lee nada. **Ésta no la caza `validate --strict`.**
+6. Una spec canónica necesita una sección `## Purpose`. `## Overview` no vale: sin
+   `## Purpose` el parser reporta **cero requisitos** aunque el fichero esté lleno de
+   ellos. Verificado aislando un fichero: renombrar ese único encabezado llevó
+   `rg-unit-contract` de `requirements 0` a `requirements 7`.
 
 **Gate antes del PR, no en el archive:**
 
