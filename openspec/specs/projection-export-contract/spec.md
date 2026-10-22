@@ -10,7 +10,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 ## Requirements
 
-### R1. Grid mode generates exactly `n_az·(n_el − 2) + 2` projections
+### Requirement: R1. Grid mode generates exactly `n_az·(n_el − 2) + 2` projections
 
 **GIVEN** the caller requests `mode=grid` with integer `n_az ≥ 1` and `n_el ≥ 2`,
 **WHEN** the backend generates projection directions,
@@ -45,7 +45,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 ---
 
-### R2. Fibonacci mode generates exactly N unique projections
+### Requirement: R2. Fibonacci mode generates exactly N unique projections
 
 **GIVEN** the caller requests `mode=fibonacci` with integer `N ≥ 1`,
 **WHEN** directions are generated via a golden-angle spiral lattice,
@@ -80,7 +80,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 ---
 
-### R3. Legacy mode preserves current production output
+### Requirement: R3. Legacy mode preserves current production output
 
 **GIVEN** a client calls the endpoint **without** a `mode` field, **or** with `mode=legacy`,
 **WHEN** the backend processes the request,
@@ -104,7 +104,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 ---
 
-### R4. Filename convention for grid and fibonacci modes
+### Requirement: R4. Filename convention for grid and fibonacci modes
 
 **GIVEN** projections are generated in `grid` or `fibonacci` mode,
 **WHEN** filenames are assigned in the ZIP,
@@ -136,7 +136,7 @@ This spec describes **observable behavior** — what a caller sees in responses,
 
 ---
 
-### R5. `metadata.json` is present in the ZIP with contract shape
+### Requirement: R5. `metadata.json` is present in the ZIP with contract shape
 
 **GIVEN** the export ZIP is assembled in `grid` or `fibonacci` mode,
 **WHEN** the ZIP is finalized,
@@ -204,7 +204,7 @@ non-null entries (backward compat for consumers reading only the top-level field
 
 ---
 
-### R-DELTA-A. ZIP structure for grid and fibonacci modes includes dual PNGs per direction
+### Requirement: R-DELTA-A. ZIP structure for grid and fibonacci modes includes dual PNGs per direction
 
 **GIVEN** a projection ZIP produced in `grid` or `fibonacci` mode,
 **WHEN** the ZIP contents are enumerated,
@@ -256,7 +256,7 @@ one per sweep step in legacy. Scientific PNGs did not exist.)
 
 ---
 
-### R-DELTA-B. Render → measure → write order: render all directions first, then metadata once
+### Requirement: R-DELTA-B. Render → measure → write order: render all directions first, then metadata once
 
 **GIVEN** a projection export task (sync or Celery async) in any mode,
 **WHEN** the export pipeline executes,
@@ -313,7 +313,7 @@ the Celery path.)
 
 ---
 
-### R6. Sync/async execution threshold
+### Requirement: R6. Sync/async execution threshold
 
 **GIVEN** `mode=grid` or `mode=fibonacci`,
 **WHEN** the total projection count `n_generated ≤ 200`,
@@ -346,7 +346,7 @@ the Celery path.)
 
 ---
 
-### R7. Azimuth and elevation computation for Fibonacci
+### Requirement: R7. Azimuth and elevation computation for Fibonacci
 
 **GIVEN** a Fibonacci lattice point `(x, y, z)` on the unit sphere (where `y` is the up-axis per the golden-angle construction `y = 1 − (2i+1)/N`),
 **WHEN** it is converted to `(azimuth, elevation)` for the output contract,
@@ -377,7 +377,7 @@ Note: the axis convention is `y`-up; the spec canonicalizes poles to `azimuth = 
 
 ---
 
-### R8. Mode rejection and validation
+### Requirement: R8. Mode rejection and validation
 
 **GIVEN** a request with invalid or missing mode-specific parameters,
 **WHEN** the backend validates the payload,

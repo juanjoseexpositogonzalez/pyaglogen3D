@@ -22,7 +22,7 @@ model the compare view requires.
 
 ## Requirements
 
-### R1. Camera state is scoped per route/context
+### Requirement: R1. Camera state is scoped per route/context
 
 **GIVEN** the application renders one or more `AgglomerateViewer` instances
 across different surfaces (single-sim detail page, compare page, future
