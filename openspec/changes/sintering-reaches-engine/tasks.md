@@ -34,7 +34,12 @@
 - [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
 - [x] T0.16 Corrección r6 (este commit)
 - [x] T0.17 spec-review r6 en agente fresco
-- [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
+- [x] T0.18 Correcciones hasta ronda sin hallazgos semánticos → **criterio de parada
+      redefinido por la persona (2026-10-22): los blockers.** Cumplido desde la r10: r10, r11 y
+      r12 dieron **cero**. El criterio original no convergía, y no por el contrato: desde la
+      r11, los majors y buena parte de los minors los introducía la corrección de la ronda
+      anterior, así que cada ronda generaba el material de la siguiente. Blockers 3, 2, 1, 0,
+      0, 0; majors clavados en 2 cuatro rondas; minors subiendo 3, 2, 6, 6, 8, 9
 - [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
 - [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
 - [x] T0.21 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
@@ -48,7 +53,7 @@
       las suites, tras destrackear `tsconfig.tsbuildinfo` (PR #96)
 - [x] T0.27 spec-review r12 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 9 minors)`; la
       barrida de residuos del recorte salió **vacía** por primera vez en seis rondas
-- [ ] T0.28 spec-review r13 en agente fresco, si procede
+- [~] T0.28 spec-review r13 — **no se hace**: criterio de parada cumplido (T0.18)
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
@@ -438,3 +443,11 @@
   en `1d8b4fb` y es la decisión que carga el recorte. Cuatro de los nueve minors eran errores de
   la nota de huecos que yo mismo escribí en `39207e0`, incluido confundir el número más alto
   (L26) con el recuento (21) — el mismo error que creó los huecos.
+- L28 (2026-10-22): **Criterio de parada, decisión de la persona**: los blockers, no «ronda sin
+  hallazgos semánticos». Seis rondas de revisión (r7-r12) con agente fresco: los blockers se
+  extinguieron (3, 2, 1, 0, 0, 0) pero los majors se quedaron en 2 durante cuatro rondas y los
+  minors crecieron (3, 2, 6, 6, 8, 9). La causa no es el contrato: desde la r11 los hallazgos
+  eran defectos **de las correcciones**, no del contrato — el patrón del superviviente, frases
+  que quedan justificando la versión anterior del párrafo que las rodea. Un bucle que se
+  alimenta de sí mismo no converge. Se cierra la fase de revisión y el contrato pasa al gate
+  humano.
