@@ -221,8 +221,15 @@
       vivir en `specs/<capability>/spec.md`, no en `specs/<capability>.md`; un fichero plano se
       **ignora en silencio** al aplicar y al archivar.
 - [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
-      `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros
-      en `openspec/specs/`, nunca diferidos.
+      `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros,
+      nunca diferidos, en **`openspec/specs/<capability>/spec.md`** — forma de carpeta, no
+      fichero plano. Verificado: `openspec list --specs` responde hoy **"No specs found"**
+      porque las 21 canónicas del repo son planas y el tooling no ve ninguna. Estas dos serían
+      las primeras visibles. Migrar las otras 21 es un chore aparte, decisión de la persona; no
+      lo hace este change.
+- [ ] T8.2b Comprobar que, tras el archive, `openspec list --specs` lista
+      `design-system-foundation` y `app-shell-navigation` con sus 8 y 6 requisitos. Si no las
+      lista, el archive fue silencioso y hay que repararlo antes de cerrar.
 - [ ] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
       `lint_cmd: "cd frontend && npm run lint"` como gate cuando no existe configuración ESLint
       alguna (T0.1): o se anota como no ejecutable, o se retira.
@@ -268,8 +275,8 @@ Cualquier fichero fuera de esta lista es una desviación del contrato:
 - `openspec/changes/redesign-design-system/**` (las deltas en
   `specs/<capability>/spec.md`, que es la única forma que `openspec validate` acepta)
 
-**Y, solo en T8 (archive):** `openspec/specs/design-system-foundation.md`,
-`openspec/specs/app-shell-navigation.md`, `openspec/state.yaml` y
+**Y, solo en T8 (archive):** `openspec/specs/design-system-foundation/spec.md`,
+`openspec/specs/app-shell-navigation/spec.md`, `openspec/state.yaml` y
 `openspec/changes/archive/**`.
 
 Cualquier otro fichero, nuevo o existente, es una desviación del contrato. En particular **no**
