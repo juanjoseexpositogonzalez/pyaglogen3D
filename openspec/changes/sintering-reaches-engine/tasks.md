@@ -259,6 +259,22 @@
 
 ## Log
 
+> **Sobre los huecos L5, L9, L13, L17 y L20.** No falta nada. Eran los números que fue
+> ocupando, y vacando, el resumen de decisiones de diseño: al ser siempre la última entrada,
+> cada ronda insertaba sus entradas antes y lo renumeraba (L5 en `89079e0`, L9 en `fa0563c`,
+> L13 en `f977d3a`, L17 en `4ec9b5e`, L20 en `c82cb77`). Recuperable entero con
+> `git show 89079e0:openspec/changes/sintering-reaches-engine/tasks.md`. Ahora vive sin número,
+> que es lo que era desde el principio, y los huecos se quedan: renumerar las 26 entradas
+> rompería las referencias cruzadas que ya las citan.
+
+- **Decisiones de diseño vigentes** (resumen permanente, sin número de entrada: no es un
+  suceso con fecha sino el estado actual de las decisiones, y se actualiza en el sitio).
+  Cada una con su alternativa descartada: regla única en las siete superficies (DD1); el helper
+  lanza pero nunca es el primero en enterarse (DD2); validar antes de escribir en vez de
+  `transaction.atomic`, porque una tarea Celery ya despachada no se deshace con un rollback
+  (DD3); `sintering_coeff` es la media (DD4); allow-list de once algoritmos con `limiting`
+  sólo-`fixed` (DD5).
+
 - L1 (2026-10-21): Contrato escrito a partir del mapa consolidado
   (`_explore-only/distribution-config-surface.md`, PR #81), que a su vez consolida la
   exploración y cuatro rondas de spec-review del change retirado `distribution-config-wiring`.
@@ -369,11 +385,6 @@
   `value`); los hijos de frontera entran en el nivel 1; R11 exige que el **llamante resuelva**
   la precedencia y pase el ajuste ganador; cuatro cláusulas nuevas en R3.10 y una en R7.4;
   corregidos el ancla `utils.py:180`, la evidencia de T1.8/T3.0e y los conteos.
-- L20 (2026-10-22): Decisiones de diseño con su alternativa descartada: regla única en las siete
-  superficies (DD1); el helper lanza pero nunca es el primero en enterarse (DD2); validar antes
-  de escribir en vez de `transaction.atomic`, porque una tarea Celery ya despachada no se
-  deshace con un rollback (DD3); `sintering_coeff` es la media (DD4); allow-list de once
-  algoritmos con `limiting` sólo-`fixed` (DD5).
 - L21 (2026-10-22): **Recorte de alcance** (`14d0b13`): fuera la precedencia y la unificación de
   los dos sitios de creación. `6f52d05` alineó sólo la precedencia, porque el último párrafo de
   `14d0b13` sólo avisaba de ella: un mensaje que infradescribe su propio alcance envenena el
