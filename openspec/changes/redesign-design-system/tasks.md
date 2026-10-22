@@ -314,5 +314,15 @@ Coincide con la cifra que el contrato declaraba. Es el número que T7.3 exige no
 
 **T0.3 — Solape con `sintering-reaches-engine`.** `git diff --stat origin/develop feature/sintering-reaches-engine -- frontend/` → **sin salida**: esa rama no ha tocado todavía ningún fichero del frontend (sus tareas T6 siguen pendientes). Cero solape a fecha de hoy. La reserva por fichero sigue vigente igualmente, porque sus T6.1–T6.5 editarán `BatchSimulationForm.tsx` cuando lleguen.
 
-**T0.1 — Pendiente.** `npm ci` en curso en este worktree; las cifras de `npm test` y `npm run type-check` se capturan aquí al terminar, observadas en este árbol y no heredadas.
+**T0.1 — Línea base observada en este árbol tras `npm ci`** (971 paquetes, exit 0):
+
+- `npm test` → **55 ficheros, 597 tests, todos en verde**, 48,7 s. Esta es la cifra que T7.1 debe conservar.
+- `npm run type-check` → **13 errores**, exactamente los 13 que el contrato heredaba, ahora verificados aquí en vez de dados por buenos. Todos en **ficheros de test ajenos a esta ola**, en tres ficheros:
+  - `src/components/batch/__tests__/BatchProjectionExportPanel.test.tsx` — 9 × TS2322 (`VitestUtils` no asignable a `Awaitable<HookCleanupCallback>`)
+  - `src/components/topology/__tests__/NetworkCanvas.test.tsx` — 3 × TS2571 (`Object is of type 'unknown'`)
+  - `src/lib/__tests__/projection-grid.test.ts` — 1 × TS2561 (`azimuth_start` inexistente)
+
+  **Aviso para T6.4**: `NetworkCanvas.test.tsx` es uno de los tres y está en la lista de ficheros editables. Al añadir su caso de `data-theme` hay que no incrementar esos 3 errores; T7.2 compara contra 13, no contra 0.
+- `npm run lint` no se ejecuta: `next lint` sin configuración ESLint, como declara T0.1. No es un gate utilizable.
+- Observación fuera de alcance, anotada para que no se pierda: `npm ci` reporta **40 vulnerabilidades (5 críticas, 26 altas)**. No se tocan aquí —`npm audit fix --force` introduce cambios de ruptura— y merecen issue propio bajo la política nueva.
 
