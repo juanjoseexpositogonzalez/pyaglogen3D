@@ -16,6 +16,11 @@
 >
 > **T2.2 viaja en 1b, no en 1a**: anclar `darkMode` a `[data-theme="dark"]` mientras nadie
 > escribe ese atributo dejaría las 38 variantes `dark:` inertes entre ambos merges. Va con T6.1.
+>
+> **Su cara B, que T7.8 en 1a debe vigilar:** entre el merge de 1a y el de 1b, `darkMode` sigue
+> sin declarar, es decir `media`. Un usuario con sistema operativo oscuro verá esas variantes
+> pintando superficies oscuras sobre el lienzo claro, en nueve ficheros. Solo se caza
+> recorriendo T7.8 en una máquina con el sistema en oscuro.
 
 ## T0 — Línea base
 
@@ -46,6 +51,9 @@
       existen** bajo `:root` en `globals.css:7-26` (19 de color más `--radius`), y **añadir**
       `--chart-1…5`, que hoy **no existen** ni en `globals.css` ni en `tailwind.config.ts`,
       derivados de `--series-1…5` por si un componente shadcn futuro los espera.
+      **Los alias que resuelven por `var()` no se redeclaran en el bloque oscuro**: heredan el
+      cambio de su token de origen. R2-S4 los considera cubiertos; duplicarlos por satisfacer
+      el test literalmente sería ruido, y debilitar el test está prohibido por AGENTS.md.
 - [ ] T1.4 Escala tipográfica y clases de micro-tipografía (`.label-xs`, `.eyebrow`, `.hint`).
 - [ ] T1.5 Tests automatizables de R2-S4 y R3-S1: paridad de tokens entre temas y disyunción
       semánticos/series, ambos por **parseo estático de `globals.css` como texto**.
@@ -54,8 +62,10 @@
       custom properties. Lo es: una sonda sobre jsdom 23.2.0 (la versión fijada en
       `package-lock.json`) devuelve el valor correcto tanto tras `setProperty` como desde un
       `<style>` inyectado. Por eso T4.4 sí puede inyectarlas.
-- [ ] T1.6 `app/auth/layout.tsx` **y las cuatro páginas de auth** (`login`, `register`,
-      `check-email`, `verify-email`) re-expresadas en tokens, con sus tests de R2-S3.
+- [ ] T1.6 `app/auth/layout.tsx` **y las cinco páginas de auth** (`login`, `register`,
+      `check-email`, `verify-email`, `oauth-callback`) re-expresadas en tokens, con sus tests
+      de R2-S3. `oauth-callback/page.tsx:45-46,56-57` fija `border-blue-600` y `text-gray-600`:
+      gris oscuro sobre superficie oscura en cuanto exista el tema oscuro.
       Verificado: además del layout, esas páginas fijan `bg-gray-800`, `bg-gray-700` y
       `text-white` en sus tarjetas; sin tocarlas, tras 1a queda una tarjeta gris oscura sobre
       lienzo claro. Ninguna está reservada por ningún change. Hoy fija `text-white` y
@@ -110,6 +120,9 @@
       gráficas (D5).
 - [ ] T4.6b Test de R1-S2 (los ficheros creados por esta ola no contienen literales de color,
       salvo el fallback SSR documentado), en `src/lib/__tests__/chart-theme.test.ts`.
+      **Barrido por glob tolerante a rutas ausentes.** En 1a solo existe `chart-theme.ts`;
+      `kit/`, `shell/`, `theme.ts` y `useThemeStore.ts` los entrega 1b. Un test que lea los
+      cinco caminos literalmente fallaría con ENOENT y dejaría la puerta T7.1 de 1a en rojo.
 - [ ] T4.6 La triple codificación **no invade colores atados por otra capacidad**:
       `multi-aggregate-comparison` R6/S5.3 ata cada serie de Rg al color de su simulación, el
       mismo del borde de su viewer. `series(i)` no se impone ahí; `dash(i)` y `marker(i)` sí.
@@ -127,11 +140,14 @@
       `/projects`, y `:15` redirige fuera de `/auth/login` y `/auth/register` al usuario
       autenticado: un sidebar con breadcrumb y menú de usuario sobre la pantalla de login sería
       incoherente.
-- [ ] T5.3c `AppShellContext` montado en `app/providers.tsx`, para que `Header` sepa que debe
-      renderizar `null` (D9).
+- [ ] T5.3c `AppShellContext`, definido en `components/shell/` y montado en
+      `app/providers.tsx`, para que `Header` sepa que debe renderizar `null` (D9). **No** en
+      `src/contexts/`: esa ruta no está en la lista cerrada.
 - [ ] T5.4 `Header` deprecado: renderiza `null` bajo el shell. **Ninguna página de producto se
-      edita en esta ola.** La única excepción es `app/auth/layout.tsx` (T1.6), que no es página
-      de producto ni está reservada por ningún change.
+      edita en esta ola.** Las únicas excepciones son el layout y las cinco páginas de auth
+      (T1.6), que no son pantallas de producto ni están reservadas por ningún change. La
+      autoridad sobre qué es editable es la lista cerrada del final de este fichero, no esta
+      frase.
 - [ ] T5.5 Responsive: iconos a <1440px, drawer con trampa de foco a <900px, frame a 1440px.
       Solo la trampa de foco y el nombre accesible son testables; los breakpoints son media
       queries y van a T7.4 manual.
@@ -190,7 +206,9 @@
       sí afecta (hay 23 ficheros `page.tsx`; doce son pantallas distintas y 17 importan
       `Header`; aquí se recorren las doce): el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
       Recorrido manual de las doce pantallas en ambos temas a 1440px, con capturas en el Log.
-      Atención explícita a `multi-aggregate-comparison.md:45`, que fija la rejilla de viewers
+      En **1a no hay conmutador de tema** (T5.2, T6.0 y T6.1 son de 1b): el tema oscuro se
+      alcanza poniendo `data-theme="dark"` a mano en devtools, ya que el bloque existe desde
+      T1.1. Atención explícita a `multi-aggregate-comparison.md:45`, que fija la rejilla de viewers
       por N: comprobar que sigue siendo usable con el sidebar montado. Corre en **ambos** PRs.
 
 ## T8 — Entrega y limpieza
@@ -198,6 +216,10 @@
 - [ ] T8.1 **Dos PRs encadenados** a `develop`, etiqueta `type:feat` y su issue de Jira, con el
       reparto de la tabla de cabecera de este fichero. Un único PR de ~5.000 líneas no es
       revisable y el repo tiene una skill cuyo disparador son los 400.
+- [ ] T8.0 `openspec validate redesign-design-system --strict` en verde **antes del PR de 1a**.
+      Es un gate real y barato que cuatro rondas de spec-review no ejecutaron: las deltas deben
+      vivir en `specs/<capability>/spec.md`, no en `specs/<capability>.md`; un fichero plano se
+      **ignora en silencio** al aplicar y al archivar.
 - [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
       `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros
       en `openspec/specs/`, nunca diferidos.
@@ -237,12 +259,14 @@ Cualquier fichero fuera de esta lista es una desviación del contrato:
   no se ejecutaría nunca y pasaría en verde vacuamente,
   `frontend/src/lib/__tests__/chart-theme.test.ts` (T4.4 y T4.6b),
   `frontend/src/lib/__tests__/theme.test.ts` (T6.3),
-  `frontend/src/components/layout/__tests__/Header.test.tsx` (T5.4 / R3 — el directorio no
+  `frontend/src/components/layout/__tests__/Header.test.tsx` (T5.4b, escenario R3 — el directorio no
   existe todavía),
   `frontend/src/app/auth/__tests__/layout.test.tsx` (R2 S3)
-- `frontend/src/app/auth/{login,register,check-email,verify-email}/page.tsx` (solo T1.6) y
+- `frontend/src/app/auth/{login,register,check-email,verify-email,oauth-callback}/page.tsx`
+  (solo T1.6) y
   `frontend/src/app/auth/__tests__/`
-- `openspec/changes/redesign-design-system/**`
+- `openspec/changes/redesign-design-system/**` (las deltas en
+  `specs/<capability>/spec.md`, que es la única forma que `openspec validate` acepta)
 
 **Y, solo en T8 (archive):** `openspec/specs/design-system-foundation.md`,
 `openspec/specs/app-shell-navigation.md`, `openspec/state.yaml` y
@@ -253,6 +277,9 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 ## Deuda conocida que este change NO cierra
 
+- **R3 de `app-shell-navigation` es transitorio**: normaliza que `Header` siga siendo
+  importable durante la migración. La ola 3, al borrar el fichero, debe declarar esa capacidad
+  MODIFIED y retirar R3; si no, la spec canónica hablará de un fichero inexistente.
 - Las 17 páginas y el fichero de test siguen importando `Header`; se retira en las olas 2 y 3,
   y el fichero se borra al cerrar la ola 3.
 - `components/ui/*` (shadcn) y `components/common/*` (`MetricsCard`, `QualityBadge`,

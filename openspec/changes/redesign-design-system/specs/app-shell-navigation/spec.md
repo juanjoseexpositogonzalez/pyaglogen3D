@@ -59,8 +59,8 @@ fixed-colour utility, so that they stay legible under either theme.
 
 #### Scenario: The auth layout is legible in both themes `[test]`
 
-- GIVEN `frontend/src/app/auth/layout.tsx` and the `login`, `register`, `check-email` and
-  `verify-email` pages
+- GIVEN `frontend/src/app/auth/layout.tsx` and the `login`, `register`, `check-email`,
+  `verify-email` and `oauth-callback` pages
 - WHEN their classes are inspected
 - THEN no fixed-colour utility such as `text-white`, `bg-gray-800` or `text-gray-400` remains
 - AND their colours resolve through theme tokens
@@ -69,8 +69,11 @@ fixed-colour utility, so that they stay legible under either theme.
 
 ### Requirement: R3. The legacy header is superseded without double navigation
 
-`components/layout/Header.tsx` remains importable while pages are migrated, but MUST render
+While a legacy navigation component remains importable during the migration, it MUST render
 nothing when the shell is already mounted, so that no route shows two navigations at once.
+
+**Transitional.** This requirement exists only while `components/layout/Header.tsx` survives.
+The wave that deletes it MUST retire this requirement in the same change.
 
 #### Scenario: Legacy header yields to the shell `[test]`
 
