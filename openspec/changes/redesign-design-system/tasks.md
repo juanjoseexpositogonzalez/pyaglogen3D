@@ -37,9 +37,16 @@
       buena ninguna cifra previa. Verificado aparte: `frontend/` no tiene **ninguna**
       configuración ESLint (`.eslintrc*` y `eslint.config.*` ausentes) pese a declarar
       `eslint ^8` y `eslint-config-next 14.1`, así que `npm run lint` no es un gate utilizable.
-- [ ] T0.2 Capturar el recuento exacto de literales de color bajo `frontend/src/components/` y
-      `frontend/src/lib/`. La cifra observada al redactar el contrato es **170 en 24 ficheros**.
-      T7.3 exige que no suba, no que baje a cero (D1).
+- [ ] T0.2 Capturar el recuento de literales de color bajo `frontend/src/components/` y
+      `frontend/src/lib/`, **separando código de producción de ficheros de test**:
+      - total: **170 en 24 ficheros**;
+      - **producción (excluyendo `__tests__/`): 98** ← esta es la cifra que gobierna T7.3.
+
+      **ENMIENDA (2026-10-22, autorizada por la persona).** El contrato aprobado medía el total
+      y exigía que no subiera. Al implementar T4 quedó claro que eso **contradice a R1**, que
+      exime expresamente la rampa de fallback SSR de `chart-theme.ts`, y que además castigaba
+      los fixtures de los tests, que por definición necesitan valores de color concretos para
+      aseverar contra ellos. Medir el total hacía imposible cumplir las dos reglas a la vez.
 - [ ] T0.3 Confirmar que la rama sale de `origin/develop` y que no hay solape con
       `sintering-reaches-engine` (`git diff --stat` contra su rama).
 
@@ -196,8 +203,16 @@
 
 - [ ] T7.1 `cd frontend && npm test` verde; ningún test preexistente pasa a rojo.
 - [ ] T7.2 `npm run type-check` sin errores nuevos respecto a la línea base de T0.1.
-- [ ] T7.3 **La línea base de literales de color de T0.2 no sube.** No se exige cero: 170 son
-      preexistentes y uno está mandado por `contacts-graph-viz` (D1).
+- [ ] T7.3 **Los literales de color en código de producción no suben de 98** (T0.2), excluidos
+      los ficheros bajo `__tests__/` y la rampa de fallback SSR que R1 documenta como su única
+      excepción. No se exige cero: 98 son preexistentes y uno está mandado verbatim por
+      `contacts-graph-viz` (D1).
+
+      Comando:
+      ```
+      grep -rnoE '#[0-9a-fA-F]{3,8}\b|rgba?\(' src/components src/lib \
+        --include=*.ts --include=*.tsx | grep -v '__tests__' | grep -v 'chart-theme.ts' | wc -l
+      ```
 - [ ] T7.4 Verificación manual en navegador, con capturas en el Log, de **todos los escenarios
       `[manual]`** de las dos specs: ausencia de flash de tema, alineación de columnas
       numéricas y los cuatro breakpoints (1440, 1280, 900, 360). Es un change de interfaz: la
@@ -311,6 +326,43 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L3 — T4 y dos enmiendas (2026-10-22)
+
+**T4 — Tema de gráficas Plotly.** `lib/chart-theme.ts` con `series(i)`, `dash(i)`, `marker(i)`,
+`markEvery()`, `traceStyle()`, `axisTitle()` y `layout()`. Lee la rampa del documento y la
+re-lee con `MutationObserver` sobre `data-theme` y `class`. **16 tests** en
+`src/lib/__tests__/chart-theme.test.ts`, incluida la exención de color para series atadas por
+otra capacidad (`multi-aggregate-comparison` R6/S5.3): patrón y marcador aplican, el color no.
+
+**Dos defectos del código, cazados por sus propios tests:**
+
+1. `readSeries()` **conservaba valores obsoletos**: solo sobrescribía cuando encontraba el
+   token, así que al desaparecer este la rampa se quedaba con el color del tema anterior. Ahora
+   cae al fallback de forma explícita.
+2. `layout()` **inventaba cinco literales de color** como respaldo, violando R1. Retirados:
+   `react-plotly.js` se carga con `ssr: false` en todo este código, así que `layout()` siempre
+   se construye con documento. Un token ausente deja a Plotly en su defecto, que es preferible
+   a que este módulo posea un color que el sistema de diseño no define.
+
+**ENMIENDA 1 — T2.2 de 1b a 1a** (autorizada por la persona). Razonada en la tabla de cabecera.
+
+**ENMIENDA 2 — T7.3 pasa a medir producción, no el total** (autorizada por la persona).
+Al ejecutar T4 el recuento total subió de 170 a 198: **6** de la rampa de fallback SSR, que R1
+exime expresamente, y **22** de fixtures del test, que necesitan valores concretos para
+aseverar. T7.3 tal como estaba escrito hacía **imposible cumplir R1**. Reescrito para medir
+código de producción excluyendo `__tests__/` y la excepción documentada, con línea base **98**,
+verificada hoy. El gate no se afloja: pasa a medir lo que quería medir, y con un comando
+explícito que no se puede satisfacer relajándolo.
+
+**Verificación.** Suite **58 ficheros / 624 tests verdes**. `type-check` **13**, igual que la
+línea base. Literales de producción **98**, igual. `recharts` **ausente** de `package.json`
+(D5). `graphUtils` **21 tests verdes**: la paleta canónica de `contacts-graph-viz` intacta.
+
+**Nota de disciplina.** Para medir la línea base usé `git stash`, que **sin `-u` no toca los
+ficheros sin seguimiento**, de modo que la medición salió contaminada y el árbol se manipuló
+sin necesidad. Verificado que no se perdió nada. La cifra correcta se obtiene restando, sin
+mutar el árbol.
 
 ### L2 — T1 y T2.1/T2.3a (2026-10-22)
 
