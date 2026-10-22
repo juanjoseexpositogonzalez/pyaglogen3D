@@ -40,7 +40,8 @@
       r11, los majors y buena parte de los minors los introducía la corrección de la ronda
       anterior, así que cada ronda generaba el material de la siguiente. Blockers 3, 2, 1, 0,
       0, 0; majors clavados en 2 cuatro rondas; minors subiendo 3, 2, 6, 6, 8, 9
-- [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
+- [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**. Abierta como **#97**
+      con `status:needs-approval`; pendiente de que la persona la apruebe
 - [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
 - [x] T0.21 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
       sitios; la superficie 7 conserva el camino que funciona hoy
