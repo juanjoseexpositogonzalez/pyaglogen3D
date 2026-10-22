@@ -327,6 +327,73 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L5 — Judgment day del kit: ronda de corrección, bloques 1 y 2 (2026-10-22)
+
+Dos jueces ciegos sobre el PR #91, con ángulos distintos: uno mecánico, otro de dominio.
+**Ambos NEEDS_FIXES**: 1 bloqueante, 13 mayores, 14 menores. Sin solaparse en casi nada.
+
+**Causa raíz común, que ninguno nombró entera:** el kit se construyó contra el prototipo de
+Base44 y contra suposiciones propias, y se verificó **solo contra sí mismo**. Los 28 tests
+comprobaban que estos componentes hacían lo que estos componentes decían. Nada los ataba a los
+tipos reales del producto, ni al CSS compilado, ni al comportamiento real de `ui/dialog`.
+
+**El bloqueante fue una lección ya documentada y repetida.** `VisualPanel` usaba
+`text-ink-on-dark/70`. Tailwind **no puede aplicar alfa sobre un color `var()` y descarta la
+utilidad entera sin avisar**, así que esos rótulos heredaban `--ink` y quedaban a **1.28:1** en
+tema claro: invisibles. Es exactamente la trampa que L2 documentó con `bg-success-soft/20` y
+dio por aprendida tres horas antes. **Escribir una lección en un Log no es tenerla verificada.**
+Corregido con tokens enteros `--ink-on-dark-soft` y `--ink-on-dark-faint`, comprobados
+compilando Tailwind contra una sonda: ahora emiten CSS, a 13.2:1 y 9.4:1.
+
+**Tres comentarios describían comportamiento inexistente.** Documentación que miente es peor
+que ausente, porque el consumidor futuro confía en ella:
+- `SegmentedControl` prometía navegación por flechas: `role="radiogroup"` **sustituye** la
+  semántica nativa, el navegador no aporta nada. Implementadas flechas, Home/End y *roving
+  tabindex*; un control de seis opciones vuelve a costar una tabulación y no seis.
+- `DisclosurePanel` prometía control externo y solo tenía estado interno. Añadido el modo
+  controlado `open`/`onOpenChange`.
+- `DetailsDrawer` decía "cajón, no modal" mientras `DialogContent` monta **siempre** un overlay
+  al 80% de negro. Reescrito sobre el primitivo Radix con `modal={false}` y sin overlay.
+- Y sus clases `slide-*` eran **CSS muerto**: `tailwindcss-animate` no está instalado y
+  `plugins: []`. Retiradas.
+
+**Un test propio era tautológico.** `getByText(/\w/)` ya garantiza que hay texto; afirmar
+después que su longitud es > 0 no comprueba nada. Cinco de seis estados no se verificaban
+jamás. Sustituido por tabla `[estado, etiqueta]` con aserción de rótulos distintos.
+
+**Bloque 2 — el kit hablaba un idioma que el producto no habla.** `StatusChip` definía `ready`,
+`error` y un `attention` inventado; `lib/types.ts:7` dice
+`'queued'|'running'|'completed'|'failed'|'cancelled'`. `QualityBadge` definía `good`;
+`lib/api.ts:664` dice `'converged'|'approximate'|'excluded'|'failed'`. Portar una pantalla real
+habría fallado el type-check o pintado una insignia en blanco.
+
+Ahora ambos **importan la unión del producto** en vez de redefinirla, y hay un test que importa
+`SimulationStatus` y verifica que cada estado del backend tiene chip. Al cambiar los tipos, el
+compilador cazó los tests que aún usaban el vocabulario viejo: esa es la red que faltaba.
+
+**Otros agujeros cerrados**, todos del mismo patrón —la primitiva decía imponer una regla y se
+esquivaba trivialmente—:
+- `Num` aceptaba `string` y lo pasaba tal cual, de modo que `"68.4 nm"` derrotaba la regla que
+  la primitiva existe para imponer. Ahora solo acepta números; los intervalos van por `NumRange`.
+- `MetricCard` tenía `sigma` y `detail` opcionales: un Df sin incertidumbre ni R² compilaba.
+  Ahora es unión discriminada y `measured` los **exige**.
+- `DetailList` trataba `undefined` por la rama no numérica y renderizaba celda vacía en vez del
+  em dash; `ReactNode` incluye `undefined` y los campos opcionales del backend llegan así.
+- `FilterBar` ocultaba el recuento cuando valía `0`, justo cuando el filtro no encuentra nada.
+- `MetricCard` anunciaba `aria-valuenow` sin acotar (140 contra un máximo de 100, o `NaN`).
+- `.num-unit` llevaba margen propio **y** el contenedor un gap: doble separación en la
+  primitiva por la que pasa cada número del producto.
+- `Num.toFixed` lanzaba `RangeError` con `digits` fuera de 0..100, valor que llega sin validar
+  desde definiciones de columna.
+
+**Verificación.** Suite **61 ficheros / 661 tests verdes** (base 58/624; el kit pasa de 28 a 37
+tests). `type-check` **13**. Literales de producción **98**.
+
+**Bloque 3, pendiente por decisión de la persona:** seis combinaciones de color del kit por
+debajo de AA en tema claro (`--success` 3.98, `--warning` 3.72, `--accent` 4.39, `--ink-faint`
+2.91 sobre blanco), con test de contraste automatizado en vez de medición manual; y tests para
+las 12 primitivas que siguen sin ninguno.
+
 ### L4 — T3, el kit de primitivas (2026-10-22)
 
 **18 primitivas, 1.231 líneas, más 274 de tests.** Cero literales de color en todo el kit: la

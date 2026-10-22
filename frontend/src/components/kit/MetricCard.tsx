@@ -34,14 +34,11 @@ export interface MetricDelta {
   quality: 'good' | 'poor' | 'neutral'
 }
 
-export interface MetricCardProps {
+interface MetricCardBase {
   label: ReactNode
-  value: number | string | null
+  value: number | null
   unit?: string
   digits?: number
-  sigma?: number | null
-  /** How the value was obtained: estimator, fit quality, sample size. */
-  detail?: ReactNode
   delta?: MetricDelta
   /** 0 to 1; renders the thin progress rail under the value. */
   progress?: number
@@ -49,24 +46,56 @@ export interface MetricCardProps {
   className?: string
 }
 
+/**
+ * A quantity the engine measured or estimated. `sigma` and `detail` are
+ * required: a fractal dimension without its uncertainty and without the
+ * estimator that produced it is a number without a claim, and leaving both
+ * optional let a caller render one by omission.
+ */
+export interface MeasuredMetric extends MetricCardBase {
+  kind: 'measured'
+  sigma: number | null
+  /** Estimator, fit quality and sample size, e.g. `R² 0.994 · box counting`. */
+  detail: ReactNode
+}
+
+/**
+ * A quantity that is exact by construction: a particle count, a seed, a
+ * requested target. No uncertainty exists, so none is demanded.
+ */
+export interface ExactMetric extends MetricCardBase {
+  kind: 'exact'
+  detail?: ReactNode
+}
+
+export type MetricCardProps = MeasuredMetric | ExactMetric
+
 const DELTA_INK: Record<MetricDelta['quality'], string> = {
   good: 'text-success',
   poor: 'text-warning',
   neutral: 'text-ink-muted',
 }
 
-export function MetricCard({
-  label,
-  value,
-  unit,
-  digits = 3,
-  sigma,
-  detail,
-  delta,
-  progress,
-  tone = 'plain',
-  className,
-}: MetricCardProps) {
+export function MetricCard(props: MetricCardProps) {
+  const {
+    label,
+    value,
+    unit,
+    digits = 3,
+    delta,
+    progress,
+    tone = 'plain',
+    className,
+    detail,
+  } = props
+  const sigma = props.kind === 'measured' ? props.sigma : null
+  // Clamped once and used for both the width and the announced value: an
+  // unclamped aria-valuenow of 140 against aria-valuemax 100, or NaN from a
+  // ratio with a zero denominator, is worse than no progress bar at all.
+  const ratio =
+    progress !== undefined && Number.isFinite(progress)
+      ? Math.max(0, Math.min(1, progress))
+      : undefined
   return (
     <article
       className={cn(
@@ -88,17 +117,18 @@ export function MetricCard({
         <Num value={value} unit={unit} digits={digits} sigma={sigma} size="lg" />
       </div>
 
-      {progress !== undefined && (
+      {ratio !== undefined && (
         <div
           className="my-2.5 h-1.5 overflow-hidden rounded-full bg-line-strong"
           role="progressbar"
-          aria-valuenow={Math.round(progress * 100)}
+          aria-label={typeof label === 'string' ? `${label} progress` : 'Progress'}
+          aria-valuenow={Math.round(ratio * 100)}
           aria-valuemin={0}
           aria-valuemax={100}
         >
           <div
             className="h-full rounded-full bg-brand-strong transition-[width] duration-200"
-            style={{ width: `${Math.max(0, Math.min(1, progress)) * 100}%` }}
+            style={{ width: `${ratio * 100}%` }}
           />
         </div>
       )}

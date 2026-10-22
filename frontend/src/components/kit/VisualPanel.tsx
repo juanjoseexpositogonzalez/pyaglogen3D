@@ -15,8 +15,11 @@ import { cn } from '@/lib/utils'
  *
  * The caption bar is glass over the canvas and carries live readouts, so the
  * numbers that describe what is on screen sit on the same surface as the thing
- * they describe.
+ * they describe. Its label colours are whole tokens, never opacity modifiers:
+ * Tailwind cannot apply alpha to a `var()` colour and drops the utility
+ * silently, which once left these readouts at 1.28:1 in the light theme.
  */
+
 export interface Readout {
   label: string
   value: ReactNode
@@ -61,14 +64,15 @@ export function VisualPanel({
         {overlay}
 
         {readouts && readouts.length > 0 && (
-          <div className="pointer-events-none absolute inset-x-3 bottom-3 flex items-baseline justify-between gap-4 rounded-md border border-visual-border bg-visual-caption px-3 py-2 backdrop-blur-md">
-            <span className="text-[10px] font-extrabold uppercase tracking-[0.14em] text-ink-on-dark/70">
-              {title}
-            </span>
-            <span className="flex flex-wrap items-baseline justify-end gap-x-4 gap-y-1">
+          <div
+            // The bar must not swallow pointer events aimed at the canvas, but
+            // the numbers themselves are the data: they stay selectable.
+            className="pointer-events-none absolute inset-x-3 bottom-3 flex items-baseline justify-end gap-4 rounded-md border border-visual-border bg-visual-caption px-3 py-2 backdrop-blur-md"
+          >
+            <span className="pointer-events-auto flex flex-wrap items-baseline justify-end gap-x-4 gap-y-1">
               {readouts.map((r) => (
                 <span key={r.label} className="inline-flex items-baseline gap-1.5">
-                  <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-ink-on-dark/60">
+                  <span className="text-[9px] font-extrabold uppercase tracking-[0.12em] text-ink-on-dark-faint">
                     {r.label}
                   </span>
                   <span className="num text-[11.5px] text-ink-on-dark">{r.value}</span>

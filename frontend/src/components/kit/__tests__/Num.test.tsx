@@ -8,7 +8,7 @@
 import { render, screen } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
-import { Num } from '../Num'
+import { Num, NumRange } from '../Num'
 
 describe('Num', () => {
   it('keeps the unit in a sibling element, not inside the value', () => {
@@ -59,9 +59,26 @@ describe('Num', () => {
     expect(screen.getByText('4.00e-5')).toBeTruthy()
   })
 
-  it('passes a string value through untouched', () => {
-    render(<Num value="[2.49, 2.58]" />)
+  it('refuses to render a unit when there is no magnitude', () => {
+    // `— nm` qualifies nothing. DetailList takes this path for every null
+    // metric, so it is the common case, not an edge one.
+    const { container } = render(<Num value={null} unit="nm" />)
+    expect(container.querySelector('.num-unit')).toBeNull()
+  })
+
+  it('survives a digits value that toFixed would reject', () => {
+    // `digits` reaches Num from column definitions that nothing validates;
+    // toFixed throws a RangeError outside 0..100.
+    render(<Num value={1.23456} digits={200} />)
+    expect(screen.getByText(/1\.2/)).toBeTruthy()
+  })
+
+  it('renders a confidence interval through NumRange, not as a string', () => {
+    // Num no longer accepts strings: that hole let a caller pass '68.4 nm'
+    // and defeat the rule this primitive exists to impose.
+    const { container } = render(<NumRange from={2.49} to={2.58} />)
     expect(screen.getByText('[2.49, 2.58]')).toBeTruthy()
+    expect(container.querySelector('.num')).not.toBeNull()
   })
 
   it('omits the unit element entirely when there is no unit', () => {

@@ -32,7 +32,10 @@ export function DetailList({ items, className }: DetailListProps) {
   return (
     <dl className={cn('grid gap-0', className)}>
       {items.map((item, i) => {
-        const numeric = typeof item.value === 'number' || item.value === null
+        // `ReactNode` includes `undefined`, so an optional backend field that
+        // arrives undefined instead of null must still reach Num and render
+        // the em dash rather than an empty cell.
+        const numeric = item.value == null || typeof item.value === 'number'
         return (
           <div
             key={i}

@@ -27,7 +27,11 @@ export function FilterBar({ children, hint, className }: FilterBarProps) {
       )}
     >
       {children}
-      {hint && <span className="hint ml-auto self-center px-2">{hint}</span>}
+      {/* A count of zero is the most informative case: the filter matched
+          nothing. A truthiness check would hide it exactly then. */}
+      {hint !== undefined && hint !== null && (
+        <span className="hint ml-auto self-center px-2">{hint}</span>
+      )}
     </div>
   )
 }

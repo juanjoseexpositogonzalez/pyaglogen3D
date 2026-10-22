@@ -9,22 +9,48 @@ import { describe, expect, it } from 'vitest'
 
 import { Callout } from '../Callout'
 import { QualityBadge } from '../QualityBadge'
+import type { AnalysisQuality } from '@/lib/api'
+import type { SimulationStatus } from '@/lib/types'
+
 import { StatusChip } from '../StatusChip'
+import type { Status } from '../StatusChip'
 import { StatusDot } from '../StatusDot'
 
 describe('StatusChip', () => {
-  it('names every state in words', () => {
-    const states = ['ready', 'running', 'queued', 'attention', 'error', 'cancelled'] as const
-    states.forEach((state) => {
-      const { unmount } = render(<StatusChip status={state} />)
-      expect(screen.getByText(/\w/).textContent?.trim().length).toBeGreaterThan(0)
-      unmount()
-    })
+  // One expected label per state. The previous version of this test asserted
+  // that `getByText(/\w/)` found text of length > 0, which is a tautology:
+  // it would have passed with every state mapped to the same word, or to an
+  // internal name. R8-S1 asks for a label that NAMES the state.
+  const CASES: Array<[Status, string]> = [
+    ['completed', 'Completed'],
+    ['running', 'Running'],
+    ['queued', 'Queued'],
+    ['failed', 'Failed'],
+    ['cancelled', 'Cancelled'],
+  ]
+
+  it.each(CASES)('names %s as "%s"', (status, expected) => {
+    render(<StatusChip status={status} />)
+    expect(screen.getByText(expected)).toBeTruthy()
   })
 
-  it('uses words a researcher reads, not internal state names', () => {
-    render(<StatusChip status="ready" />)
-    expect(screen.getByText('Completed')).toBeTruthy()
+  it('gives every state a distinct word', () => {
+    const labels = CASES.map(([, label]) => label)
+    expect(new Set(labels).size).toBe(labels.length)
+  })
+
+  it('covers every status the backend can return', () => {
+    // SimulationStatus and AnalysisStatus share this union in lib/types.ts.
+    // A backend state without a chip is a blank badge in production.
+    const backendStates: SimulationStatus[] = [
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+    ]
+    const covered = CASES.map(([status]) => status)
+    backendStates.forEach((state) => expect(covered).toContain(state))
   })
 
   it('marks a running job with the shimmer, which the stylesheet disables under reduced motion', () => {
@@ -33,7 +59,7 @@ describe('StatusChip', () => {
   })
 
   it('leaves a finished job unanimated', () => {
-    const { container } = render(<StatusChip status="ready" />)
+    const { container } = render(<StatusChip status="completed" />)
     expect(container.querySelector('.shimmer')).toBeNull()
   })
 
@@ -54,11 +80,28 @@ describe('QualityBadge', () => {
     expect(screen.getByText(': object touches the image border')).toBeTruthy()
   })
 
+  it('uses the vocabulary the backend actually returns', () => {
+    // An earlier version said `good`; AnalysisQuality says `converged`, so no
+    // FRAKTAL consumer could have passed its own value without a cast.
+    const fromBackend: AnalysisQuality = 'converged'
+    render(<QualityBadge quality={fromBackend} />)
+    expect(screen.getByText('Converged')).toBeTruthy()
+  })
+
+  it('does not say "Failed" for both a dead job and an unusable number', () => {
+    // Both unions contain `failed` and both badges share a FRAKTAL row.
+    const { unmount } = render(<StatusChip status="failed" />)
+    expect(screen.getByText('Failed')).toBeTruthy()
+    unmount()
+    render(<QualityBadge quality="failed" reason="no sign change" />)
+    expect(screen.getByText('Unusable')).toBeTruthy()
+  })
+
   it('distinguishes a usable result from a finished job', () => {
     // A FRAKTAL analysis can complete and still be unusable; the two concepts
     // live in different components on purpose.
-    render(<QualityBadge quality="good" />)
-    expect(screen.getByText('Good')).toBeTruthy()
+    render(<QualityBadge quality="converged" />)
+    expect(screen.getByText('Converged')).toBeTruthy()
   })
 })
 

@@ -1,5 +1,6 @@
 'use client'
 
+import type { SimulationStatus } from '@/lib/types'
 import { cn } from '@/lib/utils'
 
 /**
@@ -9,31 +10,30 @@ import { cn } from '@/lib/utils'
  * reinforces it. `running` adds a slow shimmer, suppressed under
  * `prefers-reduced-motion` by the `.shimmer` rule itself.
  *
+ * The state union is `SimulationStatus` from `lib/types.ts`, not a vocabulary
+ * of this component's own. An earlier version invented `ready`, `error` and
+ * `attention`; the backend says `completed`, `failed` and has no `attention`
+ * at all, so porting a real screen would either fail type-checking or render a
+ * blank chip. The product's types are the source of truth, and `AnalysisStatus`
+ * shares this exact union.
+ *
  * Covers design-system-foundation R8.
  */
-export type Status =
-  | 'ready'
-  | 'running'
-  | 'queued'
-  | 'attention'
-  | 'error'
-  | 'cancelled'
+export type Status = SimulationStatus
 
 const LABELS: Record<Status, string> = {
-  ready: 'Completed',
+  completed: 'Completed',
   running: 'Running',
   queued: 'Queued',
-  attention: 'Needs attention',
-  error: 'Failed',
+  failed: 'Failed',
   cancelled: 'Cancelled',
 }
 
 const STYLES: Record<Status, string> = {
-  ready: 'border-success text-success bg-success-soft',
+  completed: 'border-success text-success bg-success-soft',
   running: 'border-brand text-brand-strong bg-brand-soft',
   queued: 'border-line-strong text-ink-muted bg-surface-soft',
-  attention: 'border-warning text-warning bg-warning-soft',
-  error: 'border-danger text-danger bg-danger-soft',
+  failed: 'border-danger text-danger bg-danger-soft',
   cancelled: 'border-line-strong text-ink-faint bg-surface-soft',
 }
 

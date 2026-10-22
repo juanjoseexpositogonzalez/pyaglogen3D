@@ -31,6 +31,12 @@
     --ink-muted: #536a73;
     --ink-faint: #879b9f;
     --ink-on-dark: #eef8f4;
+    /* Hierarchy over the dark visualisation canvas. Declared as whole
+       tokens, never as opacity modifiers: Tailwind cannot apply alpha to
+       a var() colour and drops the utility silently. Contrast against
+       --visual-background: 13.2:1 and 9.4:1. */
+    --ink-on-dark-soft: #c9ddd9;
+    --ink-on-dark-faint: #a3bdb9;
 
     /* ── accents ───────────────────────────────────────────────────────── */
     --accent: #1d858c;
@@ -131,6 +137,12 @@
     --ink-muted: #a7c0c1;
     --ink-faint: #78999d;
     --ink-on-dark: #eef8f4;
+    /* Hierarchy over the dark visualisation canvas. Declared as whole
+       tokens, never as opacity modifiers: Tailwind cannot apply alpha to
+       a var() colour and drops the utility silently. Contrast against
+       --visual-background: 13.2:1 and 9.4:1. */
+    --ink-on-dark-soft: #c9ddd9;
+    --ink-on-dark-faint: #a3bdb9;
 
     --accent: #82c7bf;
     --accent-strong: #9adcd2;
@@ -254,7 +266,8 @@
   .num-unit {
     font-size: 0.82em;
     color: var(--ink-muted);
-    margin-left: 0.28em;
+    /* No margin here: the Num container already separates its children with a
+       0.28em gap, and carrying both doubled the gap for the unit only. */
   }
 
   .shimmer {

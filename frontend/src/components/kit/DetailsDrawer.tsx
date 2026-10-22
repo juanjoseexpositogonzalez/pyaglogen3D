@@ -1,25 +1,23 @@
 'use client'
 
+import * as DialogPrimitive from '@radix-ui/react-dialog'
+import { X } from 'lucide-react'
 import type { ReactNode } from 'react'
 
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
 import { cn } from '@/lib/utils'
 
 /**
  * A right-side drawer for inspecting one row, particle, node or image.
  *
  * A drawer rather than a modal on purpose: inspecting a detail should not hide
- * the table it came from, so the reader keeps their place in the data.
+ * the table it came from, so the reader keeps their place in the data. That is
+ * why this builds on the Radix primitive with `modal={false}` and no overlay,
+ * instead of on `ui/dialog`'s `DialogContent`, which always mounts a
+ * `DialogOverlay` at 80% black and traps the page behind it.
  *
- * Built on `ui/dialog`, which this repository does have, so focus trapping,
- * escape handling and the overlay come from the primitive already in use
- * rather than from a second implementation.
+ * No entry animation classes: `tailwindcss-animate` is not installed in this
+ * repository, so `slide-in-from-right` and friends emit no CSS. Claiming an
+ * animation that never runs is worse than having none.
  */
 export interface DetailsDrawerProps {
   open: boolean
@@ -42,29 +40,44 @@ export function DetailsDrawer({
   className,
 }: DetailsDrawerProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent
-        className={cn(
-          'left-auto right-0 top-0 h-full w-[min(440px,100%)] max-w-none translate-x-0 translate-y-0',
-          'overflow-y-auto rounded-none border-l border-line bg-surface-strong p-6',
-          'data-[state=open]:slide-in-from-right data-[state=closed]:slide-out-to-right',
-          className,
-        )}
-      >
-        <DialogHeader className="space-y-1 text-left">
-          <DialogTitle className="text-[16px] font-semibold tracking-[-0.015em] text-ink">
-            {title}
-          </DialogTitle>
-          {subtitle && (
-            <DialogDescription className="text-[12px] text-ink-muted">{subtitle}</DialogDescription>
+    <DialogPrimitive.Root open={open} onOpenChange={onOpenChange} modal={false}>
+      <DialogPrimitive.Portal>
+        <DialogPrimitive.Content
+          className={cn(
+            'fixed right-0 top-0 z-50 flex h-full w-[min(440px,100%)] flex-col',
+            'overflow-y-auto border-l border-line bg-surface-strong p-6 shadow-deep',
+            'focus:outline-none',
+            className,
           )}
-        </DialogHeader>
+          // The point of a non-modal drawer is that the table behind it stays
+          // readable; closing on outside interaction would undo that.
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <header className="flex items-start justify-between gap-4">
+            <div className="min-w-0">
+              <DialogPrimitive.Title className="m-0 text-[16px] font-semibold tracking-[-0.015em] text-ink">
+                {title}
+              </DialogPrimitive.Title>
+              {subtitle && (
+                <DialogPrimitive.Description className="mt-1 text-[12px] text-ink-muted">
+                  {subtitle}
+                </DialogPrimitive.Description>
+              )}
+            </div>
+            <DialogPrimitive.Close
+              aria-label="Close details"
+              className="grid h-8 w-8 shrink-0 place-items-center rounded-md border border-line text-ink-muted transition-colors hover:bg-accent hover:text-ink"
+            >
+              <X className="h-4 w-4" />
+            </DialogPrimitive.Close>
+          </header>
 
-        <div className="mt-5 grid gap-5">{children}</div>
+          <div className="mt-5 grid gap-5">{children}</div>
 
-        {footer && <div className="mt-6 border-t border-line pt-4">{footer}</div>}
-      </DialogContent>
-    </Dialog>
+          {footer && <div className="mt-auto border-t border-line pt-4">{footer}</div>}
+        </DialogPrimitive.Content>
+      </DialogPrimitive.Portal>
+    </DialogPrimitive.Root>
   )
 }
 
