@@ -40,10 +40,10 @@ function VerifyEmailContent() {
   }, [token])
 
   return (
-    <Card className="bg-gray-800 border-gray-700">
+    <Card className="bg-card border-border">
       <CardHeader className="text-center">
-        <CardTitle className="text-white">Email Verification</CardTitle>
-        <CardDescription className="text-gray-400">
+        <CardTitle className="text-foreground">Email Verification</CardTitle>
+        <CardDescription className="text-muted-foreground">
           {status === 'loading' && 'Verifying your email address...'}
           {status === 'success' && 'Your email has been verified'}
           {status === 'error' && 'Verification failed'}
@@ -51,15 +51,15 @@ function VerifyEmailContent() {
       </CardHeader>
       <CardContent className="flex flex-col items-center py-8">
         {status === 'loading' && (
-          <Loader2 className="h-16 w-16 text-blue-500 animate-spin" />
+          <Loader2 className="h-16 w-16 text-primary animate-spin" />
         )}
         {status === 'success' && (
-          <CheckCircle2 className="h-16 w-16 text-green-500" />
+          <CheckCircle2 className="h-16 w-16 text-success" />
         )}
         {status === 'error' && (
-          <XCircle className="h-16 w-16 text-red-500" />
+          <XCircle className="h-16 w-16 text-destructive" />
         )}
-        <p className="mt-4 text-gray-300 text-center">{message}</p>
+        <p className="mt-4 text-foreground text-center">{message}</p>
       </CardContent>
       <CardFooter className="flex justify-center">
         {status === 'success' && (
@@ -68,7 +68,7 @@ function VerifyEmailContent() {
           </Button>
         )}
         {status === 'error' && (
-          <Button asChild variant="outline" className="bg-gray-700 border-gray-600 text-white">
+          <Button asChild variant="outline" className="bg-muted border-input text-foreground">
             <Link href="/auth/login">Back to Login</Link>
           </Button>
         )}
@@ -79,15 +79,15 @@ function VerifyEmailContent() {
 
 function LoadingFallback() {
   return (
-    <Card className="bg-gray-800 border-gray-700">
+    <Card className="bg-card border-border">
       <CardHeader className="text-center">
-        <CardTitle className="text-white">Email Verification</CardTitle>
-        <CardDescription className="text-gray-400">
+        <CardTitle className="text-foreground">Email Verification</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Loading...
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col items-center py-8">
-        <Loader2 className="h-16 w-16 text-blue-500 animate-spin" />
+        <Loader2 className="h-16 w-16 text-primary animate-spin" />
       </CardContent>
     </Card>
   )

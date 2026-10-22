@@ -307,6 +307,46 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L2 — T1 y T2.1/T2.3a (2026-10-22)
+
+**T1.1–T1.4 — Tokens.** `globals.css` reescrito: ~60 tokens en `:root` y su contraparte en
+`[data-theme='dark']`, rampa `--series-1…6`, semánticos disjuntos de las series, canvas de
+visualización oscuro en ambos temas, gradientes tonales y micro-tipografía
+(`.label-xs`, `.eyebrow`, `.hint`, `.num`, `.num-unit`, `.shimmer` con su
+`prefers-reduced-motion`). Puente shadcn re-derivado; `--chart-1…5` **añadidos** como alias
+`var(--series-N)`, que por tanto no se redeclaran en el bloque oscuro (heredan).
+
+**T1.2 — Retirados** `body.app-background` con su imagen y su overlay, y la clase `dark` fija de
+`<html>` en `layout.tsx:19`. El PNG se conserva en `public/` para la ola 2.
+
+**T1.6 — Auth tokenizado.** 107 utilidades de color fijo sustituidas por tokens en las seis
+superficies (`layout.tsx` + 5 páginas, `oauth-callback` incluida). Mapeo **por rol**, no por
+parecido cromático: `text-white`→`text-foreground`, `text-gray-400`→`text-muted-foreground`,
+`bg-gray-800`→`bg-card`, `border-gray-600`→`border-input`. Cero colores fijos restantes.
+
+**T2.1/T2.3a — Tailwind.** Config derivado de los tokens, sin un solo literal, con
+`theme.extend` conservado (`hemisphere-grid-viz.md:67-73` fija estados por nombre de paleta).
+`darkMode` **no** se declara aquí: es T2.2, de 1b, con un comentario en el fichero que lo dice.
+
+**Verificación.** `npm test` **57 ficheros / 607 tests verdes** (base 55/597, +2 ficheros y +10
+tests nuevos). `type-check` **13**, igual que la línea base. Literales de color **170**, igual.
+
+**Dos defectos propios, corregidos, que merecen quedar escritos:**
+
+1. **Normalización de finales de línea.** Ocho ficheros del repo son **CRLF** y mis ediciones
+   por script los pasaron a LF: el primer diff mostraba los ficheros enteros reescritos, ~1.100
+   líneas de ruido. Restaurado byte a byte; el diff real es de 405 inserciones en 9 ficheros.
+   El repo no tiene `.gitattributes` y convive CRLF con LF, así que **auditar EOL de todo lo
+   modificado antes de dar una tarea por hecha** pasa a ser parte del procedimiento.
+2. **`tsconfig.json` no declara `target`**, así que TypeScript asume ES5 y rechaza iterar `Map`
+   y usar `matchAll`. Mis dos tests subieron el contador a 18. Reescritos sin iteradores en vez
+   de añadir `target` al tsconfig: ese fichero **no está en la lista cerrada**, y cambiarlo
+   habría alterado la compilación de todo el frontend desde un test.
+
+**Un fallo silencioso evitado:** `bg-green-900/20` pasó a `bg-success-soft/20`, y el
+modificador de opacidad sobre un color que es `var()` Tailwind **no lo computa y lo descarta
+sin avisar**. Como `--success-soft` ya es translúcido, se retiró el modificador.
+
 ### L1 — T0.2 y T0.3 (2026-10-22)
 
 **T0.2 — Línea base de literales de color.** `grep -rnoE '#[0-9a-fA-F]{3,8}\b|rgba?\(' src/components src/lib --include=*.ts --include=*.tsx | wc -l` → **170 ocurrencias en 24 ficheros**.
