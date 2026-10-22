@@ -27,7 +27,11 @@
 > ## Inventory of changes versus the canonical
 >
 > Every point where the canonical and this delta contradict each other, plus the deliberate
-> hardenings and relaxations.
+> hardenings and relaxations **of canonical text**. It does not re-list the requirements this
+> delta adds where the canonical is silent — R11, R12, and the three MUSTs the R10 restatement
+> adds on top of the canonical options (one pure translation function, the clear-or-mark on an
+> algorithm change, and never `null` or `NaN` in the two `limiting` inputs). Those are in the
+> requirements themselves, not contradictions to inventory.
 >
 > 1. Canonical R3 says `fixed` carries `value`; `apply_sintering_config` reads `coefficient`
 >    (`utils.py:263`) and `validate_sintering_config` validates `coefficient`

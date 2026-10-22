@@ -1,6 +1,6 @@
 # Design: sintering-reaches-engine
 
-> Decisiones de implementación. Anclas verificadas sobre `develop` @ `c3ff055`.
+> Decisiones de implementación. Anclas verificadas sobre `develop` @ `f5c93b4`.
 >
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
 > `DD1`…`DD5` son las **decisiones de diseño** de este documento.
@@ -157,8 +157,9 @@ del bucle, quedaría un estudio creado con parte de sus hijos ya encolados y una
 (Sí hay un `try/except` alrededor del `.delay()` en `views.py:1840-1845`, que se traga fallos
 del broker; no cubre la expansión ni deshace filas.)
 
-**Decisión.** Toda configuración de sinterizado alcanzable por la expansión — grid, campo de
-estudio y `base_parameters` — se valida en `ParametricStudySerializer.validate()`, es decir
+**Decisión.** Toda configuración de sinterizado alcanzable por la expansión — **las siete
+superficies de entrada de R3**, incluidas las dos de `limiting_cases_config`, no sólo grid,
+campo de estudio y `base_parameters` — se valida en `ParametricStudySerializer.validate()`, es decir
 **antes de la primera escritura**. Una configuración inválida produce **400 y cero filas**.
 
 **Alternativa descartada.** `transaction.atomic` a secas no basta: una tarea Celery ya
@@ -166,8 +167,10 @@ despachada no se deshace con el rollback, así que seguiría habiendo trabajo en
 estudio que no existe. **Sí existe una forma que también funciona**: `transaction.atomic` más
 `transaction.on_commit(lambda: run_simulation_task.delay(...))`, que no publica nada hasta que
 la transacción confirma. Se descarta no por incorrecta sino por alcance: cambia el modelo de
-despacho de toda la expansión, incluidos los casos límite y los extremos de sinterizado, que
-este contrato no toca. Validar antes resuelve el problema de este change sin tocar esa
+despacho de toda la expansión, incluidos los casos límite y los extremos de sinterizado. De
+ese despacho este contrato no cambia nada —sí retira el `sintering_config` heredado de los
+hijos de extremos (R11.7), que es otra cosa—. Validar antes resuelve el problema de este
+change sin tocar esa
 mecánica. (La versión anterior decía "la única opción": era falso.)
 
 ## DD4 — `sintering_coeff` es la media (D5)

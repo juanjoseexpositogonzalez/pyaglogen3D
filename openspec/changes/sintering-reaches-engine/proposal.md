@@ -63,8 +63,9 @@ Sí hay un defecto en ese bloque —`Simulation.objects.create` no pasa `seed_ty
 crecer este contrato. Va al contrato de seguimiento.
 
 Sobre esa base, la garantía se enuncia como **invariante del hijo** — sus claves de sinterizado
-están dentro del conjunto que el worker lee y forman una
-forma completa y en rango, venga de donde venga. La lista de superficies se conserva, pero con
+están dentro del conjunto que el worker lee, venga de donde venga.
+Que la forma esté completa y en rango lo garantiza **R3**, en la validación de entrada; el
+invariante del hijo no lo recomprueba. La lista de superficies se conserva, pero con
 el papel que le corresponde: decir dónde hay que devolver un 400 útil antes de escribir nada
 (R3 y R12), no sostener la promesa.
 
@@ -97,7 +98,9 @@ Lo que eso significa, verificado con probe propia:
 - **Los nombres mienten**: hoy un hijo `limiting` llamado `theoretical: sintering_coeff=0.5`
   corre al coeficiente del estudio, porque el dict de estudio gana al valor barrido. Este change
   **no** invierte esa precedencia: la deja como está y la describe. Arreglarla es el contrato de
-  seguimiento, por la razón que explica «Fuera de alcance».
+  seguimiento. La razón está en «Impacto en comportamiento ya desplegado» y en la nota de
+  alcance de la delta: seis rondas produjeron tres inversiones sin declarar, y ninguno de los
+  cuatro defectos necesita reordenarla.
 
 **Precedencia real, y es asimétrica.** `views.py:1804` popea `sintering_config` del dict ya
 fusionado, así que un **dict** en `base_parameters` gana al campo de estudio. Pero sus claves

@@ -4,7 +4,8 @@
 > Desde el 2026-10-22 (issue #82) el gate es una **issue de GitHub con la etiqueta
 > `status:approved`**, no un `approval.md`. **No se escribe código hasta que exista.**
 >
-> Rama: `feature/sintering-reaches-engine` (base `develop` @ `c3ff055`).
+> Rama: `feature/sintering-reaches-engine` (base `develop` @ `f5c93b4`). La base original era
+> `c3ff055`; dos merges de `develop` la movieron, y con ella la línea base de frontend.
 > Mapa de origen: `openspec/changes/_explore-only/distribution-config-surface.md` §7.1.
 > Jira: pendiente de crear al aprobar (issue AGLO, transición 21 → En curso).
 
@@ -32,16 +33,19 @@
 - [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
 - [x] T0.16 Corrección r6 (este commit)
 - [x] T0.17 spec-review r6 en agente fresco
+- [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
+- [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
+- [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
 - [x] T0.21 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
       sitios; la superficie 7 conserva el camino que funciona hoy
 - [x] T0.22 spec-review r7 → `CORRECTIONS REQUIRED (3 blockers, 3 majors, 3 minors)`; corregida
       en 1d8b4fb tras alinear sólo media parte del recorte en 6f52d05
 - [x] T0.23 spec-review r8 → `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`
 - [x] T0.24 spec-review r9 → `CORRECTIONS REQUIRED (1 blocker, 2 majors, 6 minors)`
-- [ ] T0.25 spec-review r10 en agente fresco
-- [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
-- [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
-- [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
+- [x] T0.25 spec-review r10 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 6 minors)`
+- [x] T0.26 spec-review r11 → `0 blockers, 2 majors, 8 minors`; primera ronda que pudo correr
+      las suites, tras destrackear `tsconfig.tsbuildinfo` (PR #96)
+- [ ] T0.27 spec-review r12 en agente fresco
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
@@ -111,8 +115,9 @@
       coeficiente al que corren. Retirarlo (R11.7). Verificado con probe: base con
       `coefficient: 0.7` produce un hijo que corre a `0.5` y guarda `0.7`
 - [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
-      claves **contenidas** en el conjunto que el worker lee, y campos del tipo declarado
-      presentes y en rango (vacío si el hijo no lleva ninguna). «Contenidas», no «exactamente
+      claves **contenidas** en el conjunto que el worker lee. Eso es todo lo que R11 exige en
+      la escritura: la completitud de campos y el rango son de **R3**, en la validación de
+      entrada, y no se recomprueban aquí. «Contenidas», no «exactamente
       las del dict»: eso último lo exigía la regla de limpieza que el recorte eliminó, y
       ningún requisito vigente lo pide. **No confundirla con la R11.7 actual**, que es otra
       cosa: retirar `sintering_config` de los hijos de extremos
@@ -124,14 +129,12 @@
       dict de estudio y le borraría su coeficiente. Tampoco el serializer: un hijo de caso
       límite hereda los planos de `base_parameters` (`utils.py:185-203`) y limpiar ahí se los
       quitaría aunque no aplique ningún dict
+- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+      misma expansión)
 - [ ] T3.0d Alcance de esa retirada (la orden está en T3.0, aquí sólo su límite): lo que se
       retira es `sintering_config`, porque R11 prohíbe escribir claves de sinterizado fuera del
       conjunto del worker. **No** se retiran las `sintering_*` planas heredadas: están dentro
       del conjunto y ningún requisito vigente pide quitarlas
-- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
-      conserva el plano de su propio extremo
-- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
-      misma expansión)
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
       también `views.py:1766,1871` y, en `tests/test_utils.py`, la clase
@@ -141,6 +144,8 @@
       `include_limiting_cases` aparece en tests en `tests/test_serializers.py:412,431` y en
       `tests/test_models.py:132,138,186`, ninguno con sinterizado; los de `test_models` crean el
       estudio por ORM (`:126`) sin pasar por `perform_create`, así que no pueden ponerse en rojo)
+- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
+      conserva el plano de su propio extremo
 - [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
       **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
 - [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
@@ -217,15 +222,21 @@
       de la ronda anterior era **falsa**: ese test sí aporta `sintering_min`/`sintering_max`
       en `:142-143` y no postea nada, escribe por ORM. No hay riesgo que declarar.)
 - [ ] T7.2 Gates de frontend, con su línea base:
-      - `npm test` → base **55 ficheros, 597 tests**. Ojo: hay inestabilidad preexistente en
-        `FraktalBatchImageDetail.test.tsx > comprehensive variant toggle (T6.5)`: **dos** tests
-        de ese bloque fallan en la corrida completa (el primero por aserción, `mockPush` con 0
-        llamadas; no sólo por timeout) y el fichero pasa aislado. No atribuirlo a este change
+      - `npm test` → base **58 ficheros, 624 tests**, medida sobre `f5c93b4`. La base anterior
+        (55/597) era la de `c3ff055`: los merges de `develop` añadieron `chart-theme.test.ts`
+        (16), `globals-tokens.test.ts` (6) y `tailwind-config.test.ts` (5), que son los 3
+        ficheros y 27 tests de diferencia. Nota sobre `FraktalBatchImageDetail.test.tsx >
+        comprehensive variant toggle (T6.5)`: una ronda anterior declaró **dos** tests
+        inestables en la corrida completa, pero **dos corridas completas consecutivas sobre
+        `f5c93b4` dieron 624/624 verdes**. Queda como aviso, no como hecho reproducible: si
+        aparece, no atribuirlo a este change
       - `npm run type-check` → base **13 errores TS preexistentes**, salida **2**. Aceptación:
         cero nuevos
       - `npm run lint` existe (`next lint`) pero el repo no tiene configuración de ESLint, así
         que lanza el asistente interactivo: condición preexistente declarada
-      - Nota: `npm run type-check` ensucia `frontend/tsconfig.tsbuildinfo`, que está trackeado.
+      - Nota: `frontend/tsconfig.tsbuildinfo` **ya no está trackeado** (PR #96), así que correr
+        los gates no ensucia el árbol. Antes sí, y por eso cuatro rondas de revisión no
+        pudieron reproducir estas cifras.
         Restaurarlo tras correr el gate
 - [ ] T7.3 Engine: este change **no toca `aglogen_core/`**, así que no se declara línea base.
       Se corre la suite una vez como control de no-regresión y se reporta el resultado
@@ -378,3 +389,13 @@
   `create_simulation`, así que los hijos de extremos almacenan un dict que **contradice** el
   coeficiente al que corren. Probe: base con `coefficient: 0.7` → hijo que corre a `0.5` y
   guarda `0.7`. Decisión de la persona: arreglarlo aquí, no derivarlo. De ahí R11.7.
+- L24 (2026-10-22): **spec-review r9** (`663a7b5`): `1 blocker, 2 majors, 6 minors`. El blocker
+  fue una frase que sobrevivió intacta a la reescritura de su propio párrafo y seguía nombrando
+  a `apply_sintering_config` como dueño de una limpieza que no puede hacer.
+- L25 (2026-10-22): **spec-review r10** (`27afba1`): `0 blockers, 2 majors, 6 minors`. Mismo
+  patrón una capa más abajo: *"eso cierra también el `sintering_mean` legado"*, cierta cuando se
+  escribió y falsa tras dos estrechamientos de la regla que la precedía.
+- L26 (2026-10-22): **spec-review r11**: `0 blockers, 2 majors, 8 minors`, y la primera que pudo
+  **correr las suites**. Las cinco cifras de backend salieron exactas; la de frontend estaba
+  obsoleta por los merges de `develop`. Su M2 fue un superviviente de `95d41ca`: DD3 seguía
+  enumerando tres superficies cuando el contrato exige siete desde hace cinco commits.
