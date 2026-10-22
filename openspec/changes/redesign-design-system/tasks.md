@@ -306,3 +306,13 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L1 — T0.2 y T0.3 (2026-10-22)
+
+**T0.2 — Línea base de literales de color.** `grep -rnoE '#[0-9a-fA-F]{3,8}\b|rgba?\(' src/components src/lib --include=*.ts --include=*.tsx | wc -l` → **170 ocurrencias en 24 ficheros**.
+Coincide con la cifra que el contrato declaraba. Es el número que T7.3 exige no superar.
+
+**T0.3 — Solape con `sintering-reaches-engine`.** `git diff --stat origin/develop feature/sintering-reaches-engine -- frontend/` → **sin salida**: esa rama no ha tocado todavía ningún fichero del frontend (sus tareas T6 siguen pendientes). Cero solape a fecha de hoy. La reserva por fichero sigue vigente igualmente, porque sus T6.1–T6.5 editarán `BatchSimulationForm.tsx` cuando lleguen.
+
+**T0.1 — Pendiente.** `npm ci` en curso en este worktree; las cifras de `npm test` y `npm run type-check` se capturan aquí al terminar, observadas en este árbol y no heredadas.
+
