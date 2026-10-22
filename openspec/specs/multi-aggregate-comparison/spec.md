@@ -10,7 +10,7 @@
 
 ## Requirements
 
-### R1. Selection and entry point
+### Requirement: R1. Selection and entry point
 
 **GIVEN** the user is on a project page listing N simulations
 **WHEN** they interact with per-row selection controls
@@ -35,7 +35,7 @@ Observable rules:
 
 ---
 
-### R2. Compare page renders grid by default
+### Requirement: R2. Compare page renders grid by default
 
 **GIVEN** the user lands on `/projects/{id}/compare?sims=...` with 2–9 valid IDs
 **WHEN** the page finishes loading geometries
@@ -59,7 +59,7 @@ Observable rules:
 
 ---
 
-### R3. Synchronised cameras (default-on)
+### Requirement: R3. Synchronised cameras (default-on)
 
 **GIVEN** the Compare page is showing N viewers in grid mode
 **WHEN** the user rotates, pans, or zooms one viewer
@@ -79,7 +79,7 @@ Observable rules:
 
 ---
 
-### R4. Overlay mode
+### Requirement: R4. Overlay mode
 
 **GIVEN** the Compare page is rendering N aggregates in grid mode
 **WHEN** the user activates the "Overlay" toggle
@@ -104,7 +104,7 @@ Observable rules:
 
 ---
 
-### R5. Metrics table
+### Requirement: R5. Metrics table
 
 **GIVEN** the Compare page has loaded N simulations
 **WHEN** the user scrolls to / views the metrics section
@@ -125,7 +125,7 @@ Observable rules:
 
 ---
 
-### R6. Multi-series Rg-evolution chart
+### Requirement: R6. Multi-series Rg-evolution chart
 
 **GIVEN** the Compare page has loaded N simulations
 **WHEN** the page renders the Rg-evolution section
@@ -149,7 +149,7 @@ Observable rules:
 
 ---
 
-### R7. Shared viewer settings panel
+### Requirement: R7. Shared viewer settings panel
 
 **GIVEN** the Compare page is showing N viewers (in grid or overlay)
 **WHEN** the user changes a viewer setting in the shared settings panel
@@ -169,7 +169,7 @@ Observable rules:
 
 ---
 
-### R8. Missing simulation handling
+### Requirement: R8. Missing simulation handling
 
 **GIVEN** the user navigates to `/projects/{id}/compare?sims=...` where at least one ID is invalid (does not exist → 404) or inaccessible (permission denied → 403)
 **WHEN** the Compare page loads
@@ -191,7 +191,7 @@ Observable rules:
 
 ---
 
-### R9. Single-sim view is unaffected (regression)
+### Requirement: R9. Single-sim view is unaffected (regression)
 
 **GIVEN** the user opens `/projects/{id}/simulations/{simId}` (the pre-existing single-sim detail page)
 **WHEN** they rotate, zoom, or otherwise interact with the 3D viewer on that page
@@ -210,7 +210,7 @@ Observable rules:
 
 ---
 
-### R10. Cap enforcement on the Compare page
+### Requirement: R10. Cap enforcement on the Compare page
 
 **GIVEN** the user navigates directly to `/projects/{id}/compare?sims=...` with MORE than 9 valid simulation IDs in the URL
 **WHEN** the page loads

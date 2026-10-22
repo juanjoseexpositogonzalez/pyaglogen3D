@@ -16,7 +16,7 @@ results, and logged metadata — not internal implementation.
 
 ## Requirements
 
-### R1. COM-Distance Formula
+### Requirement: R1. COM-Distance Formula
 
 The engine MUST compute the center-of-mass distance between two merging sub-clusters using:
 
@@ -82,7 +82,7 @@ fractal parameters. The function MUST accept a `sintering_coeff: f64` parameter
 
 ---
 
-### R2. Two-Rotation Particle Positioning
+### Requirement: R2. Two-Rotation Particle Positioning
 
 When placing a merged cluster, the orientation of the impactor MUST be sampled using TWO
 independent rotational degrees of freedom: azimuth `φ ∈ [0, 2π)` and elevation `θ ∈ [-π/2, π/2]`,
@@ -110,7 +110,7 @@ drawn with uniform spherical distribution. Single-axis rotation (old behavior) i
 
 ---
 
-### R3. Retry Policy on Geometric Merge Failure
+### Requirement: R3. Retry Policy on Geometric Merge Failure
 
 When selecting a candidate pair (i, j) for a merge step, the engine MUST pre-screen pairs for
 geometric feasibility before the retry loop. A pair is **feasible** when `required_distance >=
@@ -178,7 +178,7 @@ selection + undershoot ballistic policy.
 
 ---
 
-### R4. Seed Type Modes
+### Requirement: R4. Seed Type Modes
 
 The engine MUST accept a `seed_type` parameter with three modes controlling the initial
 particle pool:
@@ -230,7 +230,7 @@ particle pool:
 
 ---
 
-### R5. Convergence to Target
+### Requirement: R5. Convergence to Target
 
 For target parameters `(Df_target, kf_target)` and `N ≥ 100`, the engine MUST produce
 aggregates whose mean Df and kf over ≥ 5 independent runs (different seeds) satisfy:
@@ -343,7 +343,7 @@ These bounds are verified by the integration test suite using `cargo test`.
 
 ---
 
-### R6. Backward Compatibility
+### Requirement: R6. Backward Compatibility
 
 The `seed_type` parameter MUST be optional in all call sites (engine, API, frontend).
 Existing callers that omit it continue to work without modification or error.
@@ -368,7 +368,7 @@ Existing callers that omit it continue to work without modification or error.
 
 ---
 
-### R7. Diagnostic Metadata
+### Requirement: R7. Diagnostic Metadata
 
 The engine MUST include retry and fallback counters in the simulation result metadata, extended
 with Phase 3 adaptive merge tracking. These values appear in the result payload returned to the
@@ -413,7 +413,7 @@ no adaptive merge type existed.)
 
 ---
 
-### R8. Sintering Contact Consistency
+### Requirement: R8. Sintering Contact Consistency
 
 Both the tunable merge path AND the ballistic fallback MUST use `rp · sintering_coeff` as the
 effective contact distance when placing merged clusters and checking inter-particle contact.
@@ -446,7 +446,7 @@ This requirement is a no-op when `sintering_coeff = 1.0`.
 
 ---
 
-### R9. Convergence with Sintering
+### Requirement: R9. Convergence with Sintering
 
 For target parameters `(Df_target, kf_target)`, `N ≥ 100`, and `sintering_coeff < 1.0`, the engine
 MUST produce aggregates whose mean Df and kf over ≥ 5 independent seeded runs satisfy:
@@ -481,7 +481,7 @@ convergence is only guaranteed for `Df_target ≥ 1.8` (see PYA-14 for lower Df)
 
 ---
 
-### R10. Backward Compatibility for Pre-Sintering Callers
+### Requirement: R10. Backward Compatibility for Pre-Sintering Callers
 
 The `sintering_coeff` parameter MUST be optional in all call sites (engine, Python bindings,
 backend API). Callers that do not supply it receive `sintering_coeff = 1.0` implicitly. Existing
@@ -509,7 +509,7 @@ modification.
 
 ---
 
-### R11. `target_kf` Parametric Input
+### Requirement: R11. `target_kf` Parametric Input
 
 Modifies **the implicit `target_kf` scalar contract assumed by R1, R5, R6, and R10** of this spec.
 
@@ -570,7 +570,7 @@ no distribution config or sampling existed.)
 
 ---
 
-### R12. `dpo` Parametric Input (CC-Tunable Only)
+### Requirement: R12. `dpo` Parametric Input (CC-Tunable Only)
 
 The CC-tunable algorithm MUST accept a `dpo_distribution` parameter governing how engine-level
 `radius_min`/`radius_max` are sampled:
@@ -623,7 +623,7 @@ Scope: this distribution applies **exclusively** to `TunableCcParams`. Other alg
 
 ---
 
-### R13. Truncated Normal Sampling
+### Requirement: R13. Truncated Normal Sampling
 
 When `Normal { mean: μ, std: σ }` is specified for any parametric input, the system MUST
 sample from a **truncated Normal** distribution bounded to `[μ − 3σ, μ + 3σ]`:
@@ -663,7 +663,7 @@ The RNG state advances for each drawn candidate (rejected or accepted), ensuring
 
 ---
 
-### R14. Result Fields `dpo_used` and `target_kf_used`
+### Requirement: R14. Result Fields `dpo_used` and `target_kf_used`
 
 The `SimulationResult` returned by the CC-tunable algorithm MUST include:
 
@@ -703,7 +703,7 @@ Both fields MUST be serialized in the API response payload and included in CSV e
 
 ---
 
-### R15. Python Binding Backward Compatibility
+### Requirement: R15. Python Binding Backward Compatibility
 
 The `run_tunable_cc` Python binding MUST accept 10 new optional keyword arguments for
 distribution configuration (5 per parameter):
@@ -745,7 +745,7 @@ Valid `mode` strings: `"fixed"` (default), `"normal"`, `"uniform"`.
 
 ---
 
-### R16 (MODIFIED — Cycle 14 / PYA-14 Phase 1+2) — Per-step merge diagnostic trace
+### Requirement: R16 (MODIFIED — Cycle 14 / PYA-14 Phase 1+2) — Per-step merge diagnostic trace
 
 The CC tunable algorithm (`run_tunable_cc_internal`) MUST emit a
 `merge_trace` field on `SimulationResult`. The trace is a list of
@@ -852,7 +852,7 @@ ballistic fallback). Non-CC algorithms emit an empty list.
 
 ---
 
-### R17 — Seed Type Parameter Routing
+### Requirement: R17 — Seed Type Parameter Routing
 
 The simulation API MUST accept `seed_type` as a value inside the `parameters` JSON object (nested) and route it to the engine, in addition to the existing top-level field.
 
@@ -930,7 +930,7 @@ Valid values: `"monomers"`, `"dimers"`, `"trimers"`. Any other value MUST be rej
 
 ---
 
-### R18. merge_trace Schema Extension
+### Requirement: R18. merge_trace Schema Extension
 
 The `MergeTraceEntry` schema MUST be extended with Phase 3 fields. Existing consumers reading
 `merge_trace` MUST accept `"adaptive"` as a valid `merge_type`; schema additions are optional
@@ -975,7 +975,7 @@ no merge occurred at that step via the normal path, triggering the adaptive fall
 
 ---
 
-### R19. Convergence Guarantee for Extended Df Range
+### Requirement: R19. Convergence Guarantee for Extended Df Range
 
 WHEN running CC tunable with `target_df ∈ [1.4, 2.9]`, `target_kf ∈ [1.0, 1.5]`, `n_particles ∈ [100, 1000]`, `seed_type = "dimers"`, the engine MUST produce aggregates within tolerance over ≥ 3 independent RNG seeds per parameter combination:
 
@@ -1050,7 +1050,7 @@ If `Df_target < 1.3` is found to be physically infeasible (no valid aggregate ge
 
 ---
 
-### R20. Phase 3 Feature Flag for Rollback
+### Requirement: R20. Phase 3 Feature Flag for Rollback
 
 The smart pair selection + adaptive fallback behavior MUST be gated behind a compile-time
 Rust constant or runtime env var named `CC_TUNABLE_USE_PHASE3_ALGORITHM`.
@@ -1086,7 +1086,7 @@ observable in any integration test targeting pre-Phase-3 behavior.
 
 ---
 
-### R21. Non-Regression for Df ≥ 2.0
+### Requirement: R21. Non-Regression for Df ≥ 2.0
 
 WHEN Phase 3 algorithm is active AND `target_df >= 2.0`, cases that converged in Phase 2 MUST
 still converge in Phase 3 within the tighter ±5% tolerance.

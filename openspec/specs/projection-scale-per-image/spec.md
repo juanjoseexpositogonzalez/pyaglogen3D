@@ -11,7 +11,7 @@ ZIP contents — not internal implementation.
 
 ## Requirements
 
-### R1. Each direction entry in `metadata.json` MUST carry `pixels_per_100nm`
+### Requirement: R1. Each direction entry in `metadata.json` MUST carry `pixels_per_100nm`
 
 **GIVEN** a projection ZIP produced in `grid` or `fibonacci` mode,
 **WHEN** `metadata.json` is assembled,
@@ -47,7 +47,7 @@ ZIP contents — not internal implementation.
 
 ---
 
-### R2. Top-level `parameters.pixels_per_100nm` MUST equal `max(directions[].pixels_per_100nm)`
+### Requirement: R2. Top-level `parameters.pixels_per_100nm` MUST equal `max(directions[].pixels_per_100nm)`
 
 **GIVEN** a projection ZIP in `grid` or `fibonacci` mode with per-direction scales populated,
 **WHEN** the top-level `parameters.pixels_per_100nm` field is read,
@@ -84,7 +84,7 @@ The top-level field is kept for backward compatibility with consumers that read 
 
 ---
 
-### R3. Per-direction scale MUST be derived from the 2D projected bbox of that specific view
+### Requirement: R3. Per-direction scale MUST be derived from the 2D projected bbox of that specific view
 
 **GIVEN** a projection direction `(azimuth, elevation)` with 2D rendered bbox
 `(min_x, max_x, min_y, max_y)` in engine units,
@@ -125,7 +125,7 @@ renderer's 2% padding applied symmetrically on each side of the longer axis.
 
 ---
 
-### R4. Legacy metadata (no per-direction field) MUST be treated as broadcast for backward compat
+### Requirement: R4. Legacy metadata (no per-direction field) MUST be treated as broadcast for backward compat
 
 **GIVEN** a ZIP whose `metadata.json` was produced before this change (contains only the
 top-level `parameters.pixels_per_100nm`, with no `pixels_per_100nm` inside `directions[]`),
@@ -159,7 +159,7 @@ top-level field still satisfies the metadata-calibration path).
 
 ---
 
-### R5. Scale formula uses the 2D bbox from the Rust engine's `bounds` output, not re-derived
+### Requirement: R5. Scale formula uses the 2D bbox from the Rust engine's `bounds` output, not re-derived
 
 **GIVEN** the Rust engine returns `proj.bounds = (min_x, max_x, min_y, max_y)` for a direction,
 **WHEN** `pixels_per_100nm` is stamped for that direction,
@@ -190,7 +190,7 @@ geometry used to produce the PNG.
 
 ---
 
-### R6. Legacy 3D-bbox scale semantics NOT applicable in grid/fibonacci mode
+### Requirement: R6. Legacy 3D-bbox scale semantics NOT applicable in grid/fibonacci mode
 
 **GIVEN** a grid or fibonacci mode export,
 **WHEN** scale is computed,

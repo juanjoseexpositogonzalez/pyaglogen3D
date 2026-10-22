@@ -10,7 +10,7 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 
 ## Requirements
 
-### R1. Batch endpoint accepts ZIP with pyaglogen metadata
+### Requirement: R1. Batch endpoint accepts ZIP with pyaglogen metadata
 
 **GIVEN** a caller uploads a ZIP previously produced by pyaglogen3D's projection export,
 **AND** the ZIP contains `metadata.json` with `parameters.pixels_per_100nm` present and positive,
@@ -42,7 +42,7 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 - **Input**: ZIP where `metadata.parameters.pixels_per_100nm = 0`.
 - **Expected**: Metadata treated as missing; fallback path per R2 applies.
 
-### R2. Fallback to manual calibration when metadata missing or invalid
+### Requirement: R2. Fallback to manual calibration when metadata missing or invalid
 
 **GIVEN** a ZIP without `metadata.json` OR with missing/invalid `parameters.pixels_per_100nm`,
 **WHEN** the batch endpoint is called,
@@ -66,7 +66,7 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 - **Input**: Legacy ZIP; body has neither `pixels_per_100nm` nor `autocalibrate_dpo`.
 - **Expected**: HTTP 400 with actionable message.
 
-### R3. One-shot dpo auto-calibration reused across the batch
+### Requirement: R3. One-shot dpo auto-calibration reused across the batch
 
 **GIVEN** batch mode with `autocalibrate_dpo: true`,
 **WHEN** the orchestrator prepares the batch,
@@ -91,7 +91,7 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 - **Input**: `N = 1` with `autocalibrate_dpo: true`.
 - **Expected**: `estimate_particles_and_dpo` called once on that image; its dpo used for the single analyzer call.
 
-### R4. Sync execution path for N ≤ 30
+### Requirement: R4. Sync execution path for N ≤ 30
 
 **GIVEN** a ZIP containing `N ≤ 30` valid images,
 **WHEN** the endpoint processes it,
@@ -107,7 +107,7 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 #### Scenario 4.3 — Typical sync batch (`N=12`)
 - **Expected**: 200 with 12 results; response completes inline.
 
-### R5. Async execution path for N > 30
+### Requirement: R5. Async execution path for N > 30
 
 **GIVEN** a ZIP containing `N > 30` valid images,
 **WHEN** the endpoint is called,
@@ -133,7 +133,7 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 #### Scenario 5.4 — Failure during run
 - **Expected**: Polling returns `{status: "failed", error: "..."}`; `batch_id` absent; error message non-empty.
 
-### R6. Per-image result shape
+### Requirement: R6. Per-image result shape
 
 **GIVEN** a batch job completes (sync or async),
 **WHEN** per-image results are assembled,
@@ -192,7 +192,7 @@ Df-related field.)
 - **Expected**: `quality = "failed"`, `failure_reason = null` (not `"none"` — null indicates
   no category was surfaced by the engine).
 
-### R7. Batch statistics
+### Requirement: R7. Batch statistics
 
 **GIVEN** `N ≥ 1` per-image results,
 **WHEN** batch statistics are computed,
@@ -239,7 +239,7 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 - **Expected**: `n_converged = 0`, `n_approximate = 5`, `mean_df = null` (no converged),
   `mean_df_inclusive` is mean of the 5 approximate df_estimate values.
 
-### R8. Histogram data uses Freedman–Diaconis with Sturges fallback
+### Requirement: R8. Histogram data uses Freedman–Diaconis with Sturges fallback
 
 **GIVEN** `n_successful` Df values in a batch,
 **WHEN** histogram data is prepared,
@@ -260,7 +260,7 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 #### Scenario 8.4 — Below threshold (`n_successful=4`)
 - **Expected**: Response body has no `histogram` key; table-only UI.
 
-### R9. Simulation comparison data
+### Requirement: R9. Simulation comparison data
 
 **GIVEN** a batch result is assembled,
 **WHEN** comparison data is prepared,
@@ -289,7 +289,7 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 - **Input**: Filename UUID no longer corresponds to any simulation.
 - **Expected**: `sim_id = null`; response contains `warning` describing the missing simulation; batch stats still present.
 
-### R10. Legacy single-image FRAKTAL endpoint unchanged
+### Requirement: R10. Legacy single-image FRAKTAL endpoint unchanged
 
 **GIVEN** the pre-existing endpoint `POST /api/v1/fractal-analysis/` for single-image analysis,
 **WHEN** it is called after this change ships,
@@ -298,7 +298,7 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 #### Scenario 10.1 — Existing contract preserved
 - **Expected**: All existing `FraktalAnalysis` endpoint tests pass unchanged.
 
-### R11. Sorensen educational note in comparison card
+### Requirement: R11. Sorensen educational note in comparison card
 
 **GIVEN** a batch response with a non-null `comparison` block (R9),
 **WHEN** the results view renders the comparison card,
@@ -318,7 +318,7 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 
 ---
 
-### R-DELTA-C. Engine batch function accepts per-image `Vec<f64>` scales or single broadcast float
+### Requirement: R-DELTA-C. Engine batch function accepts per-image `Vec<f64>` scales or single broadcast float
 
 **GIVEN** the FRAKTAL batch engine function `analyze_fraktal_batch`,
 **WHEN** called from the Python binding layer,
@@ -347,7 +347,7 @@ call sites passing a single float continue to work without change.
 
 ---
 
-### R-DELTA-D. ZIP unpacking: prefer scientific PNG per direction when available; fall back to presentation
+### Requirement: R-DELTA-D. ZIP unpacking: prefer scientific PNG per direction when available; fall back to presentation
 
 **GIVEN** a ZIP is ingested by the FRAKTAL batch task,
 **WHEN** the task selects the bytes to feed the FRAKTAL analyzer for direction `i`,
@@ -395,7 +395,7 @@ delta adds variant tracking.)
 - THEN `analysis_input_variant` MUST be present in the response body
 - AND its value is `"scientific"` or `"presentation"` (never null, never omitted)
 
-### R-DELTA-E1. Engine NMS radius is `1.0 × estimated_radius`
+### Requirement: R-DELTA-E1. Engine NMS radius is `1.0 × estimated_radius`
 
 **GIVEN** the engine's peak detection step in `image_processing.rs`,
 **WHEN** Non-Maximum Suppression (NMS) is applied to distance-transform peaks,
@@ -426,7 +426,7 @@ compared to the prior run; this is expected and documented (more accurate peak r
 - THEN `dpo_used` converges closer to the true dpo; Df is no longer systematically saturated at ~2.0
 - AND the result difference is not treated as an error — it is expected behavior
 
-### R-DELTA-E2. Primary radius estimated as median of ALL detected peaks
+### Requirement: R-DELTA-E2. Primary radius estimated as median of ALL detected peaks
 
 **GIVEN** the engine's radius estimation step after NMS yields a set of accepted peaks,
 **WHEN** the primary radius (and hence `dpo_nm`) is computed,
@@ -463,7 +463,7 @@ from prior behavior).
 - WHEN the radius estimation is called
 - THEN the autocalibrate function returns an error; the batch task falls back per R3 (retry on image[N/2])
 
-### R-DELTA-E3. Autocalibrate default for batch-from-simulation is OFF
+### Requirement: R-DELTA-E3. Autocalibrate default for batch-from-simulation is OFF
 
 **GIVEN** a batch upload request where the frontend explicitly indicates the batch originates
 from a simulation (i.e., the request includes `origin: "simulation"` AND `sim_dpo_nm: <positive float>`),
@@ -512,7 +512,7 @@ the default remains `autocalibrate=ON` (unchanged),
 - THEN the frontend displays: "Using known dpo = {sim_dpo_nm} nm from simulation. Override?"
 - AND the toggle to enable autocalibrate is visible and functional
 
-### R-DELTA-E4. Detector validation: synthetic geometry within ±10% of true dpo
+### Requirement: R-DELTA-E4. Detector validation: synthetic geometry within ±10% of true dpo
 
 **GIVEN** a synthetic projection generated from a known geometry (dpo=25nm, scale=80px/100nm,
 implying true primary radius = `25/2 × 80/100 = 10px`),
@@ -543,7 +543,7 @@ NMS radius 1.0, all-peaks median, and scientific PNG (binary-thresholded) input.
 
 ---
 
-### R-DELTA-I. Simulation detail page exposes "Analyze projections" entry point
+### Requirement: R-DELTA-I. Simulation detail page exposes "Analyze projections" entry point
 
 **GIVEN** a simulation detail page at `/projects/{projectId}/simulations/{simId}/`,
 **WHEN** the simulation has completed and projection images are available (the simulation
@@ -578,7 +578,7 @@ has a non-null projections export or is in a "done" state),
 
 ---
 
-### R-DELTA-J. Batch upload page propagates origin and sim_id query params to component
+### Requirement: R-DELTA-J. Batch upload page propagates origin and sim_id query params to component
 
 **GIVEN** the batch upload page at `/projects/{id}/fraktal/batch/upload`,
 **WHEN** it is loaded with query params `?origin=simulation&sim_id={X}`,

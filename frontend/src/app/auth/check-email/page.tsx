@@ -37,24 +37,24 @@ export default function CheckEmailPage() {
   }
 
   return (
-    <Card className="bg-gray-800 border-gray-700">
+    <Card className="bg-card border-border">
       <CardHeader className="text-center">
-        <div className="mx-auto mb-4 w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center">
-          <Mail className="h-8 w-8 text-blue-500" />
+        <div className="mx-auto mb-4 w-16 h-16 bg-primary/10 rounded-full flex items-center justify-center">
+          <Mail className="h-8 w-8 text-primary" />
         </div>
-        <CardTitle className="text-white">Check Your Email</CardTitle>
-        <CardDescription className="text-gray-400">
+        <CardTitle className="text-foreground">Check Your Email</CardTitle>
+        <CardDescription className="text-muted-foreground">
           We&apos;ve sent a verification link to {user?.email || 'your email address'}
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
-        <p className="text-sm text-gray-300 text-center">
+        <p className="text-sm text-foreground text-center">
           Click the link in the email to verify your account. If you don&apos;t see it, check your spam folder.
         </p>
 
         {message && (
-          <Alert className="bg-green-900/20 border-green-800">
-            <AlertDescription className="text-green-400">{message}</AlertDescription>
+          <Alert className="bg-success-soft border-success">
+            <AlertDescription className="text-success">{message}</AlertDescription>
           </Alert>
         )}
 
@@ -66,7 +66,7 @@ export default function CheckEmailPage() {
 
         <Button
           variant="outline"
-          className="w-full bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+          className="w-full bg-muted border-input text-foreground hover:bg-muted"
           onClick={handleResend}
           disabled={isResending}
         >
@@ -81,9 +81,9 @@ export default function CheckEmailPage() {
         </Button>
       </CardContent>
       <CardFooter className="flex justify-center">
-        <p className="text-sm text-gray-400">
+        <p className="text-sm text-muted-foreground">
           Already verified?{' '}
-          <Link href="/auth/login" className="text-blue-400 hover:underline">
+          <Link href="/auth/login" className="text-primary hover:underline">
             Sign in
           </Link>
         </p>

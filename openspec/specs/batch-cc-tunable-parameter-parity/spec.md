@@ -8,7 +8,7 @@ Specification for extending `ParametricStudy.parameter_grid` with 4 new keys (`k
 
 ## Requirements
 
-### R1 — kf_distribution Grid Key
+### Requirement: R1 — kf_distribution Grid Key
 
 The system MUST accept `parameter_grid.kf_distribution` as an array of distribution config objects. Each entry MUST be one of:
 
@@ -54,7 +54,7 @@ Task expansion MUST produce one child sim per config entry x `seeds_per_combinat
 
 ---
 
-### R2 — particle_radius_config Grid Key
+### Requirement: R2 — particle_radius_config Grid Key
 
 The system MUST accept `parameter_grid.particle_radius_config` as an array of radius/polydispersity configs.
 
@@ -85,7 +85,7 @@ Child sims receive the config in params for the engine to sample.
 
 ---
 
-### R3 — sintering_config Grid Key
+### Requirement: R3 — sintering_config Grid Key
 
 The system MUST accept `parameter_grid.sintering_config` as an array of sintering distribution configs. Grid-level sintering MUST OVERRIDE study-level `sintering_config` for that child sim (precedence: grid > study > default).
 
@@ -121,7 +121,7 @@ The system MUST accept `parameter_grid.sintering_config` as an array of sinterin
 
 ---
 
-### R4 — seed_type Grid Key
+### Requirement: R4 — seed_type Grid Key
 
 The system MUST accept `parameter_grid.seed_type` as an array of values from `{"monomers", "dimers", "trimers"}`.
 
@@ -149,7 +149,7 @@ Each child sim MUST have `seed_type` set on the Simulation **MODEL FIELD** (not 
 
 ---
 
-### R5 — Combinatorial Expansion Semantics
+### Requirement: R5 — Combinatorial Expansion Semantics
 
 Grid expansion MUST be the Cartesian product of all parameter_grid keys x `seeds_per_combination`. Key iteration order MUST be alphabetical for deterministic expansion.
 
@@ -185,7 +185,7 @@ Grid expansion MUST be the Cartesian product of all parameter_grid keys x `seeds
 
 ---
 
-### R6 — Batch Size Warning and Hard Cap
+### Requirement: R6 — Batch Size Warning and Hard Cap
 
 The system MUST warn when projected sim count > 200 and MUST reject when > 1000.
 
@@ -210,7 +210,7 @@ The system MUST warn when projected sim count > 200 and MUST reject when > 1000.
 
 ---
 
-### R7 — Backward Compatibility
+### Requirement: R7 — Backward Compatibility
 
 WHEN `parameter_grid` does NOT include any of the new keys, behavior MUST be IDENTICAL to before this change.
 
@@ -228,7 +228,7 @@ WHEN `parameter_grid` does NOT include any of the new keys, behavior MUST be IDE
 
 ---
 
-### R8 — Frontend: DistributionGridInput Component
+### Requirement: R8 — Frontend: DistributionGridInput Component
 
 The system MUST provide a `DistributionGridInput` component that manages an array of distribution configs, embedding `DistributionSelector` per entry.
 
@@ -258,7 +258,7 @@ The system MUST provide a `DistributionGridInput` component that manages an arra
 
 ---
 
-### R9 — Frontend: seed_type Multi-Select
+### Requirement: R9 — Frontend: seed_type Multi-Select
 
 For `seed_type`, the system MUST provide a chip-style multi-select with exactly 3 options: monomers, dimers, trimers. At least 1 MUST be selected.
 
@@ -276,7 +276,7 @@ For `seed_type`, the system MUST provide a chip-style multi-select with exactly 
 
 ---
 
-### R10 — Frontend: Parameter-to-Vary Dropdown Extension
+### Requirement: R10 — Frontend: Parameter-to-Vary Dropdown Extension
 
 The existing dropdown in `BatchSimulationForm.tsx` (~line 265-280) MUST gain 4 new options:
 - "kf distribution (normal/uniform/fixed)"
