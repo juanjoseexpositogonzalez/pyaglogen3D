@@ -8,8 +8,8 @@
 >
 > | PR | Tareas | Verificación |
 > | --- | --- | --- |
-> | **1a** | T0, T1, T2.1, T2.3, T4 | T7.1, T7.2, T7.3, T7.6, T7.7, T7.8 |
-> | **1b** | **T2.2**, T3, T5, T6, T8 | T7 completo |
+> | **1a** | T0, T1, T2.1, T2.3a, T4 | T7.1, T7.2, T7.3, T7.6, T7.7, T7.8 |
+> | **1b** | **T2.2**, T2.3b, T3, T5, T6, T8 | T7 completo |
 >
 > T7.1–T7.3 y T7.6–T7.8 corren en **ambos** PRs: 1a reescribe los tokens que consume toda la
 > interfaz actual, así que necesita su propia puerta.
@@ -38,21 +38,27 @@
 - [ ] T1.1 Reescribir `frontend/src/app/globals.css`: superficies, tinta, acentos, semánticos,
       líneas, sombras, radio, canvas de visualización, gradientes tonales y rampa
       `--series-1…6`. Tema claro en `:root`, oscuro en `[data-theme="dark"]`.
-- [ ] T1.2 Retirar `body.app-background` y su overlay. **No borrar** `/pyAgloGen3DBNG.png`: lo
+- [ ] T1.2 Retirar `body.app-background` y su overlay, y la clase fija `dark` de
+      `<html>` (`app/layout.tsx:19`), que hoy es inerte porque `globals.css` no tiene ningún
+      selector `.dark` (D9) y lo seguiría siendo tras T2.2. **No borrar** `/pyAgloGen3DBNG.png`: lo
       reutiliza la ola 2 como hero de autenticación.
 - [ ] T1.3 Puente shadcn: re-derivar de los tokens nuevos las **20 declaraciones que ya
       existen** bajo `:root` en `globals.css:7-26` (19 de color más `--radius`), y **añadir**
       `--chart-1…5`, que hoy **no existen** ni en `globals.css` ni en `tailwind.config.ts`,
       derivados de `--series-1…5` por si un componente shadcn futuro los espera.
 - [ ] T1.4 Escala tipográfica y clases de micro-tipografía (`.label-xs`, `.eyebrow`, `.hint`).
-- [ ] T1.5 Tests automatizables de R1 y R2: paridad de tokens entre temas y disyunción
+- [ ] T1.5 Tests automatizables de R2-S4 y R3-S1: paridad de tokens entre temas y disyunción
       semánticos/series, ambos por **parseo estático de `globals.css` como texto**.
       El motivo es que **PostCSS no corre bajo vitest**, así que la hoja importada por
       `layout.tsx` nunca llega al documento de prueba — no que jsdom sea incapaz de resolver
       custom properties. Lo es: una sonda sobre jsdom 23.2.0 (la versión fijada en
       `package-lock.json`) devuelve el valor correcto tanto tras `setProperty` como desde un
       `<style>` inyectado. Por eso T4.4 sí puede inyectarlas.
-- [ ] T1.6 `app/auth/layout.tsx` re-expresado en tokens. Hoy fija `text-white` y
+- [ ] T1.6 `app/auth/layout.tsx` **y las cuatro páginas de auth** (`login`, `register`,
+      `check-email`, `verify-email`) re-expresadas en tokens, con sus tests de R2-S3.
+      Verificado: además del layout, esas páginas fijan `bg-gray-800`, `bg-gray-700` y
+      `text-white` en sus tarjetas; sin tocarlas, tras 1a queda una tarjeta gris oscura sobre
+      lienzo claro. Ninguna está reservada por ningún change. Hoy fija `text-white` y
       `text-gray-400` (líneas 16-17), que con el tema claro por defecto dejan el título de
       login blanco sobre fondo claro. Es una página, pero **no está reservada por ningún
       change**, y entregar la ola 1 con el login roto no es aceptable.
@@ -66,8 +72,9 @@
 - [ ] T2.2 **`darkMode: ['selector', '[data-theme="dark"]']`.** Hoy no se declara, lo que en
       Tailwind 3.4 significa `media`; sin esto las **38 variantes `dark:`** vivas en `src/`
       seguirían a `prefers-color-scheme` y contradirían la elección explícita del usuario (D9).
-- [ ] T2.3 Tests: el fichero no contiene literal hexadecimal ni `rgb(`, y `darkMode` está
-      anclado a `[data-theme]`.
+- [ ] T2.3a **(1a)** Test: `tailwind.config.ts` no contiene literal hexadecimal ni `rgb(`.
+- [ ] T2.3b **(1b, con T2.2)** Test: `darkMode` está anclado a `[data-theme]`. Va con T2.2
+      porque es la tarea que lo instala; dejarlo en 1a mergearía ese PR con un test en rojo.
 
 ## T3 — Kit de primitivas
 
@@ -101,6 +108,8 @@
       test.
 - [ ] T4.5 **No se añade recharts.** Verificar que `package.json` no gana dependencias de
       gráficas (D5).
+- [ ] T4.6b Test de R1-S2 (los ficheros creados por esta ola no contienen literales de color,
+      salvo el fallback SSR documentado), en `src/lib/__tests__/chart-theme.test.ts`.
 - [ ] T4.6 La triple codificación **no invade colores atados por otra capacidad**:
       `multi-aggregate-comparison` R6/S5.3 ata cada serie de Rg al color de su simulación, el
       mismo del borde de su viewer. `series(i)` no se impone ahí; `dash(i)` y `marker(i)` sí.
@@ -126,14 +135,17 @@
 - [ ] T5.5 Responsive: iconos a <1440px, drawer con trampa de foco a <900px, frame a 1440px.
       Solo la trampa de foco y el nombre accesible son testables; los breakpoints son media
       queries y van a T7.4 manual.
+- [ ] T5.4b Test de R3 en `components/layout/__tests__/Header.test.tsx`: bajo el shell,
+      `Header` no renderiza navegación.
 - [ ] T5.6 Tests del shell **a nivel de componente**, renderizando `<AppShell>` con
       `next/navigation` mockeado, como ya hace
       `app/projects/[id]/fraktal/batch/__tests__/page.test.tsx:14-32`. **No se renderiza
       `app/layout.tsx`**: es Server Component e importa `next/font/google`, que ningún test del
       repo monta hoy (`grep "app/layout\|next/font" --include=*.test.tsx` → 0). Un test de ruta
       pasaría en verde vacuamente, porque el layout nunca estaría en el árbol. Cubre: scope de
-      proyecto, acceso de IA, rol admin, `aria-current`, y ausencia de shell con `usePathname`
-      devolviendo `/` y `/auth/login`.
+      proyecto, acceso de IA, rol admin, `aria-current`, **R5** (breadcrumb y control de tema
+      de tres estados), **R1-S2** (ninguna página importa el shell, por grep) y ausencia de
+      shell con `usePathname` devolviendo `/` y `/auth/login`.
 
 ## T6 — Tema
 
@@ -174,8 +186,9 @@
       `frontend/` y `openspec/`.
 - [ ] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
       verde: la paleta canónica de `contacts-graph-viz` no se ha tocado.
-- [ ] T7.8 **Regresión visual de las 17 páginas existentes**, que esta ola no edita pero sí
-      afecta: el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
+- [ ] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
+      sí afecta (hay 23 ficheros `page.tsx`; doce son pantallas distintas y 17 importan
+      `Header`; aquí se recorren las doce): el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
       Recorrido manual de las doce pantallas en ambos temas a 1440px, con capturas en el Log.
       Atención explícita a `multi-aggregate-comparison.md:45`, que fija la rejilla de viewers
       por N: comprobar que sigue siendo usable con el sidebar montado. Corre en **ambos** PRs.
@@ -188,7 +201,9 @@
 - [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
       `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros
       en `openspec/specs/`, nunca diferidos.
-- [ ] T8.3 `state.yaml` actualizado.
+- [ ] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
+      `lint_cmd: "cd frontend && npm run lint"` como gate cuando no existe configuración ESLint
+      alguna (T0.1): o se anota como no ejecutable, o se retira.
 - [ ] T8.4 **Limpieza tras el merge**, ordenada por la persona para esta entrega:
       - rama borrada en local y remoto;
       - `git worktree remove ~/code/.worktrees/pyaglogen3D-redesign-design-system` —
@@ -217,15 +232,24 @@ Cualquier fichero fuera de esta lista es una desviación del contrato:
 - `frontend/src/stores/useThemeStore.ts`
 - los tests que las tareas exigen y que no caen bajo `kit/` ni `shell/`:
   `frontend/src/app/__tests__/globals-tokens.test.ts` (T1.5),
-  `frontend/__tests__/tailwind-config.test.ts` (T2.3),
+  `frontend/src/__tests__/tailwind-config.test.ts` (T2.3a y T2.3b) — **dentro de `src/`**:
+  `vitest.config.ts:10-15` solo recoge `src/**`, así que un test en `frontend/__tests__/`
+  no se ejecutaría nunca y pasaría en verde vacuamente,
+  `frontend/src/lib/__tests__/chart-theme.test.ts` (T4.4 y T4.6b),
   `frontend/src/lib/__tests__/theme.test.ts` (T6.3),
   `frontend/src/components/layout/__tests__/Header.test.tsx` (T5.4 / R3 — el directorio no
   existe todavía),
   `frontend/src/app/auth/__tests__/layout.test.tsx` (R2 S3)
+- `frontend/src/app/auth/{login,register,check-email,verify-email}/page.tsx` (solo T1.6) y
+  `frontend/src/app/auth/__tests__/`
 - `openspec/changes/redesign-design-system/**`
 
+**Y, solo en T8 (archive):** `openspec/specs/design-system-foundation.md`,
+`openspec/specs/app-shell-navigation.md`, `openspec/state.yaml` y
+`openspec/changes/archive/**`.
+
 Cualquier otro fichero, nuevo o existente, es una desviación del contrato. En particular **no**
-se crea nada bajo `frontend/src/components/ui/`.
+se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.config.ts`.
 
 ## Deuda conocida que este change NO cierra
 

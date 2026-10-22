@@ -63,9 +63,10 @@ The application MUST ship a light theme as the default and a dark theme under
 `prefers-color-scheme` when the user has expressed no preference, and MUST persist an explicit
 choice across sessions.
 
-Tailwind's `darkMode` strategy MUST be anchored to that attribute. The configuration declares
-no strategy today, which means `media`: the 38 existing `dark:` utilities in `frontend/src`
-follow the operating system and would contradict an explicit user choice.
+Tailwind's `darkMode` strategy MUST be anchored to that attribute, so that every `dark:`
+utility in the codebase follows the resolved theme. Leaving the strategy undeclared means
+`media` in Tailwind 3.x, under which those utilities follow the operating system and contradict
+an explicit user choice.
 
 #### Scenario: Tailwind dark variants follow the attribute, not the OS `[test]`
 
@@ -204,8 +205,9 @@ The `Num` primitive MUST render numeric quantities in the monospace family with
 `font-variant-numeric: tabular-nums`, and MUST keep the unit in a separate adjacent element.
 A number and its unit MUST NOT be concatenated into one string.
 
-**Binding scope.** This change delivers the primitive and its guarantee. Routing every existing
-screen's numbers through `Num` is the work of waves 2 and 3, which rewrite those screens.
+**Binding scope.** The guarantee binds `Num` and every component that renders a number through
+it. A screen binds this requirement once it has been rewritten onto the kit; screens still on
+their pre-redesign markup do not.
 
 #### Scenario: Unit is a sibling element `[test]`
 
@@ -228,9 +230,9 @@ screen's numbers through `Num` is the work of waves 2 and 3, which rewrite those
 The `ShowValues` primitive MUST offer a control that replaces a visual with a
 keyboard-navigable table of the data behind it, in place, keeping the surrounding panel chrome.
 
-**Binding scope.** This change delivers the primitive. Wiring it into every chart panel and
-every spatial visualisation (3D viewer, topology graph, micrograph view) binds the waves that
-rewrite those screens. No existing chart is wired to it by this change.
+**Binding scope.** The guarantee binds `ShowValues` and every chart panel or spatial
+visualisation that has been rewritten onto the kit. A panel binds this requirement from the
+moment it adopts the kit, not before.
 
 #### Scenario: Toggle replaces the visual in place `[test]`
 
@@ -255,8 +257,8 @@ The token palette MUST meet WCAG 2.1 AA contrast in both themes, including the s
 tracked labels on translucent surfaces, and the primitives this change delivers MUST NOT convey
 status by colour alone.
 
-**Binding scope.** The guarantee covers the tokens and the kit. Auditing the twelve existing
-screens for AA belongs to the waves that rewrite them.
+**Binding scope.** The guarantee binds the token palette and every component built on the kit.
+Screens still on their pre-redesign markup are audited by the wave that rewrites them.
 
 #### Scenario: Micro-labels clear AA `[manual]`
 

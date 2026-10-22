@@ -40,9 +40,8 @@ The shell MUST NOT render on the public landing route `/` nor on any route under
 Those routes carry their own layout and, per `middleware.ts`, redirect an authenticated user
 away; showing a sidebar, a breadcrumb and a user menu over a sign-in form would be incoherent.
 
-`frontend/src/app/auth/layout.tsx` currently hard-codes `text-white` and `text-gray-400`,
-which assume a dark background. It MUST be re-expressed in tokens so it stays legible once the
-light theme is the default.
+The auth layout and the auth pages MUST express their colours through theme tokens, with no
+fixed-colour utility, so that they stay legible under either theme.
 
 #### Scenario: No shell on the sign-in path `[test]`
 
@@ -60,10 +59,11 @@ light theme is the default.
 
 #### Scenario: The auth layout is legible in both themes `[test]`
 
-- GIVEN `frontend/src/app/auth/layout.tsx`
-- WHEN its classes are inspected
-- THEN no fixed-colour utility such as `text-white` or `text-gray-400` remains
-- AND its text resolves through theme tokens
+- GIVEN `frontend/src/app/auth/layout.tsx` and the `login`, `register`, `check-email` and
+  `verify-email` pages
+- WHEN their classes are inspected
+- THEN no fixed-colour utility such as `text-white`, `bg-gray-800` or `text-gray-400` remains
+- AND their colours resolve through theme tokens
 
 ---
 

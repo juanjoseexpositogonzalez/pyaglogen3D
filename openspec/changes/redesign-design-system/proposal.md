@@ -41,7 +41,7 @@ archive desbloquearía antes de tiempo:
 | Fichero | Reservado por | Se libera cuando |
 | --- | --- | --- |
 | `BatchSimulationForm.tsx` | `sintering-reaches-engine` (T6.1–T6.5) **y de nuevo** `distribution-grid-wiring` (desplegable de parámetros, claves de distribución) | archivado **el segundo**, no el primero |
-| `DistributionSelector.tsx` | `distribution-grid-wiring` únicamente — `sintering-reaches-engine` T6.6 lo declara intacto a propósito | archivado `distribution-grid-wiring` |
+| `DistributionSelector.tsx` | `distribution-grid-wiring` (planificado en `openspec/changes/_explore-only/distribution-config-surface.md` §7.2; **aún no redactado como change**) únicamente — `sintering-reaches-engine` T6.6 lo declara intacto a propósito | archivado `distribution-grid-wiring` |
 | `SimulationForm.tsx` | `polydispersity-single-source` (toggle de polidispersidad muerto en `tunable_cc`, asimetrías del formulario single) — **change aún no redactado** | ver abajo |
 
 **Protocolo de liberación.** Cada fichero se libera por **aviso explícito de la sesión dueña**,
@@ -153,13 +153,15 @@ La estimación de la spec-review sitúa la ola 1 en **~5.000 líneas**, dominada
 (la media real del repo es de 208 líneas por fichero de test). El repo tiene una skill propia
 cuyo disparador son los PRs de más de 400 líneas; 5.000 no es revisable.
 
-El reparto exacto, con su verificación, vive en la tabla de cabecera de `tasks.md`. Aquí solo
-se enuncia qué deja cada PR en `develop`, que es lo que decide si puede ir solo.
+Aquí solo se enuncia qué deja cada PR en `develop`, que es lo que decide si puede ir solo.
 
-| PR | Tareas | Estimación | Qué deja en `develop` |
-| --- | --- | --- | --- |
-| **1a — Fundación** | T0, T1, T2, T4 | ~1.000 | Una aplicación **en tema claro, sin conmutador y sin shell** |
-| **1b — Kit, shell y tema** | T3, T5, T6, T8 | ~4.000 | El rediseño de chrome completo. Si sigue siendo grande al llegar, T3 (el kit) sale como tercer PR: no tiene consumidores hasta la ola 2 |
+| PR | Estimación | Qué deja en `develop` |
+| --- | --- | --- |
+| **1a — Fundación** | ~1.000 | Una aplicación **en tema claro, sin conmutador y sin shell** |
+| **1b — Kit, shell y tema** | ~4.000 | El rediseño de chrome completo. Si sigue siendo grande al llegar, T3 (el kit) sale como tercer PR: no tiene consumidores hasta la ola 2 |
+
+**El reparto de tareas no se enumera aquí**: vive en la tabla de cabecera de `tasks.md` y en
+ningún otro sitio. Dos listas de tareas en dos documentos ya divergieron una vez.
 
 **1a no es invisible, y decirlo sería falso.** Los 20 tokens de `globals.css:7-26` los consume
 toda la interfaz actual a través de `tailwind.config.ts` (`bg-background`, `text-foreground`,
