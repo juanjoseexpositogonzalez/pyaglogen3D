@@ -27,10 +27,10 @@ export default function LoginPage() {
   }
 
   return (
-    <Card className="bg-gray-800/70 backdrop-blur-md border-gray-700">
+    <Card className="bg-card/70 backdrop-blur-md border-border">
       <CardHeader>
-        <CardTitle className="text-white">Sign In</CardTitle>
-        <CardDescription className="text-gray-400">
+        <CardTitle className="text-foreground">Sign In</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Enter your credentials to access your account
         </CardDescription>
       </CardHeader>
@@ -43,7 +43,7 @@ export default function LoginPage() {
           )}
 
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-gray-200">Email</Label>
+            <Label htmlFor="email" className="text-foreground">Email</Label>
             <Input
               id="email"
               type="email"
@@ -51,12 +51,12 @@ export default function LoginPage() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
-              className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+              className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-gray-200">Password</Label>
+            <Label htmlFor="password" className="text-foreground">Password</Label>
             <Input
               id="password"
               type="password"
@@ -64,7 +64,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
-              className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+              className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
@@ -81,10 +81,10 @@ export default function LoginPage() {
 
           <div className="relative my-4">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
+              <div className="w-full border-t border-input" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-gray-800/70 px-2 text-gray-400">Or continue with</span>
+              <span className="bg-card/70 px-2 text-muted-foreground">Or continue with</span>
             </div>
           </div>
 
@@ -92,7 +92,7 @@ export default function LoginPage() {
             <Button
               type="button"
               variant="outline"
-              className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+              className="bg-muted border-input text-foreground hover:bg-muted"
               onClick={() => window.location.href = authApi.getOAuthUrl('google')}
             >
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
@@ -118,7 +118,7 @@ export default function LoginPage() {
             <Button
               type="button"
               variant="outline"
-              className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+              className="bg-muted border-input text-foreground hover:bg-muted"
               onClick={() => window.location.href = authApi.getOAuthUrl('github')}
             >
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -129,9 +129,9 @@ export default function LoginPage() {
           </div>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-muted-foreground">
             Don&apos;t have an account?{' '}
-            <Link href="/auth/register" className="text-blue-400 hover:underline">
+            <Link href="/auth/register" className="text-primary hover:underline">
               Sign up
             </Link>
           </p>

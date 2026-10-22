@@ -39,10 +39,10 @@ export default function RegisterPage() {
   }
 
   return (
-    <Card className="bg-gray-800/70 backdrop-blur-md border-gray-700">
+    <Card className="bg-card/70 backdrop-blur-md border-border">
       <CardHeader>
-        <CardTitle className="text-white">Create Account</CardTitle>
-        <CardDescription className="text-gray-400">
+        <CardTitle className="text-foreground">Create Account</CardTitle>
+        <CardDescription className="text-muted-foreground">
           Sign up to start using PyAglogen3D
         </CardDescription>
       </CardHeader>
@@ -56,7 +56,7 @@ export default function RegisterPage() {
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="first_name" className="text-gray-200">First Name</Label>
+              <Label htmlFor="first_name" className="text-foreground">First Name</Label>
               <Input
                 id="first_name"
                 name="first_name"
@@ -64,11 +64,11 @@ export default function RegisterPage() {
                 placeholder="John"
                 value={formData.first_name}
                 onChange={handleChange}
-                className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+                className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="last_name" className="text-gray-200">Last Name</Label>
+              <Label htmlFor="last_name" className="text-foreground">Last Name</Label>
               <Input
                 id="last_name"
                 name="last_name"
@@ -76,13 +76,13 @@ export default function RegisterPage() {
                 placeholder="Doe"
                 value={formData.last_name}
                 onChange={handleChange}
-                className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+                className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
               />
             </div>
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="email" className="text-gray-200">Email</Label>
+            <Label htmlFor="email" className="text-foreground">Email</Label>
             <Input
               id="email"
               name="email"
@@ -91,12 +91,12 @@ export default function RegisterPage() {
               value={formData.email}
               onChange={handleChange}
               required
-              className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+              className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password" className="text-gray-200">Password</Label>
+            <Label htmlFor="password" className="text-foreground">Password</Label>
             <Input
               id="password"
               name="password"
@@ -105,12 +105,12 @@ export default function RegisterPage() {
               value={formData.password}
               onChange={handleChange}
               required
-              className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+              className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="password_confirm" className="text-gray-200">Confirm Password</Label>
+            <Label htmlFor="password_confirm" className="text-foreground">Confirm Password</Label>
             <Input
               id="password_confirm"
               name="password_confirm"
@@ -119,7 +119,7 @@ export default function RegisterPage() {
               value={formData.password_confirm}
               onChange={handleChange}
               required
-              className="bg-gray-700 border-gray-600 text-white placeholder:text-gray-400"
+              className="bg-muted border-input text-foreground placeholder:text-muted-foreground"
             />
           </div>
 
@@ -136,10 +136,10 @@ export default function RegisterPage() {
 
           <div className="relative my-4">
             <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-gray-600" />
+              <div className="w-full border-t border-input" />
             </div>
             <div className="relative flex justify-center text-xs uppercase">
-              <span className="bg-gray-800/70 px-2 text-gray-400">Or continue with</span>
+              <span className="bg-card/70 px-2 text-muted-foreground">Or continue with</span>
             </div>
           </div>
 
@@ -147,7 +147,7 @@ export default function RegisterPage() {
             <Button
               type="button"
               variant="outline"
-              className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+              className="bg-muted border-input text-foreground hover:bg-muted"
               onClick={() => window.location.href = authApi.getOAuthUrl('google')}
             >
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24">
@@ -173,7 +173,7 @@ export default function RegisterPage() {
             <Button
               type="button"
               variant="outline"
-              className="bg-gray-700 border-gray-600 text-white hover:bg-gray-600"
+              className="bg-muted border-input text-foreground hover:bg-muted"
               onClick={() => window.location.href = authApi.getOAuthUrl('github')}
             >
               <svg className="mr-2 h-4 w-4" viewBox="0 0 24 24" fill="currentColor">
@@ -184,9 +184,9 @@ export default function RegisterPage() {
           </div>
         </CardContent>
         <CardFooter className="flex justify-center">
-          <p className="text-sm text-gray-400">
+          <p className="text-sm text-muted-foreground">
             Already have an account?{' '}
-            <Link href="/auth/login" className="text-blue-400 hover:underline">
+            <Link href="/auth/login" className="text-primary hover:underline">
               Sign in
             </Link>
           </p>
