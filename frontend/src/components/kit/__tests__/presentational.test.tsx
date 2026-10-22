@@ -146,14 +146,28 @@ describe('EmptyState', () => {
 
 describe('FilterBar', () => {
   it('shows a result count of zero, which is when it matters most', () => {
+    // A React element is truthy, so passing one here would have passed
+    // against the broken `{hint && ...}` too. A bare 0 is the case the guard
+    // exists for: the filter matched nothing.
     render(
-      <FilterBar hint={<span>0 of 96 images</span>}>
+      <FilterBar hint={0}>
         <FilterField label="Quality">
           <select />
         </FilterField>
       </FilterBar>,
     )
-    expect(screen.getByText('0 of 96 images')).toBeTruthy()
+    expect(screen.getByText('0')).toBeTruthy()
+  })
+
+  it('still omits the hint when there is none', () => {
+    const { container } = render(
+      <FilterBar>
+        <FilterField label="Quality">
+          <select />
+        </FilterField>
+      </FilterBar>,
+    )
+    expect(container.querySelectorAll('.hint')).toHaveLength(0)
   })
 
   it('labels each control', () => {

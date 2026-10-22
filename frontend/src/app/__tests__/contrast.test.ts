@@ -61,45 +61,122 @@ export function contrastRatio(foreground: string, background: string): number {
   return (lighter + 0.05) / (darker + 0.05)
 }
 
+/**
+ * Parse `rgba(r, g, b, a)` or `#rrggbb` into channels plus alpha.
+ *
+ * The kit renders state ink on translucent `*-soft` tints, so the background a
+ * chip really presents is that tint composited over the surface beneath it.
+ */
+function parseColour(value: string): { r: number; g: number; b: number; a: number } {
+  const rgba = value.match(
+    /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)(?:[,/\s]+([\d.]+))?\s*\)/,
+  )
+  if (rgba) {
+    return {
+      r: Number(rgba[1]),
+      g: Number(rgba[2]),
+      b: Number(rgba[3]),
+      a: rgba[4] === undefined ? 1 : Number(rgba[4]),
+    }
+  }
+  const h = value.replace('#', '')
+  return {
+    r: parseInt(h.slice(0, 2), 16),
+    g: parseInt(h.slice(2, 4), 16),
+    b: parseInt(h.slice(4, 6), 16),
+    a: 1,
+  }
+}
+
+function toHex(r: number, g: number, b: number): string {
+  const part = (n: number) => Math.round(n).toString(16).padStart(2, '0')
+  return `#${part(r)}${part(g)}${part(b)}`
+}
+
+/** Composite a possibly translucent colour over an opaque one. */
+function composite(over: string, base: string): string {
+  const f = parseColour(over)
+  const b = parseColour(base)
+  return toHex(
+    f.r * f.a + b.r * (1 - f.a),
+    f.g * f.a + b.g * (1 - f.a),
+    f.b * f.a + b.b * (1 - f.a),
+  )
+}
+
 const light = tokensOf(':root')
 const dark = tokensOf("[data-theme='dark']")
 
-/**
- * The chips and badges render their ink on a translucent `*-soft` background
- * that composites over the surface, so the surface itself is the conservative
- * background to measure against: it is the lightest the composite can be.
- */
-const LIGHT_SURFACE = '#ffffff'
-const DARK_SURFACE = '#102733'
-
 const AA = 4.5
+
+/**
+ * The surfaces the kit actually renders on. The page canvas is the darkest of
+ * them in the light theme, and therefore the honest background to measure
+ * against: for dark ink a lighter background raises the ratio, so measuring on
+ * white would be the optimistic bound, not the conservative one.
+ */
+const SURFACES = {
+  light: { canvas: '#f4f7f7', surface: '#ffffff' },
+  dark: { canvas: '#091923', surface: '#102733' },
+}
 
 describe('WCAG AA contrast of the token palette', () => {
   const inkTokens = ['--ink', '--ink-strong', '--ink-muted', '--ink-faint']
-  const stateTokens = ['--success', '--warning', '--danger', '--accent', '--accent-strong']
+  const accentTokens = ['--accent', '--accent-strong']
 
-  it.each([...inkTokens, ...stateTokens])(
-    '%s clears AA as small text in the light theme',
+  it.each([...inkTokens, ...accentTokens])(
+    '%s clears AA on the light page canvas',
     (token) => {
-      const ratio = contrastRatio(light[token], LIGHT_SURFACE)
-      expect(ratio, `${token} ${light[token]} on white is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA)
+      const ratio = contrastRatio(light[token], SURFACES.light.canvas)
+      expect(
+        ratio,
+        `${token} ${light[token]} on the canvas is ${ratio.toFixed(2)}:1`,
+      ).toBeGreaterThanOrEqual(AA)
     },
   )
 
-  it.each([...inkTokens, ...stateTokens])(
-    '%s clears AA as small text in the dark theme',
-    (token) => {
-      const ratio = contrastRatio(dark[token], DARK_SURFACE)
-      expect(ratio, `${token} ${dark[token]} on ${DARK_SURFACE} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA)
-    },
-  )
+  it.each([...inkTokens, ...accentTokens])('%s clears AA on the dark page canvas', (token) => {
+    const ratio = contrastRatio(dark[token], SURFACES.dark.canvas)
+    expect(
+      ratio,
+      `${token} ${dark[token]} on the canvas is ${ratio.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(AA)
+  })
+
+  // The pairs the chips and badges really present: state ink on its own tint,
+  // composited over the darkest surface of the theme. Measuring the ink on a
+  // bare surface would pass while the component itself failed, which is what
+  // a first attempt at this test did.
+  const STATE_PAIRS = [
+    ['--success', '--success-soft'],
+    ['--warning', '--warning-soft'],
+    ['--danger', '--danger-soft'],
+  ] as const
+
+  it.each(STATE_PAIRS)('%s on %s clears AA in the light theme', (ink, tint) => {
+    const background = composite(light[tint], SURFACES.light.canvas)
+    const ratio = contrastRatio(light[ink], background)
+    expect(
+      ratio,
+      `${ink} ${light[ink]} on ${tint} composited to ${background} is ${ratio.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(AA)
+  })
+
+  it.each(STATE_PAIRS)('%s on %s clears AA in the dark theme', (ink, tint) => {
+    const background = composite(dark[tint], SURFACES.dark.surface)
+    const ratio = contrastRatio(dark[ink], background)
+    expect(
+      ratio,
+      `${ink} ${dark[ink]} on ${tint} composited to ${background} is ${ratio.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(AA)
+  })
 
   it('keeps the visualisation caption legible, which no theme toggle can rescue', () => {
-    // The canvas is near-black in both themes, so these two tokens are the
-    // only thing standing between the 3D readouts and invisibility. An
-    // opacity modifier here once produced 1.28:1.
+    // The canvas is near-black in both themes, so these tokens are the only
+    // thing between the 3D readouts and invisibility. An opacity modifier here
+    // once produced 1.28:1.
     const canvas = light['--visual-background']
-    ;['--ink-on-dark', '--ink-on-dark-soft', '--ink-on-dark-faint'].forEach((token) => {
+    ;['--ink-on-dark', '--ink-on-dark-faint'].forEach((token) => {
       const ratio = contrastRatio(light[token], canvas)
       expect(ratio, `${token} on the canvas is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(AA)
     })
@@ -109,7 +186,7 @@ describe('WCAG AA contrast of the token palette', () => {
     // Series colours carry lines and markers rather than text, so 3:1 is the
     // bar for non-text contrast.
     for (let i = 1; i <= 6; i++) {
-      const ratio = contrastRatio(light[`--series-${i}`], LIGHT_SURFACE)
+      const ratio = contrastRatio(light[`--series-${i}`], SURFACES.light.canvas)
       expect(ratio, `--series-${i} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3)
     }
   })

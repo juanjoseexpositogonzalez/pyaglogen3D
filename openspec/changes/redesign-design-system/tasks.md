@@ -281,6 +281,8 @@ Cualquier fichero fuera de esta lista es una desviación del contrato:
 - `frontend/src/stores/useThemeStore.ts`
 - los tests que las tareas exigen y que no caen bajo `kit/` ni `shell/`:
   `frontend/src/app/__tests__/globals-tokens.test.ts` (T1.5),
+  `frontend/src/app/__tests__/contrast.test.ts` (T7.5, automatiza el gate de contraste
+  que el contrato dejaba como medición manual),
   `frontend/src/__tests__/tailwind-config.test.ts` (T2.3a y T2.3b) — **dentro de `src/`**:
   `vitest.config.ts:10-15` solo recoge `src/**`, así que un test en `frontend/__tests__/`
   no se ejecutaría nunca y pasaría en verde vacuamente,
@@ -326,6 +328,66 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L7 — Pasada fresca sobre el kit: la corrección de contraste estaba mal medida (2026-10-22)
+
+Una pasada fresca sobre `f64f666` confirmó 12 de las 15 correcciones y encontró que **tres
+comprobaciones no comprobaban lo que decían**. Reprodujo exactamente la base declarada
+(715/64, type-check 13, literales 98), así que los gates numéricos nunca estuvieron en duda:
+el problema era que no medían lo que creían medir.
+
+**El fallo principal: medí el contraste contra el fondo que más me favorecía.** L6 justificaba
+medir sobre blanco llamándolo "el fondo conservador". **Está invertido**: para tinta oscura, un
+fondo más claro *sube* el ratio, así que blanco es la cota **optimista**. Los fondos reales son
+más oscuros —un `*-soft` translúcido compuesto sobre el lienzo, o el `--warning-soft` opaco— y
+los chips seguían fallando:
+
+| caso real | ratio con los tokens de L6 |
+| --- | --- |
+| `--success` sobre `--success-soft` compuesto sobre el lienzo | 3.70 |
+| `--warning` sobre `#fdf2dd` | 4.16 |
+| `.eyebrow` (`--accent`) sobre el lienzo | 4.29 |
+| `--ink-faint` sobre el lienzo | 4.31 |
+
+El 3.98 que L6 citaba como defecto original de `--success` **seguía siendo el ratio del chip
+completo**: el token subió, el componente no. Y el test, al medir sobre un fondo que ningún
+componente presenta, **no podía fallar aunque los chips fueran ilegibles**.
+
+Corregido midiendo contra el peor fondo real: `--success` `#257157`, `--warning` `#9a621a`,
+`--danger` `#9f4a56`, `--accent` `#1b7c83`, `--ink-faint` `#617479`, todos ≥4.55:1. Los tokens
+`*-soft` se **re-derivan de la tinta nueva** para que el chip y su propio tinte no diverjan;
+`--success-soft` seguía derivando del `#2f8f6d` retirado dos rondas antes. El test compone
+alfa como el navegador y mide los pares que el kit presenta de verdad.
+
+**Dos tests más que pasaban por la razón equivocada:**
+- `FilterBar`: el test pasaba `hint={<span>0 of 96</span>}`, y un elemento React es *truthy*,
+  así que **pasaba igual contra el código roto**. El caso que la guarda existe para cubrir es
+  `hint={0}`. Reescrito, más un caso de ausencia.
+- El reemplazo del test tautológico introdujo **dos aserciones nuevas igual de vacuas**:
+  comparaban dos arrays literales escritos en el propio test, sin renderizar nada. Reescritos
+  para que el componente produzca lo que se afirma.
+
+**`DetailsDrawer` era la única primitiva sin test**, y precisamente la de reescritura más
+arriesgada. L6 declaraba "T3.8 cumplida, ya no hay primitiva sin test": eran 17 de 18. Añadidos
+cuatro tests: que no hay overlay (es cajón, no modal), que se anuncia como diálogo con nombre,
+que Escape cierra sin overlay, y que no quedan clases de animación que la hoja no puede emitir.
+
+**Otros cierres:** el test de `CopyText` prometía tres cosas y medía una, y no ejercitaba el
+desmontaje que la corrección 14 arregló — ahora espía `console.error` para detectar un
+`setState` sobre componente desmontado; `aria-describedby` colgante en `DetailsDrawer` cuando
+no hay subtítulo; comentario obsoleto en `Num` sobre strings que ya no acepta;
+`--ink-on-dark-soft` declarado y cableado sin consumidores, retirado.
+
+**Desviación de contrato corregida:** `contrast.test.ts` se añadió en L6 sin enmendar la lista
+cerrada de ficheros editables. Enmendada.
+
+**Verificación.** Suite **64 ficheros / 721 tests verdes**. Kit + tokens: **103 tests**.
+`type-check` **13**. Literales de producción **98**. Las **18** primitivas con test, verificado
+por script y no por afirmación.
+
+**La lección, que es la misma de L5 en otra forma:** un gate verde no dice que el sistema esté
+bien, dice que el gate pasó. Tres veces en este change una comprobación ha estado midiendo algo
+distinto de lo que su nombre prometía, y las tres veces hizo falta alguien ajeno para verlo.
 
 ### L6 — Judgment day del kit: bloque 3, contraste y cobertura (2026-10-22)
 

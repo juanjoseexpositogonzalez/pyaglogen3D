@@ -71,7 +71,6 @@ const config: Config = {
           muted: 'var(--ink-muted)',
           faint: 'var(--ink-faint)',
           'on-dark': 'var(--ink-on-dark)',
-          'on-dark-soft': 'var(--ink-on-dark-soft)',
           'on-dark-faint': 'var(--ink-on-dark-faint)',
         },
         brand: {

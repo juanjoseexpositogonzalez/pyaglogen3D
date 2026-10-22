@@ -4,9 +4,10 @@
  * broken because nothing exercised them.
  */
 import { fireEvent, render, screen } from '@testing-library/react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { CopyText } from '../CopyText'
+import { DetailsDrawer } from '../DetailsDrawer'
 import { DataTable, type Column } from '../DataTable'
 import { DisclosurePanel } from '../DisclosurePanel'
 import { SegmentedControl } from '../SegmentedControl'
@@ -170,8 +171,14 @@ describe('DataTable', () => {
 })
 
 describe('CopyText', () => {
-  it('reports the copy to assistive technology and restores itself', () => {
-    vi.useFakeTimers()
+  const originalClipboard = navigator.clipboard
+
+  afterEach(() => {
+    Object.assign(navigator, { clipboard: originalClipboard })
+    vi.useRealTimers()
+  })
+
+  it('copies the value and announces it', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
 
@@ -179,8 +186,38 @@ describe('CopyText', () => {
     expect(screen.getByText('48213')).toBeTruthy()
 
     fireEvent.click(screen.getByRole('button'))
-    expect(writeText).toHaveBeenCalledWith('48213')
-    vi.useRealTimers()
+    await vi.waitFor(() => expect(writeText).toHaveBeenCalledWith('48213'))
+    await vi.waitFor(() => expect(screen.getByRole('status').textContent).toBe('Copied'))
+  })
+
+  it('restores itself once the window passes', async () => {
+    vi.useFakeTimers()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    render(<CopyText value="abc" />)
+    fireEvent.click(screen.getByRole('button'))
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(screen.getByRole('status').textContent).toBe('')
+  })
+
+  it('leaves no timer behind when the row unmounts mid-window', async () => {
+    // Unmounting inside the 1.6s window used to leave a setState on an
+    // unmounted component; a stacked second click used to cut the first short.
+    vi.useFakeTimers()
+    const writeText = vi.fn().mockResolvedValue(undefined)
+    Object.assign(navigator, { clipboard: { writeText } })
+
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
+    const { unmount } = render(<CopyText value="abc" />)
+    fireEvent.click(screen.getByRole('button'))
+    unmount()
+    await vi.advanceTimersByTimeAsync(2000)
+
+    // A surviving timer would fire setState on an unmounted component, which
+    // React reports through console.error.
+    expect(errors).not.toHaveBeenCalled()
+    errors.mockRestore()
   })
 
   it('survives a denied clipboard without interrupting the reader', () => {
@@ -218,5 +255,45 @@ describe('VisualPanel', () => {
       </VisualPanel>,
     )
     expect(container.innerHTML).not.toMatch(/text-ink-on-dark\//)
+  })
+})
+
+describe('DetailsDrawer', () => {
+  function renderSubject(subtitle?: string) {
+    const onOpenChange = vi.fn()
+    render(
+      <DetailsDrawer open onOpenChange={onOpenChange} title="Node 41" subtitle={subtitle}>
+        <p>neighbours</p>
+      </DetailsDrawer>,
+    )
+    return onOpenChange
+  }
+
+  it('is a drawer, not a modal: nothing covers the table it came from', () => {
+    // The point of inspecting a row is keeping your place in the data, so the
+    // reimplementation dropped ui/dialog's always-on 80% black overlay.
+    renderSubject()
+    expect(document.querySelector('[data-radix-dialog-overlay]')).toBeNull()
+    expect(screen.getByText('neighbours')).toBeTruthy()
+  })
+
+  it('names itself and offers a way out', () => {
+    renderSubject('coordination 4')
+    expect(screen.getByRole('dialog', { name: 'Node 41' })).toBeTruthy()
+    expect(screen.getByText('coordination 4')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Close details' })).toBeTruthy()
+  })
+
+  it('closes on Escape even without a modal overlay', () => {
+    const onOpenChange = renderSubject()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(onOpenChange).toHaveBeenCalledWith(false)
+  })
+
+  it('carries no animation classes the stylesheet cannot emit', () => {
+    // tailwindcss-animate is not installed; slide-in-from-right emits nothing.
+    renderSubject()
+    // The drawer renders through a portal, so the markup lives on body.
+    expect(document.body.innerHTML).not.toMatch(/slide-in-from|animate-in/)
   })
 })

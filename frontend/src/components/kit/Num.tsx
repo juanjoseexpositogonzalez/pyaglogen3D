@@ -27,7 +27,7 @@ export interface NumProps {
   value: number | null | undefined
   /** Unit symbol, rendered as a sibling. Never concatenate it into `value`. */
   unit?: string
-  /** Decimal places. Ignored when `value` is already a string. */
+  /** Decimal places. Clamped to 0..20; toFixed throws outside that range. */
   digits?: number
   /** Standard deviation, rendered as `± sigma` in the same precision. */
   sigma?: number | null
