@@ -26,6 +26,29 @@ que se parte en cuatro, **ordenados por solape de superficie, no por valor**:
 | 3 | `redesign-simulation-detail` | Simulation detail y sus seis pestañas | pendiente |
 | 4 | `redesign-forms` | `SimulationForm.tsx`, `BatchSimulationForm.tsx`, `DistributionSelector.tsx` | **bloqueada por fichero**, ver abajo |
 
+### Cambio de política a mitad de cadena (2026-10-22)
+
+La persona ha decidido que **este change se termina bajo OpenSpec y AGENTS.md tal como están
+hoy**, y que las olas 2, 3, 4a y 4b se tramitan ya con la política nueva (issue-first con
+`status:approved` como gate, Jira AGLO, PRs bajo 400 líneas, revisión adversarial antes del
+merge).
+
+Dos consecuencias que este contrato debe dejar atadas, porque es el último artefacto OpenSpec
+de la cadena y lo que no quede escrito aquí se pierde en la transición:
+
+1. **La reserva de superficie por fichero sobrevive al cambio de sistema.** No es una cláusula
+   de OpenSpec: es un acuerdo entre dos líneas de trabajo sobre tres ficheros concretos. El
+   issue de cada ola posterior debe reproducirla en su cuerpo, con su tabla y su protocolo de
+   liberación por aviso explícito. Si se pierde, se pierde la protección que impide que un
+   rediseño se lleve por delante la corrección del sinterizado.
+2. **La condición de la ola 4a sobre D4 viaja igual**: retirar el texto que promete
+   `"Particle sizes will vary from X to Y nm"` y deshabilitar el control para `tunable_cc` con
+   un callout, sin tocar cálculo.
+
+Las olas 2-4 **no serán changes de OpenSpec**, así que las referencias de abajo a
+`redesign-read-surfaces`, `redesign-simulation-detail` y `redesign-forms` nombran unidades de
+trabajo, no directorios de `openspec/changes/`.
+
 ### Reserva de superficie — obligatoria, y **por fichero**
 
 Un port reescribe el markup entero de un fichero. Mezclar eso con una corrección semántica en
