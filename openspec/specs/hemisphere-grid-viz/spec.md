@@ -180,7 +180,7 @@ The component MUST render identically regardless of how `gridDirections` was pop
 
 ### Requirement: Performance Bound
 
-The component SHOULD render within 50ms for inputs up to 500 directions.
+The component MUST render inputs of up to 500 directions without blocking interaction, and SHOULD do so within 50 ms on the reference development machine. The 50 ms figure is a target, not an acceptance threshold: it is not reproducible across machines and MUST NOT be asserted as a pass/fail condition in tests.
 
 #### Scenario: Renders ≤500 dots within performance budget
 

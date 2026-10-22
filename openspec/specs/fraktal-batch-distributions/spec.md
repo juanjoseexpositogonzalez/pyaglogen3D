@@ -206,7 +206,6 @@ The "N successful of M total" label MUST still appear.
 
 ---
 
-## ADDED Requirements
 
 ### Requirement: R-DELTA-L. Df histogram stats display: both mean_df and mean_df_inclusive shown
 
@@ -268,7 +267,6 @@ falling in that bucket,
 
 ---
 
-## ADDED REQUIREMENTS (fraktal-batch-extensions, 2026-10-19)
 
 
 ### Requirement: R-DELTA-C2. Sim-Df reference marker on the image Df histogram (C2)

@@ -1,7 +1,6 @@
 # Spec: fraktal-batch-contract
 
-## Overview
-
+## Purpose
 New capability defining the observable contract for FRAKTAL batch analysis. Covers ZIP ingestion, metadata-driven auto-calibration, one-shot dpo fallback, sync/async execution boundary, progress reporting, per-image result shape, batch statistics, histogram binning, simulation comparison, and the Sorensen educational note.
 
 Context: see `../proposal.md` for scope and affected areas; see `../explore.md` for background.
@@ -15,7 +14,7 @@ This spec describes **observable behavior** — what a caller sees in HTTP respo
 **GIVEN** a caller uploads a ZIP previously produced by pyaglogen3D's projection export,
 **AND** the ZIP contains `metadata.json` with `parameters.pixels_per_100nm` present and positive,
 **WHEN** the batch endpoint processes the upload,
-**THEN** the scale for each image is taken from `directions[i].pixels_per_100nm` when that
+**THEN** the scale for each image MUST be taken from `directions[i].pixels_per_100nm` when that
 field is present in the corresponding `directions[]` entry (new-mode ZIP),
 **AND** when `directions[i].pixels_per_100nm` is absent for an entry (legacy-mode ZIP), the
 top-level `parameters.pixels_per_100nm` is broadcast to that image (legacy fallback — no
@@ -95,8 +94,8 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 
 **GIVEN** a ZIP containing `N ≤ 30` valid images,
 **WHEN** the endpoint processes it,
-**THEN** the response is HTTP 200 with the full batch results body,
-**AND** the body contains: per-image results array (R6), batch statistics (R7), histogram data when applicable (R8), and comparison data when applicable (R9).
+**THEN** the response MUST be HTTP 200 with the full batch results body,
+**AND** the body MUST contain: per-image results array (R6), batch statistics (R7), histogram data when applicable (R8), and comparison data when applicable (R9).
 
 #### Scenario 4.1 — Minimal sync batch (`N=1`)
 - **Expected**: 200 with one entry in results array; stats reflect single value.
@@ -111,12 +110,12 @@ image; per-image `directions[i].pixels_per_100nm` did not exist.)
 
 **GIVEN** a ZIP containing `N > 30` valid images,
 **WHEN** the endpoint is called,
-**THEN** the response is HTTP 202 with body `{job_id}`,
-**AND** the polling endpoint `GET /api/v1/fraktal-status/{job_id}/` returns:
+**THEN** the response MUST be HTTP 202 with body `{job_id}`,
+**AND** the polling endpoint `GET /api/v1/fraktal-status/{job_id}/` MUST return:
 - during execution: `{status: "processing", progress: <float 0.0–1.0>, current: <int>, total: <int>, stage: "autocalibrate" | "analyzing" | "aggregating"}`,
 - on success: `{status: "done", batch_id: <uuid>, results_url: <string>}`,
 - on failure: `{status: "failed", error: <string>}`,
-**AND** `progress` advances at least once per completed image,
+**AND** `progress` MUST advance at least once per completed image,
 **AND** `results_url` points at the new DB-backed batch detail endpoint `/api/v1/projects/{project_pk}/fraktal/batches/{batch_id}/`.
 
 (Previously: success payload was `{status, results_url}` only; results lived in JSON-on-disk.)
@@ -264,8 +263,8 @@ introduces `mean_df_inclusive` for the broader aggregate.)
 
 **GIVEN** a batch result is assembled,
 **WHEN** comparison data is prepared,
-**THEN** the response includes a `comparison` block with `{sim_id, sim_target_df, sim_box_counting_df, batch_mean_df, batch_std_df, sorensen_note}`,
-**AND** `sim_id` is resolved in this precedence:
+**THEN** the response MUST include a `comparison` block with `{sim_id, sim_target_df, sim_box_counting_df, batch_mean_df, batch_std_df, sorensen_note}`,
+**AND** `sim_id` MUST be resolved in this precedence:
 1. explicit `sim_id` in the request body (manual override),
 2. otherwise, the UUID parsed from a ZIP filename matching `{uuid}_projections.zip` linked to an existing `Simulation`,
 3. otherwise, `null`,
@@ -633,7 +632,6 @@ the component MUST fall back to external mode and MUST NOT throw or show an erro
 
 ---
 
-## ADDED REQUIREMENTS (fraktal-batch-extensions, 2026-10-19)
 
 
 ### Requirement: R12. Batch-vs-linked-simulation comparison (C1)

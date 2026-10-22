@@ -237,7 +237,7 @@ The system MUST show a dismissible toast/banner when `data.nodes.length > 1000`.
 
 ### Requirement: Physics Freeze Post-Stabilization
 
-The system SHOULD disable physics after `stabilizationIterationsDone` to prevent CPU drain and make manual node dragging snappy.
+The system MUST stop the physics simulation once `stabilizationIterationsDone` is reached, so the canvas stops consuming CPU and manual node dragging stays responsive. Re-enabling physics on an explicit user action is permitted.
 
 #### Scenario: Physics disabled after stabilization
 

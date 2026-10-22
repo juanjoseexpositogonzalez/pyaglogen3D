@@ -1,7 +1,6 @@
 # Spec: rg-unit-contract
 
-## Overview
-
+## Purpose
 This capability establishes the end-to-end contract for the Radius of Gyration (Rg)
 value in the 3D aggregate simulator: the Rust engine emits Rg as a dimensionless
 scalar, and every user-facing surface (frontend pages, AI sidebar, CSV exports,

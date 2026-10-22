@@ -14,7 +14,7 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 
 **GIVEN** a batch upload completes (sync or async),
 **WHEN** persistence runs,
-**THEN** a `FraktalBatch` row exists with: `project` (FK), `created_by` (FK to `User`), `batch_id` (uuid), `algorithm`, `calibration_source`, `n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `q1_df`, `q3_df`, `min_df`, `max_df`, `sim_id`, `sim_target_df`, `sim_box_counting_df`, `created_at`,
+**THEN** a `FraktalBatch` row MUST exist with: `project` (FK), `created_by` (FK to `User`), `batch_id` (uuid), `algorithm`, `calibration_source`, `n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `q1_df`, `q3_df`, `min_df`, `max_df`, `sim_id`, `sim_target_df`, `sim_box_counting_df`, `created_at`,
 **AND** the batch is reachable from the project owner via project-level permissions.
 
 #### Scenario 1.1 — Sync batch (N ≤ 30)
@@ -211,7 +211,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch + image index,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/png/`,
-**THEN** the response is HTTP 200 with `Content-Type: image/png` and the body equals the persisted bytes.
+**THEN** the response MUST be HTTP 200 with `Content-Type: image/png` and the body MUST equal the persisted bytes.
 
 #### Scenario 4.1 — PNG present
 - **Expected**: 200; body bytes equal the stored `image_png`.
@@ -227,7 +227,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch image with PNG bytes,
 **WHEN** `POST /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/reanalyze/`,
-**THEN** a new `FraktalAnalysis` row is created using the persisted PNG + the batch's `dpo_used` + the batch's algorithm (no fresh autocalibration),
+**THEN** a new `FraktalAnalysis` row MUST be created using the persisted PNG + the batch's `dpo_used` + the batch's algorithm (no fresh autocalibration),
 **AND** the response is HTTP 201 with `{analysisId}`.
 
 #### Scenario 5.1 — Happy path
@@ -248,8 +248,8 @@ This delta adds both fields to the response.)
 
 **GIVEN** a `FraktalBatch` with N images,
 **WHEN** `DELETE /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/`,
-**THEN** the batch row + all N `FraktalBatchImage` rows + all PNG bytes are removed,
-**AND** any `FraktalAnalysis` rows previously created via re-analyze (R5) remain.
+**THEN** the batch row + all N `FraktalBatchImage` rows + all PNG bytes MUST be removed,
+**AND** any `FraktalAnalysis` rows previously created via re-analyze (R5) MUST remain.
 
 #### Scenario 6.1 — Empty batch
 - **Expected**: 204; row removed.
@@ -265,7 +265,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** an async batch in progress,
 **WHEN** `GET /api/v1/fraktal-status/{job_id}/`,
-**THEN** during processing the response shape is unchanged: `{status, progress, current, total, stage}`,
+**THEN** during processing the response shape MUST be unchanged: `{status, progress, current, total, stage}`,
 **AND** when `status = "done"` the response additionally includes `batch_id` (uuid),
 **AND** `results_url` is preserved and points at the new DB-backed batch detail endpoint.
 
@@ -332,7 +332,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch image with PNG persisted,
 **WHEN** drill-down PNG endpoint serves the bytes,
-**THEN** those bytes hash-equal the bytes that the analyzer rasterized and consumed at batch time (rasterize once, store once, serve).
+**THEN** those bytes MUST hash-equal the bytes that the analyzer rasterized and consumed at batch time (rasterize once, store once, serve).
 
 #### Scenario 9.1 — Round-trip hash
 - **Input**: Take SHA-256 of analyzer-input PNG at batch time; compare to SHA-256 of bytes returned by R4.
@@ -342,8 +342,10 @@ This delta adds both fields to the response.)
 
 **GIVEN** a sync batch with N=30 images,
 **WHEN** comparing total response time vs pre-frente-6 baseline,
-**THEN** the additional DB writes SHOULD add less than 500 ms total.
-This is a soft guarantee documented in the spec, not a CI hard gate.
+**THEN** the additional DB writes MUST NOT change the sync path's success behaviour or push the
+request past its timeout, and SHOULD add less than 500 ms total.
+The 500 ms figure is a documented soft target measured against the pre-frente-6 baseline on
+the reference machine; it MUST NOT be asserted as a CI gate.
 
 #### Scenario 10.1 — Sync N=30 overhead budget
 - **Expected**: Observed delta within budget; if exceeded, treat as a perf bug, not a correctness regression.
@@ -371,53 +373,6 @@ in any other column.
 - **Given** migration `0007` has been applied.
 - **When** `manage.py migrate fractal_analysis 0006` runs (reverse).
 - **Then** the `png_scientific_bytes` column is dropped; pre-migration table state is restored; no data loss in other columns.
-
----
-
-### Requirement: R-DELTA-H. Migration 0008 adds `analysis_input_variant` — additive, not destructive
-
-**GIVEN** the production database has existing `FraktalBatchImage` rows (pre-migration),
-**WHEN** migration `0008_add_analysis_input_variant_field.py` is applied,
-**THEN** a NOT NULL `CharField` (or equivalent string column) `analysis_input_variant` with
-`default="presentation"` MUST be added to the `fractal_analysis_fraktalbatchimage` table,
-**AND** all existing rows MUST have `analysis_input_variant = "presentation"` after the migration
-(no backfill required — the column default provides this value),
-**AND** no existing rows, foreign keys, indexes, or constraints are dropped or modified,
-**AND** the migration MUST be reversible: the reverse operation drops only `analysis_input_variant`
-and restores the pre-migration table state without data loss in any other column,
-**AND** new rows inserted after migration MUST explicitly set `analysis_input_variant` to either
-`"scientific"` or `"presentation"` — the default `"presentation"` is a fallback for legacy rows
-only and SHOULD NOT be relied upon for new batch task code.
-
-#### Scenario H.1 — Forward migration on production rows
-
-- GIVEN a database with 500 existing `FraktalBatchImage` rows
-- WHEN `manage.py migrate fractal_analysis 0008` runs
-- THEN all 500 rows gain `analysis_input_variant = "presentation"` (column default)
-- AND migration completes without error
-- AND all rows remain queryable via drill-down and PNG endpoints
-
-#### Scenario H.2 — Reverse migration
-
-- GIVEN migration `0008` has been applied
-- WHEN `manage.py migrate fractal_analysis 0007` runs (reverse)
-- THEN the `analysis_input_variant` column is dropped
-- AND all other columns and data are intact
-- AND HTTP endpoints that do not reference `analysis_input_variant` continue to work
-
-#### Scenario H.3 — New batch after migration: variant explicitly set
-
-- GIVEN migration `0008` is applied and a new-mode ZIP is submitted
-- WHEN the batch task stores results
-- THEN new rows with scientific input have `analysis_input_variant = "scientific"` (explicit, not from default)
-- AND new rows with presentation fallback have `analysis_input_variant = "presentation"` (explicit)
-- AND old pre-migration rows still have `analysis_input_variant = "presentation"` (from default)
-
-#### Scenario H.4 — Drill-down during rolling deploy (migration window)
-
-- GIVEN migration `0008` is applied while the app is serving requests
-- WHEN a drill-down request hits a row created before the migration (column default fills in)
-- THEN HTTP 200; `analysis_input_variant = "presentation"`; no AttributeError or column error
 
 ---
 
