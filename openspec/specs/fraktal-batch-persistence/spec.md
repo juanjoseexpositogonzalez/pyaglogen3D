@@ -14,7 +14,7 @@ This spec describes **observable behavior** — HTTP contracts and persistence g
 
 **GIVEN** a batch upload completes (sync or async),
 **WHEN** persistence runs,
-**THEN** a `FraktalBatch` row exists with: `project` (FK), `created_by` (FK to `User`), `batch_id` (uuid), `algorithm`, `calibration_source`, `n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `q1_df`, `q3_df`, `min_df`, `max_df`, `sim_id`, `sim_target_df`, `sim_box_counting_df`, `created_at`,
+**THEN** a `FraktalBatch` row MUST exist with: `project` (FK), `created_by` (FK to `User`), `batch_id` (uuid), `algorithm`, `calibration_source`, `n_images`, `n_successful`, `mean_df`, `std_df`, `median_df`, `q1_df`, `q3_df`, `min_df`, `max_df`, `sim_id`, `sim_target_df`, `sim_box_counting_df`, `created_at`,
 **AND** the batch is reachable from the project owner via project-level permissions.
 
 #### Scenario 1.1 — Sync batch (N ≤ 30)
@@ -211,7 +211,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch + image index,
 **WHEN** `GET /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/png/`,
-**THEN** the response is HTTP 200 with `Content-Type: image/png` and the body equals the persisted bytes.
+**THEN** the response MUST be HTTP 200 with `Content-Type: image/png` and the body MUST equal the persisted bytes.
 
 #### Scenario 4.1 — PNG present
 - **Expected**: 200; body bytes equal the stored `image_png`.
@@ -227,7 +227,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch image with PNG bytes,
 **WHEN** `POST /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/images/{index}/reanalyze/`,
-**THEN** a new `FraktalAnalysis` row is created using the persisted PNG + the batch's `dpo_used` + the batch's algorithm (no fresh autocalibration),
+**THEN** a new `FraktalAnalysis` row MUST be created using the persisted PNG + the batch's `dpo_used` + the batch's algorithm (no fresh autocalibration),
 **AND** the response is HTTP 201 with `{analysisId}`.
 
 #### Scenario 5.1 — Happy path
@@ -248,8 +248,8 @@ This delta adds both fields to the response.)
 
 **GIVEN** a `FraktalBatch` with N images,
 **WHEN** `DELETE /api/v1/projects/{project_pk}/fraktal/batches/{batchId}/`,
-**THEN** the batch row + all N `FraktalBatchImage` rows + all PNG bytes are removed,
-**AND** any `FraktalAnalysis` rows previously created via re-analyze (R5) remain.
+**THEN** the batch row + all N `FraktalBatchImage` rows + all PNG bytes MUST be removed,
+**AND** any `FraktalAnalysis` rows previously created via re-analyze (R5) MUST remain.
 
 #### Scenario 6.1 — Empty batch
 - **Expected**: 204; row removed.
@@ -265,7 +265,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** an async batch in progress,
 **WHEN** `GET /api/v1/fraktal-status/{job_id}/`,
-**THEN** during processing the response shape is unchanged: `{status, progress, current, total, stage}`,
+**THEN** during processing the response shape MUST be unchanged: `{status, progress, current, total, stage}`,
 **AND** when `status = "done"` the response additionally includes `batch_id` (uuid),
 **AND** `results_url` is preserved and points at the new DB-backed batch detail endpoint.
 
@@ -332,7 +332,7 @@ This delta adds both fields to the response.)
 
 **GIVEN** a batch image with PNG persisted,
 **WHEN** drill-down PNG endpoint serves the bytes,
-**THEN** those bytes hash-equal the bytes that the analyzer rasterized and consumed at batch time (rasterize once, store once, serve).
+**THEN** those bytes MUST hash-equal the bytes that the analyzer rasterized and consumed at batch time (rasterize once, store once, serve).
 
 #### Scenario 9.1 — Round-trip hash
 - **Input**: Take SHA-256 of analyzer-input PNG at batch time; compare to SHA-256 of bytes returned by R4.
@@ -342,8 +342,10 @@ This delta adds both fields to the response.)
 
 **GIVEN** a sync batch with N=30 images,
 **WHEN** comparing total response time vs pre-frente-6 baseline,
-**THEN** the additional DB writes SHOULD add less than 500 ms total.
-This is a soft guarantee documented in the spec, not a CI hard gate.
+**THEN** the additional DB writes MUST NOT change the sync path's success behaviour or push the
+request past its timeout, and SHOULD add less than 500 ms total.
+The 500 ms figure is a documented soft target measured against the pre-frente-6 baseline on
+the reference machine; it MUST NOT be asserted as a CI gate.
 
 #### Scenario 10.1 — Sync N=30 overhead budget
 - **Expected**: Observed delta within budget; if exceeded, treat as a perf bug, not a correctness regression.
