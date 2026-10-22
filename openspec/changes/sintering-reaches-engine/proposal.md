@@ -48,7 +48,15 @@ abajo, como una nota sobre `seed_type`.
 el engine lo lee: `generate_sintering_extreme_cases` (`utils.py:227-231`) pone
 `sintering_type = "fixed"` y `sintering_coeff` **planos**, que son exactamente dos de las cinco
 claves del lector del worker (`tasks.py:1592-1598`). Por esa ruta el sinterizado llega bien
-hoy, así que ninguno de los cuatro defectos en alcance la necesita.
+hoy, así que ninguno de los cuatro defectos pide unificarla.
+
+**Sin unificar no quiere decir sin tocar.** Ese bloque copia `base_parameters` entera
+(`utils.py:228`) y el pop de `sintering_config` vive sólo en `create_simulation`
+(`views.py:1804`), así que sus hijos almacenan un `sintering_config` que **contradice** el
+coeficiente al que corren: con `coefficient: 0.7` en base, el hijo corre a `0.5` y guarda
+`0.7` (verificado con probe). Es un parámetro almacenado que no describe lo que corrió, que es
+justo lo que este contrato existe para cerrar, así que **sí** entra: el escenario **R11.7** le
+retira el dict, sin encaminarlo por ningún constructor común.
 
 Sí hay un defecto en ese bloque —`Simulation.objects.create` no pasa `seed_type`, violando
 `cc-tunable-aggregation` R17—, pero **no es uno de los cuatro**, y adoptarlo era lo que hacía
@@ -184,6 +192,10 @@ Cambios de comportamiento adicionales, declarados:
 - **El payload `fixed` que documenta la propia canónica pasa a dar 400.**
   `{distribution_type:"fixed", value:0.9}` devuelve 201 hoy y el hijo corre **sin sinterizar**,
   porque nadie lee `value`. Canonizar `coefficient` lo convierte en un rechazo visible.
+
+- **Hijos de extremos de sinterizado.** Dejan de almacenar el `sintering_config` heredado de
+  `base_parameters` (R11.7). No cambia la física que corren —el worker nunca leyó ese dict—,
+  pero sus parámetros almacenados dejan de contradecir su coeficiente.
 
 Efecto secundario deseable: el export CSV (`views.py:2267-2271`) escribe
 `Sintering_Type`/`Sintering_Coeff` desde `sim.parameters`; en estudios `normal` hoy imprime el

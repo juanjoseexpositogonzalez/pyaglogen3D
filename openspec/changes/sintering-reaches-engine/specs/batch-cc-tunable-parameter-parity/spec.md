@@ -46,13 +46,19 @@
 >    `min <= max`, canonizing `serializers.py:386`, which already accepts `min == max`.
 > 6. Canonical R3 says the system MUST accept the key with no algorithm condition; this delta
 >    restricts it to algorithms whose engine invocation receives sintering parameters (R11).
-> 7. Canonical R10 mandates the four dropdown options with no algorithm condition; this delta
+> 7. **Declared text drop**: the canonical R10 anchors the dropdown as
+>    `` `BatchSimulationForm.tsx` (~line 265-280) ``; the restatement keeps the file and drops
+>    the line range, because the range is stale. The component has 746 lines, no `<option>` and
+>    no `parameterToVary`; the options list lives at `:314-316` (`kf_distribution` at `:314`,
+>    `sintering_config` at `:316`). Restating a wrong range would canonize a false anchor, and
+>    inventing a new one is not this contract's business.
+> 8. Canonical R10 mandates the four dropdown options with no algorithm condition; this delta
 >    conditions **only the sintering row**. The other three rows are restated with the
 >    canonical's exact labels.
-> 8. Canonical R10 is already not met for `limiting`: the dropdown returns early
+> 9. Canonical R10 is already not met for `limiting`: the dropdown returns early
 >    (`BatchSimulationForm.tsx:289-297`) and offers none of the four. The delta records the
 >    existing behaviour.
-> 9. Canonical R7 promises identical behaviour when the grid carries none of the four added
+> 10. Canonical R7 promises identical behaviour when the grid carries none of the four added
 >    keys. Flat `sintering_*` keys are such a case and are now validated, so R7 gets an explicit
 >    carve-out.
 >
@@ -364,15 +370,6 @@ contract `study-expansion-single-source` covers the last one.
 - **THEN** the sintering keys written are contained in the set the worker reads
 - **AND** `sintering_mean` is never written
 
-#### Scenario R11.7 — Sintering-extreme children carry no sintering_config
-
-- **GIVEN** a study whose `base_parameters` carry a `sintering_config` dict, with
-  `include_limiting_cases` and a study-level sintering config, so the sintering-extremes block
-  (`views.py:1869-1906`) runs
-- **WHEN** its children are created
-- **THEN** no child's parameters contain `sintering_config`
-- **AND** each child keeps the flat `sintering_coeff` of its own extreme
-
 #### Scenario R11.4 — Rejected for algorithms that do not consume sintering
 
 - **GIVEN** `base_algorithm` in `{fracval, gcca, box_rfa, imported}` and a sintering setting on any surface of R3
@@ -394,6 +391,15 @@ contract `study-expansion-single-source` covers the last one.
 - **THEN** the rule is evaluated against the instance's `base_algorithm` and the request is rejected with 400
 
 ---
+
+#### Scenario R11.7 — Sintering-extreme children carry no sintering_config
+
+- **GIVEN** a study whose `base_parameters` carry a `sintering_config` dict, with
+  `include_limiting_cases` and a study-level sintering config, so the sintering-extremes block
+  (`views.py:1869-1906`) runs
+- **WHEN** its children are created
+- **THEN** no child's parameters contain `sintering_config`
+- **AND** each child keeps the flat `sintering_coeff` of its own extreme
 
 ### Requirement: R12 — Invalid sintering settings are rejected before any write
 

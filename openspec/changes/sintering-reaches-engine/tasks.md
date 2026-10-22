@@ -32,12 +32,13 @@
 - [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
 - [x] T0.16 Corrección r6 (este commit)
 - [x] T0.17 spec-review r6 en agente fresco
-- [x] T0.20 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
+- [x] T0.21 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
       sitios; la superficie 7 conserva el camino que funciona hoy
-- [x] T0.21 spec-review r7 → `CORRECTIONS REQUIRED (3 blockers, 3 majors, 3 minors)`; corregida
+- [x] T0.22 spec-review r7 → `CORRECTIONS REQUIRED (3 blockers, 3 majors, 3 minors)`; corregida
       en 1d8b4fb tras alinear sólo media parte del recorte en 6f52d05
-- [x] T0.22 spec-review r8 → `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`
-- [ ] T0.23 spec-review r9 en agente fresco
+- [x] T0.23 spec-review r8 → `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`
+- [x] T0.24 spec-review r9 → `CORRECTIONS REQUIRED (1 blocker, 2 majors, 6 minors)`
+- [ ] T0.25 spec-review r10 en agente fresco
 - [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
 - [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
 - [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
@@ -76,6 +77,8 @@
       `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos, incluido el dict
       bien formado que se acepta) y **R3.10** (el helper no inventa ningún default)
 - [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
+- [ ] T1.7a Regresión de los escenarios canónicos restituidos verbatim y sin tarea propia:
+      R7.1, R7.2, R10.1, R10.2 y R10.3 siguen verdes
 - [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
       sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y
       `test_parametric_study_serializer.py:126-152` usan configuraciones completas y algoritmos de la allow-list)
@@ -114,22 +117,29 @@
 - [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
       claves **contenidas** en el conjunto que el worker lee, y campos del tipo declarado
       presentes y en rango (vacío si el hijo no lleva ninguna). «Contenidas», no «exactamente
-      las del dict»: eso último lo exigía R11.7 en su versión recortada y ningún requisito
-      vigente lo pide
-- [ ] T3.0b La limpieza de `sintering_*` heredadas la hace `apply_sintering_config`, no el
-      serializer: es quien sabe si un dict aplica a ese hijo. Un hijo de caso límite hereda los
-      planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
-      (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
-      ningún dict
+      las del dict»: eso último lo exigía la regla de limpieza que el recorte eliminó, y
+      ningún requisito vigente lo pide. **No confundirla con la R11.7 actual**, que es otra
+      cosa: retirar `sintering_config` de los hijos de extremos
+- [ ] T3.0b **Dueño de cada limpieza, que son dos y distintas.** En el camino por
+      `create_simulation` ya la hace el pop de `views.py:1804`: no hay nada que añadir. En el
+      bloque de extremos la hace **`generate_sintering_extreme_cases`** (`utils.py:227-231`),
+      que es quien construye esos parámetros; no `apply_sintering_config`, que ese bloque no
+      llama a propósito (`views.py:1875-1876`) y que no debe llamar, porque le aplicaría el
+      dict de estudio y le borraría su coeficiente. Tampoco el serializer: un hijo de caso
+      límite hereda los planos de `base_parameters` (`utils.py:185-203`) y limpiar ahí se los
+      quitaría aunque no aplique ningún dict
 - [ ] T3.0d Retirar `sintering_config` de los parámetros del hijo — eso **sí** lo exige R11,
       que prohíbe escribir claves de sinterizado fuera del conjunto del worker. No se retiran
       las `sintering_*` planas heredadas: están dentro del conjunto y ningún requisito vigente
       pide quitarlas
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
-      también `views.py:1766,1871` y `tests/test_utils.py:369`, pero ese último sólo afirma la
-      constante `SINTERING_EXTREMES` y sigue verde; `include_limiting_cases` aparece en tests
-      sólo en `tests/test_serializers.py:412,431`, sin sinterizado)
+      también `views.py:1766,1871` y, en `tests/test_utils.py`, la clase
+      `TestGenerateSinteringExtremeCases` (`:15,234,240,252,255,267`) más `:369`. Esa clase sí
+      cubre la función que T3.0 pasa a modificar: comprobado que sus tres tests usan
+      `base_params` **sin** `sintering_config`, así que retirarlo los deja verdes;
+      `include_limiting_cases` aparece en tests sólo en `tests/test_serializers.py:412,431`,
+      sin sinterizado)
 - [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
       misma expansión)
 - [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el

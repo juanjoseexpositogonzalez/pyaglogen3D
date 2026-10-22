@@ -15,13 +15,19 @@ Una versión anterior de este diseño los unificaba. Ya no.
 **Por qué no hace falta unificar.** El bloque inline ya escribe el sinterizado donde el engine
 lo lee: `generate_sintering_extreme_cases` (`utils.py:227-231`) pone `sintering_type = "fixed"`
 y `sintering_coeff` **planos**, dos de las cinco claves del lector del worker
-(`tasks.py:1592-1598`). Por esa ruta el sinterizado llega correctamente hoy, así que ninguno de
-los cuatro defectos en alcance la necesita. Unificar habría sido un refactor con riesgo propio
+(`tasks.py:1592-1598`). Por esa ruta el **coeficiente** llega correctamente hoy, así que
+ninguno de los cuatro defectos pide unificarla. Unificar habría sido un refactor con riesgo propio
 —el bloque lleva el comentario *"Don't apply the study's sintering config for extreme cases
 since they define their own sintering"* (`views.py:1875-1876`), y encaminarlo sin cuidado le
 aplicaría el dict de estudio y borraría su coeficiente— a cambio de nada que este contrato deba.
 
-**Lo que sí queda abierto ahí, y no es nuestro.** Ese `Simulation.objects.create` no pasa
+**Pero sin unificar no quiere decir sin tocar.** Ese bloque copia `base_parameters` entera
+(`utils.py:228`) y el pop de `sintering_config` vive sólo en `create_simulation`
+(`views.py:1804`), así que sus hijos almacenan un `sintering_config` que **contradice** el
+coeficiente al que corren. Eso sí lo exige R11, y es el escenario **R11.7**: se les retira el
+dict, sin encaminarlos por ningún constructor común.
+
+**Lo que queda abierto ahí y no es nuestro.** Ese `Simulation.objects.create` no pasa
 `seed_type`, lo que viola `cc-tunable-aggregation` R17. Es un defecto real, pero no es ninguno
 de los cuatro, y adoptarlo era lo que hacía crecer este contrato. Va al contrato de seguimiento.
 
@@ -99,13 +105,17 @@ contrato.
 Cuando un dict de dominio aplica, las claves que ese dict produce son las que mandan.
 No se exige retirar las `sintering_*` **planas** heredadas de `base_parameters`: están dentro
 del conjunto que el worker lee y ningún requisito vigente pide quitarlas — eso lo exigía la
-R11.7 en su versión recortada. Lo que sí se retira es `sintering_config`, porque R11 prohíbe
-escribir claves fuera de ese conjunto. **Esa limpieza la hace `apply_sintering_config`**, que es el que sabe si un dict aplica a
-ese hijo; no el serializer. El motivo exacto: un hijo de caso límite hereda las claves planas de
-`base_parameters` (`utils.py:185-203`) y **sí** puede recibir un dict, el de estudio, en
-`views.py:1808`. Limpiar en el serializer le quitaría sus planos aunque ningún dict aplique, y
-ese caso existe. La condición correcta es "cuando un dict aplica a este hijo", y es
-`apply_sintering_config` quien la conoce. Eso cierra también el paso del `sintering_mean`
+regla de limpieza que el recorte eliminó, que **no** es la R11.7 vigente. Lo que sí se retira
+es `sintering_config`, porque R11 prohíbe escribir claves fuera de ese conjunto.
+
+**Y son dos limpiezas con dueños distintos.** En el camino por `create_simulation` ya la hace
+el pop de `views.py:1804`, así que no hay nada que añadir. En el bloque de extremos la hace
+**`generate_sintering_extreme_cases`** (`utils.py:227-231`), que es quien construye esos
+parámetros. No `apply_sintering_config`: ese bloque no lo llama a propósito
+(`views.py:1875-1876`) y no debe llamarlo, porque le aplicaría el dict de estudio y le borraría
+su coeficiente, rompiendo el segundo **AND** de R11.7. Tampoco el serializer: un hijo de caso
+límite hereda las claves planas de `base_parameters` (`utils.py:185-203`) y limpiar ahí se las
+quitaría aunque ningún dict aplique, y ese caso existe. Eso cierra también el paso del `sintering_mean`
 legado.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en
