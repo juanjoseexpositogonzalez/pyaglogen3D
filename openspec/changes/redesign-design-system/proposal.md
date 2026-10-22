@@ -93,17 +93,36 @@ trabajo es un change y no carril corto:
 2. **Desaparece el fondo de imagen.** `body.app-background` pinta hoy `/pyAgloGen3DBNG.png`
    bajo toda la interfaz. El canvas del sistema nuevo lo sustituye.
 3. **Cambia la estructura de navegación.** La barra superior (`components/layout/Header.tsx`,
-   importada por 18 páginas) se sustituye por un sidebar fijo con navegación agrupada y
-   contextual al proyecto.
+   importada por 17 páginas y un fichero de test) se sustituye por un sidebar fijo con
+   navegación agrupada y contextual al proyecto. Las páginas públicas (`/` y `/auth/*`)
+   quedan fuera del shell; `app/auth/layout.tsx` se re-expresa en tokens porque hoy fija
+   `text-white` sobre lo que pasará a ser un fondo claro.
 
-## Qué NO cambia
+## Qué NO cambia, y las tres fronteras canónicas que sí hay que respetar
 
 - Ninguna ruta, ningún endpoint, ningún cálculo, ninguna tolerancia numérica.
-- `viewer3d-state`, `contacts-graph-viz`, `hemisphere-grid-viz`,
-  `multi-aggregate-comparison` y el resto de specs canónicas siguen cumpliéndose tal cual.
-  Al contrario: `contacts-graph-viz` ya exige hoy que la paleta de coordinación sea *"readable
-  in both light and dark modes"*, un requisito que la aplicación no podía ejercitar porque no
-  existía el modo claro. Este change lo hace ejercitable por primera vez.
+- `viewer3d-state`, `hemisphere-grid-viz` y el resto de specs canónicas siguen cumpliéndose
+  tal cual. Ninguna se declara MODIFIED.
+
+Tres de ellas imponen una frontera que este contrato acata en vez de invadir, y que la
+spec-review identificó como lo que habría roto la entrega:
+
+| Spec canónica | Lo que fija | Cómo lo acata este change |
+| --- | --- | --- |
+| `contacts-graph-viz.md:98,104` | La paleta de coordinación verbatim (`0→#9ca3af`, …), con tests que lo afirman | La regla de "sin literales de color" se acota a los ficheros **creados** por esta ola; `graphUtils.ts` no se toca (D1) |
+| `contacts-graph-viz.md:252` | El canvas del grafo sigue *"the app's current theme"* | Hoy se cumple por accidente, leyendo `prefers-color-scheme`. T6.4 repara `NetworkCanvas` para que lea `data-theme`, porque esta ola es la que introduce la divergencia (D10) |
+| `multi-aggregate-comparison.md:128-136`, S5.3 | Cada serie de Rg lleva **el color de su simulación**, el mismo del borde del viewer | R4 exime del color a las series atadas por otro contrato: patrón y marcador sí aplican, el color no |
+
+Y una frontera que obligó a retirar un requisito: `rg-unit-contract.md:185-213` dice que el
+aviso de convención de unidades aparece **solo** para `parameters_schema_version` `null` o
+`"v1"`, y su escenario afirma literalmente *"the banner is not shown"* para v2. La primera
+versión de este contrato exigía el aviso en *any page*, lo que lo habría incumplido palabra
+por palabra. **Retirado de la ola 1**: el componente lo renderizan páginas, y las páginas son
+de las olas 2 y 3.
+
+Queda una nota a favor: `contacts-graph-viz` ya exige que la paleta sea *"readable in both
+light and dark modes"*, un requisito que la aplicación no podía ejercitar porque no existía el
+modo claro. Este change lo hace ejercitable por primera vez.
 
 ## Una corrección de premisa, antes de que cueste cara
 
@@ -120,12 +139,24 @@ verdad para la misma rampa. Por eso T4 existe como tarea propia y no como un det
 
 | Riesgo | Mitigación |
 | --- | --- |
-| Un PR enorme pese a la partición | T1–T4 y T5–T6 se commitean como unidades separadas; el PR de la ola 1 no toca páginas |
+| Un PR enorme pese a la partición | La ola 1 sale en **dos PRs encadenados**, ver abajo. Separar commits no protege al revisor: sigue recibiendo el total de golpe |
 | Rechazo del tema claro por costumbre | El conmutador recuerda la elección; el tema oscuro queda a un clic |
-| Deriva entre tokens CSS y `tailwind.config.ts` | R2: Tailwind **deriva** de los tokens, nunca los repite |
-| Deriva entre tokens CSS y tema Plotly | R6: el tema lee las variables del documento y se re-lee al cambiar de tema |
+| Deriva entre tokens CSS y `tailwind.config.ts` | `design-system-foundation` R1: Tailwind **deriva** de los tokens, nunca los repite |
+| Deriva entre tokens CSS y tema Plotly | `design-system-foundation` R5: el tema lee las variables del documento y se re-lee al cambiar de tema |
+| Las 38 variantes `dark:` existentes siguen al sistema operativo | `design-system-foundation` R2 exige anclar `darkMode` a `[data-theme="dark"]`. Sin eso, elegir "Light" con un sistema oscuro produce componentes mixtos |
 | Solape con la cadena de `distribution-config-surface` | Reserva por fichero con liberación por aviso explícito + shell montado en `layout.tsx`, de modo que la ola 1 no edita ninguna página |
 | Desbloquear la ola 4 antes de tiempo | La liberación no se infiere de un archive; se espera aviso de la sesión dueña y se registra en el Log |
+
+## La ola 1 sale en dos PRs
+
+La estimación de la spec-review sitúa la ola 1 en **~5.000 líneas**, dominadas por los tests
+(la media real del repo es de 208 líneas por fichero de test). El repo tiene una skill propia
+cuyo disparador son los PRs de más de 400 líneas; 5.000 no es revisable.
+
+| PR | Tareas | Estimación | Por qué puede ir solo |
+| --- | --- | --- | --- |
+| **1a — Fundación** | T0, T1, T2, T4 | ~1.000 | Tokens, Tailwind y tema Plotly. No cambia nada visible porque todavía nadie los consume |
+| **1b — Kit, shell y tema** | T3, T5, T6, T7, T8 | ~4.000 | Si sigue siendo grande al llegar, T3 (el kit) sale como tercer PR: no tiene consumidores hasta la ola 2 |
 
 ## Evidencia de entrada
 
@@ -135,3 +166,6 @@ verdad para la misma rampa. Por eso T4 existe como tarea propia y no como un det
 - `docs/design/base44-design-delta-2.md` — segunda: paleta aplicada a medias.
 - `docs/design/base44-port-checklist.md` — veredicto final y 6 residuales.
 - `docs/design/fierce-fractal-logic-lab/` — el export de Base44, como referencia visual.
+  **No está en este worktree**: vive sin commitear en el clon principal
+  `~/code/pyaglogen3D/docs/design/fierce-fractal-logic-lab/` (1,4 MB). Quien implemente aquí
+  tiene que abrirlo desde allí.

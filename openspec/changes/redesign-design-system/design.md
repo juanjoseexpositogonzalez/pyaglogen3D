@@ -16,8 +16,22 @@ coincidir a mano. En la segunda reexportación ya había divergido en seis compo
 seguían pintando con hexes retirados (`#cf8a38`, `#7664bb`, `#728391`) mientras los tokens ya
 eran otros. La aplicación pintaba desde dos paletas a la vez.
 
-**Consecuencia operativa.** Un literal de color fuera de `globals.css` es un defecto, y T7 lo
-verifica con un grep que falla la tarea si aparece alguno en `components/` o `lib/`.
+**Consecuencia operativa, acotada.** La regla rige **lo que esta ola crea**: `components/kit/`,
+`components/shell/` y `lib/chart-theme.ts`. No rige el código preexistente.
+
+La primera versión de este contrato exigía "cero literales de color" en todo `components/` y
+`lib/`. Era incumplible por dos razones, ambas verificadas:
+
+1. Hay **170 literales** en 24 ficheros de `compare/`, `charts/`, `fraktal/`, `viewer3d/`,
+   `analysis/`, `topology/` y `projection/`. Llevarlos a cero obliga a editar exactamente las
+   superficies de las olas 2 y 3, contradiciendo la promesa de que esta ola no toca pantallas.
+2. Uno de ellos **está mandado por una spec canónica**. `graphUtils.ts:9` contiene `'#9ca3af'`
+   porque `contacts-graph-viz.md:98` fija la paleta de coordinación verbatim y su escenario de
+   la línea 104 lo afirma. Hay tests que lo comprueban. Tokenizarlo sería romper una capacidad
+   canónica, no mejorar la consistencia.
+
+T7.3 pasa a ser **línea base no empeorada**: el recuento de T0.2 no sube. La migración de los
+170 pertenece a las olas que reescriben sus pantallas.
 
 ---
 
@@ -44,7 +58,9 @@ autenticación lo reutiliza como hero visual en la ola 2.
 
 ## D3. El shell se monta en `layout.tsx`, no página a página
 
-`components/layout/Header.tsx` lo importan **18 páginas**. Sustituirlo en las 18 dentro de esta
+`components/layout/Header.tsx` lo importan **17 páginas y un fichero de test**
+(`app/projects/[id]/fraktal/batch/__tests__/page.test.tsx`, que ya lo mockea a `null` y por
+tanto es inmune al mecanismo de contexto). Sustituirlo en las 17 dentro de esta
 ola significaría editar `app/projects/[id]/batch/page.tsx` y `app/projects/[id]/simulations/new/page.tsx`,
 que son vecinos inmediatos de los ficheros reservados para la ola 4.
 
@@ -70,6 +86,11 @@ montado (contexto), de modo que no haya doble navegación en pantalla.
 **Por qué.** Sustituir shadcn en la misma ola que se instalan los tokens duplicaría el riesgo
 sin ganar nada: las 12 pantallas aún no están reescritas y seguirían consumiendo `ui/*`. La
 retirada de shadcn, si llega a interesar, es un change posterior con su propia evidencia.
+
+**Y lo mismo con `components/common/*`.** Ya existen ahí `MetricsCard`, `QualityBadge` y
+`StatusBadge`, con seis consumidores. Van a convivir con homónimos del kit. Se tratan igual que
+`Header`: quedan deprecados en esta ola y los retira la ola que reescribe a su último
+consumidor. Ningún fichero existente cambia de import en la ola 1.
 
 ---
 
@@ -130,10 +151,53 @@ hereda el ancho tabular.
 
 ---
 
-## D8. Qué NO decide este contrato
+## D9. El estado de tema vive en zustand, junto al precedente del repo
+
+El repo ya persiste estado de interfaz con zustand: `src/stores/viewerStore.ts` usa `persist`.
+El tema reutiliza ese mecanismo en `useThemeStore`, no abre un segundo.
+
+**Hidratación.** `app/layout.tsx` es un Server Component. Un `useState(() => localStorage…)`
+provocaría mismatch de hidratación. El valor inicial se lee de
+`document.documentElement.dataset.theme`, que el script inline ya escribió antes del primer
+paint; el store solo refleja lo que el DOM ya dice.
+
+**Montaje.** El provider va en `app/providers.tsx`, donde ya viven `QueryClientProvider` y
+`AuthProvider`. `AppShellContext`, el que permite a `Header` renderizar `null`, se monta en el
+mismo sitio.
+
+**Tailwind.** `darkMode` no está declarado hoy, lo que en Tailwind 3.4 significa `media`. Hay
+**38 variantes `dark:`** vivas en `src/**/*.tsx`. Si no se ancla a `[data-theme="dark"]`, un
+usuario con sistema oscuro que elija "Light" verá componentes mixtos, y R2 de
+`design-system-foundation` queda falseado. Anclarlo es obligatorio, no una mejora.
+
+Nota de precisión: `<html className="dark">` en `layout.tsx:19` **no hace nada hoy**.
+`globals.css` no tiene ningún selector `.dark`; la aplicación es oscura porque los tokens de
+`:root` son oscuros. La premisa del proposal es cierta, pero el mecanismo no es el que su
+redacción sugiere.
+
+---
+
+## D10. El grafo de topología debe seguir al tema de la app, no al del sistema
+
+`components/topology/NetworkCanvas.tsx:9-12` resuelve su tema con
+`window.matchMedia('(prefers-color-scheme: dark)')`. Hoy cumple `contacts-graph-viz.md:252`
+(*"MUST be transparent or match the app's current theme"*) **por accidente**: el tema de la app
+es la preferencia del sistema.
+
+En cuanto `data-theme` tenga precedencia sobre el sistema, el grafo quedará en desacuerdo con
+la aplicación y esa spec canónica dejará de cumplirse. Por eso T6.4 lo repara dentro de esta
+ola: es la ola que introduce la divergencia, así que es la que debe cerrarla.
+
+---
+
+## D11. Qué NO decide este contrato
 
 - El destino del export de Base44 (`docs/design/fierce-fractal-logic-lab/`, 1,4 MB): si entra
   al repo o se queda fuera es decisión de la persona, y no bloquea esta ola.
 - La retirada de shadcn.
 - El alcance final de la ola 4, que depende de si `polydispersity-single-source` se escribe o
   se aparca.
+- La migración de los 170 literales de color preexistentes: pertenece a las olas 2 y 3.
+- `src/stores/viewerStore.ts:24-29` tiene cuatro literales de fondo de viewer. Quedan **fuera**
+  de esta ola: `multi-aggregate-comparison` S7.3 es canónico sobre ese selector y tocarlo sin
+  reescribir Compare sería cambiar comportamiento a ciegas.
