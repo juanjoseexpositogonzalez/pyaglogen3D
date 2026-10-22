@@ -327,6 +327,51 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L4 — T3, el kit de primitivas (2026-10-22)
+
+**18 primitivas, 1.231 líneas, más 274 de tests.** Cero literales de color en todo el kit: la
+regla de R1 se cumple por construcción, porque cada color pasa por un token.
+
+| Grupo | Primitivas |
+| --- | --- |
+| Datos | `Num`, `CopyText`, `DetailList`, `DataTable`, `MetricCard` |
+| Superficies | `Panel`, `VisualPanel`, `PageHeader`, `EmptyState`, `DisclosurePanel` |
+| Estado | `StatusChip`, `QualityBadge`, `StatusDot`, `Callout` |
+| Control | `SegmentedControl`, `FilterBar`, `ShowValues`, `DetailsDrawer` |
+
+**Criterio: las primitivas obligan a las reglas, no confían en que el llamante las recuerde.**
+
+- `Num` recibe `sigma` como parámetro, de modo que una magnitud medida sin su incertidumbre
+  cuesta más de escribir que con ella.
+- `MetricCard` espera `detail` con el estimador y la calidad del ajuste: un Df sin R² es un
+  número sin afirmación.
+- `DetailList` acepta `provenance`, para que un valor heredado diga de dónde viene.
+- `QualityBadge` usa una **unión discriminada**: `approximate`, `excluded` y `failed` **no
+  compilan sin `reason`**. Una exclusión que no se puede interrogar se confunde con un fallo
+  del programa, y aquí lo impide el compilador.
+- `QualityBadge` y `StatusChip` son componentes distintos a propósito: un análisis FRAKTAL puede
+  terminar con éxito y aun así dar un resultado inutilizable.
+- `Panel` tiene tonos decorativos y **el estado vive solo en `Callout` y `StatusChip`**, para que
+  "este panel es dorado" nunca acabe significando "algo va mal".
+- `SegmentedControl` es un `radiogroup` con `ariaLabel` obligatorio.
+- `DetailsDrawer` es cajón lateral y no modal: inspeccionar un detalle no tapa la tabla de la
+  que viene.
+
+**`DataTable` se escribe desde cero**, sin `ui/table`: ese fichero no existe en el repo (shadcn
+está instalado a medias, sin `components.json`) y crearlo caería fuera de la lista cerrada. Lo
+detectó la spec-review r2 antes de que se intentara.
+
+**Un fallo propio, y lo que salió de corregirlo.** Importé `@testing-library/user-event` dando
+por hecho que estaba instalado; no lo está, y añadirlo habría sido tocar `package.json`, fuera
+de la lista cerrada. Reescrito con `fireEvent`, que ya usan tres tests del repo. Al hacerlo, el
+test de teclado mejoró: `jsdom` **no convierte Enter en click**, así que un `userEvent.keyboard`
+habría pasado igual con un `<div onClick>`, inalcanzable por teclado. La versión actual afirma
+lo que de verdad garantiza el acceso —elemento `BUTTON` nativo, sin `tabindex`, enfocable—, que
+es más fuerte que lo que la herramienta ausente permitía.
+
+**Verificación.** Suite **61 ficheros / 652 tests verdes** (base 58/624). `type-check` **13**.
+Literales de producción **98**, en el techo exacto.
+
 ### L3 — T4 y dos enmiendas (2026-10-22)
 
 **T4 — Tema de gráficas Plotly.** `lib/chart-theme.ts` con `series(i)`, `dash(i)`, `marker(i)`,
