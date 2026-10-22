@@ -70,7 +70,14 @@ y exigir el tipo convertiría cada uno de ellos en un 400.
 
 **Precedencia, por niveles.** Lo decidido **para ese hijo** (entrada de grid, barrido, extremo
 teórico, extremo de sinterizado) gana a `base_parameters`, que gana al campo de estudio, que
-gana al default; dentro de un nivel, un dict gana a un plano. La versión anterior decía que un
+gana al default; dentro de un nivel, un dict gana a un plano.
+
+Eso son **dos** cambios de comportamiento, no uno. El segundo me lo encontró la r4: hoy
+`base_parameters` gana al estudio sólo en forma **dict**; en forma **plana**
+`apply_sintering_config` lo pisa (`views.py:1808`). Lo metí en la misma frase con la que
+corregía el primero, sin declararlo y sin escenario que lo detectara — R3.10 sólo ejercitaba el
+caso dict, que ya gana hoy, así que habría pasado antes y después. Decisión de la persona:
+`base_parameters` gana siempre, declarado como cambio. La versión anterior decía que un
 extremo teórico ganaba a todo: **falso**, hoy gana el dict de estudio, y por eso los cuatro
 hijos `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio. Invertir
 esa precedencia es un cambio de comportamiento declarado, y es lo que hace que el nombre del
@@ -114,7 +121,7 @@ después, por cada combinación, crea cada `Simulation` y la encola con
 `run_simulation_task.delay(...)`. No hay `try/except`, el proyecto **no define
 `ATOMIC_REQUESTS`** y no hay `transaction.atomic`. Si `apply_sintering_config` lanzara a mitad
 del bucle, quedaría un estudio creado con parte de sus hijos ya encolados y una respuesta 500.
-(Sí hay un `try/except` alrededor del `.delay()` en `views.py:1837-1844`, que se traga fallos
+(Sí hay un `try/except` alrededor del `.delay()` en `views.py:1840-1845`, que se traga fallos
 del broker; no cubre la expansión ni deshace filas.)
 
 **Decisión.** Toda configuración de sinterizado alcanzable por la expansión — grid, campo de

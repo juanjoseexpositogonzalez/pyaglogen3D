@@ -85,11 +85,22 @@ Lo que eso significa, verificado con probe propia:
   corre al coeficiente del estudio, porque el dict de estudio gana al valor barrido. Este change
   invierte esa precedencia; es un cambio de comportamiento declarado.
 
-**Precedencia real** (también distinta de lo que decía la primera versión): `views.py:1804`
-popea `sintering_config` del dict ya fusionado, así que `base_parameters` **gana al campo de
-estudio**. El orden es `grid > base_parameters > estudio > default`.
+**Precedencia real, y es asimétrica.** `views.py:1804` popea `sintering_config` del dict ya
+fusionado, así que un **dict** en `base_parameters` gana al campo de estudio. Pero sus claves
+**planas** no: `apply_sintering_config` las sobrescribe con las del estudio (`views.py:1808`).
+Verificado con probe:
 
-Endurecer el helper sin validar antes **las tres** convertiría un fallo silencioso en un fallo
+```text
+plano en base + dict de estudio -> gana el estudio (0.95)
+dict  en base + dict de estudio -> gana base       (0.60)
+```
+
+La primera versión de este contrato afirmaba el orden `grid > base_parameters > estudio` sin
+más, lo que era una **segunda inversión sin declarar** colada en la misma frase que corregía
+la primera. Decisión de la persona: `base_parameters` **gana siempre**, en ambas formas, y el
+cambio se declara.
+
+Endurecer el helper sin validar antes **todas ellas** convertiría un fallo silencioso en un fallo
 peor: `perform_create` (`views.py:1750`) no tiene `try/except`, el proyecto no define
 `ATOMIC_REQUESTS` y los hijos ya están encolados cuando el helper lanzaría. De ahí R12.
 
@@ -103,9 +114,14 @@ Explícitamente, y cada uno con su contrato en la cadena:
   sinterizado arbitrarias, incluidas `sintering_mean` y valores fuera de rango. R11 acota su
   invariante a los hijos creados por **expansión de estudio**; esas rutas pertenecen al change
   del formulario single.
-- **El admin de Django** (`apps/simulations/admin.py:6-31`) expone los JSONField sin
-  `readonly_fields`, así que permite editar `parameters` de un hijo existente saltándose el
-  serializer. No crea hijos, así que no puede producir expansiones; declarado, no arreglado.
+- **El admin de Django**: `SimulationAdmin` sí define `readonly_fields` (`admin.py:14-22`),
+  pero `parameters` no está en la lista, así que permite editar los parámetros de un hijo
+  existente saltándose el serializer. No crea hijos, así que no puede producir expansiones.
+- **`PATCH` del `sintering_config` de un estudio después de expandirlo**: se acepta (200) y no
+  reexpande nada, así que el estudio queda declarando un sinterizado distinto del que corrieron
+  sus hijos — y el CSV condiciona las columnas a `study.sintering_config` (`views.py:2206`)
+  mientras imprime `sim.parameters` (`:2270-2271`). Misma familia de mentira que este change
+  mata, en una ruta que no gobierna.
 - **D9** (la herramienta del asistente IA crea estudios por ORM sin validar ni traducir) →
   `study-expansion-single-source`. **Este change no la arregla**: un estudio creado por esa
   ruta con sinterizado sigue sin pasar por la validación. Queda declarado, no silenciado.
@@ -115,8 +131,10 @@ Explícitamente, y cada uno con su contrato en la cadena:
 - **D7** (casos límite + entradas dict → 500 preexistente, alcanzable por API) →
   `distribution-grid-wiring` o carril corto propio.
 - **D4** y la polidispersidad real → changes de seguimiento.
-- `cc-tunable-aggregation` **R17** y el helper `create_simulation()` que nombra: este change no
-  lo mueve, así que no la toca. La moverá `study-expansion-single-source`.
+- `cc-tunable-aggregation` **R17**: este change no reubica el helper `create_simulation()` que
+  R17 nombra ni modifica el texto de la capability — sí cambia su firma y le encamina un
+  segundo llamante, y hace que empiece a cumplirse para los hijos de extremos de sinterizado.
+  (El ancla de R17, `views.py:1761-1802`, ya está obsoleta hoy: el helper vive en `1784-1845`.)
 - `DistributionSelector.tsx`: su default de `uniform` emite `min == max`, que **es válido** para
   el sinterizado (`min <= max`, ambos dentro de `[0.5, 1.0]`). No se toca aquí.
 
@@ -124,7 +142,7 @@ Explícitamente, y cada uno con su contrato en la cadena:
 
 ### Modified Capabilities
 
-- `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, seis superficies
+- `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, siete superficies
   de entrada, precedencia por niveles, rechazo explícito), **R7** (carve-out: la compatibilidad
   hacia atrás no ampara sinterizado malformado, ni el cambio de la media `normal`) y R10
   **sólo en su fila de sinterizado**; **ADDED** R11 (un solo constructor, invariante del hijo y
@@ -150,6 +168,17 @@ Deliberado y declarado: los estudios batch cuyo sinterizado se descartaba en sil
 empezarán a sinterizar o a fallar en validación. **Los resultados batch anteriores con
 `sintering_config`, y los de cualquier estudio con sinterizado `normal`, no son lo que sus
 parámetros dicen.** Consta en el comentario de entrega de Jira.
+
+Cambios de comportamiento adicionales, declarados:
+
+- **Precedencia, dos inversiones.** Un valor barrido para un hijo pasa a ganar al dict de
+  estudio — hoy los hijos `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente
+  del estudio, con el nombre mintiendo. Y las claves **planas** de `base_parameters` pasan a
+  ganar al campo de estudio, que hoy las pisa.
+- **Hijos de extremos de sinterizado.** Al unificarlos con el constructor común pasan a llevar
+  `seed_type` en el campo de modelo y dejan de llevarlo dentro de `parameters`. Para
+  `tunable_cc` el worker lee el campo de modelo (`tasks.py:1676`), así que esos hijos pasan a
+  correr con el tipo de semilla declarado en vez de con `monomers` por defecto.
 
 Efecto secundario deseable: el export CSV (`views.py:2267-2271`) escribe
 `Sintering_Type`/`Sintering_Coeff` desde `sim.parameters`; en estudios `normal` hoy imprime el

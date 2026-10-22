@@ -20,10 +20,13 @@
 - [x] T0.9 spec-review r3 → `CORRECTIONS REQUIRED (1 blocker, 8 majors)`
 - [x] T0.10 Decisión de la persona: **unificar los dos sitios de creación**
 - [x] T0.11 Corrección r4 (este commit)
-- [ ] T0.12 spec-review r4 en agente fresco
-- [ ] T0.13 Correcciones hasta ronda sin hallazgos semánticos
-- [ ] T0.14 `approval.md` — **sólo la persona aprueba**
-- [ ] T0.15 Crear issue AGLO y pasarla a En curso (transición 21)
+- [x] T0.12 spec-review r4 → `CORRECTIONS REQUIRED (1 blocker, 4 majors)`
+- [x] T0.13 Decisión de la persona: `base_parameters` **gana siempre**, inversión declarada
+- [x] T0.14 Corrección r5 (este commit)
+- [ ] T0.15 spec-review r5 en agente fresco
+- [ ] T0.16 Correcciones hasta ronda sin hallazgos semánticos
+- [ ] T0.17 `approval.md` — **sólo la persona aprueba**
+- [ ] T0.18 Crear issue AGLO y pasarla a En curso (transición 21)
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
@@ -43,6 +46,9 @@
       comportamiento**: hoy el dict de estudio pisa el valor barrido, y los hijos
       `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio
 - [ ] T1.5b Rechazar el barrido de un **dict** por `theoretical_extremes` (superficie 7, R3.12)
+- [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
+      sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
+      desconocidas, por clave
 - [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
       `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos) y **R3.10**
       (precedencia)
@@ -79,6 +85,12 @@
       planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
       (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
       ningún dict
+- [ ] T3.0d El constructor retira `sintering_config` de los parámetros del hijo en **los dos**
+      modos, y retira las `sintering_*` heredadas de niveles más débiles cuando él fija el
+      sinterizado del hijo
+- [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
+      hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
+      sólo `utils.py` y `tests/test_utils.py:233-269`, que prueban el generador aislado)
 - [ ] T3.0c Tests **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
       misma expansión) y **R11.7** (los extremos de sinterizado pasan por el constructor,
       conservan su coeficiente y llevan `seed_type`)
@@ -138,26 +150,27 @@
       insatisfacible.
       - `pytest` → base **15 failed, 31 errors, 1221 passed**. Los 31 errores son de *setup de
         fixtures* (`TypeError: User() got unexpected keyword arguments: 'username'`,
-        `apps/accounts/models.py:26`), no de colección. Aceptación: los cuatro módulos de esta
+        `apps/accounts/models.py:26`), no de colección. Aceptación: los **cinco** módulos de esta
         superficie en verde y la base global sin empeorar
       - `ruff check` → base **296 errores**. Aceptación: **cero nuevos** en los ficheros tocados
       - `mypy .` → base **1740 errores en 133 ficheros**. Aceptación: **cero nuevos** en los
         ficheros tocados
-      Los cuatro módulos son `apps/simulations/tests/test_parametric_study_serializer.py`,
-      `apps/simulations/tests/test_grid_expansion.py`, `backend/tests/test_utils.py` y
-      `backend/tests/test_serializers.py`. Los otros cinco del mapa
+      Los cinco módulos son `apps/simulations/tests/test_parametric_study_serializer.py`,
+      `apps/simulations/tests/test_grid_expansion.py`, `backend/tests/test_utils.py`,
+      `backend/tests/test_serializers.py` y
+      `apps/simulations/tests/test_sintering_plumbing.py` (base conjunta: **89 passed**). Los otros cinco del mapa
       (`test_distribution_validation`, `test_distribution_field`, `test_distribution_plumbing`,
       `test_distribution_serializer`, `tests/integration/test_parametric_values_pipeline.py`)
       quedan fuera porque no tocan sinterizado (`test_distribution_plumbing.py:7` sólo lo
       menciona en un docstring). **Sí entra** `apps/simulations/tests/test_sintering_plumbing.py`,
-      que es justo quien afirma los kwargs worker→engine de sinterizado. **Guarda declarada**:
-      `test_sintering_plumbing.py:132-151` postea `{sintering_coeff:0.85, sintering_type:"uniform"}`
-      sin `min`/`max`; es ruta single, fuera del alcance de R11, pero se pondría en rojo si la
-      validación plana se extendiera a esa ruta — cosa que este change NO hace
+      que es justo quien afirma los kwargs worker→engine de sinterizado. (La "guarda declarada"
+      de la ronda anterior era **falsa**: ese test sí aporta `sintering_min`/`sintering_max`
+      en `:142-143` y no postea nada, escribe por ORM. No hay riesgo que declarar.)
 - [ ] T7.2 Gates de frontend, con su línea base:
-      - `npm test` → base **55 ficheros, 597 tests**. Ojo: hay un test **flaky** preexistente,
-        `FraktalBatchImageDetail.test.tsx > comprehensive variant toggle (T6.5)`, que falla por
-        timeout en la corrida completa y pasa 47/47 aislado. No atribuirlo a este change
+      - `npm test` → base **55 ficheros, 597 tests**. Ojo: hay inestabilidad preexistente en
+        `FraktalBatchImageDetail.test.tsx > comprehensive variant toggle (T6.5)`: **dos** tests
+        de ese bloque fallan en la corrida completa (el primero por aserción, `mockPush` con 0
+        llamadas; no sólo por timeout) y el fichero pasa aislado. No atribuirlo a este change
       - `npm run type-check` → base **13 errores TS preexistentes**, salida **2**. Aceptación:
         cero nuevos
       - `npm run lint` existe (`next lint`) pero el repo no tiene configuración de ESLint, así
@@ -173,6 +186,9 @@
 
 - [ ] T8.1 judgment-day (revisión adversarial dual, agentes frescos en sesión nueva)
 - [ ] T8.2 Fix rounds hasta APPROVED
+- [ ] T8.2b Al archivar, unificar el estilo de encabezado: la delta usa
+      `### Requirement: R3 — …` y la canónica usa `### R3 — …`. Copiarla tal cual dejaría dos
+      estilos en el mismo fichero
 - [ ] T8.3 Archive + sincronización canónica de `batch-cc-tunable-parameter-parity` (bloques
       MODIFIED/ADDED completos, nunca diferidos) + `state.yaml`
 - [ ] T8.4 PR a `develop` con etiqueta `type:bug` enlazando el issue AGLO
@@ -254,7 +270,30 @@
   canónica restaurada verbatim con las nuevas como R7.3/R7.4, alcance de R11 con sus
   exclusiones **dentro de la spec**, regla de claves extra del conjunto, y R11.7. Anclas
   corregidas (`views.py:1750`, `tsx:294`, R7 canónica en `:213-227`).
-- L13 (2026-10-21): Decisiones de diseño con su alternativa descartada: regla única en las tres
+- L14 (2026-10-21): **spec-review r4**: `CORRECTIONS REQUIRED (1 blocker, 4 majors)`. Dos
+  cierres importantes: la **enumeración de superficies por fin aguanta** (el revisor enumeró
+  *escritores* de parámetros, no claves, y no encontró una octava) y el **blocker del
+  constructor único queda cerrado**. Las seis líneas base se reprodujeron exactas.
+  - **BLOCKER: una segunda inversión de precedencia sin declarar, mía.** Afirmé que
+    `base_parameters` gana al campo de estudio; cierto en forma dict, **falso en forma plana**
+    (`apply_sintering_config` la pisa, `views.py:1808`). Confirmado con probe propia. Y el
+    único escenario de precedencia que escribí ejercitaba sólo el caso dict, así que habría
+    pasado antes y después.
+  - Majors: `sintering_config` es también una clave `sintering_*`, así que mi regla plana
+    contradecía las superficies 1 y 3; el cuarto bullet de R11.7 no tenía dueño implementable;
+    el título de R12 prometía más de lo que su cuerpo exige (D7 sigue abriendo estudios a
+    medias y sólo estaba declarado en `proposal.md`, que no se archiva); y la unidad de
+    validación plana quedaba indefinida en las superficies barridas.
+  - **Rechazado tras verificarlo**: la "guarda declarada" de T7.1 era falsa por mi parte, no
+    del revisor — él la desmontó: ese test sí trae `min`/`max` y escribe por ORM.
+- L15 (2026-10-21): Decisión de la persona: `base_parameters` **gana siempre**.
+- L16 (2026-10-21): **Corrección r5** (este commit). Declarada la segunda inversión (inventario
+  11, R3 y R3.10); `sintering_config` excluida de la regla de claves planas; el constructor
+  retira `sintering_config` y las claves heredadas en ambos modos (R11.7 con regla ejecutable);
+  R12 renombrado a lo que de verdad exige, con D7 nombrado **dentro** de la spec; unidad de
+  validación fijada para las superficies barridas; añadidos al inventario la canónica R4 y la
+  divergencia del desplegable de `limiting`; y corregidos conteos, anclas y la nota del flaky.
+- L17 (2026-10-21): Decisiones de diseño con su alternativa descartada: regla única en las tres
   superficies (DD1); el helper lanza pero nunca es el primero en enterarse (DD2); validar antes
   de escribir en vez de `transaction.atomic`, porque una tarea Celety ya despachada no se
   deshace con un rollback (DD3); `sintering_coeff` es la media (DD4); allow-list de once

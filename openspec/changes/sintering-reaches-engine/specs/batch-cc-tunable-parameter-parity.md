@@ -57,16 +57,32 @@
 > **Canonical guarantees retained but easy to lose in a restatement:**
 >
 > 9. Canonical R3's array MUST ("MUST accept `parameter_grid.sintering_config` **as an array**",
->    enforced at `serializers.py:472-477`) is restated verbatim.
+>    enforced at `serializers.py:472-477`) is restated below, reworded and relocated into the
+>    input-surfaces block. Listed here because a wholesale MODIFIED block would otherwise drop
+>    it silently.
 >
 > 10. **Precedence behaviour change.** Today a study-level dict beats a per-child swept value:
 >     the four `limiting` children named `theoretical: sintering_coeff=0.5…1.0` all run at the
 >     study's coefficient (verified by probe). Their names lie. This delta makes a value swept
 >     **for that child** win over the study field, which is what the sintering-extremes block
 >     already assumes (`views.py:1875-1876`: *"they define their own sintering"*).
-> 11. **`seed_type` on sintering-extreme children.** Unifying the two creation sites makes the
->     inline block set `seed_type` like every other child, closing an existing violation of
->     `cc-tunable-aggregation` R17 (`:869`). Declared because it changes those children.
+> 11. **Second precedence change: flat `base_parameters` beats the study field.** Today the
+>     asymmetry is real and verified: a `sintering_config` **dict** in `base_parameters` beats
+>     the study field, but **flat** `sintering_*` keys there do not —
+>     `apply_sintering_config` overwrites them with the study's values (`views.py:1808`). This
+>     delta makes `base_parameters` win in both shapes. Affects only studies that combine flat
+>     base sintering with a study-level dict; the batch form cannot create that combination
+>     (it never sends a study-level `sintering_config`), but an API client can.
+> 12. **`seed_type` on sintering-extreme children.** Unifying the two creation sites makes the
+>     inline block set `seed_type` like every other child, closing existing violations of
+>     `cc-tunable-aggregation` R17 (`:869`) **and of canonical R4 of this capability**
+>     (`openspec/specs/batch-cc-tunable-parameter-parity.md:128`: the model field, not the
+>     params blob). Those children also stop carrying `seed_type` inside `parameters`, and for
+>     `tunable_cc` the worker reads the model field (`tasks.py:1676`), so their engine seed type
+>     changes from the default `monomers` to the declared one.
+> 13. **R10 for `limiting`.** The dropdown returns early for that algorithm
+>     (`BatchSimulationForm.tsx:289-297`) and offers **none** of the four canonical options. The
+>     canonical mandates all four unconditionally; the delta blesses the existing behaviour.
 >
 > **Retired or renumbered scenarios:** canonical **R7.2** ("Historical ParametricStudies remain
 > valid" — the read path) is **kept verbatim under its own number**; the new scenarios are
@@ -103,14 +119,18 @@ required fields, and MUST NOT carry keys outside
 | `uniform` | `sintering_min`, `sintering_max` | `0.5 <= each <= 1.0`, `min <= max` |
 | `normal` | `sintering_coeff` (the mean), `sintering_std` | `0.5 <= sintering_coeff <= 1.0`, `0 < sintering_std <= 0.2` |
 
-A flat setting MUST carry the keys its type requires. Other keys from the same five-key set may
+A flat setting MUST carry the keys its type requires. For the **swept** surfaces 5 and 6, where
+the setting is a single key and the rest of the shape may legitimately live in
+`base_parameters`, the required-keys check applies to the child's **merged projection** (base
+plus the swept value); range and unknown-key checks apply per key, where they are written. Other keys from the same five-key set may
 be present — real children carry leftovers from `base_parameters` — and MUST also be in range;
 the worker ignores the ones its type does not use. A flat `sintering_coeff` with no
 `sintering_type` MUST be read as `fixed`: the batch form sends
 exactly that on every `limiting` submit (`BatchSimulationForm.tsx:220`), and rejecting it would
-break the only sintering input that algorithm has. Any `sintering_*` key outside
+break the only sintering input that algorithm has. Any **flat** `sintering_*` key outside
 `{sintering_type, sintering_coeff, sintering_min, sintering_max, sintering_std}` MUST be
-rejected — in particular `sintering_mean`, which no consumer reads.
+rejected — in particular `sintering_mean`, which no consumer reads. The key `sintering_config`
+is **not** a flat key: it is the dict shape, governed by the rules above and by its surface row.
 
 #### Input surfaces
 
@@ -147,9 +167,14 @@ Stated by level, strongest first. Within a level, a dict setting beats a flat on
 3. The study-level `sintering_config` field.
 4. Default: no sintering.
 
-Level 1 beating level 3 is a **behaviour change**: today the study dict overrides a swept
-value, so a child named `theoretical: sintering_coeff=0.5` runs at the study's coefficient.
-After this change the name and the physics agree.
+Two **behaviour changes** are declared here:
+
+- Level 1 beating level 3: today the study dict overrides a swept value, so a child named
+  `theoretical: sintering_coeff=0.5` runs at the study's coefficient. After this change the
+  name and the physics agree.
+- Level 2 beating level 3 **in its flat form**: today `base_parameters`'s `sintering_config`
+  dict beats the study field, but its flat `sintering_*` keys do not — `apply_sintering_config`
+  overwrites them (`views.py:1808`). After this change `base_parameters` wins in both shapes.
 
 When a dict setting applies to a child, that child's sintering keys MUST be exactly the ones
 that dict produces: no `sintering_*` key inherited from a weaker level may survive (R11).
@@ -243,6 +268,7 @@ These settings are only valid for the algorithms R11 permits.
 - **AND** with the grid entry removed it is **0.60**, not 0.95
 - **AND** when a dict setting applies, no `sintering_*` key inherited from a weaker level survives into the child
 - **AND** a `limiting` child named `theoretical: sintering_coeff=0.5` runs at **0.5**, not at the study coefficient
+- **AND** with study `sintering_config` fixed 0.95 and `base_parameters = {"sintering_type":"fixed","sintering_coeff":0.60}`, the child runs at **0.60**, not 0.95 (today it runs at 0.95)
 
 #### Scenario R3.11 — The helper invents no default
 
@@ -387,6 +413,12 @@ routed through the same builder, which MUST accept an explicit "this child's sin
 already decided" mode so a sintering-extreme child keeps its own coefficient (level 1 of R3's
 precedence).
 
+In **both** modes the builder MUST remove the `sintering_config` key from the child's stored
+parameters — it is a study-level instruction, not an engine parameter, and today a
+sintering-extreme child persists it verbatim. When the builder sets a child's sintering itself
+(either mode), it MUST first remove every `sintering_*` key the child inherited from a weaker
+precedence level, so the stored shape matches the one that applies.
+
 **The invariant.** Wherever its values came from, every child created by expansion MUST satisfy,
 at the point its parameters are built:
 
@@ -396,8 +428,8 @@ at the point its parameters are built:
 2. **If it carries any `sintering_*` key**, the keys its declared type requires are present and
    every value is in range. A child of a study with no sintering carries none, and satisfies
    this clause vacuously.
-3. When a dict setting applied to that child, its keys are exactly the ones that setting
-   produced.
+3. When the builder set that child's sintering — from a dict setting or in the "already
+   decided" mode — its `sintering_*` keys are exactly the ones that setting produced.
 
 A violation at that point is a programming error, not a user error: R12 requires user input to
 have been rejected earlier.
@@ -473,6 +505,7 @@ stored `base_algorithm`.
 - **GIVEN** an existing study with `base_algorithm = "fracval"`
 - **WHEN** a `PATCH` supplies only `base_parameters = {"sintering_coeff": 0.8}`
 - **THEN** the rule is evaluated against the instance's `base_algorithm`, and the request is rejected with 400
+- **AND** the mirror case is rejected too: a `PATCH` that supplies `base_algorithm: "fracval"` while the stored `base_parameters` carry sintering
 
 #### Scenario R11.7 — Sintering-extreme children join the builder
 
@@ -481,11 +514,12 @@ stored `base_algorithm`.
 - **THEN** they are created through the same builder as every other child
 - **AND** each keeps its own extreme coefficient, not the study's
 - **AND** each carries `seed_type` on the model field, as every other child does (`cc-tunable-aggregation` R17)
-- **AND** none carries `sintering_min`/`sintering_max` left over from `base_parameters` while declaring `fixed`
+- **AND** none carries a `sintering_*` key inherited from a weaker level, nor the `sintering_config` key, in its stored parameters
+- **AND** their stored `parameters` no longer carry `seed_type`, which moves to the model field
 
 ---
 
-### Requirement: R12 — The expansion leaves no half-created study
+### Requirement: R12 — Invalid sintering settings are rejected before any write
 
 Every sintering setting on an input surface of R3 MUST be validated **before the first write to
 the database**. An invalid setting MUST produce 400 **and zero rows**: no `ParametricStudy`, no
@@ -497,6 +531,13 @@ mechanism: by then the study exists and some of its children are already queued.
 `transaction.atomic`, the project defines no `ATOMIC_REQUESTS`, and `run_simulation_task.delay`
 is called inside the per-seed loop (`views.py:1841`), so a dispatched task is not undone by a
 database rollback.
+
+**Known remaining half-creation path, not closed here.** A `parameter_grid.sintering_config`
+with two or more entries — which R3 requires accepting — combined with `include_limiting_cases`
+still crashes mid-expansion: `generate_limiting_cases` sorts dict values (`utils.py:176`),
+raising `TypeError` after the study row and some children exist. That defect predates this
+change and is closed by the chained contract `distribution-grid-wiring`. This requirement
+governs rejection of **invalid** settings, not every way the expansion can fail.
 
 #### Scenario R12.1 — An invalid sintering setting creates nothing
 
