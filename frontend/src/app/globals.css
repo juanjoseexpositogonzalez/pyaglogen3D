@@ -29,7 +29,7 @@
     --ink: #112c3d;
     --ink-strong: #0a2030;
     --ink-muted: #536a73;
-    --ink-faint: #617479;
+    --ink-faint: #5c6f73;
     --ink-on-dark: #eef8f4;
     /* Hierarchy over the dark visualisation canvas. Declared as whole
        tokens, never as opacity modifiers: Tailwind cannot apply alpha to
@@ -38,7 +38,7 @@
     --ink-on-dark-faint: #a3bdb9;
 
     /* ── accents ───────────────────────────────────────────────────────── */
-    --accent: #1b7c83;
+    --accent: #1a777d;
     --accent-strong: #14646f;
     /* focus, hover and active states only; never carries state meaning */
     --accent-bright: #4faea8;
@@ -62,18 +62,20 @@
        A first attempt measured on white and called it conservative. That has
        the direction backwards: for dark ink, a lighter background raises the
        ratio, so white is the optimistic bound. The real backgrounds are
-       darker — a translucent *-soft composited over the page canvas, or the
-       opaque --warning-soft — and the chips still failed at 3.70 to 4.31
-       while the tokens "passed" on white.
+       darker. A second attempt used --canvas, which is not the darkest
+       surface this file declares either: --canvas-deep and the final stop of
+       --shell-background are darker still, and the chips failed there at 4.23
+       to 4.34 while "passing" on --canvas. These values clear AA against that
+       final stop, #e7f0f0, which is the darkest light surface declared.
 
        The *-soft values are re-derived from these inks, so the chip ink and
        its own tint stay in step. */
-    --success: #257157;
-    --success-soft: rgba(37, 113, 87, 0.13);
+    --success: #236c53;
+    --success-soft: rgba(35, 108, 83, 0.13);
     --warning: #9a621a;
     --warning-soft: #fdf2dd;
-    --danger: #9f4a56;
-    --danger-soft: rgba(159, 74, 86, 0.13);
+    --danger: #974652;
+    --danger-soft: rgba(151, 70, 82, 0.13);
 
     /* ── lines, shadows, radius ────────────────────────────────────────── */
     --line: rgba(26, 88, 95, 0.17);

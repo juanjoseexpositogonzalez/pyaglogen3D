@@ -52,9 +52,10 @@ export function DetailsDrawer({
           // The point of a non-modal drawer is that the table behind it stays
           // readable; closing on outside interaction would undo that.
           onInteractOutside={(event) => event.preventDefault()}
-          // Radix always sets aria-describedby; without a subtitle it would
-          // point at an element that is never mounted.
-          aria-describedby={subtitle ? undefined : undefined}
+          // Radix always sets aria-describedby. With a subtitle its own id is
+          // correct and must not be overridden; without one it would point at
+          // an element that is never mounted, so the attribute is suppressed.
+          {...(subtitle ? {} : { 'aria-describedby': undefined })}
         >
           <header className="flex items-start justify-between gap-4">
             <div className="min-w-0">

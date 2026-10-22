@@ -149,14 +149,19 @@ describe('FilterBar', () => {
     // A React element is truthy, so passing one here would have passed
     // against the broken `{hint && ...}` too. A bare 0 is the case the guard
     // exists for: the filter matched nothing.
-    render(
+    // Asserting getByText('0') is not enough: with the broken `{hint && ...}`
+    // guard, `0 && <span>` evaluates to 0 and React renders a bare text node,
+    // which getByText finds just the same. The hint has to be IN its wrapper.
+    const { container } = render(
       <FilterBar hint={0}>
         <FilterField label="Quality">
           <select />
         </FilterField>
       </FilterBar>,
     )
-    expect(screen.getByText('0')).toBeTruthy()
+    const hint = container.querySelector('.hint')
+    expect(hint, 'the hint wrapper is missing, so the guard dropped it').not.toBeNull()
+    expect(hint?.textContent).toBe('0')
   })
 
   it('still omits the hint when there is none', () => {

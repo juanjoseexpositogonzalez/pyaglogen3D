@@ -116,8 +116,12 @@ const AA = 4.5
  * white would be the optimistic bound, not the conservative one.
  */
 const SURFACES = {
-  light: { canvas: '#f4f7f7', surface: '#ffffff' },
-  dark: { canvas: '#091923', surface: '#102733' },
+  // The darkest surface each theme declares, which is the honest background:
+  // for dark ink a lighter background raises the ratio, and for light ink a
+  // darker one does. Measuring on --canvas passed while the chips failed on
+  // --canvas-deep and on the final stop of --shell-background.
+  light: { worst: '#e7f0f0', surface: '#ffffff' },
+  dark: { worst: '#12303d', surface: '#102733' },
 }
 
 describe('WCAG AA contrast of the token palette', () => {
@@ -125,9 +129,9 @@ describe('WCAG AA contrast of the token palette', () => {
   const accentTokens = ['--accent', '--accent-strong']
 
   it.each([...inkTokens, ...accentTokens])(
-    '%s clears AA on the light page canvas',
+    '%s clears AA on the darkest light surface',
     (token) => {
-      const ratio = contrastRatio(light[token], SURFACES.light.canvas)
+      const ratio = contrastRatio(light[token], SURFACES.light.worst)
       expect(
         ratio,
         `${token} ${light[token]} on the canvas is ${ratio.toFixed(2)}:1`,
@@ -135,8 +139,8 @@ describe('WCAG AA contrast of the token palette', () => {
     },
   )
 
-  it.each([...inkTokens, ...accentTokens])('%s clears AA on the dark page canvas', (token) => {
-    const ratio = contrastRatio(dark[token], SURFACES.dark.canvas)
+  it.each([...inkTokens, ...accentTokens])('%s clears AA on the darkest dark surface', (token) => {
+    const ratio = contrastRatio(dark[token], SURFACES.dark.worst)
     expect(
       ratio,
       `${token} ${dark[token]} on the canvas is ${ratio.toFixed(2)}:1`,
@@ -154,7 +158,7 @@ describe('WCAG AA contrast of the token palette', () => {
   ] as const
 
   it.each(STATE_PAIRS)('%s on %s clears AA in the light theme', (ink, tint) => {
-    const background = composite(light[tint], SURFACES.light.canvas)
+    const background = composite(light[tint], SURFACES.light.worst)
     const ratio = contrastRatio(light[ink], background)
     expect(
       ratio,
@@ -163,11 +167,25 @@ describe('WCAG AA contrast of the token palette', () => {
   })
 
   it.each(STATE_PAIRS)('%s on %s clears AA in the dark theme', (ink, tint) => {
-    const background = composite(dark[tint], SURFACES.dark.surface)
+    const background = composite(dark[tint], SURFACES.dark.worst)
     const ratio = contrastRatio(dark[ink], background)
     expect(
       ratio,
       `${ink} ${dark[ink]} on ${tint} composited to ${background} is ${ratio.toFixed(2)}:1`,
+    ).toBeGreaterThanOrEqual(AA)
+  })
+
+  it.each([
+    ['--ink-muted', 'light'],
+    ['--ink-muted', 'dark'],
+  ] as const)('%s on --surface-soft clears AA (%s), the neutral chips', (token, theme) => {
+    const tokens = theme === 'light' ? light : dark
+    const surfaces = theme === 'light' ? SURFACES.light : SURFACES.dark
+    const background = composite(tokens['--surface-soft'], surfaces.worst)
+    const ratio = contrastRatio(tokens[token], background)
+    expect(
+      ratio,
+      `${token} on --surface-soft composited to ${background} is ${ratio.toFixed(2)}:1`,
     ).toBeGreaterThanOrEqual(AA)
   })
 
@@ -186,7 +204,7 @@ describe('WCAG AA contrast of the token palette', () => {
     // Series colours carry lines and markers rather than text, so 3:1 is the
     // bar for non-text contrast.
     for (let i = 1; i <= 6; i++) {
-      const ratio = contrastRatio(light[`--series-${i}`], SURFACES.light.canvas)
+      const ratio = contrastRatio(light[`--series-${i}`], SURFACES.light.worst)
       expect(ratio, `--series-${i} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(3)
     }
   })

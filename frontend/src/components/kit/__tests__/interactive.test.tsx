@@ -208,16 +208,17 @@ describe('CopyText', () => {
     const writeText = vi.fn().mockResolvedValue(undefined)
     Object.assign(navigator, { clipboard: { writeText } })
 
-    const errors = vi.spyOn(console, 'error').mockImplementation(() => {})
     const { unmount } = render(<CopyText value="abc" />)
     fireEvent.click(screen.getByRole('button'))
-    unmount()
-    await vi.advanceTimersByTimeAsync(2000)
+    await vi.waitFor(() => expect(vi.getTimerCount()).toBe(1))
 
-    // A surviving timer would fire setState on an unmounted component, which
-    // React reports through console.error.
-    expect(errors).not.toHaveBeenCalled()
-    errors.mockRestore()
+    unmount()
+
+    // React 18 removed the "setState on an unmounted component" warning, so
+    // spying on console.error would pass whether or not the timer is cleared.
+    // The pending-timer count is what actually discriminates: without the
+    // cleanup effect this stays at 1.
+    expect(vi.getTimerCount()).toBe(0)
   })
 
   it('survives a denied clipboard without interrupting the reader', () => {
@@ -272,8 +273,12 @@ describe('DetailsDrawer', () => {
   it('is a drawer, not a modal: nothing covers the table it came from', () => {
     // The point of inspecting a row is keeping your place in the data, so the
     // reimplementation dropped ui/dialog's always-on 80% black overlay.
+    // Radix emits no data-radix-dialog-overlay attribute, so querying for one
+    // would pass with or without an overlay. ui/dialog's overlay is a fixed
+    // inset-0 element tinted bg-black/80: that is what must be absent.
     renderSubject()
-    expect(document.querySelector('[data-radix-dialog-overlay]')).toBeNull()
+    expect(document.body.innerHTML).not.toMatch(/bg-black/)
+    expect(document.querySelector('.fixed.inset-0')).toBeNull()
     expect(screen.getByText('neighbours')).toBeTruthy()
   })
 

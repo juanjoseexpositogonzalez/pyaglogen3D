@@ -47,6 +47,25 @@ describe('StatusChip', () => {
     expect(new Set(rendered).size).toBe(CASES.length)
   })
 
+  it('renders a label for every status the backend can return', () => {
+    // Comparing two literal arrays declared in this file would prove nothing:
+    // the component has to be the one producing the label. Exhaustiveness of
+    // the union itself is enforced by Record<Status, string> at compile time,
+    // so this guards the rendering, not the typing.
+    const backendStates: SimulationStatus[] = [
+      'queued',
+      'running',
+      'completed',
+      'failed',
+      'cancelled',
+    ]
+    backendStates.forEach((state) => {
+      const { container, unmount } = render(<StatusChip status={state} />)
+      expect(container.textContent?.trim(), `${state} rendered no label`).toBeTruthy()
+      unmount()
+    })
+  })
+
   it('marks a running job with the shimmer, which the stylesheet disables under reduced motion', () => {
     const { container } = render(<StatusChip status="running" />)
     expect(container.querySelector('.shimmer')).not.toBeNull()

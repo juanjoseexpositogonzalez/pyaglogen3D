@@ -34,7 +34,7 @@ const STYLES: Record<Status, string> = {
   running: 'border-brand text-brand-strong bg-brand-soft',
   queued: 'border-line-strong text-ink-muted bg-surface-soft',
   failed: 'border-danger text-danger bg-danger-soft',
-  cancelled: 'border-line-strong text-ink-faint bg-surface-soft',
+  cancelled: 'border-line-strong text-ink-muted bg-surface-soft',
 }
 
 export interface StatusChipProps {

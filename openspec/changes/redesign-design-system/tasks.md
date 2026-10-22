@@ -329,6 +329,59 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L8 — Cuarta ronda: tres tests que no podían fallar, y la prueba de que ahora sí (2026-10-22)
+
+Una pasada fresca sobre `e60540d` demostró, **ejecutando**, que tres tests pasaban con el
+componente roto. Las tres causas eran hechos del entorno que yo desconocía:
+
+| test | por qué no podía fallar |
+| --- | --- |
+| `FilterBar` | `0 && <span>` evalúa a `0` y **React renderiza un `0` suelto**; `getByText('0')` lo encuentra igual con la guarda rota |
+| `DetailsDrawer` overlay | Radix **no emite nunca** `data-radix-dialog-overlay`; el selector daba `null` hubiera overlay o no |
+| `CopyText` | React 18.3.1 **eliminó** el warning de *setState tras desmontar*; el espía de `console.error` vigilaba algo que ya no ocurre |
+
+Reescritos para que discriminen: el hint debe estar **dentro de `.hint`**, no suelto en el DOM;
+la ausencia de overlay se comprueba por `bg-black` y `.fixed.inset-0`, que es lo que `ui/dialog`
+pinta; y el desmontaje se mide con `vi.getTimerCount()`, que sin la limpieza se queda en 1.
+
+**Y esta vez están falsificados, no supuestos.** Rompí cada componente a propósito y comprobé
+el rojo:
+
+```
+FilterBar con la guarda rota     -> FAIL
+CopyText sin limpieza del timer  -> FAIL
+--success con el token de L7     -> FAIL
+```
+
+Un test que nunca se ha visto fallar es una hipótesis, no una verificación. Debí hacerlo desde
+la primera ronda.
+
+**Regresión propia de L7, corregida.** `aria-describedby={subtitle ? undefined : undefined}`
+tenía las dos ramas idénticas y pisaba el id que genera Radix, dejando el subtítulo sin anunciar
+**cuando sí existía**. Ahora el atributo solo se suprime si no hay subtítulo.
+
+**El fondo equivocado, por segunda vez.** L7 midió contra `--canvas`, pero `--canvas-deep` y el
+stop final de `--shell-background` son más oscuros, y allí los chips daban 4.23–4.34. Los tokens
+se recalculan contra `#e7f0f0`, la superficie clara más oscura que declara la hoja:
+`--success #236c53`, `--danger #974652`, `--accent #1a777d`, `--ink-faint #5c6f73`, con sus
+tintes re-derivados. El test mide ahora contra esa superficie en ambos temas.
+
+**Un par que nadie medía:** los chips `queued` y `cancelled` usan tinta sobre `--surface-soft`,
+y `STATE_PAIRS` solo cubría success/warning/danger. En tema oscuro daban **3.96** sobre una fila
+con hover. `cancelled` pasa a `--ink-muted` (6.35) y el par entra en el test.
+
+**Un test que borré sin querer.** Al reescribir las aserciones vacuas, una sustitución por
+rangos se llevó por delante el bloque de *"renders a label for every status"*, y lo delató un
+import muerto de `SimulationStatus`. Repuesto.
+
+**Verificación.** Suite **64 ficheros / 723 tests verdes**. `type-check` **13**. Literales de
+producción **98**. `openspec validate --strict` y `show --deltas-only` correctos.
+
+**Anotado y no corregido, por estar fuera del alcance:** `frontend/tsconfig.tsbuildinfo` es un
+artefacto de build versionado en git que se ensucia con cada `type-check`; merece salir del
+control de versiones en un trabajo propio. Y `FraktalBatchImageDetail.test.tsx` (fichero ajeno)
+es intermitente bajo carga paralela: 47 verdes en aislamiento.
+
 ### L7 — Pasada fresca sobre el kit: la corrección de contraste estaba mal medida (2026-10-22)
 
 Una pasada fresca sobre `f64f666` confirmó 12 de las 15 correcciones y encontró que **tres
