@@ -2,8 +2,18 @@
 
 > Each scenario is tagged with its verification mechanism: `[test]` is automatable with the
 > repository's vitest + jsdom runner; `[manual]` is verified by hand with evidence recorded in
-> the change Log. jsdom loads no stylesheet and performs no layout or paint, so a scenario that
-> depends on resolved CSS, composited colour or geometry cannot be a DOM test.
+> the change Log.
+>
+> Three properties of that runner decide the split, all verified against jsdom 23.2.0, the
+> version pinned in `package-lock.json`: PostCSS does not run under vitest, so the stylesheet
+> imported by `layout.tsx` never reaches the test document; jsdom performs no layout or paint;
+> and `window.matchMedia` is **undefined**, with no stub in `src/test/setup.ts`. jsdom *does*
+> resolve custom properties that a test injects itself, which is why the chart-theme scenarios
+> are testable while the stylesheet ones are parsed as text.
+>
+> **Scope.** This capability governs the design system and the primitives this change creates.
+> Where a requirement names a consumer that this change does not deliver, its binding scope is
+> stated explicitly.
 
 ## ADDED Requirements
 
@@ -15,7 +25,9 @@ MUST derive its theme from those properties and MUST NOT restate any literal val
 
 No file **created by this change** — under `frontend/src/components/kit/`,
 `frontend/src/components/shell/`, or `frontend/src/lib/chart-theme.ts` — may contain a colour
-literal, with one documented exception: the SSR fallback ramp in `chart-theme.ts`.
+literal, with one documented exception: the SSR fallback ramp in `chart-theme.ts`. The same
+rule covers the other files this change creates: `frontend/src/lib/theme.ts` and
+`frontend/src/stores/useThemeStore.ts`.
 
 This requirement does NOT demand the removal of pre-existing colour literals elsewhere in
 `frontend/src`. Some of them are mandated by other capability contracts: the coordination
@@ -32,7 +44,7 @@ remaining literals belongs to the waves that rewrite their screens.
 
 #### Scenario: New files carry no colour literals `[test]`
 
-- GIVEN the files under `components/kit/`, `components/shell/` and `lib/chart-theme.ts`
+- GIVEN the files created by this change, as listed above
 - WHEN they are searched for `#[0-9a-fA-F]{3,8}` and `rgb(`
 - THEN the only matches are inside the documented SSR fallback ramp
 
@@ -104,12 +116,16 @@ may equal any series colour, and no series colour may be used to convey state.
 - WHEN the semantic values and the six series values are compared, in each theme block
 - THEN the two sets share no value
 
-#### Scenario: Accent-bright carries no state meaning `[test]`
+#### Scenario: Accent-bright carries no state meaning `[manual]`
 
 - GIVEN the files created by this change
-- WHEN uses of `--accent-bright` are inspected
+- WHEN uses of `--accent-bright` are reviewed by hand
 - THEN it appears only in focus, hover and active styling
 - AND never as the colour of a status chip, badge or callout
+- AND the reviewed list is recorded in the Log
+
+(Not mechanically decidable: telling "focus styling" from "state styling" is a judgement about
+intent, not a grep.)
 
 ---
 
@@ -184,9 +200,12 @@ the ramp of the theme in force.
 
 ### Requirement: R6. Numeric rendering is tabular and unit-separated
 
-Every numeric quantity MUST render in the monospace family with `font-variant-numeric:
-tabular-nums`, and its unit MUST be a separate adjacent element. A number and its unit MUST NOT
-be concatenated into one string.
+The `Num` primitive MUST render numeric quantities in the monospace family with
+`font-variant-numeric: tabular-nums`, and MUST keep the unit in a separate adjacent element.
+A number and its unit MUST NOT be concatenated into one string.
+
+**Binding scope.** This change delivers the primitive and its guarantee. Routing every existing
+screen's numbers through `Num` is the work of waves 2 and 3, which rewrite those screens.
 
 #### Scenario: Unit is a sibling element `[test]`
 
@@ -206,9 +225,12 @@ be concatenated into one string.
 
 ### Requirement: R7. Charts and spatial views expose their values as text
 
-Every chart panel and every spatial visualisation (3D viewer, topology graph, micrograph view)
-MUST offer a control that replaces the visual with a keyboard-navigable table of the data
-behind it, in place, keeping the surrounding panel chrome.
+The `ShowValues` primitive MUST offer a control that replaces a visual with a
+keyboard-navigable table of the data behind it, in place, keeping the surrounding panel chrome.
+
+**Binding scope.** This change delivers the primitive. Wiring it into every chart panel and
+every spatial visualisation (3D viewer, topology graph, micrograph view) binds the waves that
+rewrite those screens. No existing chart is wired to it by this change.
 
 #### Scenario: Toggle replaces the visual in place `[test]`
 
@@ -229,8 +251,12 @@ behind it, in place, keeping the surrounding panel chrome.
 
 ### Requirement: R8. Contrast and non-colour status
 
-Text MUST meet WCAG 2.1 AA contrast in both themes, including the small uppercase tracked
-labels on translucent surfaces. Status MUST never be conveyed by colour alone.
+The token palette MUST meet WCAG 2.1 AA contrast in both themes, including the small uppercase
+tracked labels on translucent surfaces, and the primitives this change delivers MUST NOT convey
+status by colour alone.
+
+**Binding scope.** The guarantee covers the tokens and the kit. Auditing the twelve existing
+screens for AA belongs to the waves that rewrite them.
 
 #### Scenario: Micro-labels clear AA `[manual]`
 
@@ -246,8 +272,13 @@ labels on translucent surfaces. Status MUST never be conveyed by colour alone.
 - WHEN it is rendered
 - THEN it contains a text label naming the state
 
-#### Scenario: Motion respects the user's preference `[test]`
+#### Scenario: Motion respects the user's preference `[manual]`
 
-- GIVEN `prefers-reduced-motion: reduce`
-- WHEN a running job's progress bar renders
-- THEN the shimmer class is not applied
+- GIVEN a browser with `prefers-reduced-motion: reduce`
+- WHEN a kit component with a shimmer renders
+- THEN no shimmer animation plays
+- AND the evidence is recorded in the Log
+
+(The shimmer is suppressed with the CSS `motion-reduce:` variant, so the class is in the DOM
+either way and jsdom evaluates no media query. `window.matchMedia` is undefined in jsdom 23.2.0
+and `src/test/setup.ts` provides no stub, so a DOM assertion here would be vacuous.)

@@ -153,10 +153,32 @@ La estimación de la spec-review sitúa la ola 1 en **~5.000 líneas**, dominada
 (la media real del repo es de 208 líneas por fichero de test). El repo tiene una skill propia
 cuyo disparador son los PRs de más de 400 líneas; 5.000 no es revisable.
 
-| PR | Tareas | Estimación | Por qué puede ir solo |
+El reparto exacto, con su verificación, vive en la tabla de cabecera de `tasks.md`. Aquí solo
+se enuncia qué deja cada PR en `develop`, que es lo que decide si puede ir solo.
+
+| PR | Tareas | Estimación | Qué deja en `develop` |
 | --- | --- | --- | --- |
-| **1a — Fundación** | T0, T1, T2, T4 | ~1.000 | Tokens, Tailwind y tema Plotly. No cambia nada visible porque todavía nadie los consume |
-| **1b — Kit, shell y tema** | T3, T5, T6, T7, T8 | ~4.000 | Si sigue siendo grande al llegar, T3 (el kit) sale como tercer PR: no tiene consumidores hasta la ola 2 |
+| **1a — Fundación** | T0, T1, T2, T4 | ~1.000 | Una aplicación **en tema claro, sin conmutador y sin shell** |
+| **1b — Kit, shell y tema** | T3, T5, T6, T8 | ~4.000 | El rediseño de chrome completo. Si sigue siendo grande al llegar, T3 (el kit) sale como tercer PR: no tiene consumidores hasta la ola 2 |
+
+**1a no es invisible, y decirlo sería falso.** Los 20 tokens de `globals.css:7-26` los consume
+toda la interfaz actual a través de `tailwind.config.ts` (`bg-background`, `text-foreground`,
+`bg-card/80` en `Header.tsx:43`), y T1.2 retira `body.app-background`, que usa
+`app/layout.tsx:20`. Entre 1a y 1b hay un estado entregado y visible para el usuario.
+
+De ahí dos consecuencias que el contrato acata:
+
+1. **T2.2 viaja con T6.1, no antes.** Anclar `darkMode` a `[data-theme="dark"]` mientras nadie
+   escribe ese atributo dejaría las 38 variantes `dark:` permanentemente inertes. Por eso T2.2
+   se entrega en **1b**, junto al script inline que escribe el atributo.
+2. **1a tiene su propia puerta de verificación**: T7.1, T7.2, T7.3, T7.6, T7.7 y la regresión
+   visual T7.8. Un PR que reescribe los tokens de toda la interfaz no puede mergearse sin
+   verificar.
+
+Y una tarea que existe precisamente porque "no editar páginas" no es lo mismo que "no
+afectarlas": **T7.8** recorre a mano las doce pantallas existentes bajo el shell y el tema
+nuevo. El sidebar les quita ancho útil y los tokens les cambian el fondo; `multi-aggregate-comparison.md:45`
+fija la rejilla de viewers por N y nadie más comprobaría que siga siendo usable.
 
 ## Evidencia de entrada
 

@@ -80,8 +80,13 @@ montado (contexto), de modo que no haya doble navegación en pantalla.
 ## D4. El kit convive con shadcn; no lo sustituye
 
 `components/ui/*` (shadcn) se queda. El kit nuevo vive en `components/kit/*` y se construye
-**sobre** las primitivas existentes donde tiene sentido (`DataTable` sobre `table`,
-`DetailsDrawer` sobre `dialog`).
+sobre las primitivas existentes **donde existen**: `DetailsDrawer` sobre `ui/dialog`, que s	ed
+est	ed .
+
+**`DataTable` es aut	ed nomo.** `components/ui/table.tsx` **no existe** en este repo 	ed shadcn est	ed 
+instalado parcialmente, sin `components.json` que permita generarlo, y `grep "ui/table"` da
+cero. Construir `DataTable` sobre 	ed l obligar	ed a a crear un fichero bajo `components/ui/`, que la
+lista cerrada de `tasks.md` no autoriza. Se escribe directamente en `kit/`.
 
 **Por qué.** Sustituir shadcn en la misma ola que se instalan los tokens duplicaría el riesgo
 sin ganar nada: las 12 pantallas aún no están reescritas y seguirían consumiendo `ui/*`. La
@@ -148,6 +153,25 @@ mono, `nm` en un span contiguo, más pequeño y apagado. Así las columnas aline
 hereda el ancho tabular.
 
 `Num` es la primitiva que lo impone; ninguna pantalla concatena número y unidad en una cadena.
+
+---
+
+## D8. La verificaci	ed n se reparte por lo que cada PR deja en `develop`
+
+La ola 1 sale en dos PRs, y 1a **no es invisible**: reescribe los 20 tokens de
+`globals.css:7-26` que consume toda la interfaz actual v	ed a `tailwind.config.ts`, y retira
+`body.app-background`, que usa `app/layout.tsx:20`. Entre 1a y 1b hay un estado entregado y
+visible: aplicaci	ed n clara, sin conmutador y sin shell.
+
+Por eso 1a lleva su propia puerta (T7.1	ed T7.3, T7.6	ed T7.8) en vez de delegar toda la
+verificaci	ed n a 1b, y por eso **T2.2 viaja en 1b**: anclar `darkMode` a `[data-theme="dark"]`
+mientras nadie escribe ese atributo dejar	ed a las 38 variantes `dark:` inertes entre ambos
+merges.
+
+Y por eso existe **T7.8**: "no editar p	ed ginas" no es lo mismo que "no afectarlas". El sidebar
+les quita ancho 	ed til a las doce pantallas y los tokens les cambian el fondo;
+`multi-aggregate-comparison.md:45` fija la rejilla de viewers por N y nadie m	ed s comprobar	ed a
+que siga siendo usable.
 
 ---
 

@@ -2,7 +2,15 @@
 
 > Each scenario is tagged with its verification mechanism: `[test]` is automatable with the
 > repository's vitest + jsdom runner; `[manual]` is verified by hand with evidence recorded in
-> the change Log. jsdom evaluates no media query and performs no layout.
+> the change Log. jsdom evaluates no media query, performs no layout, and has no
+> `window.matchMedia`.
+>
+> **Shell scenarios are component-level, never route-level.** The shell is mounted in
+> `app/layout.tsx`, a Server Component that imports `next/font/google`; no test in this
+> repository renders it, and a route-level assertion such as "no sidebar on `/auth/login`"
+> would pass vacuously because the layout is never in the tree. Every scenario below renders
+> `<AppShell>` directly with `next/navigation` mocked, the pattern already used in
+> `app/projects/[id]/fraktal/batch/__tests__/page.test.tsx`.
 
 ## ADDED Requirements
 
@@ -11,9 +19,10 @@
 The application chrome (sidebar, top bar and page frame) MUST be mounted a single time in
 `frontend/src/app/layout.tsx` and MUST NOT be imported by individual pages.
 
-#### Scenario: Shell wraps every application route `[test]`
+#### Scenario: Shell renders for application paths `[test]`
 
-- GIVEN any route under `/dashboard` or `/projects`
+- GIVEN `<AppShell>` rendered with `usePathname` returning `/dashboard` or a `/projects/...`
+  path
 - WHEN it renders
 - THEN the sidebar and top bar are present exactly once in the document
 
@@ -35,17 +44,19 @@ away; showing a sidebar, a breadcrumb and a user menu over a sign-in form would 
 which assume a dark background. It MUST be re-expressed in tokens so it stays legible once the
 light theme is the default.
 
-#### Scenario: No shell on the sign-in route `[test]`
+#### Scenario: No shell on the sign-in path `[test]`
 
-- GIVEN the route `/auth/login`
+- GIVEN `<AppShell>` rendered with `usePathname` returning `/auth/login`
 - WHEN it renders
 - THEN no sidebar and no top bar are present
+- AND its children still render
 
-#### Scenario: No shell on the public landing route `[test]`
+#### Scenario: No shell on the public landing path `[test]`
 
-- GIVEN the route `/`
+- GIVEN `<AppShell>` rendered with `usePathname` returning `/`
 - WHEN it renders
 - THEN no sidebar and no top bar are present
+- AND its children still render
 
 #### Scenario: The auth layout is legible in both themes `[test]`
 
@@ -147,9 +158,12 @@ a frame no wider than 1440px.
 
 #### Scenario: Icon-only entries keep an accessible name `[test]`
 
-- GIVEN the sidebar rendered in its collapsed form
+- GIVEN the sidebar rendered with its collapsed state forced through a prop
 - WHEN the accessibility tree is inspected
 - THEN every entry exposes its destination as an accessible name
+
+(The collapse must be reachable as component state, not only through a media query, or this
+cannot be asserted: jsdom evaluates no media query.)
 
 #### Scenario: The drawer traps focus `[test]`
 

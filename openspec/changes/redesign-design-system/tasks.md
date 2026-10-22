@@ -3,7 +3,19 @@
 > No se escribe código hasta que exista `approval.md`. Esta lista se actualiza al avanzar; el
 > Log del final recoge la evidencia.
 >
-> **Entrega en dos PRs:** 1a = T0, T1, T2, T4 (~1.000 líneas). 1b = T3, T5, T6, T7, T8 (~4.000).
+> **Entrega en dos PRs.** El reparto se enuncia **aquí y solo aquí**; T8.1 y `proposal.md` se
+> remiten a esta tabla en vez de repetirla.
+>
+> | PR | Tareas | Verificación |
+> | --- | --- | --- |
+> | **1a** | T0, T1, T2.1, T2.3, T4 | T7.1, T7.2, T7.3, T7.6, T7.7, T7.8 |
+> | **1b** | **T2.2**, T3, T5, T6, T8 | T7 completo |
+>
+> T7.1–T7.3 y T7.6–T7.8 corren en **ambos** PRs: 1a reescribe los tokens que consume toda la
+> interfaz actual, así que necesita su propia puerta.
+>
+> **T2.2 viaja en 1b, no en 1a**: anclar `darkMode` a `[data-theme="dark"]` mientras nadie
+> escribe ese atributo dejaría las 38 variantes `dark:` inertes entre ambos merges. Va con T6.1.
 
 ## T0 — Línea base
 
@@ -28,15 +40,18 @@
       `--series-1…6`. Tema claro en `:root`, oscuro en `[data-theme="dark"]`.
 - [ ] T1.2 Retirar `body.app-background` y su overlay. **No borrar** `/pyAgloGen3DBNG.png`: lo
       reutiliza la ola 2 como hero de autenticación.
-- [ ] T1.3 Puente shadcn: re-derivar de los tokens nuevos los **21 tokens que ya existen** en
-      `globals.css:7-26`, y **añadir** `--chart-1…5`, que hoy **no existen** ni en `globals.css`
-      ni en `tailwind.config.ts`, derivados de `--series-1…5` por si un componente shadcn
-      futuro los espera.
+- [ ] T1.3 Puente shadcn: re-derivar de los tokens nuevos las **20 declaraciones que ya
+      existen** bajo `:root` en `globals.css:7-26` (19 de color más `--radius`), y **añadir**
+      `--chart-1…5`, que hoy **no existen** ni en `globals.css` ni en `tailwind.config.ts`,
+      derivados de `--series-1…5` por si un componente shadcn futuro los espera.
 - [ ] T1.4 Escala tipográfica y clases de micro-tipografía (`.label-xs`, `.eyebrow`, `.hint`).
 - [ ] T1.5 Tests automatizables de R1 y R2: paridad de tokens entre temas y disyunción
-      semánticos/series, ambos por **parseo estático de `globals.css` como texto**. jsdom no
-      carga la hoja de estilos, así que `getComputedStyle` devolvería cadena vacía para toda
-      custom property.
+      semánticos/series, ambos por **parseo estático de `globals.css` como texto**.
+      El motivo es que **PostCSS no corre bajo vitest**, así que la hoja importada por
+      `layout.tsx` nunca llega al documento de prueba — no que jsdom sea incapaz de resolver
+      custom properties. Lo es: una sonda sobre jsdom 23.2.0 (la versión fijada en
+      `package-lock.json`) devuelve el valor correcto tanto tras `setProperty` como desde un
+      `<style>` inyectado. Por eso T4.4 sí puede inyectarlas.
 - [ ] T1.6 `app/auth/layout.tsx` re-expresado en tokens. Hoy fija `text-white` y
       `text-gray-400` (líneas 16-17), que con el tema claro por defecto dejan el título de
       login blanco sobre fondo claro. Es una página, pero **no está reservada por ningún
@@ -60,13 +75,15 @@
       hermano, nunca concatenados.
 - [ ] T3.2 `Panel`, `VisualPanel`, `PageHeader`, `DetailList`, `Callout`, `EmptyState`.
 - [ ] T3.3 `MetricCard` con tono, delta, barra de progreso y línea de detalle.
-- [ ] T3.4 `DataTable` sobre `ui/table`: cabecera sticky, columnas numéricas a la derecha,
-      sin cebra.
+- [ ] T3.4 `DataTable` **autónomo en `kit/`**, sin dependencia de `ui/table`: cabecera sticky,
+      columnas numéricas a la derecha, sin cebra. `components/ui/table.tsx` **no existe** en
+      este repo (shadcn está instalado parcialmente, sin `components.json`), y crearlo caería
+      fuera de la lista cerrada de ficheros editables.
 - [ ] T3.5 `StatusChip`, `QualityBadge`, `StatusDot` — cada uno con etiqueta textual; el estado
       nunca se distingue solo por color. Conviven con los homónimos de `components/common/*`,
       que quedan deprecados sin cambiar ningún import existente (D4).
 - [ ] T3.6 `SegmentedControl`, `FilterBar`, `DisclosurePanel`, `DetailsDrawer` sobre
-      `ui/dialog`.
+      `ui/dialog` — este sí existe (`components/ui/dialog.tsx`), verificado.
 - [ ] T3.7 `ShowValues` — el conmutador de alternativa textual (D6). Entra ahora aunque sus
       consumidores lleguen en las olas 2 y 3.
 - [ ] T3.8 Tests de cada primitiva, incluidos los escenarios `[test]` de accesibilidad de R7
@@ -95,10 +112,12 @@
 - [ ] T5.2 `components/shell/TopBar.tsx`: breadcrumb, conmutador de tema, notificaciones,
       usuario.
 - [ ] T5.3 `components/shell/AppShell.tsx` y montaje **único** en `app/layout.tsx` (D3).
-- [ ] T5.3b El shell **no** se monta en `/` ni en `/auth/*` (route group o guard por
-      `usePathname`). `middleware.ts:13-16` solo protege `/dashboard` y `/projects`, y las
-      rutas de auth redirigen fuera al usuario autenticado: un sidebar con breadcrumb y menú de
-      usuario sobre la pantalla de login sería incoherente.
+- [ ] T5.3b El shell **no** se monta en `/` ni en `/auth/*`. Se implementa como **guard por
+      `usePathname` dentro de `AppShell`**, no como route group, para que sea testable a nivel
+      de componente (ver T5.6). `frontend/middleware.ts:12` solo protege `/dashboard` y
+      `/projects`, y `:15` redirige fuera de `/auth/login` y `/auth/register` al usuario
+      autenticado: un sidebar con breadcrumb y menú de usuario sobre la pantalla de login sería
+      incoherente.
 - [ ] T5.3c `AppShellContext` montado en `app/providers.tsx`, para que `Header` sepa que debe
       renderizar `null` (D9).
 - [ ] T5.4 `Header` deprecado: renderiza `null` bajo el shell. **Ninguna página de producto se
@@ -107,16 +126,29 @@
 - [ ] T5.5 Responsive: iconos a <1440px, drawer con trampa de foco a <900px, frame a 1440px.
       Solo la trampa de foco y el nombre accesible son testables; los breakpoints son media
       queries y van a T7.4 manual.
-- [ ] T5.6 Tests del shell: scope de proyecto, acceso de IA, rol admin, `aria-current`, y
-      ausencia de shell en `/` y en `/auth/login`.
+- [ ] T5.6 Tests del shell **a nivel de componente**, renderizando `<AppShell>` con
+      `next/navigation` mockeado, como ya hace
+      `app/projects/[id]/fraktal/batch/__tests__/page.test.tsx:14-32`. **No se renderiza
+      `app/layout.tsx`**: es Server Component e importa `next/font/google`, que ningún test del
+      repo monta hoy (`grep "app/layout\|next/font" --include=*.test.tsx` → 0). Un test de ruta
+      pasaría en verde vacuamente, porque el layout nunca estaría en el árbol. Cubre: scope de
+      proyecto, acceso de IA, rol admin, `aria-current`, y ausencia de shell con `usePathname`
+      devolviendo `/` y `/auth/login`.
 
 ## T6 — Tema
 
 - [ ] T6.0 `useThemeStore` (zustand + `persist`, consistente con `viewerStore`) montado en
       `app/providers.tsx`. Valor inicial leído de `document.documentElement.dataset.theme` para
       no romper la hidratación: `app/layout.tsx` es Server Component (D9).
-- [ ] T6.1 Script inline de resolución previa al primer paint.
-- [ ] T6.2 Persistencia y precedencia sobre `prefers-color-scheme`.
+- [ ] T6.1 Script inline de resolución previa al primer paint. **Lee la misma clave y el mismo
+      formato que escribe `persist`**: zustand guarda `{"state":{…},"version":N}` bajo su
+      `name` (precedente: `viewerStore.ts:173` → `'viewer-settings'`). Un
+      `localStorage.getItem('theme')` ingenuo rompería el escenario de "sin flash" en silencio.
+      La clave se fija en esta tarea y se documenta en el Log.
+- [ ] T6.2 Persistencia y precedencia sobre `prefers-color-scheme`. **`window.matchMedia` no
+      existe en jsdom 23.2.0** y `src/test/setup.ts` no lo stubea (verificado): el resolutor se
+      escribe como función pura importable desde `src/lib/theme.ts`, que recibe la preferencia
+      guardada y la del sistema como argumentos. Así T6.3 no depende de `matchMedia`.
 - [ ] T6.3 Tests de los escenarios `[test]` de R2: la función resolutora escribe el `data-theme`
       correcto en cada combinación de preferencia guardada y preferencia del sistema. El
       escenario de "sin flash" es `[manual]` y va a T7.4.
@@ -142,12 +174,17 @@
       `frontend/` y `openspec/`.
 - [ ] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
       verde: la paleta canónica de `contacts-graph-viz` no se ha tocado.
+- [ ] T7.8 **Regresión visual de las 17 páginas existentes**, que esta ola no edita pero sí
+      afecta: el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
+      Recorrido manual de las doce pantallas en ambos temas a 1440px, con capturas en el Log.
+      Atención explícita a `multi-aggregate-comparison.md:45`, que fija la rejilla de viewers
+      por N: comprobar que sigue siendo usable con el sidebar montado. Corre en **ambos** PRs.
 
 ## T8 — Entrega y limpieza
 
-- [ ] T8.1 **Dos PRs encadenados** a `develop`, etiqueta `type:feat` y su issue de Jira: **1a**
-      (T0, T1, T2, T4) y **1b** (T3, T5, T6, T7). Un único PR de ~5.000 líneas no es revisable
-      y el repo tiene una skill cuyo disparador son los 400.
+- [ ] T8.1 **Dos PRs encadenados** a `develop`, etiqueta `type:feat` y su issue de Jira, con el
+      reparto de la tabla de cabecera de este fichero. Un único PR de ~5.000 líneas no es
+      revisable y el repo tiene una skill cuyo disparador son los 400.
 - [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
       `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros
       en `openspec/specs/`, nunca diferidos.
@@ -164,14 +201,31 @@
 
 Cualquier fichero fuera de esta lista es una desviación del contrato:
 
+**Editables existentes:**
+
 - `frontend/src/app/{layout,providers}.tsx` y `frontend/src/app/globals.css`
 - `frontend/src/app/auth/layout.tsx` (solo T1.6)
 - `frontend/tailwind.config.ts`
 - `frontend/src/components/layout/Header.tsx` (solo para que renderice `null`)
 - `frontend/src/components/topology/NetworkCanvas.tsx` (solo T6.4)
-- todo lo **nuevo** bajo `frontend/src/components/kit/`, `frontend/src/components/shell/`,
-  `frontend/src/lib/chart-theme.ts`, `frontend/src/stores/useThemeStore.ts`, y sus tests
+- `frontend/src/components/topology/__tests__/NetworkCanvas.test.tsx` (solo el caso de T6.4)
+
+**Nuevos autorizados:**
+
+- todo bajo `frontend/src/components/kit/` y `frontend/src/components/shell/`
+- `frontend/src/lib/chart-theme.ts` y `frontend/src/lib/theme.ts` (el resolutor puro de T6.2)
+- `frontend/src/stores/useThemeStore.ts`
+- los tests que las tareas exigen y que no caen bajo `kit/` ni `shell/`:
+  `frontend/src/app/__tests__/globals-tokens.test.ts` (T1.5),
+  `frontend/__tests__/tailwind-config.test.ts` (T2.3),
+  `frontend/src/lib/__tests__/theme.test.ts` (T6.3),
+  `frontend/src/components/layout/__tests__/Header.test.tsx` (T5.4 / R3 — el directorio no
+  existe todavía),
+  `frontend/src/app/auth/__tests__/layout.test.tsx` (R2 S3)
 - `openspec/changes/redesign-design-system/**`
+
+Cualquier otro fichero, nuevo o existente, es una desviación del contrato. En particular **no**
+se crea nada bajo `frontend/src/components/ui/`.
 
 ## Deuda conocida que este change NO cierra
 
