@@ -1,7 +1,8 @@
 # Tasks: sintering-reaches-engine
 
-> Estado del contrato: **spec-review pendiente** (agente fresco) y `approval.md` de la persona.
-> **No se escribe código hasta que exista `approval.md`.**
+> Estado del contrato: **spec-review pendiente** (agente fresco) y aprobación de la persona.
+> Desde el 2026-10-22 (issue #82) el gate es una **issue de GitHub con la etiqueta
+> `status:approved`**, no un `approval.md`. **No se escribe código hasta que exista.**
 >
 > Rama: `feature/sintering-reaches-engine` (base `develop` @ `c3ff055`).
 > Mapa de origen: `openspec/changes/_explore-only/distribution-config-surface.md` §7.1.
@@ -22,12 +23,14 @@
 - [x] T0.11 Corrección r4 (este commit)
 - [x] T0.12 spec-review r4 → `CORRECTIONS REQUIRED (1 blocker, 4 majors)`
 - [x] T0.13 Decisión de la persona: `base_parameters` **gana siempre**, inversión declarada
+      — **revocada** por el recorte de 14d0b13: no hay ninguna inversión y el orden de hoy se
+      conserva tal cual
 - [x] T0.14 Corrección r5 (este commit)
 - [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
 - [x] T0.16 Corrección r6 (este commit)
 - [ ] T0.17 spec-review r6 en agente fresco
 - [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
-- [ ] T0.19 `approval.md` — **sólo la persona aprueba**
+- [ ] T0.19 Issue con `status:approved` — **sólo la persona aprueba**
 - [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
@@ -48,15 +51,19 @@
       `base_parameters`, luego el campo de estudio. La tarea es **validar** los ajustes sin
       reordenarlos; si al implementar aparece la tentación de invertir algo, es señal de que
       pertenece al contrato de seguimiento
-- [ ] T1.5a Verificar con un test que el orden **no cambia**: el mismo payload que hoy resuelve
-      a un ganador debe seguir resolviendo al mismo después de este change
-- [ ] T1.5b Rechazar el barrido de un **dict** por `theoretical_extremes` (superficie 7, R3.12)
+- [ ] T1.5a Verificar con un test de regresión que el orden **no cambia**: el mismo payload que
+      hoy resuelve a un ganador debe seguir resolviendo al mismo. No lo respalda ningún
+      escenario de la delta, y es deliberado: la delta dice que la precedencia no cambia, así
+      que lo que se protege es la ausencia de cambio
+- [ ] T1.5b Superficie 7: un dict **bien formado** barrido por `theoretical_extremes` funciona
+      hoy y **debe seguir funcionando** (R3.9); lo que se rechaza es la forma `{mode, …}`
+      malformada, como en cualquier otra superficie
 - [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
       sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
       desconocidas, por clave
 - [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
-      `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos) y **R3.10**
-      (la precedencia de hoy, sin cambios)
+      `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos, incluido el dict
+      bien formado que se acepta) y **R3.10** (el helper no inventa ningún default)
 - [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
 - [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
       sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y
@@ -67,45 +74,43 @@
 - [ ] T2.1 `apply_sintering_config` (`utils.py:236`): lanzar `ValueError` ante dict no vacío que
       incumpla T1.1, incluido `distribution_type` desconocido; `None`/`{}` siguen devolviendo
       los parámetros intactos
-- [ ] T2.2 Test **R3.11** (el helper lanza)
+- [ ] T2.2 Test **R3.10** (el helper no inventa default: lanza en vez de rellenar)
 - [ ] T2.3 **Test existente que esta tarea pone en rojo y se retira** (declaración completa):
       - `backend/tests/test_utils.py:336-344` `test_default_values_used` — afirma que
         `apply_sintering_config({"distribution_type":"uniform"})` rellena `0.85`/`0.95` por
         defecto. Es la forma codificada del defecto D2; R3 exige que lance
-- [ ] T2.3b Tests **R7.3** (el cambio de la media `normal` no lo ampara R7) y **R7.4** (el
-      carve-out, incluido el payload `value` que la canónica documenta)
+- [ ] T2.3b Test **R7.3**, el carve-out: la compatibilidad hacia atrás no ampara el
+      sinterizado malformado ni el cambio de la media `normal`, incluido el payload `value`
+      que la canónica documenta
 - [ ] T2.4 Regresión declarada: `test_none_config_returns_unchanged` y
       `test_empty_config_returns_unchanged` (`backend/tests/test_utils.py:319-334`) **siguen
       verdes sin cambios**
 
 ## T3 — El invariante del hijo y el engine (D5, R11)
 
-- [ ] T3.0 **Unificar los dos sitios de creación**: encaminar el bloque inline de extremos de
-      sinterizado (`views.py:1869-1906`) por `create_simulation`, con un parámetro explícito
-      "el sinterizado de este hijo ya está decidido" para que conserve su coeficiente. Esos
-      hijos pasan a llevar `seed_type`, cerrando la violación de `cc-tunable-aggregation` R17
-- [ ] T3.0a Implementar el **invariante de R11** en ese constructor único: claves dentro del
-      conjunto que el worker lee, campos del tipo declarado presentes y en rango (vacío si el
-      hijo no lleva ninguna), y exactamente las del dict cuando un dict aplica
-- [ ] T3.0b La limpieza de `sintering_*` heredadas la hace el **constructor único**, no el
-      serializer: sólo él sabe si un dict aplica a ese hijo. Un hijo de caso límite hereda los
+- [ ] T3.0 **No unificar los sitios de creación.** El bloque inline de extremos
+      (`views.py:1869-1906`) se queda como está: ya escribe `sintering_type` y `sintering_coeff`
+      planos vía `generate_sintering_extreme_cases` (`utils.py:227-231`), que son claves que el
+      worker lee (`tasks.py:1592-1598`). Que esos hijos se creen sin `seed_type` viola
+      `cc-tunable-aggregation` R17, pero **no** es uno de los cuatro defectos: va al contrato de
+      seguimiento
+- [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
+      claves dentro del conjunto que el worker lee, campos del tipo declarado presentes y en
+      rango (vacío si el hijo no lleva ninguna), y exactamente las del dict cuando un dict aplica
+- [ ] T3.0b La limpieza de `sintering_*` heredadas la hace `apply_sintering_config`, no el
+      serializer: es quien sabe si un dict aplica a ese hijo. Un hijo de caso límite hereda los
       planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
       (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
       ningún dict
-- [ ] T3.0c0 El constructor **recibe** el ajuste de sinterizado ya resuelto; no lo deduce de
-      los parámetros fusionados
-- [ ] T3.0d El constructor retira `sintering_config` de los parámetros del hijo en **los dos**
-      modos, y retira las `sintering_*` heredadas de niveles más débiles cuando él fija el
-      sinterizado del hijo
+- [ ] T3.0d Retirar `sintering_config` de los parámetros del hijo, y retirar las `sintering_*`
+      heredadas cuando un dict fija el sinterizado de ese hijo
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
       también `views.py:1766,1871` y `tests/test_utils.py:369`, pero ese último sólo afirma la
       constante `SINTERING_EXTREMES` y sigue verde; `include_limiting_cases` aparece en tests
       sólo en `tests/test_serializers.py:412,431`, sin sinterizado)
-- [ ] T3.0c Tests **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
-      misma expansión) y **R11.7** (los extremos de sinterizado pasan por el constructor,
-      conservan su coeficiente y llevan `seed_type`)
-
+- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+      misma expansión)
 - [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
       tipo `normal`; retirar `sintering_mean`, que ningún consumidor de producción lee
 - [ ] T3.2 **Test existente que esta tarea pone en rojo y se reescribe** (declaración completa):
@@ -197,9 +202,8 @@
 
 - [ ] T8.1 judgment-day (revisión adversarial dual, agentes frescos en sesión nueva)
 - [ ] T8.2 Fix rounds hasta APPROVED
-- [ ] T8.2b Al archivar, unificar el estilo de encabezado: la delta usa
-      `### Requirement: R3 — …` y la canónica usa `### R3 — …`. Copiarla tal cual dejaría dos
-      estilos en el mismo fichero
+- [x] T8.2b Estilo de encabezado: ya no hay dos estilos. `bb54fae` (PR #86) migró la canónica a
+      `### Requirement: R3 — …`, el mismo que usa la delta, así que copiarla es directo
 - [ ] T8.3 Archive + sincronización canónica de `batch-cc-tunable-parameter-parity` (bloques
       MODIFIED/ADDED completos, nunca diferidos) + `state.yaml`
 - [ ] T8.4 PR a `develop` con etiqueta `type:bug` enlazando el issue AGLO

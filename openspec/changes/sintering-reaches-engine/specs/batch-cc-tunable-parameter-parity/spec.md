@@ -16,13 +16,13 @@
 > study's coefficient is real, but it is a different defect — the name lies — and it gets its
 > own contract.
 >
-> ## Archive dependency
+> ## Archive dependency: resolved
 >
 > `openspec validate --strict` and `openspec show` require the canonical spec to live at
-> `openspec/specs/<capability>/spec.md` with `### Requirement:` headers. Today it is a flat
-> file with `### R3 — …` headers, so the tooling sees no canonical spec at all. **This delta
-> cannot be archived until that migration lands** (its own chore). The headers below use the
-> canonical requirement text with the `Requirement:` prefix the tooling expects.
+> `openspec/specs/<capability>/spec.md` with `### Requirement:` headers. That migration landed
+> in `bb54fae` (PR #86): the canonical spec now has that layout and the tooling reads its ten
+> requirements. **This delta is no longer blocked on it.** The headers below use the canonical
+> requirement text with the `Requirement:` prefix the tooling expects.
 >
 > ## Inventory of changes versus the canonical
 >
@@ -34,21 +34,25 @@
 >    (`serializers.py:374`). The implementation is canonized. Consequence: the payload the
 >    canonical itself documents, `{distribution_type:"fixed", value:0.9}`, returns 201 today and
 >    the child runs with **no sintering** because nothing reads `value`; it now returns 400.
-> 2. Canonical R3 bounds with `> 0`; the implementation bounds `0.5 <= … <= 1.0`
+> 2. Canonical R3 states the precedence as `grid > study > default`; this delta describes
+>    today's three dict levels, `grid > base_parameters > study field`, so the
+>    `base_parameters` level is new wording versus the canonical. It is a description of what
+>    already happens, not a reorder: see the precedence paragraph below.
+> 3. Canonical R3 bounds with `> 0`; the implementation bounds `0.5 <= … <= 1.0`
 >    (`serializers.py:373-396`). The stricter implemented bound is canonized.
-> 3. Canonical R3 allows `std >= 0` for `normal`; this delta requires `0 < std <= 0.2`. A normal
+> 4. Canonical R3 allows `std >= 0` for `normal`; this delta requires `0 < std <= 0.2`. A normal
 >    with zero spread is a fixed in disguise.
-> 4. **Declared relaxation**: canonical R3 `uniform` requires `min < max`; this delta accepts
+> 5. **Declared relaxation**: canonical R3 `uniform` requires `min < max`; this delta accepts
 >    `min <= max`, canonizing `serializers.py:386`, which already accepts `min == max`.
-> 5. Canonical R3 says the system MUST accept the key with no algorithm condition; this delta
+> 6. Canonical R3 says the system MUST accept the key with no algorithm condition; this delta
 >    restricts it to algorithms whose engine invocation receives sintering parameters (R11).
-> 6. Canonical R10 mandates the four dropdown options with no algorithm condition; this delta
+> 7. Canonical R10 mandates the four dropdown options with no algorithm condition; this delta
 >    conditions **only the sintering row**. The other three rows are restated with the
 >    canonical's exact labels.
-> 7. Canonical R10 is already not met for `limiting`: the dropdown returns early
+> 8. Canonical R10 is already not met for `limiting`: the dropdown returns early
 >    (`BatchSimulationForm.tsx:289-297`) and offers none of the four. The delta records the
 >    existing behaviour.
-> 8. Canonical R7 promises identical behaviour when the grid carries none of the four added
+> 9. Canonical R7 promises identical behaviour when the grid carries none of the four added
 >    keys. Flat `sintering_*` keys are such a case and are now validated, so R7 gets an explicit
 >    carve-out.
 >
@@ -109,11 +113,16 @@ For the swept surfaces 5 and 6 the required-keys check applies to the child's **
 projection** (base parameters plus the swept value), since the rest of the shape may legitimately
 live in `base_parameters`; range and unknown-key checks apply per key, where they are written.
 
-**Precedence is unchanged by this contract.** Today any dict setting wins over any flat key
-regardless of where it came from, because `views.py:1804` pops `sintering_config` from the merged
-parameters and `apply_sintering_config` then overwrites the flat keys; among dicts the order is
-grid, then `base_parameters`, then the study field. This contract validates those settings and
-does not reorder them.
+**Precedence is unchanged by this contract.** On the path through `create_simulation`, any dict
+setting wins over any flat key regardless of where it came from, because `views.py:1804` pops
+`sintering_config` from the merged parameters and `apply_sintering_config` then overwrites the
+flat keys; among dicts the order is grid, then `base_parameters`, then the study field.
+
+One path is exempt and MUST stay that way: the sintering-extremes block (`views.py:1869-1906`)
+runs only when a study dict exists, yet deliberately does not call `apply_sintering_config`, so
+each child keeps the flat `sintering_coeff` that `generate_sintering_extreme_cases` wrote for
+it. A dict exists there and the flat key still wins. This contract validates these settings and
+reorders none of them.
 
 **Explicit rejection, never a silent default.** The system MUST NOT accept an incomplete or
 unrecognised sintering setting and then apply defaults: the result would be a simulation whose

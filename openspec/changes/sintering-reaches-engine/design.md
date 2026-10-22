@@ -5,31 +5,30 @@
 > **Nomenclatura**: `D2`, `D5`, `D5b`, `D6` son los **defectos** (ver `proposal.md` y el mapa);
 > `DD1`…`DD5` son las **decisiones de diseño** de este documento.
 
-## DD0 — Un solo constructor, y el invariante en él
+## DD0 — El invariante del hijo, sin unificar constructores
 
-**Decisión.** Primero **unificar**, luego enunciar. `perform_create` crea hijos en dos sitios:
-`views.py:1826`, dentro de `create_simulation`, y `views.py:1889`, un bloque inline para los
-extremos de sinterizado que duplica el bucle (nombre, semilla, `delay`, `try/except`), se salta
-`apply_sintering_config` y omite `seed_type`. Ese bloque se encamina por el mismo constructor,
-que recibe un modo explícito **"el sinterizado de este hijo ya está decidido"**. Sobre esa base,
-el invariante de R11 se enuncia y se exige ahí.
+**Decisión.** `perform_create` crea hijos en dos sitios: `views.py:1826`, dentro de
+`create_simulation`, y `views.py:1889`, un bloque inline para los extremos de sinterizado que
+duplica el bucle (nombre, semilla, `delay`, `try/except`) y se salta `apply_sintering_config`.
+Una versión anterior de este diseño los unificaba. Ya no.
 
-**Por qué unificar en vez de acotar.** Acotar el invariante a los hijos de `create_simulation`
-habría sido honesto, pero concede que cuatro hijos por estudio con sinterizado quedan fuera de
-la garantía — y son justo los hijos *de sinterizado*. Unificar hace cierta la premisa en vez de
-suponerla, y cierra de paso una violación existente de `cc-tunable-aggregation` R17: esos hijos
-se crean hoy sin `seed_type`.
+**Por qué no hace falta unificar.** El bloque inline ya escribe el sinterizado donde el engine
+lo lee: `generate_sintering_extreme_cases` (`utils.py:227-231`) pone `sintering_type = "fixed"`
+y `sintering_coeff` **planos**, dos de las cinco claves del lector del worker
+(`tasks.py:1592-1598`). Por esa ruta el sinterizado llega correctamente hoy, así que ninguno de
+los cuatro defectos en alcance la necesita. Unificar habría sido un refactor con riesgo propio
+—el bloque lleva el comentario *"Don't apply the study's sintering config for extreme cases
+since they define their own sintering"* (`views.py:1875-1876`), y encaminarlo sin cuidado le
+aplicaría el dict de estudio y borraría su coeficiente— a cambio de nada que este contrato deba.
 
-**Por qué el modo explícito.** El bloque lleva el comentario *"Don't apply the study's sintering
-config for extreme cases since they define their own sintering"* (`views.py:1875-1876`). Sin ese
-modo, encaminarlo por el constructor le aplicaría el dict de estudio y borraría su coeficiente:
-exactamente el colapso que hoy sufren los extremos teóricos, cuyos nombres mienten.
+**Lo que sí queda abierto ahí, y no es nuestro.** Ese `Simulation.objects.create` no pasa
+`seed_type`, lo que viola `cc-tunable-aggregation` R17. Es un defecto real, pero no es ninguno
+de los cuatro, y adoptarlo era lo que hacía crecer este contrato. Va al contrato de seguimiento.
 
 **Por qué el invariante y no sólo la lista.** Tres rondas refutaron tres enumeraciones (tres
 superficies, cinco, una sexta). Una lista de entradas sólo garantiza lo que la lista contiene;
-el invariante de salida garantiza también lo que no supe enumerar. Y la premisa de que existía
-un constructor único la di por **"verificada"** sin probarla: de ahí que ahora la exija el
-contrato en vez de asumirla.
+el invariante de salida garantiza también lo que no supe enumerar.
+
 
 **Qué sigue haciendo la lista.** Dar un 400 útil antes de escribir nada (R12). Un fallo del
 invariante en el chokepoint es un error de programación, no de usuario: si el usuario pudo
@@ -81,10 +80,10 @@ reordenarla: D2 y D5b se cierran validando la forma, D5 mandando la media donde 
 lee, y D6 acotando los algoritmos. Reordenarla es un contrato propio, con sus propios
 escenarios y su propia aprobación.
 
-**Consecuencia para el constructor.** Como el orden no cambia, el constructor **no resuelve
-precedencia**: recibe el ajuste que el llamante ya fusionó, tal y como se fusiona hoy, y hace
-cumplir el invariante de qué claves puede escribir en el hijo. No adivina de dónde vino cada
-clave porque no necesita saberlo.
+**Consecuencia para la escritura.** Como el orden no cambia, nadie **resuelve precedencia**:
+el ajuste llega ya fusionado, tal y como se fusiona hoy, y lo que el contrato exige es el
+invariante de qué claves acaban en el hijo. No hay que adivinar de dónde vino cada clave
+porque no hace falta saberlo.
 
 **Dónde está escrita la historia.** Las tres inversiones, quién las encontró y en qué ronda
 están en el Log de `tasks.md`. Aquí sólo queda lo que el diseño necesita saber: hoy
@@ -94,12 +93,12 @@ contrato.
 
 Cuando un dict de dominio aplica, las claves de sinterizado del hijo son
 exactamente las que ese dict produce: cualquier `sintering_*` heredado de `base_parameters` no
-sobrevive. **Esa limpieza la hace el constructor único**, que es el que sabe si un dict aplica a
+sobrevive. **Esa limpieza la hace `apply_sintering_config`**, que es el que sabe si un dict aplica a
 ese hijo; no el serializer. El motivo exacto: un hijo de caso límite hereda las claves planas de
 `base_parameters` (`utils.py:185-203`) y **sí** puede recibir un dict, el de estudio, en
 `views.py:1808`. Limpiar en el serializer le quitaría sus planos aunque ningún dict aplique, y
-ese caso existe. La condición correcta es "cuando un dict aplica a este hijo", y sólo el
-constructor la conoce. Eso cierra también el paso del `sintering_mean`
+ese caso existe. La condición correcta es "cuando un dict aplica a este hijo", y es
+`apply_sintering_config` quien la conoce. Eso cierra también el paso del `sintering_mean`
 legado.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en

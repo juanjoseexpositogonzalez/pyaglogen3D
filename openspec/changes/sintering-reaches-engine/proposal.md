@@ -44,13 +44,18 @@ bucle, se salta `apply_sintering_config` y omite `seed_type`. El único sitio qu
 era, precisamente, el de sinterizado — y este mismo documento lo describía dos secciones más
 abajo, como una nota sobre `seed_type`.
 
-**Decisión de la persona: unificar los dos sitios** en vez de debilitar la promesa. R11 exige
-**un solo constructor** para todo hijo de la expansión, con un modo explícito "el sinterizado
-de este hijo ya está decidido" para que un extremo conserve su coeficiente. Así la premisa pasa
-a ser cierta en vez de supuesta, y de paso se cierra la violación de `cc-tunable-aggregation`
-R17 (esos hijos se crean hoy sin `seed_type`).
+**Y no hace falta unificar los dos sitios.** El bloque inline ya escribe el sinterizado donde
+el engine lo lee: `generate_sintering_extreme_cases` (`utils.py:227-231`) pone
+`sintering_type = "fixed"` y `sintering_coeff` **planos**, que son exactamente dos de las cinco
+claves del lector del worker (`tasks.py:1592-1598`). Por esa ruta el sinterizado llega bien
+hoy, así que ninguno de los cuatro defectos en alcance la necesita.
 
-Sobre esa base, la garantía se enuncia como **invariante del hijo en el constructor único** — sus claves de sinterizado están dentro del conjunto que el worker lee y forman una
+Sí hay un defecto en ese bloque —`Simulation.objects.create` no pasa `seed_type`, violando
+`cc-tunable-aggregation` R17—, pero **no es uno de los cuatro**, y adoptarlo era lo que hacía
+crecer este contrato. Va al contrato de seguimiento.
+
+Sobre esa base, la garantía se enuncia como **invariante del hijo** — sus claves de sinterizado
+están dentro del conjunto que el worker lee y forman una
 forma completa y en rango, venga de donde venga. La lista de superficies se conserva, pero con
 el papel que le corresponde: decir dónde hay que devolver un 400 útil antes de escribir nada
 (R3 y R12), no sostener la promesa.
@@ -98,8 +103,8 @@ dict  en base + dict de estudio -> gana base       (0.60)
 
 La primera versión de este contrato afirmaba el orden `grid > base_parameters > estudio` sin
 más, lo que era una **segunda inversión sin declarar** colada en la misma frase que corregía
-la primera. Decisión de la persona: `base_parameters` **gana siempre**, en ambas formas, y el
-cambio se declara.
+la primera. Tras el recorte no hay ninguna inversión: el orden de hoy se describe tal cual y
+no se toca.
 
 Endurecer el helper sin validar antes **todas ellas** convertiría un fallo silencioso en un fallo
 peor: `perform_create` (`views.py:1750`) no tiene `try/except`, el proyecto no define
@@ -132,10 +137,11 @@ Explícitamente, y cada uno con su contrato en la cadena:
 - **D7** (casos límite + entradas dict → 500 preexistente, alcanzable por API) →
   `distribution-grid-wiring` o carril corto propio.
 - **D4** y la polidispersidad real → changes de seguimiento.
-- `cc-tunable-aggregation` **R17**: este change no reubica el helper `create_simulation()` que
-  R17 nombra ni modifica el texto de la capability — sí cambia su firma y le encamina un
-  segundo llamante, y hace que empiece a cumplirse para los hijos de extremos de sinterizado.
-  (El ancla de R17, `views.py:1761-1802`, ya está obsoleta hoy: el helper vive en `1784-1845`.)
+- `cc-tunable-aggregation` **R17**: fuera de alcance. Este change no reubica el helper
+  `create_simulation()` que R17 nombra, no cambia su firma y no le encamina un segundo llamante.
+  Que los hijos de extremos se creen hoy sin `seed_type` es una violación real de R17, pero no
+  es ninguno de los cuatro defectos: va al contrato de seguimiento. (El ancla de R17,
+  `views.py:1761-1802`, ya está obsoleta hoy: el helper vive en `1784-1845`.)
 - `DistributionSelector.tsx`: su default de `uniform` emite `min == max`, que **es válido** para
   el sinterizado (`min <= max`, ambos dentro de `[0.5, 1.0]`). No se toca aquí.
 
@@ -146,13 +152,8 @@ Explícitamente, y cada uno con su contrato en la cadena:
 - `batch-cc-tunable-parameter-parity`: **MODIFIED** R3 (formas dict y plana, siete superficies
   de entrada, la precedencia de hoy descrita y no cambiada, rechazo explícito), **R7** (carve-out: la compatibilidad
   hacia atrás no ampara sinterizado malformado, ni el cambio de la media `normal`) y R10
-  **sólo en su fila de sinterizado**; **ADDED** R11 (un solo constructor, invariante del hijo y
-  alcance por algoritmo) y R12 (integridad de la expansión). Delta en `specs/`.
-
-El change **sí** toca ahora el bloque de extremos de sinterizado (`views.py:1869-1906`): al
-unificarlo con el constructor común, esos hijos pasan a llevar `seed_type`, lo que cierra una
-violación existente de `cc-tunable-aggregation` R17. Esa capability no se modifica: se empieza
-a cumplir.
+  **sólo en su fila de sinterizado**; **ADDED** R11 (invariante del hijo y alcance por
+  algoritmo) y R12 (integridad de la expansión). Delta en `specs/`.
 
 El restatement de R10 conserva literalmente lo que el canónico dice de las otras tres opciones:
 `distribution-grid-wiring` las reescribirá sobre el canónico ya archivado por este change.
@@ -183,10 +184,6 @@ Cambios de comportamiento adicionales, declarados:
 - **El payload `fixed` que documenta la propia canónica pasa a dar 400.**
   `{distribution_type:"fixed", value:0.9}` devuelve 201 hoy y el hijo corre **sin sinterizar**,
   porque nadie lee `value`. Canonizar `coefficient` lo convierte en un rechazo visible.
-- **Hijos de extremos de sinterizado.** Al unificarlos con el constructor común pasan a llevar
-  `seed_type` en el campo de modelo y dejan de llevarlo dentro de `parameters`. Para
-  `tunable_cc` el worker lee el campo de modelo (`tasks.py:1676`), así que esos hijos pasan a
-  correr con el tipo de semilla declarado en vez de con `monomers` por defecto.
 
 Efecto secundario deseable: el export CSV (`views.py:2267-2271`) escribe
 `Sintering_Type`/`Sintering_Coeff` desde `sim.parameters`; en estudios `normal` hoy imprime el
