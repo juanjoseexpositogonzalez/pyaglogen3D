@@ -37,7 +37,8 @@ el invariante de salida garantiza también lo que no supe enumerar.
 
 
 **Qué sigue haciendo la lista.** Dar un 400 útil antes de escribir nada (R12). Un fallo del
-invariante donde se escriben los parámetros del hijo es un error de programación, no de usuario: si el usuario pudo
+invariante donde se escriben los parámetros del hijo es un error de programación, no de
+usuario: si el usuario pudo
 provocarlo, es que falta una superficie en la capa de entrada, y ese es el síntoma que hay que
 arreglar.
 
@@ -113,10 +114,15 @@ el pop de `views.py:1804`, así que no hay nada que añadir. En el bloque de ext
 **`generate_sintering_extreme_cases`** (`utils.py:227-231`), que es quien construye esos
 parámetros. No `apply_sintering_config`: ese bloque no lo llama a propósito
 (`views.py:1875-1876`) y no debe llamarlo, porque le aplicaría el dict de estudio y le borraría
-su coeficiente, rompiendo el segundo **AND** de R11.7. Tampoco el serializer: un hijo de caso
+su coeficiente, rompiendo el **AND** de R11.7, que exige que cada hijo conserve el plano de
+su propio extremo. Tampoco el serializer: un hijo de caso
 límite hereda las claves planas de `base_parameters` (`utils.py:185-203`) y limpiar ahí se las
-quitaría aunque ningún dict aplique, y ese caso existe. Eso cierra también el paso del `sintering_mean`
-legado.
+quitaría aunque ningún dict aplique, y ese caso existe.
+
+El `sintering_mean` legado **no** lo cierra ninguna de estas dos limpiezas: lo cierra la
+validación de entrada (R3), que lo rechaza con un 400 en las siete superficies. Dicho antes
+aquí como si lo cerrase la limpieza, que era cierto cuando ésta retiraba toda `sintering_*`
+heredada — la regla que el recorte eliminó.
 
 **Dict vacío y `None`.** Significan "este estudio no configura sinterizado" y se **aceptan** en
 el campo de estudio y en `base_parameters`. En una entrada de `parameter_grid` se **rechazan**:

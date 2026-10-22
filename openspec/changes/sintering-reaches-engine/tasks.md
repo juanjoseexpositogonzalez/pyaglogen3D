@@ -110,10 +110,6 @@
       (`views.py:1804`), así que esos hijos almacenan un `sintering_config` que **contradice** el
       coeficiente al que corren. Retirarlo (R11.7). Verificado con probe: base con
       `coefficient: 0.7` produce un hijo que corre a `0.5` y guarda `0.7`
-- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
-      conserva el plano de su propio extremo
-- [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
-      **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
 - [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
       claves **contenidas** en el conjunto que el worker lee, y campos del tipo declarado
       presentes y en rango (vacío si el hijo no lleva ninguna). «Contenidas», no «exactamente
@@ -128,20 +124,25 @@
       dict de estudio y le borraría su coeficiente. Tampoco el serializer: un hijo de caso
       límite hereda los planos de `base_parameters` (`utils.py:185-203`) y limpiar ahí se los
       quitaría aunque no aplique ningún dict
-- [ ] T3.0d Retirar `sintering_config` de los parámetros del hijo — eso **sí** lo exige R11,
-      que prohíbe escribir claves de sinterizado fuera del conjunto del worker. No se retiran
-      las `sintering_*` planas heredadas: están dentro del conjunto y ningún requisito vigente
-      pide quitarlas
+- [ ] T3.0d Alcance de esa retirada (la orden está en T3.0, aquí sólo su límite): lo que se
+      retira es `sintering_config`, porque R11 prohíbe escribir claves de sinterizado fuera del
+      conjunto del worker. **No** se retiran las `sintering_*` planas heredadas: están dentro
+      del conjunto y ningún requisito vigente pide quitarlas
+- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
+      conserva el plano de su propio extremo
+- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+      misma expansión)
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
       también `views.py:1766,1871` y, en `tests/test_utils.py`, la clase
       `TestGenerateSinteringExtremeCases` (`:15,234,240,252,255,267`) más `:369`. Esa clase sí
       cubre la función que T3.0 pasa a modificar: comprobado que sus tres tests usan
       `base_params` **sin** `sintering_config`, así que retirarlo los deja verdes;
-      `include_limiting_cases` aparece en tests sólo en `tests/test_serializers.py:412,431`,
-      sin sinterizado)
-- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
-      misma expansión)
+      `include_limiting_cases` aparece en tests en `tests/test_serializers.py:412,431` y en
+      `tests/test_models.py:132,138,186`, ninguno con sinterizado; los de `test_models` crean el
+      estudio por ORM (`:126`) sin pasar por `perform_create`, así que no pueden ponerse en rojo)
+- [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
+      **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
 - [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
       tipo `normal`; retirar `sintering_mean`, que ningún consumidor de producción lee
 - [ ] T3.2 **Test existente que esta tarea pone en rojo y se reescribe** (declaración completa):
