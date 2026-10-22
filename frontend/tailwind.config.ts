@@ -4,11 +4,14 @@ import type { Config } from 'tailwindcss'
  * Every value here derives from the custom properties declared in
  * `src/app/globals.css`. No literal colour may appear in this file.
  *
- * `darkMode` is deliberately NOT declared here yet. Anchoring it to the
- * `data-theme` attribute is T2.2, which the contract places in PR 1b together
- * with T6.1, the task that actually writes the attribute. See tasks.md.
+ * `darkMode` is anchored to the `data-theme` attribute rather than left at its
+ * default of `media`. The codebase carries 38 `dark:` utilities; under `media`
+ * they would follow the operating system and paint dark surfaces onto the new
+ * light canvas. Anchored, they stay dormant until the theme script writes the
+ * attribute. Dormant beats broken.
  */
 const config: Config = {
+  darkMode: ['selector', '[data-theme="dark"]'],
   content: [
     './src/pages/**/*.{js,ts,jsx,tsx,mdx}',
     './src/components/**/*.{js,ts,jsx,tsx,mdx}',

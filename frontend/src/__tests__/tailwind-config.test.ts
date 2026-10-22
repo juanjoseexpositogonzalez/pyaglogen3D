@@ -44,6 +44,13 @@ describe('tailwind config', () => {
     })
   })
 
+  it('anchors darkMode to the data-theme attribute, not to media', () => {
+    // Undeclared means `media` in Tailwind 3.x, under which the 38 dark:
+    // utilities in src/ follow the operating system and contradict an
+    // explicit user choice. Covers design-system-foundation R2-S1.
+    expect(code).toMatch(/darkMode:\s*\[\s*'selector'\s*,\s*'\[data-theme="dark"\]'\s*\]/)
+  })
+
   it('keeps theme.extend so the default palette survives', () => {
     // hemisphere-grid-viz fixes dot states by Tailwind palette name
     // (gray-400, blue-500, blue-700); replacing `theme` would delete them.

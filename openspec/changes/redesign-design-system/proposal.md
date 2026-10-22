@@ -212,9 +212,10 @@ toda la interfaz actual a través de `tailwind.config.ts` (`bg-background`, `tex
 
 De ahí dos consecuencias que el contrato acata:
 
-1. **T2.2 viaja con T6.1, no antes.** Anclar `darkMode` a `[data-theme="dark"]` mientras nadie
-   escribe ese atributo dejaría las 38 variantes `dark:` permanentemente inertes. Por eso T2.2
-   se entrega en **1b**, junto al script inline que escribe el atributo.
+1. **T2.2 se entrega en 1a** (enmienda del 2026-10-22, autorizada por la persona; el contrato
+   aprobado la situaba en 1b). Dejar `darkMode` sin declarar hace que resuelva a `media`, con lo
+   que las 38 variantes `dark:` se activan por el sistema operativo y pintan superficies oscuras
+   sobre el lienzo claro. Anclarlo las deja inertes hasta T6.1. Entre roto y dormido, dormido.
 2. **1a tiene su propia puerta de verificación**: T7.1, T7.2, T7.3, T7.6, T7.7 y la regresión
    visual T7.8. Un PR que reescribe los tokens de toda la interfaz no puede mergearse sin
    verificar.

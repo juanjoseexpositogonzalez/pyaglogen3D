@@ -8,19 +8,24 @@
 >
 > | PR | Tareas | Verificación |
 > | --- | --- | --- |
-> | **1a** | T0, T1, T2.1, T2.3a, T4 | T7.1, T7.2, T7.3, T7.6, T7.7, T7.8 |
-> | **1b** | **T2.2**, T2.3b, T3, T5, T6, T8 | T7 completo |
+> | **1a** | T0, T1, **T2 completo**, T4 | T7.1, T7.2, T7.3, T7.6, T7.7, T7.8 |
+> | **1b** | T3, T5, T6, T8 | T7 completo |
 >
 > T7.1–T7.3 y T7.6–T7.8 corren en **ambos** PRs: 1a reescribe los tokens que consume toda la
 > interfaz actual, así que necesita su propia puerta.
 >
-> **T2.2 viaja en 1b, no en 1a**: anclar `darkMode` a `[data-theme="dark"]` mientras nadie
-> escribe ese atributo dejaría las 38 variantes `dark:` inertes entre ambos merges. Va con T6.1.
+> **ENMIENDA (2026-10-22, autorizada por la persona): T2.2 pasa de 1b a 1a.**
 >
-> **Su cara B, que T7.8 en 1a debe vigilar:** entre el merge de 1a y el de 1b, `darkMode` sigue
-> sin declarar, es decir `media`. Un usuario con sistema operativo oscuro verá esas variantes
-> pintando superficies oscuras sobre el lienzo claro, en nueve ficheros. Solo se caza
-> recorriendo T7.8 en una máquina con el sistema en oscuro.
+> El contrato aprobado la situaba en 1b, razonando que anclar `darkMode` antes de que nadie
+> escriba `data-theme` dejaría las 38 variantes `dark:` inertes. Al implementar T1 quedó claro
+> que la alternativa es peor, y la comparación es la que decide:
+>
+> | | Qué ve un usuario con sistema oscuro tras mergear 1a |
+> | --- | --- |
+> | **No anclar** (contrato original) | `darkMode` resuelve a `media`: las 38 variantes **se activan por el sistema operativo** y pintan superficies oscuras sobre el lienzo claro nuevo. Visiblemente roto |
+> | **Anclar en 1a** (enmienda) | Las variantes quedan **inertes** hasta que T6.1 escriba el atributo. Dormidas, no rotas |
+>
+> Entre roto y dormido, dormido. El coste es una línea y T2.3b viaja con ella.
 
 ## T0 — Línea base
 
@@ -79,12 +84,12 @@
       `fontVariantNumeric` tabular. **Se mantiene `theme.extend`**, no `theme`: la paleta por
       defecto de Tailwind no se elimina, porque `hemisphere-grid-viz.md:67-73` fija estados por
       nombre (`gray-400`, `blue-500`, `blue-700`).
-- [ ] T2.2 **`darkMode: ['selector', '[data-theme="dark"]']`.** Hoy no se declara, lo que en
-      Tailwind 3.4 significa `media`; sin esto las **38 variantes `dark:`** vivas en `src/`
-      seguirían a `prefers-color-scheme` y contradirían la elección explícita del usuario (D9).
+- [ ] T2.2 **(1a por enmienda)** `darkMode: ['selector', '[data-theme="dark"]']`. Sin esto las
+      **38 variantes `dark:`** vivas en `src/` siguen a `prefers-color-scheme` y contradicen la
+      elección explícita del usuario (D9). Quedan inertes hasta T6.1, que es el estado
+      preferible entre los dos posibles.
 - [ ] T2.3a **(1a)** Test: `tailwind.config.ts` no contiene literal hexadecimal ni `rgb(`.
-- [ ] T2.3b **(1b, con T2.2)** Test: `darkMode` está anclado a `[data-theme]`. Va con T2.2
-      porque es la tarea que lo instala; dejarlo en 1a mergearía ese PR con un test en rojo.
+- [ ] T2.3b **(1a, con T2.2)** Test: `darkMode` está anclado a `[data-theme]`.
 
 ## T3 — Kit de primitivas
 
