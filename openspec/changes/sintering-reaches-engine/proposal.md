@@ -30,8 +30,8 @@ La primera versión de este contrato decía "tres superficies". La segunda decí
 dos eran falsas, y la segunda revisión encontró una **sexta**:
 `limiting_cases_config.theoretical_extremes` es un dict del usuario cuyas claves se escriben
 **literalmente** en los parámetros de cada hijo (`utils.py:199-203`) y cuyo contenido no mira
-ningún validador. Verificado: `{"sintering_coeff":[42.0], "sintering_mean":[0.9]}` → 201, y el
-hijo se lleva ambas.
+ningún validador. Verificado: `{"sintering_coeff":[42.0], "sintering_mean":[0.9]}` → 201, con un
+hijo por clave: uno se lleva `sintering_coeff=42.0` y otro `sintering_mean=0.9`.
 
 **Enumerar superficies ha fallado tres veces, así que deja de ser la fuente de la garantía.**
 Una lista sólo vale lo que valga la imaginación del siguiente lector.
@@ -171,10 +171,17 @@ parámetros dicen.** Consta en el comentario de entrega de Jira.
 
 Cambios de comportamiento adicionales, declarados:
 
-- **Precedencia, dos inversiones.** Un valor barrido para un hijo pasa a ganar al dict de
-  estudio — hoy los hijos `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente
-  del estudio, con el nombre mintiendo. Y las claves **planas** de `base_parameters` pasan a
-  ganar al campo de estudio, que hoy las pisa.
+- **Precedencia, tres inversiones.** Hoy **cualquier dict gana a cualquier clave plana**, venga
+  de donde venga: `views.py:1804` popea `sintering_config` del dict ya fusionado y
+  `apply_sintering_config` sobrescribe los planos. El eje dict/plano domina al de niveles. Tras
+  este change manda el nivel: (1) un valor barrido o extremo para un hijo gana al dict de
+  estudio — hoy los `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del
+  estudio, con el nombre mintiendo; (2) las claves planas de `base_parameters` ganan al campo de
+  estudio, que hoy las pisa; (3) un valor decidido para el hijo gana al dict de
+  `base_parameters`, que hoy lo pisa.
+- **El payload `fixed` que documenta la propia canónica pasa a dar 400.**
+  `{distribution_type:"fixed", value:0.9}` devuelve 201 hoy y el hijo corre **sin sinterizar**,
+  porque nadie lee `value`. Canonizar `coefficient` lo convierte en un rechazo visible.
 - **Hijos de extremos de sinterizado.** Al unificarlos con el constructor común pasan a llevar
   `seed_type` en el campo de modelo y dejan de llevarlo dentro de `parameters`. Para
   `tunable_cc` el worker lee el campo de modelo (`tasks.py:1676`), así que esos hijos pasan a

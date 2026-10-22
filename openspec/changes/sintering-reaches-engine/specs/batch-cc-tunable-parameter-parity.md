@@ -54,7 +54,7 @@
 >    must be rejected under R3. R7 is MODIFIED below with an explicit carve-out; without it the
 >    archived capability would hold two requirements demanding opposite outcomes.
 >
-> **Canonical guarantees retained but easy to lose in a restatement:**
+> **Deliberate behaviour changes:**
 >
 > 9. Canonical R3's array MUST ("MUST accept `parameter_grid.sintering_config` **as an array**",
 >    enforced at `serializers.py:472-477`) is restated below, reworded and relocated into the
@@ -83,6 +83,18 @@
 > 13. **R10 for `limiting`.** The dropdown returns early for that algorithm
 >     (`BatchSimulationForm.tsx:289-297`) and offers **none** of the four canonical options. The
 >     canonical mandates all four unconditionally; the delta blesses the existing behaviour.
+> 14. **Third precedence change: a value decided for a child beats a `base_parameters` dict.**
+>     Today any dict wins over any flat key regardless of level, because `views.py:1804` pops
+>     `sintering_config` from the merged dict and `apply_sintering_config` then overwrites the
+>     flat keys. Verified: `base_parameters.sintering_config` fixed 0.60 plus a grid sweep
+>     `{"sintering_coeff":[0.70]}` runs at **0.60**; the same with a theoretical extreme runs at
+>     0.60 too. Under R3's levels both must run at 0.70 / at the extreme's value. The dict/flat
+>     axis stops dominating the level axis.
+> 15. **The canonical's own `fixed` payload now 400s.** `{distribution_type:"fixed", value:0.9}`
+>     is the shape canonical R3 documents; today it returns 201 and the child runs at
+>     `sintering_coeff = 1.0` because nothing reads `value`. Item 1 canonizes `coefficient`, so
+>     that payload becomes a 400. Declared because it is a visible rejection, not only a
+>     rewording.
 >
 > **Retired or renumbered scenarios:** canonical **R7.2** ("Historical ParametricStudies remain
 > valid" — the read path) is **kept verbatim under its own number**; the new scenarios are
@@ -161,13 +173,21 @@ dict there is rejected; a dict belongs in `parameter_grid.sintering_config`.
 Stated by level, strongest first. Within a level, a dict setting beats a flat one.
 
 1. **Sintering decided for that specific child**: a `parameter_grid.sintering_config` entry or
-   a flat grid sweep for that combination, a theoretical-extreme `sintering_*` value, or a
-   sintering-extreme case.
+   a flat grid sweep for that combination, a **range-boundary** value taken from a swept
+   sintering key, a theoretical-extreme `sintering_*` value, or a sintering-extreme case.
 2. `base_parameters` (its `sintering_config` dict, else its flat keys).
 3. The study-level `sintering_config` field.
 4. Default: no sintering.
 
-Two **behaviour changes** are declared here:
+**Provenance is required.** Today everything reaches the child builder already merged
+(`views.py:1849-1851`), and the merged dict cannot distinguish a flat key that came from
+`base_parameters` from one swept for that child: `base_parameters = {sintering_config: D,
+sintering_coeff: 0.8}` and `base_parameters = {sintering_config: D}` with a grid sweep
+`{"sintering_coeff":[0.8]}` produce the same dict and require opposite outcomes. Therefore the
+caller that knows the provenance MUST resolve the precedence and pass the **winning setting**
+explicitly to the builder; the builder MUST NOT infer it from the merged parameters.
+
+Three **behaviour changes** are declared here:
 
 - Level 1 beating level 3: today the study dict overrides a swept value, so a child named
   `theoretical: sintering_coeff=0.5` runs at the study's coefficient. After this change the
@@ -175,6 +195,9 @@ Two **behaviour changes** are declared here:
 - Level 2 beating level 3 **in its flat form**: today `base_parameters`'s `sintering_config`
   dict beats the study field, but its flat `sintering_*` keys do not — `apply_sintering_config`
   overwrites them (`views.py:1808`). After this change `base_parameters` wins in both shapes.
+- Level 1 beating level 2 **in its dict form**: today a `base_parameters.sintering_config` dict
+  overwrites a value swept or chosen for that child. After this change the per-child value
+  wins. This is the general case of the rule that the dict/flat axis no longer dominates.
 
 When a dict setting applies to a child, that child's sintering keys MUST be exactly the ones
 that dict produces: no `sintering_*` key inherited from a weaker level may survive (R11).
@@ -269,6 +292,9 @@ These settings are only valid for the algorithms R11 permits.
 - **AND** when a dict setting applies, no `sintering_*` key inherited from a weaker level survives into the child
 - **AND** a `limiting` child named `theoretical: sintering_coeff=0.5` runs at **0.5**, not at the study coefficient
 - **AND** with study `sintering_config` fixed 0.95 and `base_parameters = {"sintering_type":"fixed","sintering_coeff":0.60}`, the child runs at **0.60**, not 0.95 (today it runs at 0.95)
+- **AND** with `base_parameters.sintering_config` fixed 0.60 and `parameter_grid = {"sintering_coeff":[0.70]}`, the child runs at **0.70**, not 0.60 (today it runs at 0.60)
+- **AND** with `base_parameters.sintering_config` fixed 0.60 and a theoretical extreme `sintering_coeff = 0.5`, that child runs at **0.5**, not 0.60
+- **AND** with study `sintering_config` fixed 0.95 and `parameter_grid = {"sintering_coeff":[0.6, 0.9]}` plus `include_limiting_cases`, the children named `boundary_min: sintering_coeff=0.6` and `boundary_max: sintering_coeff=0.9` run at **0.6** and **0.9**, not at 0.95 (today both run at 0.95)
 
 #### Scenario R3.11 — The helper invents no default
 
@@ -294,7 +320,8 @@ When `parameter_grid` includes none of the four keys added by the parity change
 be identical to before that change.
 
 **Carve-out.** That guarantee does not extend to malformed or out-of-range **sintering**
-settings. A grid or `base_parameters` carrying flat `sintering_*` keys contains none of the four
+settings, nor to the `fixed` payload the canonical itself documents with a `value` key: nothing
+reads `value` today, so such a study silently runs without sintering, and R3 now rejects it. A grid or `base_parameters` carrying flat `sintering_*` keys contains none of the four
 new keys, yet is subject to R3 and MUST be rejected when it violates the flat shape table. This
 is a deliberate behaviour change: such a payload is accepted today and reaches the engine
 unvalidated.
@@ -326,6 +353,7 @@ unvalidated.
 - **GIVEN** `parameter_grid = {n_particles: [100], "sintering_coeff": [42.0]}`
 - **WHEN** the serializer validates
 - **THEN** 400, even though the grid contains none of the four added keys
+- **AND** `sintering_config = {distribution_type:"fixed", value:0.9}` also yields 400, although that is the payload canonical R3 documents: today it returns 201 and the child runs at `sintering_coeff = 1.0`
 
 ---
 
@@ -412,6 +440,12 @@ duplicates the loop, skips `apply_sintering_config` and omits `seed_type`. That 
 routed through the same builder, which MUST accept an explicit "this child's sintering is
 already decided" mode so a sintering-extreme child keeps its own coefficient (level 1 of R3's
 precedence).
+
+The builder MUST receive the **resolved** sintering setting from its caller, which is the only
+place that knows each value's provenance (base parameters, grid combination, range boundary,
+theoretical extreme, sintering extreme). The builder MUST NOT re-derive precedence from the
+merged parameters: two different payloads produce the same merged dict and require opposite
+outcomes.
 
 In **both** modes the builder MUST remove the `sintering_config` key from the child's stored
 parameters — it is a study-level instruction, not an engine parameter, and today a
@@ -534,7 +568,7 @@ database rollback.
 
 **Known remaining half-creation path, not closed here.** A `parameter_grid.sintering_config`
 with two or more entries — which R3 requires accepting — combined with `include_limiting_cases`
-still crashes mid-expansion: `generate_limiting_cases` sorts dict values (`utils.py:176`),
+still crashes mid-expansion: `generate_limiting_cases` sorts dict values (`utils.py:180`),
 raising `TypeError` after the study row and some children exist. That defect predates this
 change and is closed by the chained contract `distribution-grid-wiring`. This requirement
 governs rejection of **invalid** settings, not every way the expansion can fail.

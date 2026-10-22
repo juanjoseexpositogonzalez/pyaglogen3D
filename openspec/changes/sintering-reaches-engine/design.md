@@ -48,7 +48,7 @@ arreglar.
    `normal`→`mean`,`std`);
 3. ninguna clave fuera de `{distribution_type, coefficient, min, max, mean, std}`.
 
-Se invoca sobre las **seis** superficies de R3: las tres de clave `sintering_config` (grid,
+Se invoca sobre las **siete** superficies de R3: las tres de clave `sintering_config` (grid,
 campo de estudio y `base_parameters`), los **escalares planos** en `base_parameters` y en
 `parameter_grid`, y los de `limiting_cases_config.theoretical_extremes`. Hoy las cuatro
 últimas no las valida nadie. La séptima es la misma de los extremos teóricos cuando lo que se
@@ -72,7 +72,19 @@ y exigir el tipo convertiría cada uno de ellos en un 400.
 teórico, extremo de sinterizado) gana a `base_parameters`, que gana al campo de estudio, que
 gana al default; dentro de un nivel, un dict gana a un plano.
 
-Eso son **dos** cambios de comportamiento, no uno. El segundo me lo encontró la r4: hoy
+Eso son **tres** cambios de comportamiento, no uno. El tercero lo encontré yo con una probe
+mientras corría la r5, y la r5 lo confirmó: hoy **cualquier dict gana a cualquier plano**, así
+que un dict en `base_parameters` pisa un valor barrido para ese hijo. El eje dict/plano domina
+al de niveles, y mi modelo suponía lo contrario.
+
+**Consecuencia de diseño, no cosmética.** Si manda el nivel, el constructor **no puede
+resolverlo solo**: `base_parameters = {sintering_config: D, sintering_coeff: 0.8}` y
+`base_parameters = {sintering_config: D}` con un barrido `{"sintering_coeff":[0.8]}` llegan como
+el mismo dict fusionado y exigen resultados opuestos. Por eso R11 obliga a que **el llamante
+resuelva la precedencia y pase el ajuste ganador**: él sí sabe la procedencia. El constructor
+hace cumplir el invariante; no adivina de dónde vino cada clave.
+
+Lo anterior: El segundo me lo encontró la r4: hoy
 `base_parameters` gana al estudio sólo en forma **dict**; en forma **plana**
 `apply_sintering_config` lo pisa (`views.py:1808`). Lo metí en la misma frase con la que
 corregía el primero, sin declararlo y sin escenario que lo detectara — R3.10 sólo ejercitaba el

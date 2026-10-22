@@ -23,10 +23,12 @@
 - [x] T0.12 spec-review r4 → `CORRECTIONS REQUIRED (1 blocker, 4 majors)`
 - [x] T0.13 Decisión de la persona: `base_parameters` **gana siempre**, inversión declarada
 - [x] T0.14 Corrección r5 (este commit)
-- [ ] T0.15 spec-review r5 en agente fresco
-- [ ] T0.16 Correcciones hasta ronda sin hallazgos semánticos
-- [ ] T0.17 `approval.md` — **sólo la persona aprueba**
-- [ ] T0.18 Crear issue AGLO y pasarla a En curso (transición 21)
+- [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
+- [x] T0.16 Corrección r6 (este commit)
+- [ ] T0.17 spec-review r6 en agente fresco
+- [ ] T0.18 Correcciones hasta ronda sin hallazgos semánticos
+- [ ] T0.19 `approval.md` — **sólo la persona aprueba**
+- [ ] T0.20 Crear issue AGLO y pasarla a En curso (transición 21)
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
@@ -41,10 +43,14 @@
       `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
       5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
       `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
-- [ ] T1.5 Precedencia **por niveles** (R3): lo decidido para ese hijo > `base_parameters` >
-      campo de estudio > default; dentro de un nivel, el dict gana al plano. **Cambio de
-      comportamiento**: hoy el dict de estudio pisa el valor barrido, y los hijos
-      `theoretical: sintering_coeff=0.5…1.0` corren todos al coeficiente del estudio
+- [ ] T1.5 Precedencia **por niveles** (R3): lo decidido para ese hijo (entrada de grid,
+      barrido, **frontera de rango**, extremo teórico, extremo de sinterizado) >
+      `base_parameters` > campo de estudio > default; dentro de un nivel, el dict gana al plano.
+      **Tres cambios de comportamiento**, porque hoy cualquier dict gana a cualquier plano
+      venga de donde venga
+- [ ] T1.5a La **resolución** de la precedencia vive en el llamante que conoce la procedencia
+      (expansión de grid, casos límite, extremos), no en el constructor: el dict fusionado no
+      distingue un plano de `base_parameters` de uno barrido para ese hijo
 - [ ] T1.5b Rechazar el barrido de un **dict** por `theoretical_extremes` (superficie 7, R3.12)
 - [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
       sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
@@ -54,8 +60,8 @@
       (precedencia)
 - [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
 - [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
-      sinterizado de `tests/test_serializers.py:209-341` y `test_grid_expansion.py:216-260`
-      usan configuraciones completas y algoritmos de la allow-list)
+      sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y
+      `test_parametric_study_serializer.py:126-152` usan configuraciones completas y algoritmos de la allow-list)
 
 ## T2 — El helper deja de inventar defaults (R3)
 
@@ -67,6 +73,8 @@
       - `backend/tests/test_utils.py:336-344` `test_default_values_used` — afirma que
         `apply_sintering_config({"distribution_type":"uniform"})` rellena `0.85`/`0.95` por
         defecto. Es la forma codificada del defecto D2; R3 exige que lance
+- [ ] T2.3b Tests **R7.3** (el cambio de la media `normal` no lo ampara R7) y **R7.4** (el
+      carve-out, incluido el payload `value` que la canónica documenta)
 - [ ] T2.4 Regresión declarada: `test_none_config_returns_unchanged` y
       `test_empty_config_returns_unchanged` (`backend/tests/test_utils.py:319-334`) **siguen
       verdes sin cambios**
@@ -85,12 +93,16 @@
       planos de `base_parameters` (`utils.py:185-203`) y **sí** puede recibir el dict de estudio
       (`views.py:1808`); limpiar en el serializer le quitaría los planos aunque no aplique
       ningún dict
+- [ ] T3.0c0 El constructor **recibe** el ajuste de sinterizado ya resuelto; no lo deduce de
+      los parámetros fusionados
 - [ ] T3.0d El constructor retira `sintering_config` de los parámetros del hijo en **los dos**
       modos, y retira las `sintering_*` heredadas de niveles más débiles cuando él fija el
       sinterizado del hijo
 - [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
-      sólo `utils.py` y `tests/test_utils.py:233-269`, que prueban el generador aislado)
+      también `views.py:1766,1871` y `tests/test_utils.py:369`, pero ese último sólo afirma la
+      constante `SINTERING_EXTREMES` y sigue verde; `include_limiting_cases` aparece en tests
+      sólo en `tests/test_serializers.py:412,431`, sin sinterizado)
 - [ ] T3.0c Tests **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
       misma expansión) y **R11.7** (los extremos de sinterizado pasan por el constructor,
       conservan su coeficiente y llevan `seed_type`)
@@ -293,8 +305,24 @@
   R12 renombrado a lo que de verdad exige, con D7 nombrado **dentro** de la spec; unidad de
   validación fijada para las superficies barridas; añadidos al inventario la canónica R4 y la
   divergencia del desplegable de `limiting`; y corregidos conteos, anclas y la nota del flaky.
-- L17 (2026-10-21): Decisiones de diseño con su alternativa descartada: regla única en las tres
+- L18 (2026-10-22): **spec-review r5**: `CORRECTIONS REQUIRED (1 blocker, 2 majors)`. Seis
+  líneas base exactas; la enumeración de superficies **vuelve a aguantar**.
+  - **BLOCKER: tercera inversión de precedencia.** La encontré yo con una probe mientras la r5
+    corría, y ella la confirmó: hoy cualquier dict gana a cualquier plano, así que un dict en
+    `base_parameters` pisa un valor barrido para ese hijo. Declaraba dos cambios y producía tres.
+  - **MAJOR: el modelo no era implementable donde lo ponía.** Dos payloads distintos llegan al
+    constructor como el mismo dict fusionado y exigen resultados opuestos: falta la procedencia.
+  - **MAJOR: los hijos de frontera de rango** no estaban en el nivel 1 y sufren la misma mentira
+    de nombre: hoy `boundary_min: sintering_coeff=0.6` corre a 0.95.
+  - Minors: el payload `{distribution_type:"fixed", value:0.9}` que la **propia canónica
+    documenta** pasa a dar 400 (hoy 201 y el hijo corre sin sinterizar); y mi afirmación de que
+    un hijo "se lleva ambas" claves era falsa, `add_case` emite un hijo por clave.
+- L19 (2026-10-22): **Corrección r6**. Inventario 14 (tercera inversión) y 15 (payload
+  `value`); los hijos de frontera entran en el nivel 1; R11 exige que el **llamante resuelva**
+  la precedencia y pase el ajuste ganador; cuatro cláusulas nuevas en R3.10 y una en R7.4;
+  corregidos el ancla `utils.py:180`, la evidencia de T1.8/T3.0e y los conteos.
+- L20 (2026-10-22): Decisiones de diseño con su alternativa descartada: regla única en las siete
   superficies (DD1); el helper lanza pero nunca es el primero en enterarse (DD2); validar antes
-  de escribir en vez de `transaction.atomic`, porque una tarea Celety ya despachada no se
+  de escribir en vez de `transaction.atomic`, porque una tarea Celery ya despachada no se
   deshace con un rollback (DD3); `sintering_coeff` es la media (DD4); allow-list de once
   algoritmos con `limiting` sólo-`fixed` (DD5).
