@@ -264,6 +264,267 @@ def test_r11_6_patch_evaluates_against_the_instance_algorithm(
     )
 
 
+def test_r11_6_switching_to_a_non_consuming_algorithm_is_rejected(
+    api_client: APIClient, project: Project
+) -> None:
+    """The direction the first version missed: the payload carries no
+    sintering, the stored study does, and the update changes the algorithm
+    to one that cannot run it. Evaluating only the payload returns 200 and
+    persists exactly the combination R11.4 forbids."""
+    created = _post(
+        api_client,
+        project,
+        "tunable",
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.9},
+    )
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        "a study was stored as fracval while keeping its sintering_config"
+    )
+    stored = ParametricStudy.objects.get(id=study_id)
+    assert stored.base_algorithm == "tunable"
+
+
+def test_r11_6_switching_to_limiting_with_a_normal_shape_is_rejected(
+    api_client: APIClient, project: Project
+) -> None:
+    created = _post(
+        api_client,
+        project,
+        "tunable",
+        sintering_config={"distribution_type": "normal", "mean": 0.8, "std": 0.05},
+    )
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={"base_algorithm": "limiting"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_6_switching_algorithm_with_stored_flat_keys_is_rejected(
+    api_client: APIClient, project: Project
+) -> None:
+    """The same bypass through surface 4 instead of the study field."""
+    created = _post(
+        api_client,
+        project,
+        "tunable",
+        base_parameters={"n_particles": 100, "sintering_coeff": 0.8},
+    )
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={"base_algorithm": "box_rfa"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_6_put_cannot_launder_the_algorithm_either(
+    api_client: APIClient, project: Project
+) -> None:
+    created = _post(
+        api_client,
+        project,
+        "tunable",
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.9},
+    )
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.put(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={
+            "name": "laundered",
+            "base_algorithm": "gcca",
+            "base_parameters": {"n_particles": 100},
+            "parameter_grid": {},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_6_dropping_the_sintering_while_switching_is_allowed(
+    api_client: APIClient, project: Project
+) -> None:
+    """The rule must not trap a study: clearing the setting in the same
+    request makes the new algorithm legitimate."""
+    created = _post(
+        api_client,
+        project,
+        "tunable",
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.9},
+    )
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={"base_algorithm": "fracval", "sintering_config": None},
+        format="json",
+    )
+
+    assert resp.status_code == 200, resp.data
+
+
+# --- R11.5 beyond surface 2, and the flat shape (JD-A-003, JD-A-004) ------
+
+
+@pytest.mark.parametrize(
+    ("surface", "overrides"),
+    [
+        (
+            "surface 1: parameter_grid.sintering_config",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "normal", "mean": 0.8, "std": 0.05}
+                    ]
+                }
+            },
+        ),
+        (
+            "surface 3: base_parameters dict",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "uniform",
+                        "min": 0.7,
+                        "max": 0.95,
+                    },
+                }
+            },
+        ),
+        (
+            "surface 7: theoretical_extremes dict sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "normal", "mean": 0.8, "std": 0.05}
+                        ]
+                    }
+                },
+            },
+        ),
+    ],
+)
+def test_r11_5_limiting_rejects_non_fixed_on_every_surface(
+    api_client: APIClient, project: Project, surface: str, overrides: Any
+) -> None:
+    resp = _post(api_client, project, "limiting", **overrides)
+
+    assert resp.status_code == 400, f"{surface} let a non-fixed shape through"
+
+
+def test_r11_5_limiting_rejects_a_flat_non_fixed_type(
+    api_client: APIClient, project: Project
+) -> None:
+    """The flat half of the fixed-only rule, declared in Log L33."""
+    resp = _post(
+        api_client,
+        project,
+        "limiting",
+        base_parameters={
+            "n_particles": 100,
+            "sintering_type": "normal",
+            "sintering_coeff": 0.8,
+            "sintering_std": 0.05,
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "fixed" in str(resp.data).lower()
+
+
+def test_r11_5_limiting_rejects_a_flat_non_fixed_type_when_swept(
+    api_client: APIClient, project: Project
+) -> None:
+    resp = _post(
+        api_client,
+        project,
+        "limiting",
+        base_parameters={"n_particles": 100, "sintering_std": 0.05},
+        parameter_grid={"sintering_type": ["normal"], "sintering_coeff": [0.8]},
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_5_limiting_rejects_the_keys_the_worker_ignores(
+    api_client: APIClient, project: Project
+) -> None:
+    """tasks.py:1800 reads sintering_coeff and nothing else on this path, so
+    accepting sintering_std would store a parameter that did not run."""
+    resp = _post(
+        api_client,
+        project,
+        "limiting",
+        base_parameters={
+            "n_particles": 100,
+            "sintering_coeff": 0.8,
+            "sintering_std": 0.05,
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "sintering_std" in str(resp.data)
+
+
+def test_r11_4_the_message_says_the_algorithm_does_not_consume_sintering(
+    api_client: APIClient, project: Project
+) -> None:
+    """R11.4 requires the 400 to say so, not merely to mention sintering."""
+    resp = _post(
+        api_client,
+        project,
+        "fracval",
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.8},
+    )
+
+    assert resp.status_code == 400
+    assert "does not consume sintering" in str(resp.data)
+    assert "fracval" in str(resp.data)
+
+
+def test_r11_5_the_default_extremes_really_reach_the_children(
+    api_client: APIClient, project: Project
+) -> None:
+    """The first version only asserted 201, which any implementation gives
+    for an empty sintering payload."""
+    resp = _post(api_client, project, "limiting", include_limiting_cases=True)
+    assert resp.status_code == 201, resp.data
+
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    coeffs = {
+        child.parameters.get("sintering_coeff")
+        for child in study.simulations.all()
+        if "sintering_coeff" in child.parameters
+    }
+    assert {0.5, 0.75, 0.9, 1.0} <= coeffs, coeffs
+
+
 def test_r11_6_patch_on_a_consuming_algorithm_still_works(
     api_client: APIClient, project: Project
 ) -> None:
