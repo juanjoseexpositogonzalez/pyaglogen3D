@@ -386,6 +386,68 @@ def test_r11_6_dropping_the_sintering_while_switching_is_allowed(
     assert resp.status_code == 200, resp.data
 
 
+def test_r11_6_patch_of_a_dict_surface_on_a_non_consuming_study(
+    api_client: APIClient, project: Project
+) -> None:
+    """The update path was pinned only through flat keys on surface 4."""
+    created = _post(api_client, project, "fracval")
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={
+            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}
+        },
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_6_patch_of_a_grid_dict_surface_is_rejected_too(
+    api_client: APIClient, project: Project
+) -> None:
+    created = _post(api_client, project, "gcca")
+    assert created.status_code == 201, created.data
+    study_id = created.data["id"]
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study_id}/",
+        data={
+            "parameter_grid": {
+                "sintering_config": [
+                    {"distribution_type": "fixed", "coefficient": 0.8}
+                ]
+            }
+        },
+        format="json",
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r11_5_the_batch_forms_real_limiting_payload_still_works(
+    api_client: APIClient, project: Project
+) -> None:
+    """The payload BatchSimulationForm.tsx:214-221 actually builds for
+    limiting. The flat half of the fixed-only rule must not break it."""
+    resp = _post(
+        api_client,
+        project,
+        "limiting",
+        base_parameters={
+            "n_particles": 100,
+            "geometry_type": "sphere",
+            "configuration_type": "cuboctaedro",
+            "packing": "HC",
+            "sintering_coeff": 0.9,
+        },
+    )
+
+    assert resp.status_code == 201, resp.data
+
+
 # --- R11.5 beyond surface 2, and the flat shape (JD-A-003, JD-A-004) ------
 
 
