@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from .fields import DistributionField
 from .sintering_shape import (
     FLAT_KEYS,
+    check_algorithm_scope,
     check_flat_keys,
     check_flat_required,
     validate_dict_shape,
@@ -517,6 +518,40 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             check_flat_required(merged)
         except ValueError as exc:
             raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
+
+        # --- Allow-list by algorithm, over the seven surfaces at once (R11) ---
+        # The rule is evaluated over the study **as it will be after this
+        # request**, not over the payload. An update carries only the fields it
+        # changes, so both halves must fall back to what is stored: an omitted
+        # base_algorithm falls back to the instance's (R11.6), and an omitted
+        # sintering setting falls back to the one the study keeps. Without the
+        # second half, a request that changes only the algorithm is never
+        # evaluated against the sintering it leaves in place, and a `fracval`
+        # study ends up persisting a setting no code will ever read.
+        def _effective(field: str, payload_value: Any) -> Any:
+            if field in data:
+                return payload_value
+            return getattr(self.instance, field, None)
+
+        algorithm = _effective("base_algorithm", data.get("base_algorithm"))
+        eff_base = _effective("base_parameters", base_params) or {}
+        eff_grid = _effective("parameter_grid", grid) or {}
+        eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        eff_extremes = eff_limiting.get("theoretical_extremes") or {}
+
+        try:
+            check_algorithm_scope(
+                algorithm,
+                dicts=(
+                    eff_grid.get("sintering_config"),
+                    _effective("sintering_config", data.get("sintering_config")),
+                    eff_base.get("sintering_config"),
+                    eff_extremes.get("sintering_config"),
+                ),
+                flats=(eff_base, eff_grid, eff_extremes),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")

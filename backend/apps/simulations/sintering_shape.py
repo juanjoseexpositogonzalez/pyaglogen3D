@@ -31,6 +31,19 @@ FLAT_KEYS = frozenset(
 
 DISTRIBUTION_TYPES = frozenset({"fixed", "uniform", "normal"})
 
+#: Algorithms whose engine invocation receives the full sintering set (R11).
+SINTERING_ALGORITHMS = frozenset(
+    {"dla", "cca", "ballistic", "ballistic_cc", "tunable", "tunable_cc"}
+)
+
+#: `limiting` reads `sintering_coeff` (`tasks.py:1800`) and ignores type, min,
+#: max and std, so it accepts the fixed shape only.
+FIXED_ONLY_ALGORITHMS = frozenset({"limiting"})
+
+#: These consume no sintering at all. Declaring it for them would store
+#: parameters that do not describe what ran.
+NO_SINTERING_ALGORITHMS = frozenset({"fracval", "gcca", "box_rfa", "imported"})
+
 #: Required dict fields per distribution type.
 _DICT_REQUIRED: dict[str, tuple[str, ...]] = {
     "fixed": ("coefficient",),
@@ -187,3 +200,75 @@ def check_flat_required(merged: Mapping[str, Any]) -> None:
             raise ValueError(
                 "sintering_min must be less than or equal to sintering_max"
             )
+
+
+def check_algorithm_scope(
+    algorithm: str | None,
+    *,
+    dicts: Iterable[Any],
+    flats: Iterable[Mapping[str, Any]],
+) -> None:
+    """Allow-list by algorithm, over every surface at once (R11, R11.4-R11.6).
+
+    `dicts` are the `sintering_config` settings found on any surface and
+    `flats` the mappings that may carry flat `sintering_*` keys. The caller
+    passes the algorithm to evaluate against: on a partial update that omits
+    `base_algorithm`, that is the instance's stored one (R11.6).
+    """
+    settings: list[Any] = []
+    for config in dicts:
+        if not config:
+            continue
+        if isinstance(config, list):
+            settings.extend(entry for entry in config if entry)
+        else:
+            settings.append(config)
+    flat_keys = sorted(
+        {key for mapping in flats for key in mapping if key in FLAT_KEYS}
+    )
+    if not settings and not flat_keys:
+        return  # absent means no sintering: nothing to scope
+
+    if algorithm in NO_SINTERING_ALGORITHMS:
+        raise ValueError(
+            f"algorithm '{algorithm}' does not consume sintering, so it must not "
+            "be configured for it"
+        )
+
+    if algorithm in FIXED_ONLY_ALGORITHMS:
+        for config in settings:
+            if not isinstance(config, Mapping):
+                continue
+            if config.get("distribution_type") != "fixed":
+                raise ValueError(
+                    f"algorithm '{algorithm}' accepts the fixed sintering shape "
+                    f"only, got '{config.get('distribution_type')}'"
+                )
+        for mapping in flats:
+            for value in _swept_values(mapping.get("sintering_type")):
+                if value != "fixed":
+                    raise ValueError(
+                        f"algorithm '{algorithm}' accepts the fixed sintering "
+                        f"shape only, got sintering_type '{value}'"
+                    )
+            shape_only = sorted(
+                key
+                for key in mapping
+                if key in {"sintering_min", "sintering_max", "sintering_std"}
+            )
+            if shape_only:
+                raise ValueError(
+                    f"algorithm '{algorithm}' ignores {', '.join(shape_only)}: it "
+                    "accepts the fixed sintering shape only"
+                )
+        return
+
+    if algorithm not in SINTERING_ALGORITHMS:
+        raise ValueError(f"unknown algorithm '{algorithm}' for a sintering setting")
+
+
+def _swept_values(value: Any) -> list[Any]:
+    """One value or the elements of a swept list."""
+    if value is None:
+        return []
+    return list(value) if isinstance(value, list) else [value]

@@ -170,16 +170,16 @@
 
 ## T4 — Alcance por algoritmo (D6, R11)
 
-- [ ] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
+- [x] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
       consumen; sólo `fixed` para `limiting`; rechazo para `fracval`/`gcca`/`box_rfa`/`imported`
-- [ ] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
-- [ ] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
+- [x] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
+- [x] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
       `base_algorithm` guardado en la instancia, no contra el ausente (R11, R11.6)
-- [ ] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
+- [x] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
       `fracval` + `theoretical_extremes`), R11.5 (barrido plano de `limiting` y sus extremos
       por defecto del servidor) y R11.6 (actualización parcial contra el
       `base_algorithm` de la instancia)
-- [ ] T4.4 **Ningún test existente pasa a rojo por esta tarea** (verificado: todos los tests de
+- [x] T4.4 **Ningún test existente pasa a rojo por esta tarea** (verificado: todos los tests de
       la suite usan `tunable`, `tunable_cc` o `dla`, los tres dentro de la allow-list)
 
 ## T5 — Integridad de la expansión (R12)
@@ -531,3 +531,81 @@
   preexistentes (`tasks.py` 80, `accounts/models.py` 5). Para llegar a ese 0 hubo que anotar
   las fixtures y los parámetros de test, incluida una ligadura intermedia en la fixture `user`
   porque `UserManager.create_user` no está anotado y mypy marcaba `no-any-return`.
+- L33 (2026-10-23): **T4 implementada** (D6, R11.4, R11.5, R11.6). Allow-list por algoritmo:
+  `check_algorithm_scope` en `apps/simulations/sintering_shape.py`, con las tres listas
+  —los seis que consumen sinterizado, `limiting` sólo-`fixed`, y los cuatro que no consumen
+  nada— cableada en `ParametricStudySerializer.validate()` sobre **las siete superficies a la
+  vez**, no superficie a superficie: la función recibe todos los dicts y todos los mapas con
+  claves planas y decide una sola vez.
+  Test-first, medido: **32 rojos antes, 37 verdes después** en la primera vuelta, y **53
+  tests** tras las dos rondas de judgment-day, en
+  `tests/test_sintering_algorithm_scope.py` (CRLF, la convención de `backend/tests/`). Los 5
+  que ya estaban verdes son los casos de **aceptación** —los seis algoritmos que sí consumen,
+  el dict `fixed` de `limiting`, su barrido plano, los extremos por defecto del servidor y el
+  PATCH sobre un algoritmo permitido—: están para que la allow-list no cierre puertas que debe
+  dejar abiertas, y no prueban el rechazo.
+  **T4.2a**: en un PATCH que omite `base_algorithm`, la regla cae a
+  `self.instance.base_algorithm`. Sin eso, un PATCH era el rodeo a la allow-list; el test que
+  lo cubre fallaba con 200 antes del cambio.
+  **Una lectura que declaro porque el contrato no la deletrea**: para `limiting`, «acepta sólo
+  la forma `fixed`» lo aplico también a las claves planas `sintering_min`, `sintering_max` y
+  `sintering_std`, que el worker **ignora** en ese camino (`tasks.py:1800`). Aceptarlas sería
+  justo la ciencia silenciosa que este contrato existe para cerrar: parámetros almacenados que
+  no describen lo que corrió. Ninguno de los casos que R11.5 declara aceptables las incluye.
+  **T4.4 verificado midiendo, no citando** la declaración del contrato: con `git stash` sobre
+  la implementación, los **46** FAILED/ERROR preexistentes salen **idénticos** antes y después,
+  y la única diferencia son mis 32, de rojo a verde.
+  Gates finales, tras el arreglo del judgment-day: `pytest` 15 failed / **1329** passed / 31
+  errors — fallos y errores idénticos a la línea base, los 53 de más son los tests nuevos;
+  `ruff` **296**, igual; `mypy` **1727 en 132**, la base, con los tres ficheros tocados
+  aportando **0** errores propios. Diff de T4: **426 líneas** (421 inserciones y 5 borrados), **por encima** del techo
+  de 400: 387 de implementación y tests, 39 de este registro. La excepción de tamaño está
+  publicada en la issue #97 antes de abrir el PR, como exige AGENTS.md. La primera redacción de
+  esta línea decía «387 líneas, por debajo del techo» — medía un subconjunto del propio PR,
+  excluyendo el registro que la contiene, y un juez la cazó: el error exacto que este Log lleva
+  anotando desde L-método, una cifra que mide algo distinto de lo que su nombre promete.
+  **Judgment-day sobre T4** (dos jueces ciegos, PR #104). Un **CRITICAL**, real y mío:
+  la allow-list era **burlable cambiando de algoritmo**. Yo la evaluaba sobre el *payload*, así
+  que una actualización que sólo cambia `base_algorithm` y no manda sinterizado nunca se
+  contrastaba con el que el estudio **ya guarda**. Reproducido por mí antes de tocar nada:
+  POST `tunable` + `normal` → 201; PATCH `base_algorithm=limiting` → **200**; PATCH
+  `base_algorithm=fracval` → **200**, con el estudio almacenado como `fracval` llevando
+  `sintering_config` `normal`. Y el comentario que yo mismo había escrito decía que el PATCH
+  ya no era un rodeo. Arreglado evaluando el **estudio efectivo tras la petición**: cuando el
+  payload omite un campo, tanto el algoritmo como el sinterizado caen a la instancia. Cuatro
+  tests nuevos lo fijan —PATCH a no-consumidor, PATCH a `limiting` con forma `normal`, el mismo
+  rodeo por la superficie 4, y PUT— más uno que impide la trampa contraria: **limpiar el ajuste
+  en la misma petición sigue permitido**, para no dejar estudios atrapados.
+  **Dos huecos de cobertura, también ciertos**: mi lectura declarada (la rama plana de
+  `limiting`) tenía **cero tests** —borrarla dejaba los 37 verdes— y R11.5 sólo se ejercitaba en
+  la superficie 2. Cerrados y **medidos rompiendo el código**: neutralizar esa rama pone ahora
+  **3 en rojo**, y desconectar las superficies del allow-list pone **15**, tres de ellos de
+  R11.5 por superficie. Reforzados además dos tests que pasaban con cualquier implementación: el
+  de los extremos por defecto ahora **lee los hijos** y exige `{0.5, 0.75, 0.9, 1.0}`, y el de
+  R11.4 exige el texto «does not consume sintering» y el nombre del algoritmo, no un mero
+  «sintering» que la propia clave de error ya satisfacía.
+  **El segundo juez llegó al mismo CRITICAL por su cuenta**, con la misma reproducción, y
+  coincidió en los dos huecos de cobertura. Aportó además dos cosas que el primero no vio.
+  **Consecuencia de mi lectura declarada, medida y registrada**: un estudio `limiting` con
+  `sintering_min`/`sintering_max`/`sintering_std` planos devolvía 201 y ahora devuelve 400,
+  así que un *read-modify-write* que reenvíe esas claves de una fila antigua falla hasta que se
+  retiren. Comprobado por mí en el código, no citando al juez: el payload de `limiting` que
+  construye `BatchSimulationForm.tsx:214-221` es `{n_particles, geometry_type,
+  configuration_type, packing, sintering_coeff}` y **no** lleva esas tres claves; quien sí las
+  manda es `SimulationForm.tsx:692-694`, que es la simulación individual y está **fuera** del
+  alcance de R11. Queda un test con ese payload real para que nadie lo rompa sin enterarse.
+  **Cobertura del camino de actualización**: R11.6 sólo se ejercitaba por la superficie 4 y
+  nunca con `base_algorithm` en el payload — que es justo donde vivía el CRITICAL. Añadidos
+  PATCH por superficie 2 y por superficie 1 sobre estudios ya almacenados.
+  Además, el juez B señala que la página batch no tiene `onError` en su mutación de creación
+  (`app/projects/[id]/batch/page.tsx:60-70`), así que **cualquier 400 de esta regla se ve como
+  un envío que no hace nada**. Eso agrava (a) de abajo y refuerza que T6/R10 es su cierre.
+  **Dos hallazgos registrados y no implementados aquí**, por alcance: (a) el formulario batch
+  sigue ofreciendo el sinterizado para algoritmos que ahora dan 400 —es **T6/R10** del mismo
+  contrato, y hasta entonces la UI invita a una combinación que el servidor rechaza—; (b) todo
+  rechazo de la allow-list se reporta bajo la clave `sintering_config` venga de la superficie
+  que venga, mientras el resto de R3 usa claves por superficie: va al contrato de seguimiento,
+  que acumula ya cuatro puntos.
+  Esta tarea cierra además la ventana que el judgment-day de T3 señaló (JD-A-003): entre T3 y
+  T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
+  0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.
