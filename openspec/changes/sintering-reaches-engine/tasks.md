@@ -117,7 +117,7 @@
 
 ## T3 — El invariante del hijo y el engine (D5, R11)
 
-- [ ] T3.0 **No unificar los sitios de creación**, pero sí cerrar R11 en el bloque inline.
+- [x] T3.0 **No unificar los sitios de creación**, pero sí cerrar R11 en el bloque inline.
       No se unifica: `generate_sintering_extreme_cases` (`utils.py:227-231`) ya escribe
       `sintering_type` y `sintering_coeff` planos, claves que el worker lee
       (`tasks.py:1592-1598`). Lo que sí hay que arreglar es que copia `base_parameters` entera
@@ -125,14 +125,14 @@
       (`views.py:1804`), así que esos hijos almacenan un `sintering_config` que **contradice** el
       coeficiente al que corren. Retirarlo (R11.7). Verificado con probe: base con
       `coefficient: 0.7` produce un hijo que corre a `0.5` y guarda `0.7`
-- [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
+- [x] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
       claves **contenidas** en el conjunto que el worker lee. Eso es todo lo que R11 exige en
       la escritura: la completitud de campos y el rango son de **R3**, en la validación de
       entrada, y no se recomprueban aquí. «Contenidas», no «exactamente
       las del dict»: eso último lo exigía la regla de limpieza que el recorte eliminó, y
       ningún requisito vigente lo pide. **No confundirla con la R11.7 actual**, que es otra
       cosa: retirar `sintering_config` de los hijos de extremos
-- [ ] T3.0b **Dueño de cada limpieza, que son dos y distintas.** En el camino por
+- [x] T3.0b **Dueño de cada limpieza, que son dos y distintas.** En el camino por
       `create_simulation` ya la hace el pop de `views.py:1804`: no hay nada que añadir. En el
       bloque de extremos la hace **`generate_sintering_extreme_cases`** (`utils.py:227-231`),
       que es quien construye esos parámetros; no `apply_sintering_config`, que ese bloque no
@@ -140,13 +140,13 @@
       dict de estudio y le borraría su coeficiente. Tampoco el serializer: un hijo de caso
       límite hereda los planos de `base_parameters` (`utils.py:185-203`) y limpiar ahí se los
       quitaría aunque no aplique ningún dict
-- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+- [x] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
       misma expansión)
-- [ ] T3.0d Alcance de esa retirada (la orden está en T3.0, aquí sólo su límite): lo que se
+- [x] T3.0d Alcance de esa retirada (la orden está en T3.0, aquí sólo su límite): lo que se
       retira es `sintering_config`, porque R11 prohíbe escribir claves de sinterizado fuera del
       conjunto del worker. **No** se retiran las `sintering_*` planas heredadas: están dentro
       del conjunto y ningún requisito vigente pide quitarlas
-- [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
+- [x] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
       hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
       también `views.py:1766,1871` y, en `tests/test_utils.py`, la clase
       `TestGenerateSinteringExtremeCases` (`:15,234,240,252,255,267`) más `:369`. Esa clase sí
@@ -155,18 +155,18 @@
       `include_limiting_cases` aparece en tests en `tests/test_serializers.py:412,431` y en
       `tests/test_models.py:132,138,186`, ninguno con sinterizado; los de `test_models` crean el
       estudio por ORM (`:126`) sin pasar por `perform_create`, así que no pueden ponerse en rojo)
-- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
+- [x] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
       conserva el plano de su propio extremo
-- [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
+- [x] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
       **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
-- [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
+- [x] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
       tipo `normal`; retirar `sintering_mean`, que ningún consumidor de producción lee
-- [ ] T3.2 **Test existente que esta tarea pone en rojo y se reescribe** (declaración completa):
+- [x] T3.2 **Test existente que esta tarea pone en rojo y se reescribe** (declaración completa):
       - `backend/tests/test_utils.py:304-317` `test_normal_sintering` — afirma
         `result["sintering_mean"] == 0.9`; pasa a afirmar `result["sintering_coeff"] == 0.9`
-- [ ] T3.3 Test R11.1 de **borde de engine**: mock sobre el binding, afirmando que la media que
+- [x] T3.3 Test R11.1 de **borde de engine**: mock sobre el binding, afirmando que la media que
       llega es 0.8 y **no** 1.0
-- [ ] T3.4 Tests R11.2 y R11.3 (ninguna clave fuera del conjunto que el worker lee)
+- [x] T3.4 Tests R11.2 y R11.3 (ninguna clave fuera del conjunto que el worker lee)
 
 ## T4 — Alcance por algoritmo (D6, R11)
 
@@ -479,3 +479,55 @@
   **no** cierra es la descomposición por fichero: `tests/test_utils.py` baja 2 al retirar el
   test, `utils.py` se queda en 11 y mis ficheros aportan 0. Queda dicho en vez de maquillado;
   el criterio de aceptación es no superar la base, y 1738 < 1740.
+- L32 (2026-10-23): **T3 completa** (D5, R11.1, R11.2, R11.3, R11.7). El núcleo salió en
+  `ef72aef`, `f28cf95` y `3e0a0be`: la media viaja en `sintering_coeff` y el hijo de extremos
+  deja de almacenar el `sintering_config` heredado que contradecía su coeficiente. Lo que
+  cierra T3 son las tres tareas que quedaban abiertas —**T3.3**, **T3.4** y **T3.0c**—, en
+  `apps/simulations/tests/test_sintering_r11_expansion.py` (**11 tests**). De ellos, **3**
+  recorren la cadena entera hasta el borde del engine —POST del estudio → expansión de
+  producción → hijo → worker → binding mockeado—, que son los de R11.1 y R11.2; los **8**
+  de R11.3 paran en los parámetros almacenados del hijo, que es donde R11.3 pone su
+  obligación. Dicho así porque la primera redacción de esta entrada atribuía el recorrido
+  completo a los ocho, y era falso.
+  **Evidencia de rojo, no sólo de verde** (lección de L-método: un gate verde sólo dice que el
+  gate pasó). Con los 8 tests tal cual y `utils.py` restaurado a su versión pre-T3 (`18efce7`):
+  **5 fallan** — T3.3 con `assert 1.0 == 0.8`, que es exactamente D5 (1.0 es el default: *no
+  sinterizar*), y los cuatro de R11.3 porque se escribía `sintering_mean`. Con el fix, 8/8
+  verdes. Los **3 que pasan en ambos lados son los de R11.2** (`fixed` y `uniform`) y el barrido
+  plano: son guardas de no-regresión, no prueban el arreglo, y se declaran como tales en vez de
+  contarse como cobertura nueva.
+  **T3.0c** monta una sola expansión con los cuatro tipos de hijo —grid, frontera de rango,
+  extremo teórico y extremo de sinterizado— y lleva el dict también en `base_parameters`, así
+  que ejercita **R11.7 por API** y no sólo contra el helper.
+  **Judgment-day antes del merge** (dos jueces ciegos, PRs #102 y #103). Un solo hallazgo
+  severo, corroborado por los dos: R11.3 dice «cualquier superficie» y la primera versión
+  cubría **4 de las 7** (1, 2, 3 y 5). Peor: el caso etiquetado «base_parameters flat sweep»
+  pasaba `parameter_grid`, o sea la superficie 5 — **la etiqueta mentía**, el patrón que este
+  mismo Log lleva registrando desde L-método, cometido en el fichero cuyo commit presume de
+  no cometerlo. Corregido: las siete superficies cubiertas y cada id del parametrize nombra su
+  número de superficie.
+  **Qué guarda de verdad cada test, medido rompiendo el código a propósito**, no deducido:
+  quitar el `pop` de `views.py:1804` pone **4 en rojo, incluida la superficie 7**, que es el
+  sitio donde las claves del usuario se escriben verbatim en el hijo (`utils.py:199-203`).
+  Neutralizar `check_flat_keys` **no pone ninguno de los 11 en rojo** y en cambio tumba **6 de
+  T1** (`tests/test_sintering_shape.py`): el guard del serializer lo cubre T1, no este fichero,
+  porque estos tests entran con valores válidos. Las superficies **4 y 6 quedan verdes en los
+  dos experimentos**: son cobertura declarativa, no guardas, y se declaran como tales.
+  **T3.0a**: su invariante no se implementa como una comprobación en los sitios de escritura.
+  Hoy se sostiene **transitivamente**, por la validación de entrada de T1/T2
+  (`sintering_shape.check_flat_keys`), y los tres sitios de escritura —`utils.py:204`,
+  `utils.py:230-239` y `views.py:1804-1808`— no llevan aserción propia. Queda marcada porque
+  el invariante se cumple y está medido, pero quien lea la casilla no encontrará código suyo.
+  **T3.0g** queda registrado aquí, no implementado: los hijos de extremos se crean sin
+  `seed_type` y eso viola `cc-tunable-aggregation` R17, pero no es uno de los cuatro defectos de
+  este contrato — va al contrato de seguimiento, junto con la precedencia y la unificación de
+  los dos sitios de creación.
+  El fichero nuevo va en **LF**, que es la convención de `apps/simulations/tests/` (43 de 43
+  ficheros), no la CRLF de `backend/tests/`.
+  Gates: `pytest` 15 failed / **1276** passed / 31 errors — fallos y errores **idénticos** a la
+  línea base, los 11 de más son los tests nuevos; `ruff` **296**, igual; `mypy` **1727 en 132**,
+  la base de L31 ya corregida por `ef72aef`. El fichero nuevo aporta **0** errores de mypy,
+  medido aislándolo: los 103 que salen al comprobarlo vienen todos de módulos importados
+  preexistentes (`tasks.py` 80, `accounts/models.py` 5). Para llegar a ese 0 hubo que anotar
+  las fixtures y los parámetros de test, incluida una ligadura intermedia en la fixture `user`
+  porque `UserManager.create_user` no está anotado y mypy marcaba `no-any-return`.
