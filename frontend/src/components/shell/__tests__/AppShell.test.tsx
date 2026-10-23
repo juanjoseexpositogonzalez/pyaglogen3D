@@ -8,7 +8,10 @@
  * assertion such as "no sidebar on /auth/login" would pass vacuously because
  * the layout would never be in the tree.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
+import { readFileSync, readdirSync, statSync } from 'node:fs'
+import { join } from 'node:path'
+
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const pathname = vi.hoisted(() => ({ current: '/dashboard' }))
@@ -131,5 +134,118 @@ describe('the legacy Header inside the shell', () => {
     pathname.current = '/dashboard'
     render(<Header />)
     expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
+  })
+})
+
+describe('the off-canvas drawer', () => {
+  function openDrawer() {
+    pathname.current = '/dashboard'
+    render(
+      <AppShell>
+        <p>page body</p>
+        <button type="button">behind the drawer</button>
+      </AppShell>,
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Open navigation' }))
+  }
+
+  it('announces itself as a modal dialog', () => {
+    // R6. The drawer covers the page; a keyboard user needs to be told that,
+    // and to be kept inside it.
+    openDrawer()
+    expect(screen.getByRole('dialog', { name: 'Navigation' })).toBeTruthy()
+  })
+
+  it('moves focus into itself when it opens', () => {
+    openDrawer()
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' })
+    expect(drawer.contains(document.activeElement)).toBe(true)
+  })
+
+  it('keeps Tab inside it instead of letting focus wander behind', () => {
+    openDrawer()
+    const drawer = screen.getByRole('dialog', { name: 'Navigation' })
+    const focusables = drawer.querySelectorAll<HTMLElement>('a[href], button')
+    const last = focusables[focusables.length - 1]
+
+    last.focus()
+    fireEvent.keyDown(document, { key: 'Tab' })
+
+    expect(drawer.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement?.textContent).not.toBe('behind the drawer')
+  })
+
+  it('closes on Escape', () => {
+    openDrawer()
+    fireEvent.keyDown(document, { key: 'Escape' })
+    expect(screen.queryByRole('dialog', { name: 'Navigation' })).toBeNull()
+  })
+})
+
+describe('the theme control', () => {
+  it('indicates the active option without relying on colour', () => {
+    // R5's second THEN, which the previous test never asserted.
+    pathname.current = '/dashboard'
+    render(
+      <AppShell>
+        <p>page body</p>
+      </AppShell>,
+    )
+    const checked = screen
+      .getAllByRole('radio')
+      .filter((el) => el.getAttribute('aria-checked') === 'true')
+    expect(checked).toHaveLength(1)
+  })
+
+  it('actually writes the theme the user picks', () => {
+    // Nothing asserted that activating an option reached the document.
+    pathname.current = '/dashboard'
+    render(
+      <AppShell>
+        <p>page body</p>
+      </AppShell>,
+    )
+    fireEvent.click(screen.getByRole('radio', { name: 'Dark' }))
+    expect(document.documentElement.dataset.theme).toBe('dark')
+    delete document.documentElement.dataset.theme
+  })
+})
+
+describe('R1-S2: pages do not import the shell', () => {
+  it('finds no page importing AppShell', () => {
+    // The shell is mounted once, in the root layout. A page importing it
+    // would double the chrome, and nothing else would catch that.
+    const root = join(process.cwd(), 'src/app')
+    const offenders: string[] = []
+
+    const walk = (dir: string) => {
+      readdirSync(dir).forEach((entry) => {
+        const full = join(dir, entry)
+        if (statSync(full).isDirectory()) return walk(full)
+        if (!entry.endsWith('page.tsx')) return
+        if (readFileSync(full, 'utf8').includes('shell/AppShell')) offenders.push(full)
+      })
+    }
+    walk(root)
+
+    expect(offenders, `pages importing the shell: ${offenders.join(', ')}`).toEqual([])
+  })
+})
+
+describe('R2-S3: the auth surfaces carry no fixed colours', () => {
+  it('expresses every auth surface through tokens', () => {
+    const files = [
+      'src/app/auth/layout.tsx',
+      'src/app/auth/login/page.tsx',
+      'src/app/auth/register/page.tsx',
+      'src/app/auth/check-email/page.tsx',
+      'src/app/auth/verify-email/page.tsx',
+      'src/app/auth/oauth-callback/page.tsx',
+    ]
+    files.forEach((relative) => {
+      const source = readFileSync(join(process.cwd(), relative), 'utf8')
+      const hits = source.match(/(?:text|bg|border)-(?:white|black|gray|blue|red|green|yellow)-?\d*/g)
+      expect(hits, `${relative} still fixes colours: ${hits?.join(', ')}`).toBeNull()
+    })
   })
 })

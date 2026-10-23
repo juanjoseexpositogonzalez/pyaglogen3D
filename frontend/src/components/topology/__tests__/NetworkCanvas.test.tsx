@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, act, cleanup } from '@testing-library/react'
+import { render, screen, act, cleanup, waitFor } from '@testing-library/react'
 import type { NeighborGraphData } from '@/lib/types'
 
 // Setup mock BEFORE importing NetworkCanvas
@@ -11,6 +11,11 @@ vi.mock('vis-network/standalone', () => ({
 
 // Import after mock is set up
 import NetworkCanvas from '../NetworkCanvas'
+
+// graphUtils keeps these module-local (graphUtils.ts:42-43) and that file is
+// outside this change's editable surface, so they are restated here.
+const EDGE_LIGHT = '#cbd5e1'
+const EDGE_DARK = '#475569'
 
 // -- Test data --
 function makeData(n: number): NeighborGraphData {
@@ -211,10 +216,6 @@ describe('theme follows the application, not the operating system', () => {
     delete document.documentElement.dataset.theme
   })
 
-  // graphUtils keeps these module-local (graphUtils.ts:42-43) and that file is
-  // outside this change's editable surface, so they are restated here.
-  const EDGE_LIGHT = '#cbd5e1'
-  const EDGE_DARK = '#475569'
 
   it.each([
     ['light', EDGE_LIGHT],
@@ -237,4 +238,29 @@ describe('theme follows the application, not the operating system', () => {
       expect(payload.edges[0].color).toBe(expectedEdgeColour)
     },
   )
+
+  it('repaints when the user switches theme while the graph is mounted', async () => {
+    // Detection was covered; reaction was not. Replacing the MutationObserver
+    // with null left the suite at 10/10, so nothing asserted that the canvas
+    // follows a live flip, which is the behaviour T6.4 claims.
+    document.documentElement.dataset.theme = 'light'
+
+    await act(async () => {
+      render(<NetworkCanvas data={data5} onNodeClick={vi.fn()} selectedNodeId={null} />)
+    })
+    const before = MockNetwork.mock.calls.length
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark'
+      // MutationObserver callbacks are delivered as microtasks.
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(MockNetwork.mock.calls.length).toBeGreaterThan(before))
+    const [, payload] = MockNetwork.mock.calls[MockNetwork.mock.calls.length - 1] as [
+      unknown,
+      { edges: Array<{ color: string }> },
+    ]
+    expect(payload.edges[0].color).toBe(EDGE_DARK)
+  })
 })

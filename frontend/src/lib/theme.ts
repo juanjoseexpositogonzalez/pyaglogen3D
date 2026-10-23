@@ -83,6 +83,7 @@ export const THEME_BOOTSTRAP_SCRIPT = `
     document.documentElement.style.colorScheme = theme;
   } catch (e) {
     document.documentElement.dataset.theme = 'light';
+    document.documentElement.style.colorScheme = 'light';
   }
 })();
 `.trim()

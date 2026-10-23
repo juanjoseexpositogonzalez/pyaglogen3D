@@ -33,14 +33,18 @@ describe('Sidebar', () => {
     render(<Sidebar pathname="/projects/p1" project={project} />)
 
     expect(screen.getByText('Soot campaign')).toBeTruthy()
-    ;['Overview', 'Simulations', 'Batch studies', 'Compare', 'FRAKTAL analyses', 'FRAKTAL batches'].forEach(
-      (label) => expect(screen.getByRole('link', { name: label })).toBeTruthy(),
-    )
+    ;[
+      'Overview',
+      'New simulation',
+      'Batch studies',
+      'New FRAKTAL analysis',
+      'FRAKTAL batches',
+    ].forEach((label) => expect(screen.getByRole('link', { name: label })).toBeTruthy())
   })
 
   it('hides the project group outside a project', () => {
     render(<Sidebar pathname="/dashboard" />)
-    expect(screen.queryByRole('link', { name: 'Simulations' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Batch studies' })).toBeNull()
   })
 
   it('offers the assistant only to users who have access', () => {
@@ -67,12 +71,17 @@ describe('Sidebar', () => {
     expect(screen.getByRole('link', { name: 'Dashboard' }).getAttribute('aria-current')).toBeNull()
   })
 
-  it('distinguishes project sub-sections by their section parameter', () => {
-    render(<Sidebar pathname="/projects/p1" project={project} section="fraktal" />)
-    expect(
-      screen.getByRole('link', { name: 'FRAKTAL analyses' }).getAttribute('aria-current'),
-    ).toBe('page')
-    expect(screen.getByRole('link', { name: 'Overview' }).getAttribute('aria-current')).toBeNull()
+  it('offers only destinations that exist in the product', () => {
+    // An earlier version linked Simulations and FRAKTAL analyses with
+    // `?section=`, which no page reads, and Compare without the `?sims=` it
+    // requires. All three came from the Base44 prototype, not the product.
+    render(<Sidebar pathname="/projects/p1" project={project} />)
+
+    const hrefs = screen.getAllByRole('link').map((a) => a.getAttribute('href'))
+    expect(hrefs.some((h) => h?.includes('section='))).toBe(false)
+    expect(hrefs).toContain('/projects/p1/batch')
+    expect(hrefs).toContain('/projects/p1/fraktal/batch')
+    expect(hrefs).toContain('/projects/p1/simulations/new')
   })
 
   it('keeps an accessible name when collapsed to icons', () => {

@@ -1,8 +1,7 @@
 'use client'
 
-import { Bell, LogOut, Menu, Monitor, Moon, Settings, Sparkles, Sun } from 'lucide-react'
+import { Bell, LogOut, Menu, Monitor, Moon, Sun } from 'lucide-react'
 import Link from 'next/link'
-import type { ReactNode } from 'react'
 
 import { SegmentedControl } from '@/components/kit/SegmentedControl'
 import { useThemeStore } from '@/stores/useThemeStore'
@@ -23,8 +22,11 @@ export interface TopBarProps {
   crumbs?: Crumb[]
   user?: { name: string; initials: string } | null
   notifications?: number
-  /** Shown only while the sidebar is a drawer. */
-  onOpenNavigation?: () => void
+  /**
+   * Shown only while the sidebar is a drawer. Receives its own trigger so the
+   * shell can return focus there when the drawer closes.
+   */
+  onOpenNavigation?: (trigger: HTMLElement) => void
   onSignOut?: () => void
   environment?: string | null
   className?: string
@@ -66,7 +68,7 @@ export function TopBar({
         {onOpenNavigation && (
           <button
             type="button"
-            onClick={onOpenNavigation}
+            onClick={(event) => onOpenNavigation(event.currentTarget)}
             aria-label="Open navigation"
             className="grid h-9 w-9 place-items-center rounded-md border border-line text-ink-muted lg:hidden"
           >
@@ -107,6 +109,7 @@ export function TopBar({
           </span>
         )}
 
+        {/* Full control where it fits. */}
         <span className="hidden items-center gap-2 md:flex">
           <ActiveIcon className="h-3.5 w-3.5 text-ink-muted" aria-hidden="true" />
           <SegmentedControl
@@ -117,6 +120,27 @@ export function TopBar({
             onChange={setPreference}
           />
         </span>
+
+        {/*
+          On a phone the segmented control does not fit, but hiding it with no
+          alternative left those users unable to change theme at all. This
+          cycles System to Light to Dark and names the next state, so the
+          action is announced rather than guessed.
+        */}
+        <button
+          type="button"
+          onClick={() => {
+            const order: ThemePreference[] = ['system', 'light', 'dark']
+            const next = order[(order.indexOf(preference) + 1) % order.length]
+            setPreference(next)
+          }}
+          aria-label={`Theme: ${preference}. Activate for ${
+            preference === 'system' ? 'light' : preference === 'light' ? 'dark' : 'system'
+          }.`}
+          className="grid h-9 w-9 place-items-center rounded-md text-ink-muted transition-colors hover:bg-accent hover:text-ink md:hidden"
+        >
+          <ActiveIcon className="h-4 w-4" />
+        </button>
 
         <button
           type="button"
@@ -158,23 +182,6 @@ export function TopBar({
         )}
       </div>
     </header>
-  )
-}
-
-export function TopBarAiLink({ children }: { children: ReactNode }) {
-  return (
-    <Link href="/ai" className="flex items-center gap-1.5 text-[11px] text-ink-muted">
-      <Sparkles className="h-3.5 w-3.5" />
-      {children}
-    </Link>
-  )
-}
-
-export function TopBarSettingsLink() {
-  return (
-    <Link href="/settings" aria-label="Settings" className="text-ink-muted">
-      <Settings className="h-4 w-4" />
-    </Link>
   )
 }
 

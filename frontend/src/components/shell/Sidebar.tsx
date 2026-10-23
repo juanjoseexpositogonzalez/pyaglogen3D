@@ -5,7 +5,6 @@ import {
   Atom,
   Boxes,
   FolderOpen,
-  GitCompare,
   Image as ImageIcon,
   LayoutDashboard,
   Layers,
@@ -36,8 +35,6 @@ export interface SidebarProps {
   pathname: string
   /** Present only while a project is in scope. */
   project?: SidebarProject | null
-  /** The `section` query parameter, which project pages use as a sub-route. */
-  section?: string | null
   hasAiAccess?: boolean
   isAdmin?: boolean
   /** Icons only, for the 1280–1439px band. */
@@ -71,8 +68,8 @@ function NavItem({ href, icon: Icon, label, active, collapsed, nested }: NavItem
         'flex items-center gap-[11px] rounded-[9px] px-[13px] py-2.5 transition-colors',
         nested ? 'py-[7px] text-[11px]' : 'text-[13px]',
         active
-          ? 'bg-[rgba(133,214,225,.15)] text-white shadow-[inset_3px_0_0_#8be0e4]'
-          : 'text-[#a9becb] hover:bg-white/[.08] hover:text-white',
+          ? 'bg-rail-active text-white shadow-[inset_3px_0_0_var(--rail-accent)]'
+          : 'text-rail-ink-muted hover:bg-white/[.08] hover:text-white',
         collapsed && 'justify-center px-2',
       )}
     >
@@ -94,7 +91,7 @@ function Group({
   return (
     <div className="mt-[19px] first:mt-0">
       {!collapsed && (
-        <div className="px-[13px] pb-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-[#7f9bab]">
+        <div className="px-[13px] pb-[9px] text-[10px] font-bold uppercase tracking-[0.12em] text-rail-ink-faint">
           {label}
         </div>
       )}
@@ -106,7 +103,6 @@ function Group({
 export function Sidebar({
   pathname,
   project,
-  section,
   hasAiAccess = false,
   isAdmin = false,
   collapsed = false,
@@ -114,23 +110,21 @@ export function Sidebar({
   className,
 }: SidebarProps) {
   const at = (href: string) => pathname === href
-  const inProject = (s?: string) =>
-    Boolean(project) && pathname === `/projects/${project?.id}` && (section ?? null) === (s ?? null)
 
   return (
     <nav
       aria-label="Main"
       className={cn(
-        'flex h-full flex-col overflow-hidden bg-[#102b3d] px-3.5 pb-[18px] pt-6 text-[#d9e6ef]',
+        'flex h-full flex-col overflow-hidden bg-rail px-3.5 pb-[18px] pt-6 text-rail-ink',
         className,
       )}
     >
       <Link href="/dashboard" className="flex items-center gap-[11px] px-3 pb-[31px]">
-        <Atom className="h-[34px] w-[34px] shrink-0 text-[#8be0e4]" />
+        <Atom className="h-[34px] w-[34px] shrink-0 text-rail-accent" />
         {!collapsed && (
           <span className="min-w-0">
             <strong className="block text-[15px] tracking-[0.01em] text-white">pyAgloGen3D</strong>
-            <span className="mt-0.5 block text-[10px] uppercase tracking-[0.05em] text-[#8fa8b8]">
+            <span className="mt-0.5 block text-[10px] uppercase tracking-[0.05em] text-rail-ink-faint">
               Fractal agglomerate lab
             </span>
           </span>
@@ -157,19 +151,28 @@ export function Sidebar({
 
         {project && (
           <Group label={project.name} collapsed={collapsed}>
+            {/*
+              Only real routes live here. An earlier version offered
+              "Simulations" and "FRAKTAL analyses" as `?section=` links and
+              "Compare" as a bare `/compare`, all three taken from the Base44
+              prototype: the product's project page never reads `section`, and
+              the compare page requires `?sims=<csv>` and shows an empty state
+              without it. Those are sections of the overview and a flow that
+              starts from selecting simulations, not destinations.
+            */}
             <NavItem
               href={`/projects/${project.id}`}
               icon={Boxes}
               label="Overview"
-              active={inProject()}
+              active={pathname === `/projects/${project.id}`}
               collapsed={collapsed}
               nested
             />
             <NavItem
-              href={`/projects/${project.id}?section=simulations`}
+              href={`/projects/${project.id}/simulations/new`}
               icon={Layers}
-              label="Simulations"
-              active={inProject('simulations')}
+              label="New simulation"
+              active={pathname.startsWith(`/projects/${project.id}/simulations/new`)}
               collapsed={collapsed}
               nested
             />
@@ -182,18 +185,10 @@ export function Sidebar({
               nested
             />
             <NavItem
-              href={`/projects/${project.id}/compare`}
-              icon={GitCompare}
-              label="Compare"
-              active={pathname.startsWith(`/projects/${project.id}/compare`)}
-              collapsed={collapsed}
-              nested
-            />
-            <NavItem
-              href={`/projects/${project.id}?section=fraktal`}
+              href={`/projects/${project.id}/fraktal/new`}
               icon={Microscope}
-              label="FRAKTAL analyses"
-              active={inProject('fraktal')}
+              label="New FRAKTAL analysis"
+              active={pathname.startsWith(`/projects/${project.id}/fraktal/new`)}
               collapsed={collapsed}
               nested
             />
@@ -234,7 +229,7 @@ export function Sidebar({
       </div>
 
       {engine && !collapsed && (
-        <div className="mt-auto flex items-center gap-2 px-3 pt-3.5 text-[11px] text-[#8fa8b8]">
+        <div className="mt-auto flex items-center gap-2 px-3 pt-3.5 text-[11px] text-rail-ink-faint">
           <StatusDot
             tone={engine.online ? 'positive' : 'negative'}
             label={engine.online ? 'Engine online' : 'Engine unreachable'}

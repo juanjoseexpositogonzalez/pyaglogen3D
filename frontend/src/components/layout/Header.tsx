@@ -32,6 +32,9 @@ export function Header() {
 
   useEffect(() => {
     async function checkAIAccess() {
+      // The shell already asks. Running this too would double the request on
+      // every one of the seventeen pages that still import this component.
+      if (insideAppShell) return
       if (isAuthenticated) {
         try {
           const response = await aiApi.checkAccess()
@@ -44,7 +47,7 @@ export function Header() {
       }
     }
     checkAIAccess()
-  }, [isAuthenticated])
+  }, [isAuthenticated, insideAppShell])
 
   // Build navigation dynamically based on AI access
   const navigation = hasAIAccess
