@@ -34,7 +34,7 @@ FRAKTAL_MODEL_DISPLAY_NAMES = {
 }
 
 # Theoretical extreme values by algorithm
-THEORETICAL_EXTREMES: dict[str, dict[str, list[float]]] = {
+THEORETICAL_EXTREMES: dict[str, dict[str, list[float] | list[str]]] = {
     "dla": {
         "sticking_probability": [0.1, 1.0],
     },
