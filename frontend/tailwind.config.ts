@@ -71,6 +71,7 @@ const config: Config = {
           muted: 'var(--ink-muted)',
           faint: 'var(--ink-faint)',
           'on-dark': 'var(--ink-on-dark)',
+          'on-dark-faint': 'var(--ink-on-dark-faint)',
         },
         brand: {
           DEFAULT: 'var(--accent)',

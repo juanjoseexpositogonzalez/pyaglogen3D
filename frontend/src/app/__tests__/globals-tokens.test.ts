@@ -18,7 +18,12 @@ import { join } from 'node:path'
 
 import { describe, expect, it } from 'vitest'
 
-const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8').replace(/\r/g, '')
+const css = readFileSync(join(process.cwd(), 'src/app/globals.css'), 'utf8')
+  .replace(/\r/g, '')
+  // Comments are stripped before parsing: prose that mentions a token by name,
+  // such as "contrast against --visual-background", otherwise matches the
+  // declaration regex and swallows the declaration that follows it.
+  .replace(/\/\*[\s\S]*?\*\//g, '')
 
 type Tokens = Record<string, string>
 

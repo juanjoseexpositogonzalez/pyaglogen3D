@@ -281,6 +281,8 @@ Cualquier fichero fuera de esta lista es una desviación del contrato:
 - `frontend/src/stores/useThemeStore.ts`
 - los tests que las tareas exigen y que no caen bajo `kit/` ni `shell/`:
   `frontend/src/app/__tests__/globals-tokens.test.ts` (T1.5),
+  `frontend/src/app/__tests__/contrast.test.ts` (T7.5, automatiza el gate de contraste
+  que el contrato dejaba como medición manual),
   `frontend/src/__tests__/tailwind-config.test.ts` (T2.3a y T2.3b) — **dentro de `src/`**:
   `vitest.config.ts:10-15` solo recoge `src/**`, así que un test en `frontend/__tests__/`
   no se ejecutaría nunca y pasaría en verde vacuamente,
@@ -326,6 +328,278 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L8 — Cuarta ronda: tres tests que no podían fallar, y la prueba de que ahora sí (2026-10-22)
+
+Una pasada fresca sobre `e60540d` demostró, **ejecutando**, que tres tests pasaban con el
+componente roto. Las tres causas eran hechos del entorno que yo desconocía:
+
+| test | por qué no podía fallar |
+| --- | --- |
+| `FilterBar` | `0 && <span>` evalúa a `0` y **React renderiza un `0` suelto**; `getByText('0')` lo encuentra igual con la guarda rota |
+| `DetailsDrawer` overlay | Radix **no emite nunca** `data-radix-dialog-overlay`; el selector daba `null` hubiera overlay o no |
+| `CopyText` | React 18.3.1 **eliminó** el warning de *setState tras desmontar*; el espía de `console.error` vigilaba algo que ya no ocurre |
+
+Reescritos para que discriminen: el hint debe estar **dentro de `.hint`**, no suelto en el DOM;
+la ausencia de overlay se comprueba por `bg-black` y `.fixed.inset-0`, que es lo que `ui/dialog`
+pinta; y el desmontaje se mide con `vi.getTimerCount()`, que sin la limpieza se queda en 1.
+
+**Y esta vez están falsificados, no supuestos.** Rompí cada componente a propósito y comprobé
+el rojo:
+
+```
+FilterBar con la guarda rota     -> FAIL
+CopyText sin limpieza del timer  -> FAIL
+--success con el token de L7     -> FAIL
+```
+
+Un test que nunca se ha visto fallar es una hipótesis, no una verificación. Debí hacerlo desde
+la primera ronda.
+
+**Regresión propia de L7, corregida.** `aria-describedby={subtitle ? undefined : undefined}`
+tenía las dos ramas idénticas y pisaba el id que genera Radix, dejando el subtítulo sin anunciar
+**cuando sí existía**. Ahora el atributo solo se suprime si no hay subtítulo.
+
+**El fondo equivocado, por segunda vez.** L7 midió contra `--canvas`, pero `--canvas-deep` y el
+stop final de `--shell-background` son más oscuros, y allí los chips daban 4.23–4.34. Los tokens
+se recalculan contra `#e7f0f0`, la superficie clara más oscura que declara la hoja:
+`--success #236c53`, `--danger #974652`, `--accent #1a777d`, `--ink-faint #5c6f73`, con sus
+tintes re-derivados. El test mide ahora contra esa superficie en ambos temas.
+
+**Un par que nadie medía:** los chips `queued` y `cancelled` usan tinta sobre `--surface-soft`,
+y `STATE_PAIRS` solo cubría success/warning/danger. En tema oscuro daban **3.96** sobre una fila
+con hover. `cancelled` pasa a `--ink-muted` (6.35) y el par entra en el test.
+
+**Un test que borré sin querer.** Al reescribir las aserciones vacuas, una sustitución por
+rangos se llevó por delante el bloque de *"renders a label for every status"*, y lo delató un
+import muerto de `SimulationStatus`. Repuesto.
+
+**Verificación.** Suite **64 ficheros / 723 tests verdes**. `type-check` **13**. Literales de
+producción **98**. `openspec validate --strict` y `show --deltas-only` correctos.
+
+**Anotado y no corregido, por estar fuera del alcance:** `frontend/tsconfig.tsbuildinfo` es un
+artefacto de build versionado en git que se ensucia con cada `type-check`; merece salir del
+control de versiones en un trabajo propio. Y `FraktalBatchImageDetail.test.tsx` (fichero ajeno)
+es intermitente bajo carga paralela: 47 verdes en aislamiento.
+
+### L7 — Pasada fresca sobre el kit: la corrección de contraste estaba mal medida (2026-10-22)
+
+Una pasada fresca sobre `f64f666` confirmó 12 de las 15 correcciones y encontró que **tres
+comprobaciones no comprobaban lo que decían**. Reprodujo exactamente la base declarada
+(715/64, type-check 13, literales 98), así que los gates numéricos nunca estuvieron en duda:
+el problema era que no medían lo que creían medir.
+
+**El fallo principal: medí el contraste contra el fondo que más me favorecía.** L6 justificaba
+medir sobre blanco llamándolo "el fondo conservador". **Está invertido**: para tinta oscura, un
+fondo más claro *sube* el ratio, así que blanco es la cota **optimista**. Los fondos reales son
+más oscuros —un `*-soft` translúcido compuesto sobre el lienzo, o el `--warning-soft` opaco— y
+los chips seguían fallando:
+
+| caso real | ratio con los tokens de L6 |
+| --- | --- |
+| `--success` sobre `--success-soft` compuesto sobre el lienzo | 3.70 |
+| `--warning` sobre `#fdf2dd` | 4.16 |
+| `.eyebrow` (`--accent`) sobre el lienzo | 4.29 |
+| `--ink-faint` sobre el lienzo | 4.31 |
+
+El 3.98 que L6 citaba como defecto original de `--success` **seguía siendo el ratio del chip
+completo**: el token subió, el componente no. Y el test, al medir sobre un fondo que ningún
+componente presenta, **no podía fallar aunque los chips fueran ilegibles**.
+
+Corregido midiendo contra el peor fondo real: `--success` `#257157`, `--warning` `#9a621a`,
+`--danger` `#9f4a56`, `--accent` `#1b7c83`, `--ink-faint` `#617479`, todos ≥4.55:1. Los tokens
+`*-soft` se **re-derivan de la tinta nueva** para que el chip y su propio tinte no diverjan;
+`--success-soft` seguía derivando del `#2f8f6d` retirado dos rondas antes. El test compone
+alfa como el navegador y mide los pares que el kit presenta de verdad.
+
+**Dos tests más que pasaban por la razón equivocada:**
+- `FilterBar`: el test pasaba `hint={<span>0 of 96</span>}`, y un elemento React es *truthy*,
+  así que **pasaba igual contra el código roto**. El caso que la guarda existe para cubrir es
+  `hint={0}`. Reescrito, más un caso de ausencia.
+- El reemplazo del test tautológico introdujo **dos aserciones nuevas igual de vacuas**:
+  comparaban dos arrays literales escritos en el propio test, sin renderizar nada. Reescritos
+  para que el componente produzca lo que se afirma.
+
+**`DetailsDrawer` era la única primitiva sin test**, y precisamente la de reescritura más
+arriesgada. L6 declaraba "T3.8 cumplida, ya no hay primitiva sin test": eran 17 de 18. Añadidos
+cuatro tests: que no hay overlay (es cajón, no modal), que se anuncia como diálogo con nombre,
+que Escape cierra sin overlay, y que no quedan clases de animación que la hoja no puede emitir.
+
+**Otros cierres:** el test de `CopyText` prometía tres cosas y medía una, y no ejercitaba el
+desmontaje que la corrección 14 arregló — ahora espía `console.error` para detectar un
+`setState` sobre componente desmontado; `aria-describedby` colgante en `DetailsDrawer` cuando
+no hay subtítulo; comentario obsoleto en `Num` sobre strings que ya no acepta;
+`--ink-on-dark-soft` declarado y cableado sin consumidores, retirado.
+
+**Desviación de contrato corregida:** `contrast.test.ts` se añadió en L6 sin enmendar la lista
+cerrada de ficheros editables. Enmendada.
+
+**Verificación.** Suite **64 ficheros / 721 tests verdes**. Kit + tokens: **103 tests**.
+`type-check` **13**. Literales de producción **98**. Las **18** primitivas con test, verificado
+por script y no por afirmación.
+
+**La lección, que es la misma de L5 en otra forma:** un gate verde no dice que el sistema esté
+bien, dice que el gate pasó. Tres veces en este change una comprobación ha estado midiendo algo
+distinto de lo que su nombre prometía, y las tres veces hizo falta alguien ajeno para verlo.
+
+### L6 — Judgment day del kit: bloque 3, contraste y cobertura (2026-10-22)
+
+**Contraste AA, con valores medidos y no ajustados a ojo.** Calculado el tono más oscuro de
+cada matiz que cruza 4.5:1 sobre blanco, que es el fondo conservador porque los chips pintan su
+tinta sobre fondos `*-soft` translúcidos:
+
+| token | antes | ahora |
+| --- | --- | --- |
+| `--ink-faint` | `#879b9f` · 2.91 | `#64787d` · **4.64** |
+| `--warning` | `#b8761f` · 3.72 | `#a3681b` · **4.61** |
+| `--success` | `#2f8f6d` · 3.98 | `#2b8364` · **4.63** |
+| `--accent` | `#1d858c` · 4.39 | `#1c8188` · **4.62** |
+
+El tema oscuro ya cumplía sus cinco pares; verificado antes de tocarlo, no supuesto.
+
+**T7.5 deja de ser una medición manual y pasa a ser un test.** `src/app/__tests__/contrast.test.ts`,
+20 aserciones: tinta y semánticos en ambos temas, los tres tokens sobre el canvas de
+visualización, y las seis series a 3:1 por ser contraste no textual. Una medición manual es una
+foto; un token puede derivar al día siguiente.
+
+**El test de contraste encontró un defecto en sí mismo antes que en los tokens.** El parser de
+`globals.css` usaba `(--[\w-]+)\s*:\s*([^;]+);`, y un comentario propio que mencionaba
+`--visual-background: 13.2:1` **era tomado por una declaración y se tragaba la siguiente**.
+Afectaba igual al test de tokens de L2. Corregido quitando comentarios antes de parsear, en los
+dos ficheros.
+
+**Dos defectos más del juez A, cerrados:**
+- `DataTable` con `maxHeight` era una caja con scroll sin nada enfocable, así que **las filas
+  bajo el corte eran inalcanzables por teclado** (WCAG 2.1.1). Como `ShowValues` fija
+  `maxHeight` por defecto, afectaba a *todas* las tablas de "Show values" y contradecía R7-S2,
+  que el Log daba por cubierto. Ahora `tabIndex=0`, `role="region"` y `aria-label`.
+- El estado vacío tiraba `caption` y cabecera; vía `ShowValues` el caption es lo único que dice
+  **qué** mostraba la gráfica. Ahora se conservan, con una fila `colSpan`.
+- `CopyText` dejaba el timer vivo: desmontar la fila dentro de 1,6 s provocaba un `setState`
+  sobre un componente desmontado, y los clics repetidos acumulaban timers.
+
+**Cobertura: de 6 a 18 primitivas con test.** 34 tests nuevos en `interactive.test.tsx` y
+`presentational.test.tsx`, centrados en lo que los jueces señalaron como no ejercitado:
+teclado y *roving tabindex* de `SegmentedControl`, modo controlado de `DisclosurePanel`,
+`progress` con `NaN` y fuera de rango, `undefined` en `DetailList`, recuento cero en
+`FilterBar`, y que `VisualPanel` no vuelva a usar modificadores de opacidad.
+
+**Verificación.** Suite **64 ficheros / 715 tests verdes** (base 58/624). Kit: **71 tests**
+(eran 28). `type-check` **13**. Literales de producción **98**.
+
+**T3.8 queda cumplida**: ya no hay primitiva sin test. T7.5 cumplida y automatizada.
+
+### L5 — Judgment day del kit: ronda de corrección, bloques 1 y 2 (2026-10-22)
+
+Dos jueces ciegos sobre el PR #91, con ángulos distintos: uno mecánico, otro de dominio.
+**Ambos NEEDS_FIXES**: 1 bloqueante, 13 mayores, 14 menores. Sin solaparse en casi nada.
+
+**Causa raíz común, que ninguno nombró entera:** el kit se construyó contra el prototipo de
+Base44 y contra suposiciones propias, y se verificó **solo contra sí mismo**. Los 28 tests
+comprobaban que estos componentes hacían lo que estos componentes decían. Nada los ataba a los
+tipos reales del producto, ni al CSS compilado, ni al comportamiento real de `ui/dialog`.
+
+**El bloqueante fue una lección ya documentada y repetida.** `VisualPanel` usaba
+`text-ink-on-dark/70`. Tailwind **no puede aplicar alfa sobre un color `var()` y descarta la
+utilidad entera sin avisar**, así que esos rótulos heredaban `--ink` y quedaban a **1.28:1** en
+tema claro: invisibles. Es exactamente la trampa que L2 documentó con `bg-success-soft/20` y
+dio por aprendida tres horas antes. **Escribir una lección en un Log no es tenerla verificada.**
+Corregido con tokens enteros `--ink-on-dark-soft` y `--ink-on-dark-faint`, comprobados
+compilando Tailwind contra una sonda: ahora emiten CSS, a 13.2:1 y 9.4:1.
+
+**Tres comentarios describían comportamiento inexistente.** Documentación que miente es peor
+que ausente, porque el consumidor futuro confía en ella:
+- `SegmentedControl` prometía navegación por flechas: `role="radiogroup"` **sustituye** la
+  semántica nativa, el navegador no aporta nada. Implementadas flechas, Home/End y *roving
+  tabindex*; un control de seis opciones vuelve a costar una tabulación y no seis.
+- `DisclosurePanel` prometía control externo y solo tenía estado interno. Añadido el modo
+  controlado `open`/`onOpenChange`.
+- `DetailsDrawer` decía "cajón, no modal" mientras `DialogContent` monta **siempre** un overlay
+  al 80% de negro. Reescrito sobre el primitivo Radix con `modal={false}` y sin overlay.
+- Y sus clases `slide-*` eran **CSS muerto**: `tailwindcss-animate` no está instalado y
+  `plugins: []`. Retiradas.
+
+**Un test propio era tautológico.** `getByText(/\w/)` ya garantiza que hay texto; afirmar
+después que su longitud es > 0 no comprueba nada. Cinco de seis estados no se verificaban
+jamás. Sustituido por tabla `[estado, etiqueta]` con aserción de rótulos distintos.
+
+**Bloque 2 — el kit hablaba un idioma que el producto no habla.** `StatusChip` definía `ready`,
+`error` y un `attention` inventado; `lib/types.ts:7` dice
+`'queued'|'running'|'completed'|'failed'|'cancelled'`. `QualityBadge` definía `good`;
+`lib/api.ts:664` dice `'converged'|'approximate'|'excluded'|'failed'`. Portar una pantalla real
+habría fallado el type-check o pintado una insignia en blanco.
+
+Ahora ambos **importan la unión del producto** en vez de redefinirla, y hay un test que importa
+`SimulationStatus` y verifica que cada estado del backend tiene chip. Al cambiar los tipos, el
+compilador cazó los tests que aún usaban el vocabulario viejo: esa es la red que faltaba.
+
+**Otros agujeros cerrados**, todos del mismo patrón —la primitiva decía imponer una regla y se
+esquivaba trivialmente—:
+- `Num` aceptaba `string` y lo pasaba tal cual, de modo que `"68.4 nm"` derrotaba la regla que
+  la primitiva existe para imponer. Ahora solo acepta números; los intervalos van por `NumRange`.
+- `MetricCard` tenía `sigma` y `detail` opcionales: un Df sin incertidumbre ni R² compilaba.
+  Ahora es unión discriminada y `measured` los **exige**.
+- `DetailList` trataba `undefined` por la rama no numérica y renderizaba celda vacía en vez del
+  em dash; `ReactNode` incluye `undefined` y los campos opcionales del backend llegan así.
+- `FilterBar` ocultaba el recuento cuando valía `0`, justo cuando el filtro no encuentra nada.
+- `MetricCard` anunciaba `aria-valuenow` sin acotar (140 contra un máximo de 100, o `NaN`).
+- `.num-unit` llevaba margen propio **y** el contenedor un gap: doble separación en la
+  primitiva por la que pasa cada número del producto.
+- `Num.toFixed` lanzaba `RangeError` con `digits` fuera de 0..100, valor que llega sin validar
+  desde definiciones de columna.
+
+**Verificación.** Suite **61 ficheros / 661 tests verdes** (base 58/624; el kit pasa de 28 a 37
+tests). `type-check` **13**. Literales de producción **98**.
+
+**Bloque 3, pendiente por decisión de la persona:** seis combinaciones de color del kit por
+debajo de AA en tema claro (`--success` 3.98, `--warning` 3.72, `--accent` 4.39, `--ink-faint`
+2.91 sobre blanco), con test de contraste automatizado en vez de medición manual; y tests para
+las 12 primitivas que siguen sin ninguno.
+
+### L4 — T3, el kit de primitivas (2026-10-22)
+
+**18 primitivas, 1.231 líneas, más 274 de tests.** Cero literales de color en todo el kit: la
+regla de R1 se cumple por construcción, porque cada color pasa por un token.
+
+| Grupo | Primitivas |
+| --- | --- |
+| Datos | `Num`, `CopyText`, `DetailList`, `DataTable`, `MetricCard` |
+| Superficies | `Panel`, `VisualPanel`, `PageHeader`, `EmptyState`, `DisclosurePanel` |
+| Estado | `StatusChip`, `QualityBadge`, `StatusDot`, `Callout` |
+| Control | `SegmentedControl`, `FilterBar`, `ShowValues`, `DetailsDrawer` |
+
+**Criterio: las primitivas obligan a las reglas, no confían en que el llamante las recuerde.**
+
+- `Num` recibe `sigma` como parámetro, de modo que una magnitud medida sin su incertidumbre
+  cuesta más de escribir que con ella.
+- `MetricCard` espera `detail` con el estimador y la calidad del ajuste: un Df sin R² es un
+  número sin afirmación.
+- `DetailList` acepta `provenance`, para que un valor heredado diga de dónde viene.
+- `QualityBadge` usa una **unión discriminada**: `approximate`, `excluded` y `failed` **no
+  compilan sin `reason`**. Una exclusión que no se puede interrogar se confunde con un fallo
+  del programa, y aquí lo impide el compilador.
+- `QualityBadge` y `StatusChip` son componentes distintos a propósito: un análisis FRAKTAL puede
+  terminar con éxito y aun así dar un resultado inutilizable.
+- `Panel` tiene tonos decorativos y **el estado vive solo en `Callout` y `StatusChip`**, para que
+  "este panel es dorado" nunca acabe significando "algo va mal".
+- `SegmentedControl` es un `radiogroup` con `ariaLabel` obligatorio.
+- `DetailsDrawer` es cajón lateral y no modal: inspeccionar un detalle no tapa la tabla de la
+  que viene.
+
+**`DataTable` se escribe desde cero**, sin `ui/table`: ese fichero no existe en el repo (shadcn
+está instalado a medias, sin `components.json`) y crearlo caería fuera de la lista cerrada. Lo
+detectó la spec-review r2 antes de que se intentara.
+
+**Un fallo propio, y lo que salió de corregirlo.** Importé `@testing-library/user-event` dando
+por hecho que estaba instalado; no lo está, y añadirlo habría sido tocar `package.json`, fuera
+de la lista cerrada. Reescrito con `fireEvent`, que ya usan tres tests del repo. Al hacerlo, el
+test de teclado mejoró: `jsdom` **no convierte Enter en click**, así que un `userEvent.keyboard`
+habría pasado igual con un `<div onClick>`, inalcanzable por teclado. La versión actual afirma
+lo que de verdad garantiza el acceso —elemento `BUTTON` nativo, sin `tabindex`, enfocable—, que
+es más fuerte que lo que la herramienta ausente permitía.
+
+**Verificación.** Suite **61 ficheros / 652 tests verdes** (base 58/624). `type-check` **13**.
+Literales de producción **98**, en el techo exacto.
 
 ### L3 — T4 y dos enmiendas (2026-10-22)
 
