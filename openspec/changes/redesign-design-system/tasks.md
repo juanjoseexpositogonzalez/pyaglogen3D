@@ -329,6 +329,47 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L10 — T5: el shell (2026-10-23)
+
+**Cero páginas editadas.** Es la cifra que hacía viable el paralelismo con la cadena
+`distribution-config-surface`: el shell se monta una sola vez en `app/layout.tsx` y `Header`
+cede renderizando `null` bajo un contexto, así que **ninguna de las 17 páginas que lo importan
+cambió una línea** y no me acerqué a los ficheros reservados.
+
+**Piezas.** `AppShellContext` (transitorio, muere con `Header`), `Sidebar` con navegación
+agrupada y grupo de proyecto contextual, `TopBar` con breadcrumb y el conmutador de tema de
+tres estados, y `AppShell` con el guard de rutas públicas.
+
+**El guard es un componente, no un route group**, a propósito: como componente con props se
+puede aseverar en un test; un route group no.
+
+**Falsificación: un test pasó la prueba y el otro la suspendió.**
+- Desactivar el guard de `/` y `/auth/*` → **3 fallos**. El test sirve.
+- Quitar el `yield` de `Header` → **0 fallos**. El test **no servía**: contaba navegaciones con
+  nombre `"Main"`, y el `<nav>` de `Header` no lleva ese nombre, así que una navegación
+  duplicada era **invisible** para la aserción. Reescrito para contar la marca de producto, que
+  ambos renderizan, y entonces sí cae.
+
+Séptima vez en este change que un test no comprobaba lo que su nombre prometía. La diferencia:
+esta vez lo encontré antes de que lo hiciera un revisor, porque romper el código a propósito ya
+es parte del procedimiento.
+
+**Intermitencia de la suite, diagnosticada en vez de supuesta.** Con paralelismo de ficheros
+caen 1–3 tests de `FraktalBatchImageDetail` y `FraktalBatchUpload`, variando cuáles. Medido:
+
+| ejecución | resultado |
+| --- | --- |
+| `FraktalBatchUpload` aislado, 3 corridas | 17/17, 17/17, 17/17 |
+| suite con paralelismo | 1–3 fallos, variables |
+| **suite `--no-file-parallelism`** | **67 ficheros / 762 tests, todos verdes** |
+
+La causa es la concurrencia y el defecto es preexistente y ajeno —ninguno de esos ficheros
+importa nada modificado aquí—, pero **los tres ficheros de test que añade esta ola suben la
+carga y lo agravan**. Eso es contribución propia aunque el defecto no lo sea, y queda dicho.
+
+**Verificación.** Suite **67 ficheros / 762 tests** (verdes en serie). `type-check` **13**.
+Literales de producción **98**. Páginas editadas: **0**.
+
 ### L9 — T6: el tema (2026-10-23)
 
 **`lib/theme.ts`, resolutor puro.** Recibe la preferencia del sistema como argumento en vez de

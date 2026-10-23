@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { cn } from '@/lib/utils'
 import { useAuth } from '@/contexts/AuthContext'
+import { useIsInsideAppShell } from '@/components/shell/AppShellContext'
 import { aiApi } from '@/lib/ai-api'
 import { Atom, FolderOpen, LayoutDashboard, LogIn, UserPlus, LogOut, User, Shield, Bot } from 'lucide-react'
 
@@ -13,7 +14,18 @@ const baseNavigation = [
   { name: 'Projects', href: '/projects', icon: FolderOpen },
 ]
 
+/**
+ * @deprecated Superseded by `components/shell/AppShell`, which mounts the
+ * sidebar and top bar once in the root layout.
+ *
+ * Still exported because eighteen files import it. Rather than edit pages that
+ * belong to later waves — some of them neighbours of files another change has
+ * reserved — this renders nothing when the shell is already mounted, so no
+ * route shows two navigations and no page changes an import. The wave that
+ * rewrites the last of those pages deletes this file.
+ */
 export function Header() {
+  const insideAppShell = useIsInsideAppShell()
   const pathname = usePathname()
   const { user, isAuthenticated, isLoading, logout } = useAuth()
   const [hasAIAccess, setHasAIAccess] = useState(false)
@@ -38,6 +50,8 @@ export function Header() {
   const navigation = hasAIAccess
     ? [...baseNavigation, { name: 'AI Assistant', href: '/ai', icon: Bot }]
     : baseNavigation
+
+  if (insideAppShell) return null
 
   return (
     <header className="border-b border-white/10 bg-card/80 backdrop-blur-md">
