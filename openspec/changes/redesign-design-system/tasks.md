@@ -359,9 +359,16 @@ test del tema oscuro en rojo: jsdom no reporta media query alguna, así que sin 
 el grafo se construiría siempre claro.
 
 **Verificación.** 16 tests de tema + 2 de `NetworkCanvas`. Suite **65 ficheros / 742 tests**,
-con el único fallo en `FraktalBatchImageDetail.test.tsx`, fichero ajeno e intermitente bajo
-carga paralela (1 fallo en una corrida, 3 en otra, 47 verdes en aislamiento). `type-check`
-**13**. Literales de producción **98**.
+con el único fallo en `FraktalBatchImageDetail.test.tsx`. `type-check` **13**. Literales de
+producción **98**.
+
+**Corrección a lo que este Log afirmó antes.** L7 anotó ese fichero como "47 verdes en
+aislamiento", basándose en **una sola corrida**. Tres corridas seguidas en aislamiento dan
+`47/47`, `47/47`, `4 fallos`, y el test que cae cambia entre ejecuciones. El aislamiento **no
+lo cura**: es intermitencia real, no contención por carga paralela. Descartado como causa
+propia: el fichero mockea `next/navigation`, `next/link` y `@/lib/api`, no monta `Providers`
+ni el layout, y no toca nada de lo modificado en T6. Queda como issue propia bajo la política
+nueva, ahora con el diagnóstico correcto.
 
 ### L8 — Cuarta ronda: tres tests que no podían fallar, y la prueba de que ahora sí (2026-10-22)
 
