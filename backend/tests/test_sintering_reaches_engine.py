@@ -41,7 +41,9 @@ def test_r11_1_normal_mean_travels_in_sintering_coeff() -> None:
         {"n_particles": 1000},
         {"distribution_type": "normal", "mean": 0.8, "std": 0.05},
     )
-    assert result["sintering_coeff"] == 0.8, "the declared mean never reached the engine"
+    assert result["sintering_coeff"] == 0.8, (
+        "the declared mean never reached the engine"
+    )
     assert result["sintering_std"] == 0.05
     assert result["sintering_type"] == "normal"
 
