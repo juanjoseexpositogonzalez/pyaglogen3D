@@ -450,9 +450,20 @@ caen 1–3 tests de `FraktalBatchImageDetail` y `FraktalBatchUpload`, variando c
 | suite con paralelismo | 1–3 fallos, variables |
 | **suite `--no-file-parallelism`** | **67 ficheros / 762 tests, todos verdes** |
 
-La causa es la concurrencia y el defecto es preexistente y ajeno —ninguno de esos ficheros
-importa nada modificado aquí—, pero **los tres ficheros de test que añade esta ola suben la
-carga y lo agravan**. Eso es contribución propia aunque el defecto no lo sea, y queda dicho.
+**Corrección posterior (2026-10-23).** De ahí concluí que "en serie sale verde" y que la causa
+era la concurrencia. **Era una generalización desde una sola corrida.** Al verificar los siete
+trozos de la partición, una corrida **en serie** falló igual. Medido después: **1 fallo en 5
+corridas en serie**, frente a 1-3 por corrida en paralelo.
+
+Lo correcto es: el modo serie **reduce mucho** la intermitencia pero **no la elimina**. El
+defecto sigue siendo preexistente y ajeno —esos ficheros no importan nada modificado aquí— y
+los tres ficheros de test que añade esta ola siguen agravándolo al subir la carga.
+
+**Consecuencia para el CI que la persona va a montar:** ejecutar la suite en serie no basta
+para estabilizarla. El test intermitente pasa de deuda anotada a **prerrequisito del CI**, o el
+primer workflow tendrá rojos aleatorios desde el día uno.
+
+Segunda vez en este change que generalizo sobre este mismo test desde una única observación.
 
 **Verificación.** Suite **67 ficheros / 762 tests** (verdes en serie). `type-check` **13**.
 Literales de producción **98**. Páginas editadas: **0**.
