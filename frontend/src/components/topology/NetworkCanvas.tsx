@@ -5,8 +5,22 @@ import { buildVisNetworkData } from '@/lib/graphUtils'
 import type { GraphTheme } from '@/lib/graphUtils'
 import type { NeighborGraphData } from '@/lib/types'
 
-/** Detect current theme from system preference. SSR-safe and jsdom-safe — defaults to 'light'. */
+/**
+ * Detect the theme the application is actually in.
+ *
+ * `contacts-graph-viz` requires the graph canvas to match "the app's current
+ * theme". Reading `prefers-color-scheme` satisfied that by accident while the
+ * app had no theme of its own; now that an explicit choice can override the
+ * operating system, the attribute is the answer and the media query is only a
+ * fallback for the moment before the bootstrap script runs.
+ *
+ * SSR-safe and jsdom-safe: defaults to 'light'.
+ */
 function detectTheme(): GraphTheme {
+  if (typeof document !== 'undefined') {
+    const attribute = document.documentElement.dataset.theme
+    if (attribute === 'dark' || attribute === 'light') return attribute
+  }
   if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return 'light'
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
@@ -35,13 +49,31 @@ export default function NetworkCanvas({
   const onNodeClickRef = useRef(onNodeClick)
   onNodeClickRef.current = onNodeClick
 
-  // Listen for system theme changes
+  // Follow the application's theme, and the system preference only as the
+  // fallback the detector uses before the attribute exists.
   useEffect(() => {
-    if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return
-    const mql = window.matchMedia('(prefers-color-scheme: dark)')
-    const handler = (e: MediaQueryListEvent) => setTheme(e.matches ? 'dark' : 'light')
-    mql.addEventListener('change', handler)
-    return () => mql.removeEventListener('change', handler)
+    if (typeof document === 'undefined') return
+
+    const observer =
+      typeof MutationObserver === 'function'
+        ? new MutationObserver(() => setTheme(detectTheme()))
+        : null
+    observer?.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme'],
+    })
+
+    let mql: MediaQueryList | null = null
+    const handler = () => setTheme(detectTheme())
+    if (typeof window !== 'undefined' && typeof window.matchMedia === 'function') {
+      mql = window.matchMedia('(prefers-color-scheme: dark)')
+      mql.addEventListener('change', handler)
+    }
+
+    return () => {
+      observer?.disconnect()
+      mql?.removeEventListener('change', handler)
+    }
   }, [])
 
   useEffect(() => {

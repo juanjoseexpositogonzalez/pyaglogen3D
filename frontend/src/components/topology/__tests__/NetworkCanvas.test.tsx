@@ -199,3 +199,42 @@ describe('<NetworkCanvas />', () => {
     expect(MockNetwork).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('theme follows the application, not the operating system', () => {
+  beforeEach(() => {
+    resetMock()
+    MockNetwork.mockClear()
+  })
+
+  afterEach(() => {
+    cleanup()
+    delete document.documentElement.dataset.theme
+  })
+
+  // graphUtils keeps these module-local (graphUtils.ts:42-43) and that file is
+  // outside this change's editable surface, so they are restated here.
+  const EDGE_LIGHT = '#cbd5e1'
+  const EDGE_DARK = '#475569'
+
+  it.each([
+    ['light', EDGE_LIGHT],
+    ['dark', EDGE_DARK],
+  ] as const)(
+    'builds the graph with the %s theme the application resolved',
+    async (theme, expectedEdgeColour) => {
+      // contacts-graph-viz requires the canvas to match "the app's current
+      // theme". Reading prefers-color-scheme satisfied that by accident while
+      // the app had no theme of its own; an explicit choice now overrides it,
+      // and jsdom reports no media query at all, so without reading the
+      // attribute this would always build the light graph.
+      document.documentElement.dataset.theme = theme
+
+      await act(async () => {
+        render(<NetworkCanvas data={data5} onNodeClick={vi.fn()} selectedNodeId={null} />)
+      })
+
+      const [, payload] = MockNetwork.mock.calls[0] as [unknown, { edges: Array<{ color: string }> }]
+      expect(payload.edges[0].color).toBe(expectedEdgeColour)
+    },
+  )
+})

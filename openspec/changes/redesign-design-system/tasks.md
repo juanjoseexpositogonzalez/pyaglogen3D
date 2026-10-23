@@ -329,6 +329,40 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L9 — T6: el tema (2026-10-23)
+
+**`lib/theme.ts`, resolutor puro.** Recibe la preferencia del sistema como argumento en vez de
+leer `window.matchMedia`, que jsdom 23 no provee y `src/test/setup.ts` no stubea. Eso es lo que
+lo hace testable; un resolutor que lo leyera directamente no se podría verificar.
+
+**`useThemeStore`**: zustand + `persist`, el mismo mecanismo que `viewerStore`, para no abrir un
+segundo sitio donde mirar cuando una preferencia no sobrevive a una recarga. Solo persiste la
+preferencia: `resolved` es derivado y quedaría obsoleto si la preferencia del sistema cambiase
+entre visitas.
+
+**Script inline antes del primer paint**, en `<head>`. Dos decisiones:
+- **La clave de `localStorage` es un contrato compartido.** `persist` escribe
+  `{"state":{…},"version":n}` bajo su `name`; un `getItem('theme')` ingenuo habría devuelto
+  `null` y reintroducido el parpadeo **en silencio**. Script y store comparten la constante, y
+  un test afirma que el script la contiene.
+- **El script y el resolutor están duplicados a propósito** —el inline no puede importar— así
+  que un test ejecuta **ambos contra los mismos cuatro casos** y exige que coincidan. Es lo
+  único que impide que deriven.
+
+**T6.4 — `NetworkCanvas` sigue el tema de la app.** `contacts-graph-viz.md:252` exige que el
+canvas siga *"the app's current theme"*, y hasta ahora se cumplía **por accidente**: el tema de
+la app era el del sistema. En cuanto la elección explícita gana, dejaba de cumplirse. Ahora lee
+`data-theme` con la media query como respaldo, y observa el atributo además del `MediaQueryList`.
+
+**Falsificado, no supuesto.** Revertir `detectTheme` a leer solo `prefers-color-scheme` pone el
+test del tema oscuro en rojo: jsdom no reporta media query alguna, así que sin leer el atributo
+el grafo se construiría siempre claro.
+
+**Verificación.** 16 tests de tema + 2 de `NetworkCanvas`. Suite **65 ficheros / 742 tests**,
+con el único fallo en `FraktalBatchImageDetail.test.tsx`, fichero ajeno e intermitente bajo
+carga paralela (1 fallo en una corrida, 3 en otra, 47 verdes en aislamiento). `type-check`
+**13**. Literales de producción **98**.
+
 ### L8 — Cuarta ronda: tres tests que no podían fallar, y la prueba de que ahora sí (2026-10-22)
 
 Una pasada fresca sobre `e60540d` demostró, **ejecutando**, que tres tests pasaban con el
