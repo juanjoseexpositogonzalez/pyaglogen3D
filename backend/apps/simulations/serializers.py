@@ -12,10 +12,9 @@ from rest_framework.exceptions import ValidationError
 
 from .fields import DistributionField
 from .sintering_shape import (
-    FLAT_KEYS,
     check_algorithm_scope,
     check_flat_keys,
-    check_flat_required,
+    check_flat_required_over_sweeps,
     validate_dict_shape,
 )
 from .models import ParametricStudy, Simulation
@@ -508,14 +507,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
         # Required keys are checked on the child's merged projection: the
-        # rest of the shape may legitimately live in base_parameters.
-        merged = {k: v for k, v in base_params.items() if k in FLAT_KEYS}
-        for mapping in (grid, extremes):
-            for key, value in mapping.items():
-                if key in FLAT_KEYS:
-                    merged[key] = value[0] if isinstance(value, list) and value else value
+        # rest of the shape may legitimately live in base_parameters. A sweep
+        # emits one child per element, so every element is projected, not only
+        # the first: reading just the first let a second child be stored as
+        # `uniform` with no min/max, which the worker then ran as 0.85-0.95.
         try:
-            check_flat_required(merged)
+            check_flat_required_over_sweeps(base_params, grid=grid, extremes=extremes)
         except ValueError as exc:
             raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
 

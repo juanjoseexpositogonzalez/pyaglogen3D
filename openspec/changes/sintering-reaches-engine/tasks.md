@@ -610,11 +610,18 @@
   T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
   0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.
 - L34 (2026-10-23): **T5 completa** (R12). T5 **no cambia comportamiento**: su trabajo es
-  demostrar que la barrera está donde el contrato exige, antes de la primera escritura, y
+  demostrar que la barrera está donde el contrato exige, **antes de la primera escritura**, y
   dejarla fijada. Lo demostrado, con evidencia propia: `perform_create` (`views.py:1750`) **no
   valida nada**, `config/` **no define `ATOMIC_REQUESTS`**, y DRF llama `is_valid()` antes de
-  `perform_create`, así que la única barrera es `ParametricStudySerializer.validate()` — que es
-  justo donde T1 y T4 pusieron sus comprobaciones.
+  `perform_create`.
+  **Corrección de un juez, y la acepto**: la primera redacción decía que *toda* la validación
+  ocurre en `ParametricStudySerializer.validate()`, «la única barrera». Es **falso**. La forma
+  de la superficie 2 se valida en `validate_sintering_config` (`serializers.py:367`), un
+  validador **de campo** que DRF ejecuta en `to_internal_value`, es decir **antes** de
+  `validate()`. La propiedad que R12 exige se sostiene igual —ambos corren antes de la primera
+  escritura—, pero T5.1 enunciado como «todo en `validate()`» invitaba al siguiente auditor a
+  mover comprobaciones que hoy funcionan, o a leer como infracción un validador de campo que no
+  lo es. Lo que T5 garantiza es la propiedad, no el método.
   **Qué pasa si esa barrera no está, medido en vez de supuesto** (probe con las cuatro funciones
   de validación anuladas y el payload de R12.1): la expansión revienta a media faena con
   `ValueError: unknown sintering_config keys: mode` y deja **1 estudio, 1 simulación y 1 tarea
@@ -624,9 +631,39 @@
   despachos** antes y después: los cuatro ajustes inválidos que R12.1 y R12.2 nombran, uno por
   superficie, más dos controles de que un ajuste **válido sí escribe y sí encola** — sin ellos,
   un serializer que rechazara todo pasaría los cuatro primeros.
-  Los seis salen **verdes de entrada**, porque T1 y T4 ya habían puesto la barrera; se declara
-  así en vez de venderlos como rojo-a-verde. Lo que los hace guardas y no decorado es el probe
-  de arriba: en el mundo sin barrera, los cuatro fallan por las tres aserciones a la vez.
+  Los seis salieron **verdes de entrada**, porque T1 y T4 ya habían puesto la barrera; se
+  declara así en vez de venderlos como rojo-a-verde. Lo que los hace guardas es el probe de
+  arriba: en el mundo sin barrera, los cuatro fallan. **Pero no «por las tres aserciones a la
+  vez», como escribí**: los dos jueces lo midieron y es falso. Los dos casos de forma dict
+  revientan dentro de `_post`, así que las aserciones de filas y de despachos **ni se ejecutan**,
+  y el caso de `base_parameters` deja +1 estudio pero 0 despachos. La fuerza de la guarda varía
+  por caso, y el registro lo dice ahora en vez de redondearlo.
+  **Judgment-day sobre T5: cero severos en lo que escribí, tres defectos vivos en el código.**
+  T5 nació como tarea sin código de producción; deja de serlo por decisión de la persona, porque
+  los jueces encontraron tres caminos que **violan R12 hoy** y que ninguno de mis seis tests
+  tocaba. Reproducidos por mí antes de arreglar nada:
+  1. **Superficie 6 con un escalar** (`theoretical_extremes: {sintering_coeff: 0.7}`, sin lista):
+     `TypeError` en `utils.py:202` → **500**, con +1 estudio, +1 simulación y **+1 tarea
+     encolada**.
+  2. **Superficie 5 con un escalar** (`parameter_grid: {sintering_coeff: 0.7}`): `TypeError` en
+     `itertools.product` (`views.py:1777`) → **500** y un estudio huérfano en RUNNING.
+  3. **Barrido cuyo segundo elemento es inválido**
+     (`{sintering_type: ["fixed","uniform"], sintering_coeff: [0.6]}`): **201**, y el segundo
+     hijo queda almacenado como `uniform` **sin min/max**, que el worker corre como uniform
+     0.85-0.95 (`tasks.py:1596-1598`). El peor de los tres: no falla, miente.
+  Arreglados: `check_flat_keys` exige **lista** en las superficies barridas, y
+  `check_flat_required_over_sweeps` proyecta **cada hijo** que el barrido produce en vez de sólo
+  el primero — producto cartesiano para el grid, un hijo por par clave/valor para los extremos,
+  que es como los expande `add_case`. Tres tests nuevos en rojo antes, verdes después, más dos
+  controles de que un barrido **bien especificado** sigue aceptándose.
+  **Tests débiles, corregidos**: el sexto test era un duplicado byte a byte del control y no
+  podía fallar solo (retirado); los cuatro casos inválidos sólo exigían «400», así que cualquier
+  400 ajeno los dejaba verdes (ahora exigen que el 400 hable del sinterizado); y faltaban las
+  superficies 2, 5 y 7, que R12.2 cubre con su «lo mismo para las demás superficies».
+  **Derivado, no arreglado**: el bloque de extremos (`views.py:1869-1906`) con un `n_particles`
+  en forma de dict revienta tras crear **8 hijos y encolar 8 tareas** (medido). No lo gobierna
+  R12 —no es un ajuste de sinterizado—, así que va al contrato de seguimiento, que suma cinco
+  puntos.
   **Fuera de alcance, y el contrato ya lo dice**: un `parameter_grid.sintering_config` con dos o
   más entradas junto a `include_limiting_cases` sigue reventando a media expansión por el
   `sorted` de `utils.py:180`. Es anterior a este contrato y pertenece a `distribution-grid-wiring`.

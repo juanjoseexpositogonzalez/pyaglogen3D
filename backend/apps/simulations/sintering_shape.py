@@ -15,6 +15,7 @@ These functions raise `ValueError`; the serializer turns that into a
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from itertools import product
 from typing import Any
 
 #: The flat keys the worker reads. Anything else is rejected, in
@@ -157,6 +158,12 @@ def check_flat_keys(parameters: Mapping[str, Any], *, swept: bool) -> None:
                 f"unknown sintering key '{key}'. The worker reads only: "
                 f"{', '.join(sorted(FLAT_KEYS))}"
             )
+        if swept and not isinstance(value, list):
+            raise ValueError(
+                f"sintering key '{key}' is swept here, so it must be a list, got "
+                f"{type(value).__name__}. A bare value passed validation and then "
+                "broke the expansion once the study row already existed"
+            )
         values: Iterable[Any] = value if swept and isinstance(value, list) else [value]
         for item in values:
             if key == "sintering_type":
@@ -272,3 +279,41 @@ def _swept_values(value: Any) -> list[Any]:
     if value is None:
         return []
     return list(value) if isinstance(value, list) else [value]
+def check_flat_required_over_sweeps(
+    base_parameters: Mapping[str, Any],
+    *,
+    grid: Mapping[str, Any],
+    extremes: Mapping[str, Any],
+) -> None:
+    """Required-key check on every child a sweep produces, not just the first.
+
+    R3 puts the required-key check on the child's **merged projection**, and a
+    sweep emits one child per element. Reading only the first element let
+    `{sintering_type: ["fixed", "uniform"], sintering_coeff: [0.6]}` through:
+    the second child was stored as `uniform` with no min/max, and the worker
+    ran it as uniform 0.85-0.95 (`tasks.py:1596-1598`) - stored parameters
+    that do not describe what ran.
+
+    The two surfaces expand differently, so they are projected differently:
+    the grid is a cartesian product (`views.py:1777`), while a theoretical
+    extreme emits one child per key/value pair (`utils.py:199-203`).
+    """
+    base = {key: value for key, value in base_parameters.items() if key in FLAT_KEYS}
+
+    swept_keys = [key for key in grid if key in FLAT_KEYS]
+    if swept_keys:
+        value_lists = [list(grid[key]) for key in swept_keys]
+        for combination in product(*value_lists):
+            merged = dict(base)
+            merged.update(dict(zip(swept_keys, combination, strict=True)))
+            check_flat_required(merged)
+    else:
+        check_flat_required(base)
+
+    for key, values in extremes.items():
+        if key not in FLAT_KEYS:
+            continue
+        for value in values if isinstance(values, list) else [values]:
+            merged = dict(base)
+            merged[key] = value
+            check_flat_required(merged)

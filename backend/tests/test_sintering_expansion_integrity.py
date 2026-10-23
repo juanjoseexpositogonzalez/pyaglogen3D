@@ -56,9 +56,7 @@ def dispatch() -> Any:
         yield mock_task
 
 
-def _post(
-    api_client: APIClient, project: Project, **overrides: Any
-) -> Any:
+def _post(api_client: APIClient, project: Project, **overrides: Any) -> Any:
     payload: dict[str, Any] = {
         "name": "R12 study",
         "base_algorithm": "tunable_cc",
@@ -103,6 +101,20 @@ INVALID: dict[str, dict[str, Any]] = {
         "include_limiting_cases": True,
         "limiting_cases_config": {"theoretical_extremes": {"sintering_mean": [0.9]}},
     },
+    "R12.2 — surface 2: the study field with an out-of-range std": {
+        "sintering_config": {"distribution_type": "normal", "mean": 0.8, "std": 0.3}
+    },
+    "R12.2 — surface 5: a swept coefficient out of range": {
+        "parameter_grid": {"sintering_coeff": [0.6, 42.0]}
+    },
+    "R12.2 — surface 7: the selector shape, swept": {
+        "include_limiting_cases": True,
+        "limiting_cases_config": {
+            "theoretical_extremes": {
+                "sintering_config": [{"mode": "normal", "mean": 0.8, "std": 0.05}]
+            }
+        },
+    },
 }
 
 
@@ -115,6 +127,9 @@ def test_r12_an_invalid_setting_writes_nothing(
     resp = _post(api_client, project, **INVALID[case])
 
     assert resp.status_code == 400, f"{case} was accepted: {resp.data}"
+    assert "sintering" in str(resp.data).lower(), (
+        f"{case} was rejected, but not for its sintering setting: {resp.data}"
+    )
     assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before, (
         f"{case} wrote rows before rejecting"
     )
@@ -142,19 +157,107 @@ def test_r12_a_valid_setting_still_writes_and_queues(
     assert dispatch.delay.call_count == 2
 
 
-def test_r12_1_the_first_entry_alone_would_have_been_accepted(
+# --- The three R12 violations Judgment Day found alive in the code ----------
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        (
+            "surface 5: a flat key that is not a list",
+            {"parameter_grid": {"sintering_coeff": 0.7}},
+        ),
+        (
+            "surface 6: a flat key that is not a list",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": 0.7}
+                },
+            },
+        ),
+    ],
+)
+def test_r12_a_scalar_on_a_swept_surface_writes_nothing(
+    api_client: APIClient,
+    project: Project,
+    dispatch: Any,
+    case: str,
+    overrides: dict[str, Any],
+) -> None:
+    """Surfaces 5 and 6 are swept: their values arrive as lists, one child per
+    element. A bare scalar passed validation and blew up mid-expansion -
+    `itertools.product` for the grid, the `for val in extreme_values` loop at
+    `utils.py:202` for the extremes - after the study row existed and, for
+    surface 6, after a child had been created and its task queued.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 400, f"{case} was accepted: {resp.data}"
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before, (
+        f"{case} left an orphan study behind"
+    )
+    assert dispatch.delay.call_count == 0, f"{case} queued a task before failing"
+
+
+def test_r12_a_sweep_whose_later_element_is_invalid_writes_nothing(
     api_client: APIClient, project: Project, dispatch: Any
 ) -> None:
-    """R12.1's grid is rejected for its second entry, not its shape: the
-    first one on its own creates the study, so the scenario really does
-    pin 'one invalid entry is enough'."""
+    """The required-key check read only the first element of each swept key,
+    so this returned 201 and stored a child as uniform with no min/max. The
+    worker then ran it as uniform 0.85-0.95 (`tasks.py:1596-1598`): stored
+    parameters that do not describe what ran, which is the harm this contract
+    exists to close.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
     resp = _post(
         api_client,
         project,
         parameter_grid={
-            "n_particles": [100, 200],
-            "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.9}],
+            "sintering_type": ["fixed", "uniform"],
+            "sintering_coeff": [0.6],
         },
+    )
+
+    assert resp.status_code == 400, (
+        f"a child would run as uniform 0.85-0.95: {resp.data}"
+    )
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_fully_specified_sweep_is_still_accepted(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The guard above must not reject a sweep that gives every element the
+    shape its own type requires."""
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "sintering_type": ["fixed", "uniform"],
+            "sintering_coeff": [0.6],
+            "sintering_min": [0.7],
+            "sintering_max": [0.9],
+        },
+    )
+
+    assert resp.status_code == 201, resp.data
+    assert dispatch.delay.call_count > 0
+
+
+def test_r12_a_valid_swept_extreme_is_still_accepted(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """Surface 6 with a proper list keeps working, as R11.5 requires."""
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": {"sintering_coeff": [0.7, 0.9]}},
     )
 
     assert resp.status_code == 201, resp.data
