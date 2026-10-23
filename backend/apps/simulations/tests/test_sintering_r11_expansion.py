@@ -11,7 +11,12 @@ engine binding.
   `sintering_coeff=0.8`, not as the 1.0 default that means *no sintering*.
 - T3.4 / R11.2: `fixed` and `uniform` still arrive, unchanged by the fix.
 - T3.4 / R11.3: no sintering key outside the set the worker reads
-  (`tasks.py:1592-1598`) is written into a child, from any surface.
+  (`tasks.py:1592-1598`) is written into a child, from **each of the seven
+  input surfaces of R3**, named by number so a failing case names the surface
+  it really exercises. Surfaces 6 and 7 carry the risk: their keys are written
+  verbatim into the child (`utils.py:199-203`) with no guard at that write
+  site, so the only thing keeping an out-of-set key out of a child is
+  `check_flat_keys` in the serializer.
 - T3.0c / R11.3: the same holds in one expansion that produces all four kinds
   of child at once - grid, range boundary, theoretical extreme and sintering
   extreme.
@@ -217,7 +222,7 @@ def test_r11_2_uniform_reaches_the_engine_binding(
     ("surface", "overrides"),
     [
         (
-            "study-level sintering_config",
+            "surface 2: study-level sintering_config",
             {
                 "sintering_config": {
                     "distribution_type": "normal",
@@ -227,7 +232,7 @@ def test_r11_2_uniform_reaches_the_engine_binding(
             },
         ),
         (
-            "grid entry",
+            "surface 1: parameter_grid.sintering_config entry",
             {
                 "parameter_grid": {
                     "sintering_config": [
@@ -237,7 +242,7 @@ def test_r11_2_uniform_reaches_the_engine_binding(
             },
         ),
         (
-            "base_parameters dict",
+            "surface 3: base_parameters dict",
             {
                 "base_parameters": {
                     "n_particles": 100,
@@ -251,9 +256,43 @@ def test_r11_2_uniform_reaches_the_engine_binding(
             },
         ),
         (
-            "base_parameters flat sweep",
+            "surface 4: base_parameters flat keys",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sticking_probability": 1.0,
+                    "sintering_type": "normal",
+                    "sintering_coeff": 0.8,
+                    "sintering_std": 0.05,
+                }
+            },
+        ),
+        (
+            "surface 5: parameter_grid flat sweep",
             {
                 "parameter_grid": {"sintering_coeff": [0.7, 0.9]},
+            },
+        ),
+        (
+            "surface 6: theoretical_extremes flat sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": [0.7, 0.9]}
+                },
+            },
+        ),
+        (
+            "surface 7: theoretical_extremes dict sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                },
             },
         ),
     ],
