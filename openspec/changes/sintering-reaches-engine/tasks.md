@@ -58,58 +58,60 @@
 
 ## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
 
-- [ ] T1.1 `validate_sintering_config` (`serializers.py:360`): exigir `distribution_type`
+- [x] T1.1 `validate_sintering_config` (`serializers.py:360`): exigir `distribution_type`
       conocido, exigir los campos requeridos por tipo, rechazar claves fuera de
       `{distribution_type, coefficient, min, max, mean, std}`
-- [ ] T1.2 Distinguir los dos contextos de llamada: como validador del **campo de estudio** y
+- [x] T1.2 Distinguir los dos contextos de llamada: como validador del **campo de estudio** y
       de `base_parameters` acepta `None`/`{}`; como validador de una **entrada de grid** los
       rechaza
-- [ ] T1.3 Validar `base_parameters["sintering_config"]`, que hoy no valida nadie (D5b)
-- [ ] T1.4 Validar los **escalares planos** `sintering_*` en `base_parameters`, como claves de
+- [x] T1.3 Validar `base_parameters["sintering_config"]`, que hoy no valida nadie (D5b)
+- [x] T1.4 Validar los **escalares planos** `sintering_*` en `base_parameters`, como claves de
       `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
       5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
       `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
-- [ ] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual. En el camino
+- [x] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual. En el camino
       que pasa por `create_simulation`, cualquier dict gana a cualquier clave plana, y entre
       dicts manda grid, luego `base_parameters`, luego el campo de estudio. El bloque de
       extremos (`views.py:1869-1906`) está **exento de ese orden** y sigue estándolo: ahí el
       plano sobrevive al dict. La tarea es **validar** los ajustes sin reordenarlos; si al
       implementar aparece la tentación de invertir algo, es señal de que pertenece al contrato
       de seguimiento
-- [ ] T1.5a Verificar con un test de regresión que el orden **no cambia**, en los dos caminos:
+- [x] T1.5a Verificar con un test de regresión que el orden **no cambia**, en los dos caminos:
       el mismo payload que hoy resuelve a un ganador debe seguir resolviendo al mismo, y el
       hijo de extremos debe seguir corriendo a su propio plano. No lo respalda ningún escenario
       de la delta, y es deliberado: lo que se protege es la ausencia de cambio
-- [ ] T1.5b Superficie 7: un dict **bien formado** barrido por `theoretical_extremes` funciona
+- [x] T1.5b Superficie 7: un dict **bien formado** barrido por `theoretical_extremes` funciona
       hoy y **debe seguir funcionando** (R3.9); lo que se rechaza es la forma `{mode, …}`
       malformada, como en cualquier otra superficie
-- [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
+- [x] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
       sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
       desconocidas, por clave
-- [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
+- [x] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
       `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos, incluido el dict
       bien formado que se acepta) y **R3.10** (el helper no inventa ningún default)
-- [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
-- [ ] T1.7a Regresión de los escenarios canónicos restituidos verbatim y sin tarea propia:
-      R7.1, R7.2, R10.1, R10.2 y R10.3 siguen verdes
-- [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
+- [x] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
+- [~] T1.7a Regresión de los escenarios canónicos restituidos verbatim y sin tarea propia:
+      R7.1, R7.2, R10.1, R10.2 y R10.3 siguen verdes. **A medias**: R7.1 y R7.2 cubiertos en
+      `tests/test_sintering_precedence_regression.py`; R10.1-R10.3 son de **frontend** y no se
+      pueden cubrir con pytest, así que van con `npm test` en T6
+- [x] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
       sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y
       `test_parametric_study_serializer.py:126-152` usan configuraciones completas y algoritmos de la allow-list)
 
 ## T2 — El helper deja de inventar defaults (R3)
 
-- [ ] T2.1 `apply_sintering_config` (`utils.py:236`): lanzar `ValueError` ante dict no vacío que
+- [x] T2.1 `apply_sintering_config` (`utils.py:236`): lanzar `ValueError` ante dict no vacío que
       incumpla T1.1, incluido `distribution_type` desconocido; `None`/`{}` siguen devolviendo
       los parámetros intactos
-- [ ] T2.2 Test **R3.10** (el helper no inventa default: lanza en vez de rellenar)
-- [ ] T2.3 **Test existente que esta tarea pone en rojo y se retira** (declaración completa):
+- [x] T2.2 Test **R3.10** (el helper no inventa default: lanza en vez de rellenar)
+- [x] T2.3 **Test existente que esta tarea pone en rojo y se retira** (declaración completa):
       - `backend/tests/test_utils.py:336-344` `test_default_values_used` — afirma que
         `apply_sintering_config({"distribution_type":"uniform"})` rellena `0.85`/`0.95` por
         defecto. Es la forma codificada del defecto D2; R3 exige que lance
-- [ ] T2.3b Test **R7.3**, el carve-out: la compatibilidad hacia atrás no ampara el
+- [x] T2.3b Test **R7.3**, el carve-out: la compatibilidad hacia atrás no ampara el
       sinterizado malformado ni el cambio de la media `normal`, incluido el payload `value`
       que la canónica documenta
-- [ ] T2.4 Regresión declarada: `test_none_config_returns_unchanged` y
+- [x] T2.4 Regresión declarada: `test_none_config_returns_unchanged` y
       `test_empty_config_returns_unchanged` (`backend/tests/test_utils.py:319-334`) **siguen
       verdes sin cambios**
 
@@ -457,3 +459,23 @@
   A partir de aquí el contrato **no se cambia por el camino**: si la implementación obliga a
   tocar `proposal.md`, `specs/` o una decisión de `design.md`, se para y se pide nueva
   aprobación. `tasks.md` sí se actualiza al avanzar, con su evidencia en este Log.
+- L30 (2026-10-22): **T1 implementada** (D2, D5b, R3). Test-first: 14 rojos antes, 27 verdes
+  después, en `tests/test_sintering_shape.py` y `tests/test_sintering_precedence_regression.py`.
+  La forma vive en un módulo propio, `apps/simulations/sintering_shape.py`, y se cablea en las
+  siete superficies. Gates: `pytest` 15 failed / 1248 passed / 31 errors — fallos y errores
+  **idénticos** a la línea base, los 27 de más son los tests nuevos; `ruff` 296, igual;
+  `mypy` **1739 en 133**, uno menos que la base. Ese −1 no es ruido y queda explicado: el
+  camino de grid llamaba a `self.validate_sintering_config`, sin anotar, y pasa a llamar a
+  `validate_dict_shape`, que sí lo está, así que desaparece el `no-untyped-call` de
+  `serializers.py:484`. Medido aislando el fichero: 15 errores antes, 14 después.
+- L31 (2026-10-22): **T2 implementada** (R3.10, R7.3). `apply_sintering_config` deja de inventar
+  defaults: delega en `validate_dict_shape` y lanza. Test-first: 9 rojos antes, 12 verdes
+  después. El test que T2.3 declaraba retirar, `test_default_values_used`, se confirmó **en
+  rojo primero** —`ValueError: ... 'uniform' requires: min, max`— y se retiró con esa evidencia,
+  no sólo por estar declarado. Los dos de T2.4 siguen verdes **sin tocarlos**.
+  Gates: `pytest` 15 failed / **1259** passed / 31 errors, con fallos y errores idénticos a la
+  base; `ruff` 296, igual; `mypy` **1738 en 133**, dos por debajo de la base.
+  Sobre ese −2: la comparación A/B con `git stash` da −1 para T2 (1739 → 1738), limpia. Lo que
+  **no** cierra es la descomposición por fichero: `tests/test_utils.py` baja 2 al retirar el
+  test, `utils.py` se queda en 11 y mis ficheros aportan 0. Queda dicho en vez de maquillado;
+  el criterio de aceptación es no superar la base, y 1738 < 1740.
