@@ -184,11 +184,11 @@
 
 ## T5 — Integridad de la expansión (R12)
 
-- [ ] T5.1 Garantizar que toda la validación de T1 y T4 ocurre en
+- [x] T5.1 Garantizar que toda la validación de T1 y T4 ocurre en
       `ParametricStudySerializer.validate()`, antes de la primera escritura
-- [ ] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
+- [x] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
       encoladas (contar filas antes y después, y mockear `run_simulation_task.delay`)
-- [ ] T5.3 **Ningún test existente pasa a rojo por esta tarea**
+- [x] T5.3 **Ningún test existente pasa a rojo por esta tarea**
 
 ## T6 — Frontend (R10)
 
@@ -609,3 +609,30 @@
   Esta tarea cierra además la ventana que el judgment-day de T3 señaló (JD-A-003): entre T3 y
   T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
   0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.
+- L34 (2026-10-23): **T5 completa** (R12). T5 **no cambia comportamiento**: su trabajo es
+  demostrar que la barrera está donde el contrato exige, antes de la primera escritura, y
+  dejarla fijada. Lo demostrado, con evidencia propia: `perform_create` (`views.py:1750`) **no
+  valida nada**, `config/` **no define `ATOMIC_REQUESTS`**, y DRF llama `is_valid()` antes de
+  `perform_create`, así que la única barrera es `ParametricStudySerializer.validate()` — que es
+  justo donde T1 y T4 pusieron sus comprobaciones.
+  **Qué pasa si esa barrera no está, medido en vez de supuesto** (probe con las cuatro funciones
+  de validación anuladas y el payload de R12.1): la expansión revienta a media faena con
+  `ValueError: unknown sintering_config keys: mode` y deja **1 estudio, 1 simulación y 1 tarea
+  encolada**. Esa tarea es la que ningún rollback deshace, y es la razón por la que el contrato
+  prohíbe apoyarse en que `apply_sintering_config` lance durante la expansión.
+  Seis tests en `tests/test_sintering_expansion_integrity.py` (CRLF) cuentan **filas y
+  despachos** antes y después: los cuatro ajustes inválidos que R12.1 y R12.2 nombran, uno por
+  superficie, más dos controles de que un ajuste **válido sí escribe y sí encola** — sin ellos,
+  un serializer que rechazara todo pasaría los cuatro primeros.
+  Los seis salen **verdes de entrada**, porque T1 y T4 ya habían puesto la barrera; se declara
+  así en vez de venderlos como rojo-a-verde. Lo que los hace guardas y no decorado es el probe
+  de arriba: en el mundo sin barrera, los cuatro fallan por las tres aserciones a la vez.
+  **Fuera de alcance, y el contrato ya lo dice**: un `parameter_grid.sintering_config` con dos o
+  más entradas junto a `include_limiting_cases` sigue reventando a media expansión por el
+  `sorted` de `utils.py:180`. Es anterior a este contrato y pertenece a `distribution-grid-wiring`.
+  Gates: `pytest` 15 failed / **1335** passed / 31 errors — fallos y errores **idénticos** a la
+  línea base, los 6 de más son los tests nuevos; `ruff` **296**, igual; `mypy` **1727 en 132**,
+  la base, con el fichero nuevo aportando **0** errores propios. **T5.3 es trivialmente cierto**
+  y se dice en vez de adornarse: esta tarea no cambia ni una línea de producción, así que ningún
+  test existente podía ponerse en rojo. El único riesgo real era que los tests nuevos no
+  probaran nada, y eso lo cierra el probe, no el gate verde.
