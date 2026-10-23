@@ -170,16 +170,16 @@
 
 ## T4 — Alcance por algoritmo (D6, R11)
 
-- [ ] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
+- [x] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
       consumen; sólo `fixed` para `limiting`; rechazo para `fracval`/`gcca`/`box_rfa`/`imported`
-- [ ] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
-- [ ] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
+- [x] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
+- [x] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
       `base_algorithm` guardado en la instancia, no contra el ausente (R11, R11.6)
-- [ ] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
+- [x] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
       `fracval` + `theoretical_extremes`), R11.5 (barrido plano de `limiting` y sus extremos
       por defecto del servidor) y R11.6 (actualización parcial contra el
       `base_algorithm` de la instancia)
-- [ ] T4.4 **Ningún test existente pasa a rojo por esta tarea** (verificado: todos los tests de
+- [x] T4.4 **Ningún test existente pasa a rojo por esta tarea** (verificado: todos los tests de
       la suite usan `tunable`, `tunable_cc` o `dla`, los tres dentro de la allow-list)
 
 ## T5 — Integridad de la expansión (R12)
@@ -531,3 +531,32 @@
   preexistentes (`tasks.py` 80, `accounts/models.py` 5). Para llegar a ese 0 hubo que anotar
   las fixtures y los parámetros de test, incluida una ligadura intermedia en la fixture `user`
   porque `UserManager.create_user` no está anotado y mypy marcaba `no-any-return`.
+- L33 (2026-10-23): **T4 implementada** (D6, R11.4, R11.5, R11.6). Allow-list por algoritmo:
+  `check_algorithm_scope` en `apps/simulations/sintering_shape.py`, con las tres listas
+  —los seis que consumen sinterizado, `limiting` sólo-`fixed`, y los cuatro que no consumen
+  nada— cableada en `ParametricStudySerializer.validate()` sobre **las siete superficies a la
+  vez**, no superficie a superficie: la función recibe todos los dicts y todos los mapas con
+  claves planas y decide una sola vez.
+  Test-first, medido: **32 rojos antes, 37 verdes después**, en
+  `tests/test_sintering_algorithm_scope.py` (CRLF, la convención de `backend/tests/`). Los 5
+  que ya estaban verdes son los casos de **aceptación** —los seis algoritmos que sí consumen,
+  el dict `fixed` de `limiting`, su barrido plano, los extremos por defecto del servidor y el
+  PATCH sobre un algoritmo permitido—: están para que la allow-list no cierre puertas que debe
+  dejar abiertas, y no prueban el rechazo.
+  **T4.2a**: en un PATCH que omite `base_algorithm`, la regla cae a
+  `self.instance.base_algorithm`. Sin eso, un PATCH era el rodeo a la allow-list; el test que
+  lo cubre fallaba con 200 antes del cambio.
+  **Una lectura que declaro porque el contrato no la deletrea**: para `limiting`, «acepta sólo
+  la forma `fixed`» lo aplico también a las claves planas `sintering_min`, `sintering_max` y
+  `sintering_std`, que el worker **ignora** en ese camino (`tasks.py:1800`). Aceptarlas sería
+  justo la ciencia silenciosa que este contrato existe para cerrar: parámetros almacenados que
+  no describen lo que corrió. Ninguno de los casos que R11.5 declara aceptables las incluye.
+  **T4.4 verificado midiendo, no citando** la declaración del contrato: con `git stash` sobre
+  la implementación, los **46** FAILED/ERROR preexistentes salen **idénticos** antes y después,
+  y la única diferencia son mis 32, de rojo a verde.
+  Gates: `pytest` 15 failed / **1313** passed / 31 errors — los 37 de más son los tests nuevos;
+  `ruff` **296**, igual; `mypy` **1727 en 132**, la base, con los tres ficheros tocados
+  aportando **0** errores propios. Diff de T4: **387 líneas**, por debajo del techo de 400.
+  Esta tarea cierra además la ventana que el judgment-day de T3 señaló (JD-A-003): entre T3 y
+  T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
+  0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.

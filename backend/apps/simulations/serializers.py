@@ -13,6 +13,7 @@ from rest_framework.exceptions import ValidationError
 from .fields import DistributionField
 from .sintering_shape import (
     FLAT_KEYS,
+    check_algorithm_scope,
     check_flat_keys,
     check_flat_required,
     validate_dict_shape,
@@ -517,6 +518,27 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             check_flat_required(merged)
         except ValueError as exc:
             raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
+
+        # --- Allow-list by algorithm, over the seven surfaces at once (R11) ---
+        # On a partial update that omits base_algorithm, the rule is evaluated
+        # against the instance's stored algorithm, not against the absent one
+        # (R11.6): otherwise a PATCH would be a way around the allow-list.
+        algorithm = data.get("base_algorithm") or getattr(
+            self.instance, "base_algorithm", None
+        )
+        try:
+            check_algorithm_scope(
+                algorithm,
+                dicts=(
+                    sintering_entries,
+                    data.get("sintering_config"),
+                    base_params.get("sintering_config"),
+                    extremes.get("sintering_config"),
+                ),
+                flats=(base_params, grid, extremes),
+            )
+        except ValueError as exc:
+            raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")
