@@ -3,6 +3,7 @@ import { Inter } from 'next/font/google'
 import './globals.css'
 import { Providers } from './providers'
 import { THEME_BOOTSTRAP_SCRIPT } from '@/lib/theme'
+import { AppShell } from '@/components/shell/AppShell'
 
 const inter = Inter({ subsets: ['latin'] })
 
@@ -28,7 +29,9 @@ export default function RootLayout({
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP_SCRIPT }} />
       </head>
       <body className={inter.className}>
-        <Providers>{children}</Providers>
+        <Providers>
+          <AppShell>{children}</AppShell>
+        </Providers>
       </body>
     </html>
   )
