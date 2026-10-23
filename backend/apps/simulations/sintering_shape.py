@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from itertools import product
+from math import prod
 from typing import Any
 
 #: The flat keys the worker reads. Anything else is rejected, in
@@ -279,11 +280,16 @@ def _swept_values(value: Any) -> list[Any]:
     if value is None:
         return []
     return list(value) if isinstance(value, list) else [value]
+
+
 def check_flat_required_over_sweeps(
     base_parameters: Mapping[str, Any],
     *,
     grid: Mapping[str, Any],
     extremes: Mapping[str, Any],
+    dict_wins_for_grid_children: bool = False,
+    dict_wins_for_other_children: bool = False,
+    max_combinations: int = 1000,
 ) -> None:
     """Required-key check on every child a sweep produces, not just the first.
 
@@ -291,29 +297,56 @@ def check_flat_required_over_sweeps(
     sweep emits one child per element. Reading only the first element let
     `{sintering_type: ["fixed", "uniform"], sintering_coeff: [0.6]}` through:
     the second child was stored as `uniform` with no min/max, and the worker
-    ran it as uniform 0.85-0.95 (`tasks.py:1596-1598`) - stored parameters
-    that do not describe what ran.
+    ran it as uniform 0.85-0.95 (`tasks.py:1596-1598`).
 
-    The two surfaces expand differently, so they are projected differently:
-    the grid is a cartesian product (`views.py:1777`), while a theoretical
-    extreme emits one child per key/value pair (`utils.py:199-203`).
+    Three things this must not do, each one learned from a regression:
+
+    * **A dict setting wins over the flats** (R3, precedence unchanged by this
+      contract). `apply_sintering_config` overwrites the flat keys before the
+      child is stored, so where a dict reaches the child its flats are not the
+      child's shape and projecting them rejects valid payloads. A grid dict
+      reaches the grid children only; a `base_parameters` or study dict also
+      reaches the limiting and theoretical ones (`views.py:1804-1808`).
+    * **An empty swept list is still a swept key.** `product()` over it yields
+      nothing, so the per-combination branch would silently check nothing.
+      The grid then contributes no child and the base projection is what the
+      remaining children carry.
+    * **The cost is bounded by the batch cap.** The product is only walked
+      when it is small enough to be a batch the serializer would accept; a
+      bigger one is the batch cap's rejection to make, and it needs only the
+      product of the lengths.
     """
     base = {key: value for key, value in base_parameters.items() if key in FLAT_KEYS}
 
     swept_keys = [key for key in grid if key in FLAT_KEYS]
-    if swept_keys:
-        value_lists = [list(grid[key]) for key in swept_keys]
+    value_lists = [list(grid[key]) for key in swept_keys]
+    combinations_count = prod(len(values) for values in value_lists) if value_lists else 0
+
+    walk_grid = (
+        not dict_wins_for_grid_children
+        and combinations_count
+        and combinations_count <= max_combinations
+    )
+    if walk_grid:
         for combination in product(*value_lists):
             merged = dict(base)
             merged.update(dict(zip(swept_keys, combination, strict=True)))
             check_flat_required(merged)
-    else:
-        check_flat_required(base)
 
-    for key, values in extremes.items():
-        if key not in FLAT_KEYS:
-            continue
-        for value in values if isinstance(values, list) else [values]:
-            merged = dict(base)
-            merged[key] = value
-            check_flat_required(merged)
+    if not dict_wins_for_other_children:
+        # The base projection is only a child's whole shape when no sintering
+        # sweep completes it. R3.8 is explicit that the rest of the shape may
+        # live in `base_parameters` while the sweep supplies the missing key,
+        # so checking the base on its own alongside a live sweep rejects a
+        # payload the contract requires accepting. An empty sweep produces no
+        # child, so there the base stands alone again.
+        if not swept_keys or not combinations_count:
+            check_flat_required(base)
+
+        for key, values in extremes.items():
+            if key not in FLAT_KEYS:
+                continue
+            for value in values if isinstance(values, list) else [values]:
+                merged = dict(base)
+                merged[key] = value
+                check_flat_required(merged)

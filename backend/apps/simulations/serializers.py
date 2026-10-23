@@ -511,8 +511,24 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # emits one child per element, so every element is projected, not only
         # the first: reading just the first let a second child be stored as
         # `uniform` with no min/max, which the worker then ran as 0.85-0.95.
+        # Where a dict setting reaches a child, `apply_sintering_config`
+        # overwrites its flat keys (`views.py:1804-1808`), so the flats are not
+        # that child's shape and projecting them would reject valid payloads.
+        # A grid dict reaches the grid children only; a `base_parameters` or
+        # study dict also reaches the limiting and theoretical ones.
+        base_or_study_dict = bool(
+            base_params.get("sintering_config") or data.get("sintering_config")
+        )
         try:
-            check_flat_required_over_sweeps(base_params, grid=grid, extremes=extremes)
+            check_flat_required_over_sweeps(
+                base_params,
+                grid=grid,
+                extremes=extremes,
+                dict_wins_for_grid_children=bool(sintering_entries)
+                or base_or_study_dict,
+                dict_wins_for_other_children=base_or_study_dict,
+                max_combinations=self._BATCH_HARD_CAP,
+            )
         except ValueError as exc:
             raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
 

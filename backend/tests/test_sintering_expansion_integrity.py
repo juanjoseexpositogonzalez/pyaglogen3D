@@ -15,6 +15,7 @@ Each case therefore counts rows **and** dispatches, before and after.
 
 from __future__ import annotations
 
+import time
 import uuid
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -196,6 +197,9 @@ def test_r12_a_scalar_on_a_swept_surface_writes_nothing(
     resp = _post(api_client, project, **overrides)
 
     assert resp.status_code == 400, f"{case} was accepted: {resp.data}"
+    assert "sintering" in str(resp.data).lower(), (
+        f"{case} was rejected, but not for its sintering setting: {resp.data}"
+    )
     assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before, (
         f"{case} left an orphan study behind"
     )
@@ -225,6 +229,7 @@ def test_r12_a_sweep_whose_later_element_is_invalid_writes_nothing(
     assert resp.status_code == 400, (
         f"a child would run as uniform 0.85-0.95: {resp.data}"
     )
+    assert "sintering" in str(resp.data).lower(), resp.data
     assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
     assert dispatch.delay.call_count == 0
 
@@ -261,3 +266,105 @@ def test_r12_a_valid_swept_extreme_is_still_accepted(
     )
 
     assert resp.status_code == 201, resp.data
+
+
+# --- Round 2: what the first fix broke, and what it made expensive ---------
+
+
+def test_r12_an_empty_sweep_does_not_disable_the_required_check(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """An empty list is still a swept key, so the first fix took the base
+    projection down the product branch, where `product()` yields nothing and
+    the check never ran. This payload returned 400 before that fix and 201
+    after it: the guard disappeared in silence."""
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+            "sintering_min": 0.8,
+        },
+        parameter_grid={"n_particles": [100, 200], "sintering_coeff": []},
+    )
+
+    assert resp.status_code == 400, f"the required-key guard vanished: {resp.data}"
+    assert "sintering_max" in str(resp.data), resp.data
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("surface", "overrides"),
+    [
+        (
+            "study field",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "target_df": 1.8,
+                    "target_kf": 1.3,
+                    "sintering_coeff": 0.6,
+                },
+                "sintering_config": {
+                    "distribution_type": "uniform",
+                    "min": 0.8,
+                    "max": 0.9,
+                },
+                "parameter_grid": {"sintering_type": ["fixed", "uniform"]},
+            },
+        ),
+        (
+            "grid dict",
+            {
+                "parameter_grid": {
+                    "sintering_type": ["fixed", "uniform"],
+                    "sintering_config": [
+                        {"distribution_type": "uniform", "min": 0.8, "max": 0.9}
+                    ],
+                },
+            },
+        ),
+    ],
+)
+def test_r12_a_dict_setting_still_wins_over_the_flat_projection(
+    api_client: APIClient, project: Project, surface: str, overrides: dict[str, Any]
+) -> None:
+    """R3 keeps the precedence this contract does not change: any dict wins
+    over any flat key, and `apply_sintering_config` overwrites the flats
+    before the child is stored. Projecting the flats as if the dict were not
+    there rejected payloads whose every child is shape-valid."""
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 201, f"{surface}: {resp.data}"
+
+
+def test_r12_validating_a_sweep_cannot_cost_more_than_the_batch_cap_allows(
+    api_client: APIClient, project: Project
+) -> None:
+    """The projection ran before the batch cap, so a ~1 KB body could ask for
+    millions of combinations and spend minutes inside validation - on a
+    request the cap was always going to reject. The cap needs only the
+    product of the lengths, so it is cheap and must come first."""
+    start = time.monotonic()
+
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "sintering_coeff": [0.6] * 40,
+            "sintering_min": [0.7] * 40,
+            "sintering_max": [0.9] * 40,
+            "sintering_std": [0.05] * 40,
+        },
+    )
+
+    elapsed = time.monotonic() - start
+    assert resp.status_code == 400, resp.data
+    assert "batch size" in str(resp.data).lower(), resp.data
+    assert elapsed < 2.0, f"validation took {elapsed:.1f}s for a request the cap rejects"

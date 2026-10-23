@@ -627,7 +627,7 @@
   `ValueError: unknown sintering_config keys: mode` y deja **1 estudio, 1 simulación y 1 tarea
   encolada**. Esa tarea es la que ningún rollback deshace, y es la razón por la que el contrato
   prohíbe apoyarse en que `apply_sintering_config` lance durante la expansión.
-  Seis tests en `tests/test_sintering_expansion_integrity.py` (CRLF) cuentan **filas y
+  Los primeros seis tests de `tests/test_sintering_expansion_integrity.py` (CRLF) cuentan **filas y
   despachos** antes y después: los cuatro ajustes inválidos que R12.1 y R12.2 nombran, uno por
   superficie, más dos controles de que un ajuste **válido sí escribe y sí encola** — sin ellos,
   un serializer que rechazara todo pasaría los cuatro primeros.
@@ -667,9 +667,36 @@
   **Fuera de alcance, y el contrato ya lo dice**: un `parameter_grid.sintering_config` con dos o
   más entradas junto a `include_limiting_cases` sigue reventando a media expansión por el
   `sorted` de `utils.py:180`. Es anterior a este contrato y pertenece a `distribution-grid-wiring`.
-  Gates: `pytest` 15 failed / **1335** passed / 31 errors — fallos y errores **idénticos** a la
-  línea base, los 6 de más son los tests nuevos; `ruff` **296**, igual; `mypy` **1727 en 132**,
-  la base, con el fichero nuevo aportando **0** errores propios. **T5.3 es trivialmente cierto**
-  y se dice en vez de adornarse: esta tarea no cambia ni una línea de producción, así que ningún
-  test existente podía ponerse en rojo. El único riesgo real era que los tests nuevos no
-  probaran nada, y eso lo cierra el probe, no el gate verde.
+  **Segunda ronda de judgment-day, y aquí los jueces me cazaron a mí.** El arreglo anterior
+  cerró tres agujeros y abrió **dos regresiones propias** más un riesgo de coste, las tres
+  reproducidas por mí antes de tocar nada:
+  1. **Una lista vacía desactivaba la comprobación entera.** `{sintering_coeff: []}` sigue
+     siendo una clave barrida, así que entraba por la rama del producto, `product()` no daba
+     ninguna combinación y no se comprobaba nada. El mismo payload daba **400 antes** de mi
+     arreglo y **201 después**: la guarda desapareció en silencio.
+  2. **Un dict manda sobre los planos, y yo proyectaba los planos igual.** Con un
+     `sintering_config` en el estudio o en el grid, `apply_sintering_config` pisa las claves
+     planas antes de guardar el hijo, así que rechazaba con 400 payloads cuyos hijos reales son
+     válidos. Corregido distinguiendo **qué hijo recibe dict**: el del grid lo recibe de una
+     entrada de grid; los de límites y extremos sólo de `base_parameters` o del campo del
+     estudio (`views.py:1804-1808`).
+  3. **El producto cartesiano corría antes del tope de lote**: 4 claves × 40 valores = 2,56 M
+     combinaciones, **4,69 s** medidos, con un cuerpo de ~1,2 KB que el tope iba a rechazar de
+     todos modos. Acotado al tope (1000): por encima, el rechazo es suyo y sólo cuesta el
+     producto de las longitudes.
+  **Y una tercera regresión la cazó el gate, no yo ni los jueces**: al añadir la comprobación
+  de la proyección base la puse **incondicional**, y eso rompió
+  `tests/test_sintering_shape.py::test_r3_8_swept_value_completes_the_shape`, que afirma
+  exactamente lo contrario — el valor barrido **puede** completar la forma que falta en
+  `base_parameters`. Se vio porque la suite pasó de 15 a **16** fallos. La base sólo se comprueba
+  sola cuando ningún barrido de sinterizado la completa.
+  Lección, y es la misma que este Log lleva repitiendo: **añadir validación a una ruta común es
+  más peligroso que el defecto que arregla**. Tres de los cuatro problemas de esta ronda los
+  introdujo el arreglo anterior, no el código original.
+  Gates finales: `pytest` 15 failed / **1346** passed / 31 errors; `ruff` **296**; `mypy`
+  **1727 en 132**, con los ficheros tocados aportando **0** errores propios. **T5.3 ya no es
+  trivial** — T5 cambia código de producción en la validación por la que pasan todos los
+  estudios— así que se midió comparando **los nombres** de los 46 fallos y errores
+  preexistentes con `git stash`, no su recuento: idénticos antes y después.
+  Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
+  la revisión adversarial, no por alcance. Excepción declarada en la issue #97.
