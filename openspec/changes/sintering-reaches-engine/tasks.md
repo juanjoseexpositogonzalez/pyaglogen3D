@@ -1,0 +1,459 @@
+# Tasks: sintering-reaches-engine
+
+> Estado del contrato: **spec-review pendiente** (agente fresco) y aprobación de la persona.
+> Desde el 2026-10-22 (issue #82) el gate es una **issue de GitHub con la etiqueta
+> `status:approved`**, no un `approval.md`. **No se escribe código hasta que exista.**
+>
+> Rama: `feature/sintering-reaches-engine`, con `develop` @ `f586946` ya fusionado (el merge
+> es `f5c93b4`, que sólo existe en esta rama). La base original era `c3ff055`; dos merges de
+> `develop` la movieron, y con ella la línea base de frontend.
+> Mapa de origen: `openspec/changes/_explore-only/distribution-config-surface.md` §7.1.
+> Jira: pendiente de crear al aprobar (issue AGLO, transición 21 → En curso).
+
+## T0 — Contrato
+
+- [x] T0.1 Mapa de superficie consolidado y entregado (PR #81)
+- [x] T0.2 Contrato r1 (`95d41ca`)
+- [x] T0.3 spec-review r1 → `CORRECTIONS REQUIRED (2 blockers, 3 majors)`
+- [x] T0.4 Decisión de la persona: las superficies planas **entran** en alcance
+- [x] T0.5 Corrección r2 (este commit)
+- [x] T0.6 spec-review r2 → `CORRECTIONS REQUIRED (1 blocker, 7 majors)`
+- [x] T0.7 Decisión de la persona: **invariante donde se escriben los parámetros del hijo**
+      + validación de entrada (dicho antes «el chokepoint», en singular, cuando son dos sitios)
+- [x] T0.8 Corrección r3 (este commit)
+- [x] T0.9 spec-review r3 → `CORRECTIONS REQUIRED (1 blocker, 8 majors)`
+- [x] T0.10 Decisión de la persona: **unificar los dos sitios de creación**
+      — **revocada** por el recorte de 14d0b13: no se unifican. El bloque inline ya escribe el
+      sinterizado donde el engine lo lee; sólo se le retira el `sintering_config` heredado (R11.7)
+- [x] T0.11 Corrección r4 (este commit)
+- [x] T0.12 spec-review r4 → `CORRECTIONS REQUIRED (1 blocker, 4 majors)`
+- [x] T0.13 Decisión de la persona: `base_parameters` **gana siempre**, inversión declarada
+      — **revocada** por el recorte de 14d0b13: no hay ninguna inversión y el orden de hoy se
+      conserva tal cual
+- [x] T0.14 Corrección r5 (este commit)
+- [x] T0.15 spec-review r5 → `CORRECTIONS REQUIRED (1 blocker, 2 majors)`
+- [x] T0.16 Corrección r6 (este commit)
+- [x] T0.17 spec-review r6 en agente fresco
+- [x] T0.18 Correcciones hasta ronda sin hallazgos semánticos → **criterio de parada
+      redefinido por la persona (2026-10-22): los blockers.** Cumplido desde la r10: r10, r11 y
+      r12 dieron **cero**. El criterio original no convergía, y no por el contrato: desde la
+      r11, los majors y buena parte de los minors los introducía la corrección de la ronda
+      anterior, así que cada ronda generaba el material de la siguiente. Blockers 3, 2, 1, 0,
+      0, 0; majors clavados en 2 cuatro rondas; minors subiendo 3, 2, 6, 6, 8, 9
+- [x] T0.19 Issue con `status:approved` — **sólo la persona aprueba**. **#97 aprobada por la
+      persona el 2026-10-22**; etiqueta `status:needs-approval` retirada
+- [x] T0.20 **AGLO-10** creada y pasada a **En curso** (transición 21, confirmada por la API)
+- [x] T0.21 Recorte de alcance (14d0b13): fuera la precedencia **y** la unificación de los dos
+      sitios; la superficie 7 conserva el camino que funciona hoy
+- [x] T0.22 spec-review r7 → `CORRECTIONS REQUIRED (3 blockers, 3 majors, 3 minors)`; corregida
+      en 1d8b4fb tras alinear sólo media parte del recorte en 6f52d05
+- [x] T0.23 spec-review r8 → `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`
+- [x] T0.24 spec-review r9 → `CORRECTIONS REQUIRED (1 blocker, 2 majors, 6 minors)`
+- [x] T0.25 spec-review r10 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 6 minors)`
+- [x] T0.26 spec-review r11 → `0 blockers, 2 majors, 8 minors`; primera ronda que pudo correr
+      las suites, tras destrackear `tsconfig.tsbuildinfo` (PR #96)
+- [x] T0.27 spec-review r12 → `CORRECTIONS REQUIRED (0 blockers, 2 majors, 9 minors)`; la
+      barrida de residuos del recorte salió **vacía** por primera vez en seis rondas
+- [~] T0.28 spec-review r13 — **no se hace**: criterio de parada cumplido (T0.18)
+
+## T1 — Regla única de forma, en las siete superficies (D2, D5b, R3)
+
+- [ ] T1.1 `validate_sintering_config` (`serializers.py:360`): exigir `distribution_type`
+      conocido, exigir los campos requeridos por tipo, rechazar claves fuera de
+      `{distribution_type, coefficient, min, max, mean, std}`
+- [ ] T1.2 Distinguir los dos contextos de llamada: como validador del **campo de estudio** y
+      de `base_parameters` acepta `None`/`{}`; como validador de una **entrada de grid** los
+      rechaza
+- [ ] T1.3 Validar `base_parameters["sintering_config"]`, que hoy no valida nadie (D5b)
+- [ ] T1.4 Validar los **escalares planos** `sintering_*` en `base_parameters`, como claves de
+      `parameter_grid` y dentro de `limiting_cases_config.theoretical_extremes` (superficies 4,
+      5 y 6): tabla propia de campos requeridos por tipo, rangos, `sintering_coeff` sin tipo =
+      `fixed`, y rechazo de cualquier otra `sintering_*` — en particular `sintering_mean`
+- [ ] T1.5 **No tocar la precedencia** (R3): el orden de hoy se conserva tal cual. En el camino
+      que pasa por `create_simulation`, cualquier dict gana a cualquier clave plana, y entre
+      dicts manda grid, luego `base_parameters`, luego el campo de estudio. El bloque de
+      extremos (`views.py:1869-1906`) está **exento de ese orden** y sigue estándolo: ahí el
+      plano sobrevive al dict. La tarea es **validar** los ajustes sin reordenarlos; si al
+      implementar aparece la tentación de invertir algo, es señal de que pertenece al contrato
+      de seguimiento
+- [ ] T1.5a Verificar con un test de regresión que el orden **no cambia**, en los dos caminos:
+      el mismo payload que hoy resuelve a un ganador debe seguir resolviendo al mismo, y el
+      hijo de extremos debe seguir corriendo a su propio plano. No lo respalda ningún escenario
+      de la delta, y es deliberado: lo que se protege es la ausencia de cambio
+- [ ] T1.5b Superficie 7: un dict **bien formado** barrido por `theoretical_extremes` funciona
+      hoy y **debe seguir funcionando** (R3.9); lo que se rechaza es la forma `{mode, …}`
+      malformada, como en cualquier otra superficie
+- [ ] T1.5c En las superficies barridas (5 y 6) la comprobación de campos requeridos se hace
+      sobre la **proyección fusionada** del hijo (base + valor barrido); rango y claves
+      desconocidas, por clave
+- [ ] T1.6 Tests R3.3, R3.5, R3.6, R3.7, **R3.8** (planos, `-5.0`/`42.0`, `sintering_mean`,
+      `coeff` sin tipo, `uniform` incompleto), **R3.9** (extremos teóricos, incluido el dict
+      bien formado que se acepta) y **R3.10** (el helper no inventa ningún default)
+- [ ] T1.7 Regresión: R3.1, R3.2 y R3.4 siguen verdes
+- [ ] T1.7a Regresión de los escenarios canónicos restituidos verbatim y sin tarea propia:
+      R7.1, R7.2, R10.1, R10.2 y R10.3 siguen verdes
+- [ ] T1.8 **Ningún test existente pasa a rojo por esta tarea** (verificado: los tests de
+      sinterizado de `tests/test_serializers.py:209-341`, `test_grid_expansion.py:216-260` y
+      `test_parametric_study_serializer.py:126-152` usan configuraciones completas y algoritmos de la allow-list)
+
+## T2 — El helper deja de inventar defaults (R3)
+
+- [ ] T2.1 `apply_sintering_config` (`utils.py:236`): lanzar `ValueError` ante dict no vacío que
+      incumpla T1.1, incluido `distribution_type` desconocido; `None`/`{}` siguen devolviendo
+      los parámetros intactos
+- [ ] T2.2 Test **R3.10** (el helper no inventa default: lanza en vez de rellenar)
+- [ ] T2.3 **Test existente que esta tarea pone en rojo y se retira** (declaración completa):
+      - `backend/tests/test_utils.py:336-344` `test_default_values_used` — afirma que
+        `apply_sintering_config({"distribution_type":"uniform"})` rellena `0.85`/`0.95` por
+        defecto. Es la forma codificada del defecto D2; R3 exige que lance
+- [ ] T2.3b Test **R7.3**, el carve-out: la compatibilidad hacia atrás no ampara el
+      sinterizado malformado ni el cambio de la media `normal`, incluido el payload `value`
+      que la canónica documenta
+- [ ] T2.4 Regresión declarada: `test_none_config_returns_unchanged` y
+      `test_empty_config_returns_unchanged` (`backend/tests/test_utils.py:319-334`) **siguen
+      verdes sin cambios**
+
+## T3 — El invariante del hijo y el engine (D5, R11)
+
+- [ ] T3.0 **No unificar los sitios de creación**, pero sí cerrar R11 en el bloque inline.
+      No se unifica: `generate_sintering_extreme_cases` (`utils.py:227-231`) ya escribe
+      `sintering_type` y `sintering_coeff` planos, claves que el worker lee
+      (`tasks.py:1592-1598`). Lo que sí hay que arreglar es que copia `base_parameters` entera
+      (`utils.py:228`) y el pop de `sintering_config` vive sólo en `create_simulation`
+      (`views.py:1804`), así que esos hijos almacenan un `sintering_config` que **contradice** el
+      coeficiente al que corren. Retirarlo (R11.7). Verificado con probe: base con
+      `coefficient: 0.7` produce un hijo que corre a `0.5` y guarda `0.7`
+- [ ] T3.0a Implementar el **invariante de R11** donde se escriben los parámetros del hijo:
+      claves **contenidas** en el conjunto que el worker lee. Eso es todo lo que R11 exige en
+      la escritura: la completitud de campos y el rango son de **R3**, en la validación de
+      entrada, y no se recomprueban aquí. «Contenidas», no «exactamente
+      las del dict»: eso último lo exigía la regla de limpieza que el recorte eliminó, y
+      ningún requisito vigente lo pide. **No confundirla con la R11.7 actual**, que es otra
+      cosa: retirar `sintering_config` de los hijos de extremos
+- [ ] T3.0b **Dueño de cada limpieza, que son dos y distintas.** En el camino por
+      `create_simulation` ya la hace el pop de `views.py:1804`: no hay nada que añadir. En el
+      bloque de extremos la hace **`generate_sintering_extreme_cases`** (`utils.py:227-231`),
+      que es quien construye esos parámetros; no `apply_sintering_config`, que ese bloque no
+      llama a propósito (`views.py:1875-1876`) y que no debe llamar, porque le aplicaría el
+      dict de estudio y le borraría su coeficiente. Tampoco el serializer: un hijo de caso
+      límite hereda los planos de `base_parameters` (`utils.py:185-203`) y limpiar ahí se los
+      quitaría aunque no aplique ningún dict
+- [ ] T3.0c Test **R11.3** (grid, caso límite, extremo teórico y extremo de sinterizado en la
+      misma expansión)
+- [ ] T3.0d Alcance de esa retirada (la orden está en T3.0, aquí sólo su límite): lo que se
+      retira es `sintering_config`, porque R11 prohíbe escribir claves de sinterizado fuera del
+      conjunto del worker. **No** se retiran las `sintering_*` planas heredadas: están dentro
+      del conjunto y ningún requisito vigente pide quitarlas
+- [ ] T3.0e **Ningún test existente pasa a rojo por T3** (verificado: ningún test cubre los
+      hijos creados en `views.py:1889`; `grep -rn sintering_extreme` sobre el backend devuelve
+      también `views.py:1766,1871` y, en `tests/test_utils.py`, la clase
+      `TestGenerateSinteringExtremeCases` (`:15,234,240,252,255,267`) más `:369`. Esa clase sí
+      cubre la función que T3.0 pasa a modificar: comprobado que sus tres tests usan
+      `base_params` **sin** `sintering_config`, así que retirarlo los deja verdes;
+      `include_limiting_cases` aparece en tests en `tests/test_serializers.py:412,431` y en
+      `tests/test_models.py:132,138,186`, ninguno con sinterizado; los de `test_models` crean el
+      estudio por ORM (`:126`) sin pasar por `perform_create`, así que no pueden ponerse en rojo)
+- [ ] T3.0f Test **R11.7**: ningún hijo de extremos lleva `sintering_config`, y cada uno
+      conserva el plano de su propio extremo
+- [ ] T3.0g **Que esos hijos se creen sin `seed_type`** viola `cc-tunable-aggregation` R17, pero
+      **no** es uno de los cuatro defectos: va al contrato de seguimiento, no aquí
+- [ ] T3.1 `apply_sintering_config`: escribir `sintering_coeff` (no `sintering_mean`) para el
+      tipo `normal`; retirar `sintering_mean`, que ningún consumidor de producción lee
+- [ ] T3.2 **Test existente que esta tarea pone en rojo y se reescribe** (declaración completa):
+      - `backend/tests/test_utils.py:304-317` `test_normal_sintering` — afirma
+        `result["sintering_mean"] == 0.9`; pasa a afirmar `result["sintering_coeff"] == 0.9`
+- [ ] T3.3 Test R11.1 de **borde de engine**: mock sobre el binding, afirmando que la media que
+      llega es 0.8 y **no** 1.0
+- [ ] T3.4 Tests R11.2 y R11.3 (ninguna clave fuera del conjunto que el worker lee)
+
+## T4 — Alcance por algoritmo (D6, R11)
+
+- [ ] T4.1 Allow-list en la validación: sinterizado completo para los seis algoritmos que lo
+      consumen; sólo `fixed` para `limiting`; rechazo para `fracval`/`gcca`/`box_rfa`/`imported`
+- [ ] T4.2 Aplicar la regla a las **siete** superficies de R3, incluidos los extremos teóricos
+- [ ] T4.2a En un **update parcial** que omita `base_algorithm`, evaluar la allow-list contra el
+      `base_algorithm` guardado en la instancia, no contra el ausente (R11, R11.6)
+- [ ] T4.3 Tests R11.4 (incluidos `fracval` + `base_parameters={"sintering_coeff":0.8}` y
+      `fracval` + `theoretical_extremes`), R11.5 (barrido plano de `limiting` y sus extremos
+      por defecto del servidor) y R11.6 (actualización parcial contra el
+      `base_algorithm` de la instancia)
+- [ ] T4.4 **Ningún test existente pasa a rojo por esta tarea** (verificado: todos los tests de
+      la suite usan `tunable`, `tunable_cc` o `dla`, los tres dentro de la allow-list)
+
+## T5 — Integridad de la expansión (R12)
+
+- [ ] T5.1 Garantizar que toda la validación de T1 y T4 ocurre en
+      `ParametricStudySerializer.validate()`, antes de la primera escritura
+- [ ] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
+      encoladas (contar filas antes y después, y mockear `run_simulation_task.delay`)
+- [ ] T5.3 **Ningún test existente pasa a rojo por esta tarea**
+
+## T6 — Frontend (R10)
+
+- [ ] T6.1 Función pura `toSinteringConfig(DistributionValue)` y su uso en el submit de
+      `BatchSimulationForm`
+- [ ] T6.2 `parameterOptions` (`BatchSimulationForm.tsx:313-318`): ofrecer "Sintering
+      coefficient distribution" sólo para los seis algoritmos que lo consumen
+- [ ] T6.3 Limpiar o marcar las variaciones que el nuevo algoritmo no acepta al cambiar de
+      algoritmo (`setAlgorithm`, `BatchSimulationForm.tsx:358`, hoy no resetea `variations`)
+- [ ] T6.3b El campo "Base Sintering Coeff." de `limiting` (`BatchSimulationForm.tsx:409-418`,
+      enviado siempre en `:220`) no puede emitir `NaN`/`null` cuando se vacía
+- [ ] T6.4 Tests R10.4 (opción ausente para `fracval`/`gcca`/`box_rfa`, presente para
+      `ballistic`), R10.5 (forma del payload, y que el default de `uniform` del selector
+      produce un payload aceptable sin edición) y R10.6 **entera**: el payload tras cambiar de
+      algoritmo no lleva `sintering_coeff`, o lleva uno válido, nunca `null` ni `NaN` (primer
+      THEN), y el cambio limpia o marca lo que ya no aplica (el AND)
+- [ ] T6.5 **Ningún test existente pasa a rojo por esta tarea** (verificado: los **nueve** casos
+      de `BatchSimulationForm.test.tsx` seleccionan `tunable_cc`, ninguno afirma
+      la forma del payload enviado y ninguno cambia de algoritmo tras configurar una variación)
+- [ ] T6.6 **No se toca** `DistributionSelector.tsx`: su default `min == max` con base `1.0` es
+      válido para el sinterizado. Pertenece a `distribution-grid-wiring`
+
+## T7 — Verificación
+
+- [ ] T7.1 Gates de backend, **cada uno con su línea base medida** en este árbol. NO se
+      encadenan con `&&`: así encadenados nunca llegan a `mypy` y el criterio sería
+      insatisfacible.
+      - `pytest` → base **15 failed, 31 errors, 1221 passed**. Los 31 errores son de *setup de
+        fixtures* (`TypeError: User() got unexpected keyword arguments: 'username'`,
+        `apps/accounts/models.py:26`), no de colección. Aceptación: los **cinco** módulos de esta
+        superficie en verde y la base global sin empeorar
+      - `ruff check` → base **296 errores**. Aceptación: **cero nuevos** en los ficheros tocados
+      - `mypy .` → base **1740 errores en 133 ficheros**. Aceptación: **cero nuevos** en los
+        ficheros tocados
+      Los cinco módulos son `apps/simulations/tests/test_parametric_study_serializer.py`,
+      `apps/simulations/tests/test_grid_expansion.py`, `backend/tests/test_utils.py`,
+      `backend/tests/test_serializers.py` y
+      `apps/simulations/tests/test_sintering_plumbing.py` (base conjunta: **89 passed**). Los otros cinco del mapa
+      (`test_distribution_validation`, `test_distribution_field`, `test_distribution_plumbing`,
+      `test_distribution_serializer`, `tests/integration/test_parametric_values_pipeline.py`)
+      quedan fuera porque no tocan sinterizado (`test_distribution_plumbing.py:7` sólo lo
+      menciona en un docstring). **Sí entra** `apps/simulations/tests/test_sintering_plumbing.py`,
+      que es justo quien afirma los kwargs worker→engine de sinterizado. (La "guarda declarada"
+      de la ronda anterior era **falsa**: ese test sí aporta `sintering_min`/`sintering_max`
+      en `:142-143` y no postea nada, escribe por ORM. No hay riesgo que declarar.)
+- [ ] T7.2 Gates de frontend, con su línea base:
+      - `npm test` → base **58 ficheros, 624 tests**, medida sobre la rama con `f586946` dentro. La base anterior
+        (55/597) era la de `c3ff055`: los merges de `develop` (hasta `f586946`) añadieron
+        `chart-theme.test.ts`
+        (16), `globals-tokens.test.ts` (6) y `tailwind-config.test.ts` (5), que son los 3
+        ficheros y 27 tests de diferencia. Nota sobre `FraktalBatchImageDetail.test.tsx >
+        comprehensive variant toggle (T6.5)`: una ronda anterior declaró **dos** tests
+        inestables en la corrida completa, pero **dos corridas completas consecutivas sobre
+        `f5c93b4` dieron 624/624 verdes**. Queda como aviso, no como hecho reproducible: si
+        aparece, no atribuirlo a este change
+      - `npm run type-check` → base **13 errores TS preexistentes**, salida **2**. Aceptación:
+        cero nuevos
+      - `npm run lint` existe (`next lint`) pero el repo no tiene configuración de ESLint, así
+        que lanza el asistente interactivo: condición preexistente declarada
+      - Nota: `frontend/tsconfig.tsbuildinfo` **ya no está trackeado** (PR #96), así que correr
+        los gates no ensucia el árbol. Antes sí, y por eso cuatro rondas de revisión no
+        pudieron reproducir estas cifras.
+- [ ] T7.3 Engine: este change **no toca `aglogen_core/`** (`git diff c3ff055..HEAD --
+      aglogen_core` sale vacío), pero la línea base **sí** se declara, porque medirla no cuesta
+      nada y cuatro rondas la arrastraron como duda. Medida sobre `39207e0` con
+      `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test -p aglogen-engine --release`, salida
+      **0**: **374 passed, 0 failed, 5 ignored** en seis binarios — `src/lib.rs` 329 de 330
+      (1 ignorado), `bc_windowed_test` 11 de 12 (1), `cc_tunable_high_df_test` 9, 
+      `cc_tunable_low_df_test` 12, `integration_cc_tunable` 13 de 14 (1) y doc-tests 0 de 1 (1).
+      Aceptación: **cero nuevos fallos**. Tarda unos 7 minutos en release; tres tests de
+      rollback pasan de 60 s cada uno, así que no es un gate para correr a cada commit
+- [ ] T7.4 Verificación manual: estudio batch `ballistic` con sinterizado normal(0.8, 0.05) →
+      comprobar en los parámetros del hijo y en el resultado que la media aplicada es **0.8**
+
+## T8 — Cierre
+
+- [ ] T8.1 judgment-day (revisión adversarial dual, agentes frescos en sesión nueva)
+- [ ] T8.2 Fix rounds hasta APPROVED
+- [x] T8.2b Estilo de encabezado: ya no hay dos estilos. `bb54fae` (PR #86) migró la canónica a
+      `### Requirement: R3 — …`, el mismo que usa la delta, así que copiarla es directo
+- [ ] T8.3 Archive + sincronización canónica de `batch-cc-tunable-parameter-parity` (bloques
+      MODIFIED/ADDED completos, nunca diferidos) + `state.yaml`
+- [ ] T8.4 PR a `develop` con etiqueta `type:bug` enlazando el issue AGLO
+- [ ] T8.5 Comentario de entrega en Jira **haciendo constar** que los resultados batch
+      anteriores con `sintering_config`, y los de cualquier estudio con sinterizado `normal`,
+      se ejecutaron sin el sinterizado declarado; y transición 41
+- [ ] T8.6 Arrancar el siguiente contrato de la cadena: `distribution-grid-wiring`
+
+## Log
+
+> **Sobre los huecos L5, L9, L13, L17 y L20.** No falta nada. Eran los números que fue
+> ocupando, y vacando, el resumen de decisiones de diseño: mientras fue la última entrada,
+> cada ronda insertaba las suyas antes y lo renumeraba (L5 en `89079e0`, L9 en `fa0563c`,
+> L13 en `f977d3a`, L17 en `4ec9b5e`, L20 en `c82cb77`). Dejó de serlo en `262e08d`, y desde
+> entonces no se abrió ningún hueco más. Recuperable entero con
+> `git show 89079e0:openspec/changes/sintering-reaches-engine/tasks.md`. Ahora vive **sin
+> número**, porque no es un suceso con fecha: eso es lo que debió ser desde el principio,
+> aunque llevara número desde `89079e0`.
+>
+> Los huecos se quedan. Las entradas numeradas son **21**, con L26 como número más alto —
+> confundir el número más alto con el recuento es justo el error que los creó. Renumerarlas
+> reescribiría la historia de un registro cuyo valor es ser inmutable, y los mensajes de
+> commit de este change ya citan rondas por su número; dentro del repositorio no hay ninguna
+> referencia cruzada a estos L.
+
+- **Decisiones de diseño vigentes** (resumen permanente, sin número de entrada: no es un
+  suceso con fecha sino el estado actual de las decisiones, y se actualiza en el sitio).
+  Cada una con su alternativa descartada: regla única en las siete superficies (DD1); el helper
+  lanza pero nunca es el primero en enterarse (DD2); validar antes de escribir en vez de
+  `transaction.atomic`, porque una tarea Celery ya despachada no se deshace con un rollback
+  (DD3); `sintering_coeff` es la media (DD4); allow-list de once algoritmos con `limiting`
+  sólo-`fixed` (DD5).
+
+- L1 (2026-10-21): Contrato escrito a partir del mapa consolidado
+  (`_explore-only/distribution-config-surface.md`, PR #81), que a su vez consolida la
+  exploración y cuatro rondas de spec-review del change retirado `distribution-config-wiring`.
+  Alcance deliberadamente reducido a la familia del sinterizado: D2, D5, D5b y D6. Las claves
+  de distribución (D1/D3/D8), la ruta del asistente IA (D9) y el 500 de los casos límite (D7)
+  quedan para los contratos siguientes, declarados en `proposal.md`.
+- L2 (2026-10-21): **spec-review r1**: `CORRECTIONS REQUIRED (2 blockers, 3 majors)`. Los dos
+  blockers eran míos y de fondo:
+  - **"Tres superficies" era falso: son cinco.** Mapé por nombre de clave (`sintering_config`)
+    en vez de por lo que lee el consumidor; el worker lee escalares planos. Confirmado con
+    probe propia: `base_parameters={"sintering_coeff":0.6,...}` ACEPTADO,
+    `parameter_grid={"sintering_coeff":[-5.0,42.0]}` ACEPTADO, `fracval` + flat ACEPTADO (burla
+    la allow-list), `sintering_mean` legado ACEPTADO. Y el desplegable de `limiting` ofrece ese
+    barrido plano como su única entrada de sinterizado.
+  - **La precedencia que escribí era falsa**: `views.py:1804` popea del dict ya fusionado, así
+    que es `grid > base_parameters > estudio`, no `grid > estudio`.
+  Majors: la delta estaba **en español** y las canonicas son 100% inglés (habría dejado
+  `openspec/specs/` bilingüe); el gate `pytest && ruff && mypy` es insatisfacible (296 / 1740 /
+  13 errores preexistentes, y el `&&` corta antes); y "validar antes es la única opción" era
+  falso (`transaction.on_commit` también sirve).
+- L3 (2026-10-21): Decisión de la persona: las superficies planas **entran** en alcance.
+- L4 (2026-10-21): **Corrección r2** (este commit): delta reescrita **en inglés** con las cinco
+  superficies, precedencia de cuatro niveles, R3.8/R3.9 nuevos, R10.6 (cambio de algoritmo),
+  R11.4 extendido a las cinco superficies, R11.6 (actualización parcial); líneas base de los
+  cinco gates declaradas; `on_commit` nombrado como alternativa descartada por alcance;
+  declaraciones de "ningún test a rojo" en T1/T4/T5/T6; y declarados como fuera de alcance el
+  bloque hermano de extremos de sinterizado (R17) y la condición del CSV.
+- L6 (2026-10-21): **spec-review r2**: `CORRECTIONS REQUIRED (1 blocker, 7 majors)`. Las cinco
+  líneas base declaradas se verificaron exactas (salvo que `type-check` sale con 2, no 1).
+  - **BLOCKER: hay una sexta superficie.** `limiting_cases_config.theoretical_extremes` escribe
+    sus claves verbatim en cada hijo (`utils.py:199-203`) y su validador sólo mira los tres
+    nombres de primer nivel. Confirmado por mí: `{"sintering_coeff":[42.0],"sintering_mean":[0.9]}`
+    → 201. Falsificaba cinco afirmaciones normativas de la delta a la vez.
+  - Majors: precedencia distinta por forma; exigir `sintering_type` rompería **todos** los
+    envíos de `limiting`; los planos no tenían tabla de campos requeridos; `limiting` tiene dos
+    entradas de sinterizado, no una; la limpieza de claves heredadas no tenía dueño
+    implementable; el MUST "venga de donde venga" lo falsifican las rutas de simulación
+    individual; y la canónica **R7** prometía comportamiento idéntico para grids sin claves
+    nuevas, lo que contradice el rechazo de `{"sintering_coeff":[42.0]}`.
+  - **Rechazado tras verificarlo**: m8 ("los proposal archivados están en inglés") es falso —
+    los dos archivados de 2026-10-19 los tienen en español. Y `perform_create` está en
+    `views.py:1750`, no `:1749`: la r1 me había corregido hacia el error.
+- L7 (2026-10-21): Decisión de la persona: **cambiar el enfoque**. La garantía deja de
+  enunciarse como lista de superficies.
+- L8 (2026-10-21): **Corrección r3** (este commit). R11 pasa a ser un **invariante del hijo en
+  el cuello de botella** (`create_simulation`, por donde pasan grid, casos límite y extremos
+  teóricos), acotado a la expansión de estudios; las seis superficies quedan como capa de 400
+  antes de escribir (R3/R12). Añadidos: tabla propia para la forma plana, `coeff` sin tipo =
+  `fixed`, precedencia por forma, dueño explícito de la limpieza (`apply_sintering_config`,
+  no el serializer, para no cambiar la física de los casos límite), **R7 MODIFIED** con
+  carve-out, y las dos entradas de sinterizado de `limiting`.
+- L10 (2026-10-21): **spec-review r3**: `CORRECTIONS REQUIRED (1 blocker, 8 majors)`. Las seis
+  líneas base declaradas se reprodujeron exactas.
+  - **BLOCKER: la premisa del chokepoint era falsa.** `perform_create` crea hijos en **dos**
+    sitios: `views.py:1826` (dentro de `create_simulation`) y `views.py:1889` (inline, extremos
+    de sinterizado). Confirmado por mí. Lo afirmé como "verificado" tras leer sólo `:1867`, y
+    este mismo contrato describía el segundo sitio en su sección de fuera de alcance.
+  - Majors: la cláusula 2 del invariante era insatisfacible para los hijos sin sinterizado; la
+    superficie 6 también admite **dict** (y eso reintroduce D2 entero); el bullet 2 de
+    precedencia era falso y contradecía al bullet 3; la canónica R7.2 se retiraba en silencio
+    mientras el inventario decía "ninguno"; R7.2 chocaba con el cambio de la media `normal`;
+    el alcance de R11 vivía sólo en `proposal.md`, que **no se archiva**; el rationale de la
+    limpieza era medio falso; y la forma plana no decía qué pasa con claves extra del conjunto.
+- L11 (2026-10-21): Decisión de la persona: **unificar los dos sitios de creación**.
+- L12 (2026-10-21): **Corrección r4** (este commit). R11 exige **un solo constructor** y lo
+  convierte en requisito en vez de premisa; el bloque de extremos de sinterizado entra en
+  alcance y gana `seed_type` (cierra R17). Añadidos: superficie 7 (dict por extremos teóricos,
+  R3.12), precedencia **por niveles** con la inversión declarada, cláusula 2 con guarda, R7.2
+  canónica restaurada verbatim con las nuevas como R7.3/R7.4, alcance de R11 con sus
+  exclusiones **dentro de la spec**, regla de claves extra del conjunto, y R11.7. Anclas
+  corregidas (`views.py:1750`, `tsx:294`, R7 canónica en `:213-227`).
+- L14 (2026-10-21): **spec-review r4**: `CORRECTIONS REQUIRED (1 blocker, 4 majors)`. Dos
+  cierres importantes: la **enumeración de superficies por fin aguanta** (el revisor enumeró
+  *escritores* de parámetros, no claves, y no encontró una octava) y el **blocker del
+  constructor único queda cerrado**. Las seis líneas base se reprodujeron exactas.
+  - **BLOCKER: una segunda inversión de precedencia sin declarar, mía.** Afirmé que
+    `base_parameters` gana al campo de estudio; cierto en forma dict, **falso en forma plana**
+    (`apply_sintering_config` la pisa, `views.py:1808`). Confirmado con probe propia. Y el
+    único escenario de precedencia que escribí ejercitaba sólo el caso dict, así que habría
+    pasado antes y después.
+  - Majors: `sintering_config` es también una clave `sintering_*`, así que mi regla plana
+    contradecía las superficies 1 y 3; el cuarto bullet de R11.7 no tenía dueño implementable;
+    el título de R12 prometía más de lo que su cuerpo exige (D7 sigue abriendo estudios a
+    medias y sólo estaba declarado en `proposal.md`, que no se archiva); y la unidad de
+    validación plana quedaba indefinida en las superficies barridas.
+  - **Rechazado tras verificarlo**: la "guarda declarada" de T7.1 era falsa por mi parte, no
+    del revisor — él la desmontó: ese test sí trae `min`/`max` y escribe por ORM.
+- L15 (2026-10-21): Decisión de la persona: `base_parameters` **gana siempre**.
+- L16 (2026-10-21): **Corrección r5** (este commit). Declarada la segunda inversión (inventario
+  11, R3 y R3.10); `sintering_config` excluida de la regla de claves planas; el constructor
+  retira `sintering_config` y las claves heredadas en ambos modos (R11.7 con regla ejecutable);
+  R12 renombrado a lo que de verdad exige, con D7 nombrado **dentro** de la spec; unidad de
+  validación fijada para las superficies barridas; añadidos al inventario la canónica R4 y la
+  divergencia del desplegable de `limiting`; y corregidos conteos, anclas y la nota del flaky.
+- L18 (2026-10-22): **spec-review r5**: `CORRECTIONS REQUIRED (1 blocker, 2 majors)`. Seis
+  líneas base exactas; la enumeración de superficies **vuelve a aguantar**.
+  - **BLOCKER: tercera inversión de precedencia.** La encontré yo con una probe mientras la r5
+    corría, y ella la confirmó: hoy cualquier dict gana a cualquier plano, así que un dict en
+    `base_parameters` pisa un valor barrido para ese hijo. Declaraba dos cambios y producía tres.
+  - **MAJOR: el modelo no era implementable donde lo ponía.** Dos payloads distintos llegan al
+    constructor como el mismo dict fusionado y exigen resultados opuestos: falta la procedencia.
+  - **MAJOR: los hijos de frontera de rango** no estaban en el nivel 1 y sufren la misma mentira
+    de nombre: hoy `boundary_min: sintering_coeff=0.6` corre a 0.95.
+  - Minors: el payload `{distribution_type:"fixed", value:0.9}` que la **propia canónica
+    documenta** pasa a dar 400 (hoy 201 y el hijo corre sin sinterizar); y mi afirmación de que
+    un hijo "se lleva ambas" claves era falsa, `add_case` emite un hijo por clave.
+- L19 (2026-10-22): **Corrección r6**. Inventario 14 (tercera inversión) y 15 (payload
+  `value`); los hijos de frontera entran en el nivel 1; R11 exige que el **llamante resuelva**
+  la precedencia y pase el ajuste ganador; cuatro cláusulas nuevas en R3.10 y una en R7.4;
+  corregidos el ancla `utils.py:180`, la evidencia de T1.8/T3.0e y los conteos.
+- L21 (2026-10-22): **Recorte de alcance** (`14d0b13`): fuera la precedencia y la unificación de
+  los dos sitios de creación. `6f52d05` alineó sólo la precedencia, porque el último párrafo de
+  `14d0b13` sólo avisaba de ella: un mensaje que infradescribe su propio alcance envenena el
+  commit siguiente.
+- L22 (2026-10-22): **spec-review r7** (`1d8b4fb`): `CORRECTIONS REQUIRED (3 blockers, 3 majors,
+  3 minors)`. B1 fue el recorte a medias. Comprobado que no dejaba agujero en D5: el bloque
+  inline ya escribe los planos que lee el worker (`utils.py:227-231`). El `seed_type` que le
+  falta viola `cc-tunable-aggregation` R17, pero no es uno de los cuatro defectos: al
+  seguimiento, que acumula ya tres puntos.
+- L23 (2026-10-22): **spec-review r8**: `CORRECTIONS REQUIRED (2 blockers, 3 majors, 2 minors)`.
+  Declaró limpios el formato, las referencias a escenarios y lo derivado al seguimiento. Su M3
+  no era residuo sino defecto nuevo: el `pop` de `sintering_config` vive sólo en
+  `create_simulation`, así que los hijos de extremos almacenan un dict que **contradice** el
+  coeficiente al que corren. Probe: base con `coefficient: 0.7` → hijo que corre a `0.5` y
+  guarda `0.7`. Decisión de la persona: arreglarlo aquí, no derivarlo. De ahí R11.7.
+- L24 (2026-10-22): **spec-review r9** (`663a7b5`): `1 blocker, 2 majors, 6 minors`. El blocker
+  fue una frase que sobrevivió intacta a la reescritura de su propio párrafo y seguía nombrando
+  a `apply_sintering_config` como dueño de una limpieza que no puede hacer.
+- L25 (2026-10-22): **spec-review r10** (`27afba1`): `0 blockers, 2 majors, 6 minors`. Mismo
+  patrón una capa más abajo: *"eso cierra también el `sintering_mean` legado"*, cierta cuando se
+  escribió y falsa tras dos estrechamientos de la regla que la precedía.
+- L26 (2026-10-22): **spec-review r11**: `0 blockers, 2 majors, 8 minors`, y la primera que pudo
+  **correr las suites**. Las cinco cifras de backend salieron exactas; la de frontend estaba
+  obsoleta por los merges de `develop`. Su M2 fue un superviviente de `95d41ca`: DD3 seguía
+  enumerando tres superficies cuando el contrato exige siete desde hace cinco commits.
+- L27 (2026-10-22): **spec-review r12**: `0 blockers, 2 majors, 9 minors`. Primer dato nuevo en
+  seis rondas: la barrida de residuos del recorte de `14d0b13` salió **vacía**, declarada así de
+  forma explícita. Los dos majors son el patrón del superviviente por sexta vez, y ambos los
+  introduje o los dejé yo: una orden sin objeto en T7.2 (*"Restaurarlo tras correr el gate"*),
+  superviviente de `89079e0` bajo el párrafo que `79d2e87` reescribió para decir lo contrario; y
+  la clave de **Nomenclatura** de `design.md`, que seguía diciendo `DD1…DD5` cuando `DD0` nació
+  en `1d8b4fb` y es la decisión que carga el recorte. Cuatro de los nueve minors eran errores de
+  la nota de huecos que yo mismo escribí en `39207e0`, incluido confundir el número más alto
+  (L26) con el recuento (21) — el mismo error que creó los huecos.
+- L28 (2026-10-22): **Criterio de parada, decisión de la persona**: los blockers, no «ronda sin
+  hallazgos semánticos». Seis rondas de revisión (r7-r12) con agente fresco: los blockers se
+  extinguieron (3, 2, 1, 0, 0, 0) pero los majors se quedaron en 2 durante cuatro rondas y los
+  minors crecieron (3, 2, 6, 6, 8, 9). La causa no es el contrato: desde la r11 los hallazgos
+  eran defectos **de las correcciones**, no del contrato — el patrón del superviviente, frases
+  que quedan justificando la versión anterior del párrafo que las rodea. Un bucle que se
+  alimenta de sí mismo no converge. Se cierra la fase de revisión y el contrato pasa al gate
+  humano.
+- L29 (2026-10-22): **Contrato aprobado**. La persona puso `status:approved` en **#97** y
+  **AGLO-10** pasó a En curso. Queda autorizada la implementación del contrato tal y como está.
+  A partir de aquí el contrato **no se cambia por el camino**: si la implementación obliga a
+  tocar `proposal.md`, `specs/` o una decisión de `design.md`, se para y se pide nueva
+  aprobación. `tasks.md` sí se actualiza al avanzar, con su evidencia en este Log.

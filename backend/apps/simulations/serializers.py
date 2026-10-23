@@ -11,6 +11,12 @@ from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
 from .fields import DistributionField
+from .sintering_shape import (
+    FLAT_KEYS,
+    check_flat_keys,
+    check_flat_required,
+    validate_dict_shape,
+)
 from .models import ParametricStudy, Simulation
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
@@ -358,43 +364,14 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         return obj.simulations.filter(status="completed").count()
 
     def validate_sintering_config(self, value):
-        """Validate sintering configuration."""
-        if value is None:
-            return value
+        """Validate the study-level sintering configuration (surface 2, R3).
 
-        valid_types = {"fixed", "uniform", "normal"}
-        dist_type = value.get("distribution_type", "fixed")
-        if dist_type not in valid_types:
-            raise serializers.ValidationError(
-                f"distribution_type must be one of: {valid_types}"
-            )
-
-        # Validate coefficient ranges
-        if dist_type == "fixed":
-            coeff = value.get("coefficient", 1.0)
-            if not (0.5 <= coeff <= 1.0):
-                raise serializers.ValidationError(
-                    "coefficient must be between 0.5 and 1.0"
-                )
-        elif dist_type == "uniform":
-            min_val = value.get("min", 0.85)
-            max_val = value.get("max", 0.95)
-            if not (0.5 <= min_val <= 1.0):
-                raise serializers.ValidationError("min must be between 0.5 and 1.0")
-            if not (0.5 <= max_val <= 1.0):
-                raise serializers.ValidationError("max must be between 0.5 and 1.0")
-            if min_val > max_val:
-                raise serializers.ValidationError(
-                    "min must be less than or equal to max"
-                )
-        elif dist_type == "normal":
-            mean = value.get("mean", 0.9)
-            std = value.get("std", 0.05)
-            if not (0.5 <= mean <= 1.0):
-                raise serializers.ValidationError("mean must be between 0.5 and 1.0")
-            if not (0.0 < std <= 0.2):
-                raise serializers.ValidationError("std must be between 0.0 and 0.2")
-
+        `None` and `{}` are accepted: this study configures no sintering.
+        """
+        try:
+            validate_dict_shape(value, allow_empty=True)
+        except ValueError as exc:
+            raise serializers.ValidationError(str(exc)) from exc
         return value
 
     def validate_box_counting_params(self, value):
@@ -481,11 +458,65 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                         {f"parameter_grid.sintering_config[{i}]": "Must be a dict."}
                     )
                 try:
-                    self.validate_sintering_config(entry)
-                except serializers.ValidationError as exc:
+                    validate_dict_shape(entry, allow_empty=False)
+                except ValueError as exc:
                     raise serializers.ValidationError(
-                        {f"parameter_grid.sintering_config[{i}]": exc.detail}
-                    )
+                        {f"parameter_grid.sintering_config[{i}]": str(exc)}
+                    ) from exc
+
+        # --- Validate the other six sintering surfaces (R3) ---
+        base_params = data.get("base_parameters") or {}
+        limiting = data.get("limiting_cases_config") or {}
+        extremes = limiting.get("theoretical_extremes") or {}
+
+        # Surface 3: a dict inside base_parameters, which nobody validated.
+        if "sintering_config" in base_params:
+            try:
+                validate_dict_shape(base_params["sintering_config"], allow_empty=True)
+            except ValueError as exc:
+                raise serializers.ValidationError(
+                    {"base_parameters.sintering_config": str(exc)}
+                ) from exc
+
+        # Surface 7: a dict swept through theoretical_extremes. A well-formed
+        # one works today and keeps working; a malformed one is rejected.
+        swept_dicts = extremes.get("sintering_config")
+        if swept_dicts is not None:
+            entries = swept_dicts if isinstance(swept_dicts, list) else [swept_dicts]
+            for i, entry in enumerate(entries):
+                try:
+                    validate_dict_shape(entry, allow_empty=False)
+                except ValueError as exc:
+                    raise serializers.ValidationError(
+                        {
+                            "limiting_cases_config.theoretical_extremes."
+                            f"sintering_config[{i}]": str(exc)
+                        }
+                    ) from exc
+
+        # Surfaces 4, 5 and 6: flat scalars. Range and unknown-key checks
+        # apply per key, where the key is written.
+        for label, mapping, swept in (
+            ("base_parameters", base_params, False),
+            ("parameter_grid", grid, True),
+            ("limiting_cases_config.theoretical_extremes", extremes, True),
+        ):
+            try:
+                check_flat_keys(mapping, swept=swept)
+            except ValueError as exc:
+                raise serializers.ValidationError({label: str(exc)}) from exc
+
+        # Required keys are checked on the child's merged projection: the
+        # rest of the shape may legitimately live in base_parameters.
+        merged = {k: v for k, v in base_params.items() if k in FLAT_KEYS}
+        for mapping in (grid, extremes):
+            for key, value in mapping.items():
+                if key in FLAT_KEYS:
+                    merged[key] = value[0] if isinstance(value, list) and value else value
+        try:
+            check_flat_required(merged)
+        except ValueError as exc:
+            raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")
