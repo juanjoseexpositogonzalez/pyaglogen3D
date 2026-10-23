@@ -313,7 +313,8 @@ class TestApplySinteringConfig:
         result = apply_sintering_config(params, config)
 
         assert result["sintering_type"] == "normal"
-        assert result["sintering_mean"] == 0.9
+        # D5: the engine reads `sintering_coeff` as the mean (`lib.rs:602`).
+        assert result["sintering_coeff"] == 0.9
         assert result["sintering_std"] == 0.05
 
     def test_none_config_returns_unchanged(self):

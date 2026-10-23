@@ -34,7 +34,7 @@ FRAKTAL_MODEL_DISPLAY_NAMES = {
 }
 
 # Theoretical extreme values by algorithm
-THEORETICAL_EXTREMES: dict[str, dict[str, list[float]]] = {
+THEORETICAL_EXTREMES: dict[str, dict[str, list[Any]]] = {
     "dla": {
         "sticking_probability": [0.1, 1.0],
     },
@@ -228,6 +228,12 @@ def generate_sintering_extreme_cases(
 
     for coeff in SINTERING_EXTREMES["coefficients"]:
         params = dict(base_parameters)
+        # R11.7: this path copies base_parameters whole and the
+        # `sintering_config` pop lives only in `create_simulation`
+        # (`views.py:1804`), so without this the child stores a dict that
+        # contradicts the coefficient it actually runs at. Only the dict
+        # goes: inherited flat keys are inside the set the worker reads.
+        params.pop("sintering_config", None)
         params["sintering_type"] = "fixed"
         params["sintering_coeff"] = coeff
         cases.append(("sintering_extreme", f"coeff={coeff}", params))
@@ -273,7 +279,11 @@ def apply_sintering_config(
         params["sintering_min"] = sintering_config["min"]
         params["sintering_max"] = sintering_config["max"]
     elif dist_type == "normal":
-        params["sintering_mean"] = sintering_config["mean"]
+        # D5: the engine reads `sintering_coeff` as the mean (`lib.rs:602`).
+        # Writing `sintering_mean` left the declared mean unread and the
+        # study running at whatever sintering_coeff held - by default 1.0,
+        # which is no sintering at all.
+        params["sintering_coeff"] = sintering_config["mean"]
         params["sintering_std"] = sintering_config["std"]
 
     return params
