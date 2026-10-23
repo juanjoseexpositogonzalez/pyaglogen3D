@@ -333,15 +333,6 @@ class TestApplySinteringConfig:
         # Empty dict is falsy but not None - returns params without sintering
         assert "sintering_type" not in result
 
-    def test_default_values_used(self):
-        """Test that default values are used when not specified."""
-        params = {"n_particles": 1000}
-        config = {"distribution_type": "uniform"}  # No min/max specified
-
-        result = apply_sintering_config(params, config)
-
-        assert result["sintering_min"] == 0.85  # Default
-        assert result["sintering_max"] == 0.95  # Default
 
     def test_does_not_modify_original_params(self):
         """Test that original parameters are not modified."""

@@ -10,6 +10,8 @@ from typing import Any
 import numpy as np
 from django.utils import timezone
 
+from .sintering_shape import validate_dict_shape
+
 logger = logging.getLogger(__name__)
 
 
@@ -255,18 +257,24 @@ def apply_sintering_config(
     if not sintering_config:
         return parameters
 
+    # R3.10: no defaults. The serializer rejects a malformed setting before
+    # anything is written, so reaching here with one is a programming error,
+    # not user input - and inventing `fixed`/1.0 would mean no sintering at
+    # all while the stored parameters claim otherwise.
+    validate_dict_shape(sintering_config, allow_empty=True)
+
     params = dict(parameters)
-    dist_type = sintering_config.get("distribution_type", "fixed")
+    dist_type = sintering_config["distribution_type"]
     params["sintering_type"] = dist_type
 
     if dist_type == "fixed":
-        params["sintering_coeff"] = sintering_config.get("coefficient", 1.0)
+        params["sintering_coeff"] = sintering_config["coefficient"]
     elif dist_type == "uniform":
-        params["sintering_min"] = sintering_config.get("min", 0.85)
-        params["sintering_max"] = sintering_config.get("max", 0.95)
+        params["sintering_min"] = sintering_config["min"]
+        params["sintering_max"] = sintering_config["max"]
     elif dist_type == "normal":
-        params["sintering_mean"] = sintering_config.get("mean", 0.9)
-        params["sintering_std"] = sintering_config.get("std", 0.05)
+        params["sintering_mean"] = sintering_config["mean"]
+        params["sintering_std"] = sintering_config["std"]
 
     return params
 
