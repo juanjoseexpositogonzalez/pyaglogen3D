@@ -153,6 +153,32 @@ describe('AppShell', () => {
   })
 })
 
+describe('the legacy Header inside the shell', () => {
+  it('renders nothing, so no route shows two navigations', () => {
+    // Eighteen files still import Header. Rather than edit pages belonging to
+    // later waves, it yields to the shell.
+    //
+    // Counting navigations named "Main" would not catch this: Header's own
+    // <nav> carries no such name, so a duplicated navigation would be
+    // invisible to that assertion. The brand mark is what both render.
+    pathname.current = '/dashboard'
+    render(
+      <AppShell>
+        <Header />
+        <p>page body</p>
+      </AppShell>,
+    )
+    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
+    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
+  })
+
+  it('still renders on its own, outside the shell', () => {
+    pathname.current = '/dashboard'
+    render(<Header />)
+    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
+  })
+})
+
 describe('the off-canvas drawer', () => {
   function openDrawer() {
     pathname.current = '/dashboard'
@@ -240,28 +266,41 @@ describe('the theme control', () => {
   })
 })
 
-describe('the legacy Header inside the shell', () => {
-  it('renders nothing, so no route shows two navigations', () => {
-    // Eighteen files still import Header. Rather than edit pages belonging to
-    // later waves, it yields to the shell.
-    //
-    // Counting navigations named "Main" would not catch this: Header's own
-    // <nav> carries no such name, so a duplicated navigation would be
-    // invisible to that assertion. The brand mark is what both render.
-    pathname.current = '/dashboard'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
-    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
-  })
+describe('R1-S2: pages do not import the shell', () => {
+  it('finds no page importing AppShell', () => {
+    // The shell is mounted once, in the root layout. A page importing it
+    // would double the chrome, and nothing else would catch that.
+    const root = join(process.cwd(), 'src/app')
+    const offenders: string[] = []
 
-  it('still renders on its own, outside the shell', () => {
-    pathname.current = '/dashboard'
-    render(<Header />)
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
+    const walk = (dir: string) => {
+      readdirSync(dir).forEach((entry) => {
+        const full = join(dir, entry)
+        if (statSync(full).isDirectory()) return walk(full)
+        if (!entry.endsWith('page.tsx')) return
+        if (readFileSync(full, 'utf8').includes('shell/AppShell')) offenders.push(full)
+      })
+    }
+    walk(root)
+
+    expect(offenders, `pages importing the shell: ${offenders.join(', ')}`).toEqual([])
+  })
+})
+
+describe('R2-S3: the auth surfaces carry no fixed colours', () => {
+  it('expresses every auth surface through tokens', () => {
+    const files = [
+      'src/app/auth/layout.tsx',
+      'src/app/auth/login/page.tsx',
+      'src/app/auth/register/page.tsx',
+      'src/app/auth/check-email/page.tsx',
+      'src/app/auth/verify-email/page.tsx',
+      'src/app/auth/oauth-callback/page.tsx',
+    ]
+    files.forEach((relative) => {
+      const source = readFileSync(join(process.cwd(), relative), 'utf8')
+      const hits = source.match(/(?:text|bg|border)-(?:white|black|gray|blue|red|green|yellow)-?\d*/g)
+      expect(hits, `${relative} still fixes colours: ${hits?.join(', ')}`).toBeNull()
+    })
   })
 })
