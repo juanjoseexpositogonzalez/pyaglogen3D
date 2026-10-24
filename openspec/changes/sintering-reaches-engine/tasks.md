@@ -725,5 +725,35 @@
   **Nota de método del mismo juez**: revisó `git archive d8f45d0` y avisó de que el árbol de
   trabajo tenía cambios posteriores. Tenía razón y conviene retenerlo: **un juez debe revisar
   el commit, no el directorio**, o mide código que nadie ha entregado.
+  **Ronda 3: los dos jueces llegaron por separado a la misma raíz, y la raíz era el enfoque.**
+  Mi validación **simulaba** en un segundo sitio cómo se construyen los hijos, y divergía del
+  generador real una y otra vez: los hijos de **frontera de rango** (`utils.py:179-194`) y los
+  **extremos por defecto del servidor** (`utils.py:198-200`, que el serializer ni siquiera ve)
+  no se proyectaban nunca. Medido: un estudio con `sintering_type: uniform` en base y un barrido
+  de `min`/`max` entraba con **201** y guardaba **7 de 11 hijos** con `uniform` y sin min/max,
+  que el worker corre a 0.85-0.95. El daño central del contrato, **aceptado**. Y mi docstring
+  afirmaba cubrir «cada hijo que el barrido produce»: era falso.
+  Más hallazgos de esa ronda, todos reproducidos por mí: `null` en la superficie 7 → 500 con +1
+  estudio, +1 simulación y +1 tarea; un escalar en una clave **no** de sinterizado de los
+  extremos → lo mismo; `distribution_type` inhashable y un `limiting_cases_config` que no es un
+  objeto → 500 en vez de 400; y un **falso 400** preexistente cuando un dict de grid cubre un
+  plano incompleto de `base_parameters`.
+  **Decisión de la persona: dejar de parchear y validar con la expansión real.** Nace
+  `apps/simulations/expansion_preview.py`, que **no modela nada**: ejecuta las mismas funciones
+  que `perform_create` —`generate_limiting_cases`, `generate_sintering_extreme_cases`,
+  `apply_sintering_config`— sobre los mismos datos, replica su cast `int()` con la asimetría
+  real (guardado en `create_simulation`, sin guardar en el bloque de extremos) y mira los
+  parámetros que llevarían los hijos. No escribe: esas funciones son puras. La proyección
+  paralela y sus dos banderas se **retiran**; la precedencia ya no hay que reenunciarla, porque
+  lo que `create_simulation` le hace a un hijo es lo que el preview ve.
+  **Lo que cierra de rebote, medido y no reclamado como alcance**: lo que antes reventaba a
+  media expansión ahora revienta **antes de escribir** y es un 400 con cero filas. Eso incluye
+  los tres caminos que esta misma entrada había derivado al contrato de seguimiento
+  (`n_particles` escalar y no numérico, y el `int()` sin guarda de `views.py:1878-1880`, que
+  dejaba +1 estudio, +8 simulaciones y 8 tareas) y, sobre todo, **la exención que el propio
+  contrato declara no cerrada**: dos dicts en `parameter_grid.sintering_config` junto a casos
+  límite, el `sorted` de `utils.py:182`. Hoy da 400 sin escribir nada. El texto de la spec no se
+  toca —no se cambia el contrato por el camino—: queda dicho aquí que su exención ha dejado de
+  ser necesaria. El seguimiento baja de seis puntos a tres.
   Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
   la revisión adversarial, no por alcance. Excepción declarada en la issue #97.

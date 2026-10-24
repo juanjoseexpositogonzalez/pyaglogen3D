@@ -10,11 +10,11 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from .expansion_preview import check_children, preview_children
 from .fields import DistributionField
 from .sintering_shape import (
     check_algorithm_scope,
     check_flat_keys,
-    check_flat_required_over_sweeps,
     validate_dict_shape,
 )
 from .models import ParametricStudy, Simulation
@@ -389,6 +389,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         if value is None:
             return value
 
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "limiting_cases_config must be an object, got "
+                f"{type(value).__name__}"
+            )
+
         # Ensure valid keys
         valid_keys = {
             "include_boundaries",
@@ -527,24 +533,28 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # emits one child per element, so every element is projected, not only
         # the first: reading just the first let a second child be stored as
         # `uniform` with no min/max, which the worker then ran as 0.85-0.95.
-        # Where a dict setting reaches a child, `apply_sintering_config`
-        # overwrites its flat keys (`views.py:1804-1808`), so the flats are not
-        # that child's shape and projecting them would reject valid payloads.
-        # A grid dict reaches the grid children only; a `base_parameters` or
-        # study dict also reaches the limiting and theoretical ones.
-        base_or_study_dict = bool(
-            base_params.get("sintering_config") or data.get("sintering_config")
+        # Instead of modelling how children are built, expand the study for
+        # real and look at what the children would carry. Three rounds of
+        # review found the parallel model diverging from the generator - the
+        # range-boundary children, the server-side default extremes, the
+        # precedence of a dict over the flats - so the preview runs the same
+        # functions `perform_create` runs and nothing is written.
+        effective_algorithm: str = (
+            data.get("base_algorithm")
+            or getattr(self.instance, "base_algorithm", "")
+            or ""
         )
         try:
-            check_flat_required_over_sweeps(
-                base_params,
-                grid=grid,
-                extremes=extremes,
-                dict_wins_for_grid_children=bool(sintering_entries)
-                or base_or_study_dict,
-                dict_wins_for_other_children=base_or_study_dict,
-                max_combinations=self._BATCH_HARD_CAP,
+            children = preview_children(
+                algorithm=effective_algorithm,
+                base_parameters=base_params,
+                parameter_grid=grid,
+                study_sintering_config=data.get("sintering_config"),
+                include_limiting_cases=bool(data.get("include_limiting_cases")),
+                limiting_cases_config=limiting or None,
+                max_children=self._BATCH_HARD_CAP,
             )
+            check_children(children)
         except ValueError as exc:
             raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
 

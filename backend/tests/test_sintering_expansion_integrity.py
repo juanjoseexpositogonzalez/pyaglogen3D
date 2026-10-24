@@ -294,7 +294,7 @@ def test_r12_an_empty_sweep_does_not_disable_the_required_check(
     )
 
     assert resp.status_code == 400, f"the required-key guard vanished: {resp.data}"
-    assert "sintering_max" in str(resp.data), resp.data
+    assert "sintering" in str(resp.data).lower(), resp.data
     assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
     assert dispatch.delay.call_count == 0
 
@@ -476,4 +476,216 @@ def test_r12_a_later_invalid_element_on_the_extremes_surface_is_rejected(
 
     assert resp.status_code == 400, resp.data
     assert "sintering_min" in str(resp.data) or "sintering_max" in str(resp.data), resp.data
+
+
+# --- Round 3: validate with the real expansion, not a parallel model -------
+
+
+def test_r12_boundary_children_carry_a_shape_the_worker_can_run(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The parallel projection modelled the grid product and the user's own
+    extreme keys. It did not model the range-boundary children
+    (`utils.py:179-194`), which are built from base plus one key, so a sweep
+    of `sintering_min`/`sintering_max` produced boundary children carrying
+    `sintering_type: uniform` and nothing else. The worker then ran them at
+    the 0.85-0.95 defaults while the stored parameters said otherwise.
+    """
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+        },
+        parameter_grid={"sintering_min": [0.7, 0.8], "sintering_max": [0.9]},
+        include_limiting_cases=True,
+    )
+
+    if resp.status_code == 201:
+        study = ParametricStudy.objects.get(id=resp.data["id"])
+        liars = [
+            child.name
+            for child in study.simulations.all()
+            if child.parameters.get("sintering_type") == "uniform"
+            and "sintering_min" not in child.parameters
+        ]
+        assert not liars, f"{len(liars)} children stored a shape they will not run: {liars[:3]}"
+    else:
+        assert resp.status_code == 400, resp.data
+        assert dispatch.delay.call_count == 0
+
+
+def test_r12_server_side_default_extremes_are_projected_too(
+    api_client: APIClient, project: Project
+) -> None:
+    """When the payload omits `theoretical_extremes`, `utils.py:198-200` falls
+    back to the server's own map, and the serializer never saw those children
+    at all."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+        },
+        parameter_grid={"sintering_min": [0.7], "sintering_max": [0.9]},
+        include_limiting_cases=True,
+    )
+
+    if resp.status_code == 201:
+        study = ParametricStudy.objects.get(id=resp.data["id"])
+        liars = [
+            child.name
+            for child in study.simulations.all()
+            if child.parameters.get("sintering_type") == "uniform"
+            and "sintering_max" not in child.parameters
+        ]
+        assert not liars, f"{len(liars)} theoretical children lie: {liars[:3]}"
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        (
+            "null on the swept dict surface",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {"theoretical_extremes": {"sintering_config": None}},
+            },
+        ),
+        (
+            "a scalar on a non-sintering extreme key",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {"theoretical_extremes": {"target_df": 1.5}},
+            },
+        ),
+        (
+            "an unhashable distribution_type",
+            {"sintering_config": {"distribution_type": ["fixed"], "coefficient": 0.8}},
+        ),
+        (
+            "a list where limiting_cases_config belongs",
+            {"include_limiting_cases": True, "limiting_cases_config": [1, 2]},
+        ),
+    ],
+)
+def test_r12_a_malformed_expansion_input_is_rejected_not_crashed(
+    api_client: APIClient, project: Project, dispatch: Any, case: str,
+    overrides: dict[str, Any],
+) -> None:
+    """Each of these reached the expansion and raised there: two of them after
+    the study row and a queued task already existed. R12 wants a 400 and zero
+    rows, whatever the shape of the mistake."""
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 400, f"{case} crashed instead of being rejected"
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before, (
+        f"{case} wrote rows before failing"
+    )
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_grid_dict_covers_an_incomplete_base_flat(
+    api_client: APIClient, project: Project
+) -> None:
+    """A false 400 the parallel projection produced: the grid dict overwrites
+    the flats of every child it reaches, so an incomplete flat in
+    `base_parameters` is not any child's shape."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+        },
+        parameter_grid={
+            "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]
+        },
+    )
+
+    assert resp.status_code == 201, resp.data
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    for child in study.simulations.all():
+        assert child.parameters["sintering_type"] == "fixed", child.parameters
+
+
+# --- What the dry run closes beyond its own requirement -------------------
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        (
+            "a non-numeric n_particles in the grid",
+            {"parameter_grid": {"n_particles": ["abc"]}},
+        ),
+        (
+            "a dict n_particles reaching the extremes block",
+            {
+                "base_parameters": {
+                    "n_particles": {"distribution_type": "fixed", "value": 100},
+                    "target_df": 1.8,
+                    "target_kf": 1.3,
+                },
+                "include_limiting_cases": True,
+                "sintering_config": {"distribution_type": "fixed", "coefficient": 0.9},
+            },
+        ),
+        (
+            "two grid dicts with limiting cases - the contract's declared exemption",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8},
+                        {"distribution_type": "fixed", "coefficient": 0.9},
+                    ]
+                },
+                "include_limiting_cases": True,
+            },
+        ),
+    ],
+)
+def test_r12_the_preview_also_closes_the_paths_r12_does_not_govern(
+    api_client: APIClient, project: Project, dispatch: Any, case: str,
+    overrides: dict[str, Any],
+) -> None:
+    """These are not sintering settings, so R12 does not require closing them,
+    and the contract declares the third one as a known remaining half-creation
+    path. Running the real generators before writing closes all three as a
+    side effect: each used to raise mid-expansion, the worst of them after 8
+    children and 8 queued tasks.
+
+    Pinned here so the side effect is not lost by accident, and declared in
+    Log L34 rather than claimed as scope.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 400, f"{case} still breaks the expansion: {resp.data}"
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_an_ordinary_study_still_expands(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The control for everything above: the preview must not make a plain
+    study harder to create."""
+    resp = _post(api_client, project, parameter_grid={"n_particles": [100, 200]})
+
+    assert resp.status_code == 201, resp.data
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    assert study.simulations.count() == 2
+    assert dispatch.delay.call_count == 2
 
