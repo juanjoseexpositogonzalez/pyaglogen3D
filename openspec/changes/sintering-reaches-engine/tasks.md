@@ -614,7 +614,7 @@
   Esta tarea cierra además la ventana que el judgment-day de T3 señaló (JD-A-003): entre T3 y
   T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
   0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.
-- L34 (2026-10-23): **T5 completa** (R12). T5 **no cambia comportamiento**: su trabajo es
+- L34 (2026-10-23): **T5 completa** (R12). **Aviso para quien lea sólo esta entrada: T5 acabó cambiando comportamiento en cinco sitios** —500→400 en escalares de las superficies 5 y 6, 201→400 en un `theoretical_extremes` mal tipado, 400→201 en listas mixtas de grid y en claves que no son de sinterizado, y la regla de los hijos de frontera—. Nació como tarea sin código de producción y ocho rondas de revisión la convirtieron en otra cosa; esta línea lo dice porque durante seis correcciones nadie releyó la primera frase de una entrada de 200 líneas. Lo que sigue es su historia, y el punto de partida fue: su trabajo es
   demostrar que la barrera está donde el contrato exige, **antes de la primera escritura**, y
   dejarla fijada. Lo demostrado, con evidencia propia: `perform_create` (`views.py:1750`) **no
   valida nada**, `config/` **no define `ATOMIC_REQUESTS`**, y DRF llama `is_valid()` antes de
@@ -671,7 +671,7 @@
   puntos.
   **Fuera de alcance cuando se escribió esto, y ya no**: un `parameter_grid.sintering_config`
   con dos o más entradas junto a `include_limiting_cases` reventaba a media expansión por el
-  `sorted` de `utils.py:183` (la referencia decía `:180`, y era otra cita mal copiada). El
+  `sorted` de `generate_limiting_cases` (la referencia llevaba número de línea, y era la tercera cita que envejecía: ahora se nombra la función). El
   contrato lo declara defecto ajeno, de `distribution-grid-wiring`. La ronda 4 lo cerró de
   hecho, porque el preview obligó a mirarlo: hoy ese estudio **se crea**.
   **El texto canónico de la spec sigue diciendo que está abierto, y no lo toco**: cambiar la
@@ -797,6 +797,12 @@
   Hijos que no pueden completarse nunca, en un estudio marcado RUNNING. No es un ajuste de
   sinterizado, así que este contrato no lo cierra — pero **es el mismo daño**, y el contrato de
   seguimiento tiene que existir para que no sea permanente.
+  **Y ya existe: la issue #115.** Hasta la octava ronda, «va al contrato de seguimiento» fue una
+  promesa sin destinatario — un juez comprobó que no hay tal change en `openspec/changes/` y que,
+  al archivar, un Log de 800 líneas habría sido su única casa. #115 recoge los **nueve** defectos
+  derivados con su evidencia medida, incluida la nota de R12 que esta entrada deja sin tocar.
+  El recuento que esta entrada fue llevando a mano («baja de seis a tres», «suma seis») queda
+  obsoleto a propósito: contar defectos en prosa fue otra cifra que envejecía sola.
   Y una contradicción entre dos tests míos, encontrada al corregir: el del barrido vacío usaba
   una base incompleta, así que afirmaba a la vez que eso se acepta y que se rechaza. Reescrito
   con una base completa, y la guarda que le había debilitado vive ahora en su propio test
@@ -826,10 +832,14 @@
   pasaba; un `xfail` estricto falla hoy a propósito y **avisa el día que alguien lo cierre**.
   Son el `target_df` mixto y el extremo no-sinterizado que guarda nombres de clave.
   **Derivados nuevos, medidos**: `parameter_grid={"seed_type": [["monomers"]]}` da **500** por
-  un `in` contra un conjunto con valor inhashable, y un PATCH sobre una fila antigua cuyo
-  `theoretical_extremes` no sea un objeto también. Preexistentes, fuera de R12, y van al
-  contrato de seguimiento en vez de arreglarse estirando éste — que es justo lo que las rondas
-  4 a 6 castigaron.
+  un `in` contra un conjunto con valor inhashable. Preexistente, fuera de R12, y va al
+  seguimiento en vez de arreglarse estirando este contrato.
+  **Y aquí me equivoqué de dueño**: llamé «preexistente» también al 500 de un PATCH sobre una
+  fila cuyo `theoretical_extremes` no es un objeto. Un juez lo rastreó con `git log -S` y lo
+  confirmé: lo introdujo **`fb984fb`, la rebanada anterior de este mismo contrato**, mergeada
+  ayer en el PR #104. No era herencia, era mío y de anteayer. Arreglado aquí, no derivado,
+  porque la regla que necesitaba es la que esta misma tarea ya aplica al payload — y porque
+  dejaba un estudio **imposible de actualizar para siempre**, ni siquiera para renombrarlo.
   Gates de la ronda 7: `pytest` 15 failed / **1383** passed / 31 errors **y 2 xfailed**, con los
   nombres de los 46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
   **Tamaño: aquí ya no hay cifra, porque esta es la tercera que envejece.** Se escribió una,

@@ -975,24 +975,49 @@ def test_r12_the_scope_predicate_matches_the_rest_of_the_module(
     api_client: APIClient, project: Project
 ) -> None:
     """`startswith("sintering")` governed a bare `sintering` key and let
-    `sinterfoo` through. Neither is a sintering setting for `check_flat_keys`,
-    so the rule now uses the same predicate it does."""
-    for key in ("sintering", "sinterfoo"):
-        resp = _post(
-            api_client,
-            project,
-            include_limiting_cases=True,
-            limiting_cases_config={"theoretical_extremes": {key: {"a": 1}}},
-        )
-        assert resp.status_code == 201, f"{key}: {resp.data}"
+    `sinterfoo` through; neither is a key the worker reads. The rule now uses
+    the module's own prefix.
 
-    real_key = _post(
+    What is asserted here is only that a real sintering key **is** governed.
+    The first version of this test also pinned 201 for `sintering` and
+    `sinterfoo` - and a judge measured that those studies store junk children
+    (`sintering: "a"`), so that assertion was enshrining a defect as desired.
+    It belongs with the derived gaps below, not here.
+    """
+    governed = _post(
         api_client,
         project,
         include_limiting_cases=True,
         limiting_cases_config={"theoretical_extremes": {"sintering_coeff": 0.7}},
     )
-    assert real_key.status_code == 400, real_key.data
+    assert governed.status_code == 400, governed.data
+
+    mistyped_dict_surface = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": {"sintering_config": 5}},
+    )
+    assert mistyped_dict_surface.status_code == 400, mistyped_dict_surface.data
+
+
+@pytest.mark.parametrize(
+    "key", ["sintering", "sinterfoo", "kf_distribution", "target_df"]
+)
+def test_r12_a_bare_object_swept_on_any_key_never_crashes(
+    api_client: APIClient, project: Project, key: str
+) -> None:
+    """The derived family has one property this contract does enforce: it must
+    not reach the client as a 500. What those children store is pinned by the
+    strict xfails below."""
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": {key: {"a": 1}}},
+    )
+
+    assert resp.status_code in (201, 400), resp.status_code
 
 
 def test_r12_the_server_side_default_extremes_are_still_accepted(
@@ -1187,7 +1212,7 @@ def test_r12_a_non_mapping_extremes_map_is_rejected(
     assert dispatch.delay.call_count == 0
 
 
-def test_r12_an_empty_extremes_map_means_none_not_the_server_defaults(
+def test_r12_a_mistyped_empty_extremes_container_is_rejected(
     api_client: APIClient, project: Project
 ) -> None:
     """The type guard only fired for truthy values, because the serializer
@@ -1204,4 +1229,57 @@ def test_r12_an_empty_extremes_map_means_none_not_the_server_defaults(
 
     assert resp.status_code == 400, resp.data
     assert "theoretical_extremes" in str(resp.data), resp.data
+
+
+def test_r12_an_empty_or_absent_extremes_map_means_the_server_defaults(
+    api_client: APIClient, project: Project
+) -> None:
+    """Recorded, not changed: `{}` and `null` fall back to the server's own
+    `THEORETICAL_EXTREMES`, so a study asking for limiting cases gets them.
+    A judge measured eight children for each; whether an explicit empty map
+    should instead mean "none" is a behaviour question this contract does not
+    own."""
+    empty_meanings: tuple[Any, ...] = ({}, None)
+    for value in empty_meanings:
+        resp = _post(
+            api_client,
+            project,
+            include_limiting_cases=True,
+            limiting_cases_config={"theoretical_extremes": value},
+        )
+        assert resp.status_code == 201, resp.data
+        study = ParametricStudy.objects.get(id=resp.data["id"])
+        assert study.simulations.count() == 8, study.simulations.count()
+
+
+def test_r12_a_rename_survives_a_legacy_row_with_a_mistyped_extremes_map(
+    api_client: APIClient, project: Project
+) -> None:
+    """Rows written before the payload guard can carry a non-object
+    `theoretical_extremes`. Reading the stored value without checking its type
+    turned an innocent rename into a 500, and the study could never be updated
+    again.
+
+    Not pre-existing: a judge traced it to `fb984fb`, the previous slice of
+    this same contract, and the Log had it recorded as inherited. It is fixed
+    here rather than derived, because the rule it needs is the one this task
+    already enforces on the payload.
+    """
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="legacy",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100, "target_df": 1.8, "target_kf": 1.3},
+        parameter_grid={},
+        seeds_per_combination=1,
+        limiting_cases_config={"theoretical_extremes": ["target_df"]},
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, resp.data
 

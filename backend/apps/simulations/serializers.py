@@ -516,11 +516,11 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # that goes to the follow-up contract rather than being fixed by
         # stretching this one.
         for key, swept in extremes.items():
-            # The same predicate the rest of the module uses: the flat keys are
-            # `sintering_*` and the dict one is `sintering_config`. Matching on
-            # the bare prefix governed `sintering` while letting `sinterfoo`
-            # through, which is the same overreach in both directions.
-            if key != "sintering_config" and not key.startswith("sintering_"):
+            # `sintering_` covers both the flat keys and `sintering_config`,
+            # which starts with it. Matching on the bare `sintering` prefix
+            # governed a `sintering` key while letting `sinterfoo` through,
+            # which was overreach in both directions at once.
+            if not key.startswith("sintering_"):
                 continue
             if not isinstance(swept, list):
                 raise serializers.ValidationError(
@@ -613,7 +613,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         eff_base = _effective("base_parameters", base_params) or {}
         eff_grid = _effective("parameter_grid", grid) or {}
         eff_limiting = _effective("limiting_cases_config", limiting) or {}
-        eff_extremes = eff_limiting.get("theoretical_extremes") or {}
+        stored_extremes = eff_limiting.get("theoretical_extremes")
+        # A row written before the payload guard can carry a non-object here.
+        # Reading it without checking turned an innocent rename into a 500 and
+        # left the study permanently un-updatable. New payloads are rejected
+        # above; a stored one is ignored rather than held against the request.
+        eff_extremes = stored_extremes if isinstance(stored_extremes, dict) else {}
 
         try:
             check_algorithm_scope(

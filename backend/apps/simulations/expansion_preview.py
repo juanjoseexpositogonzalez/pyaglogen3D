@@ -181,7 +181,7 @@ def check_children(children: list[dict[str, Any]]) -> None:
     """Every child must carry a sintering shape the worker can run."""
     for child in children:
         sintering = {
-            key: value for key, value in child.items() if key.startswith("sintering")
+            key: value for key, value in child.items() if key.startswith("sintering_")
         }
         if not sintering:
             continue
