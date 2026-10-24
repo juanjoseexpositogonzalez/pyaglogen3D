@@ -184,8 +184,13 @@
 
 ## T5 — Integridad de la expansión (R12)
 
-- [x] T5.1 Garantizar que toda la validación de T1 y T4 ocurre en
-      `ParametricStudySerializer.validate()`, antes de la primera escritura
+- [x] T5.1 Garantizar que toda la validación de T1 y T4 ocurre **antes de la primera
+      escritura**. Enunciado corregido tras el judgment-day: la redacción original decía
+      «en `ParametricStudySerializer.validate()`» y es **falsa**, porque la forma de la
+      superficie 2 la valida `validate_sintering_config` (`serializers.py:366`), un validador
+      **de campo** que DRF ejecuta en `to_internal_value`, antes de `validate()`. Lo que el
+      contrato exige es la propiedad —nada se escribe sin validar—, no el método, y dejar el
+      enunciado viejo invitaba a mover comprobaciones que hoy funcionan
 - [x] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
       encoladas (contar filas antes y después, y mockear `run_simulation_task.delay`)
 - [x] T5.3 **Ningún test existente pasa a rojo por esta tarea**
@@ -616,7 +621,7 @@
   `perform_create`.
   **Corrección de un juez, y la acepto**: la primera redacción decía que *toda* la validación
   ocurre en `ParametricStudySerializer.validate()`, «la única barrera». Es **falso**. La forma
-  de la superficie 2 se valida en `validate_sintering_config` (`serializers.py:367`), un
+  de la superficie 2 se valida en `validate_sintering_config` (`serializers.py:366`), un
   validador **de campo** que DRF ejecuta en `to_internal_value`, es decir **antes** de
   `validate()`. La propiedad que R12 exige se sostiene igual —ambos corren antes de la primera
   escritura—, pero T5.1 enunciado como «todo en `validate()`» invitaba al siguiente auditor a
@@ -698,5 +703,27 @@
   trivial** — T5 cambia código de producción en la validación por la que pasan todos los
   estudios— así que se midió comparando **los nombres** de los 46 fallos y errores
   preexistentes con `git stash`, no su recuento: idénticos antes y después.
+  **Ronda 2b: el segundo juez revisó el árbol congelado y encontró un CRITICAL más**, que mi
+  arreglo anterior no tocaba. La guarda de forma barrida que añadí cubría sólo las claves
+  **planas** y se saltaba `sintering_config`, su hermana dict en la misma superficie. Un dict
+  **desnudo** (sin lista) en `theoretical_extremes.sintering_config` pasaba la validación, y la
+  expansión entonces **iteraba las claves del propio dict** (`utils.py:201-203`), escribiendo
+  `sintering_config="distribution_type"` en cada hijo hasta que `apply_sintering_config` lanzó.
+  Medido por mí en el árbol actual: **500 con +1 estudio, +4 simulaciones y +4 tareas
+  encoladas** — el peor saldo de todo el contrato. Arreglado exigiendo lista también ahí.
+  Segundo hallazgo suyo: un `sintering_type` **inhashable** (un dict, o una lista anidada)
+  reventaba el `in` contra el frozenset con `TypeError` → **500**, donde R12 pide 400. Sin
+  filas, pero un 500 no es un rechazo útil. Guardado con una comprobación de tipo.
+  Tercero: la rama de **extremos** de la proyección **no la fijaba ningún test** —borrarla
+  dejaba los 13 verdes—, así que su comportamiento correcto de hoy no estaba clavado. Ya lo
+  está, con un segundo elemento inválido en la superficie 6.
+  **Al seguimiento, no aquí** (JD-B-008): `parameter_grid={"n_particles": 100}` y
+  `{"n_particles": ["abc"]}` revientan igual con +1 estudio, y el `int()` sin guarda del bloque
+  de extremos (`views.py:1878-1880`, que sí está guardado en su copia de `views.py:1812-1815`)
+  deja +1 estudio, +1 simulación y 1 tarea. No son ajustes de sinterizado, así que R12 no los
+  gobierna; el seguimiento suma ya seis puntos.
+  **Nota de método del mismo juez**: revisó `git archive d8f45d0` y avisó de que el árbol de
+  trabajo tenía cambios posteriores. Tenía razón y conviene retenerlo: **un juez debe revisar
+  el commit, no el directorio**, o mide código que nadie ha entregado.
   Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
   la revisión adversarial, no por alcance. Excepción declarada en la issue #97.

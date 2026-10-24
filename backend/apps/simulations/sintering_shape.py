@@ -168,7 +168,9 @@ def check_flat_keys(parameters: Mapping[str, Any], *, swept: bool) -> None:
         values: Iterable[Any] = value if swept and isinstance(value, list) else [value]
         for item in values:
             if key == "sintering_type":
-                if item not in DISTRIBUTION_TYPES:
+                # `in` on a frozenset raises TypeError for an unhashable
+                # value, which surfaced as a 500 where R12 wants a 400.
+                if not isinstance(item, str) or item not in DISTRIBUTION_TYPES:
                     raise ValueError(
                         f"sintering_type must be one of: "
                         f"{', '.join(sorted(DISTRIBUTION_TYPES))}"

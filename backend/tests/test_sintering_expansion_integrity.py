@@ -368,3 +368,112 @@ def test_r12_validating_a_sweep_cannot_cost_more_than_the_batch_cap_allows(
     assert resp.status_code == 400, resp.data
     assert "batch size" in str(resp.data).lower(), resp.data
     assert elapsed < 2.0, f"validation took {elapsed:.1f}s for a request the cap rejects"
+
+
+# --- Round 2, second judge: the dict sibling of the same surface -----------
+
+
+def test_r12_a_bare_dict_on_the_swept_dict_surface_writes_nothing(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """Surface 7 is swept too, and the first guard only covered the flat keys:
+    it skipped `sintering_config`, its dict sibling. A bare dict there was
+    accepted, and the expansion then iterated the dict's own keys
+    (`utils.py:201-202`), writing `sintering_config="distribution_type"` into
+    each child until `apply_sintering_config` raised - after the study, four
+    children and four queued tasks already existed.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={"n_particles": [100, 200]},
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {
+                "sintering_config": {"distribution_type": "fixed", "coefficient": 0.9}
+            }
+        },
+    )
+
+    assert resp.status_code == 400, f"500 with four queued tasks: {resp.data}"
+    assert "sintering" in str(resp.data).lower(), resp.data
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_swept_dict_in_a_list_is_still_accepted(
+    api_client: APIClient, project: Project
+) -> None:
+    """R3.9 requires the well-formed swept dict to keep working."""
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {
+                "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.9}]
+            }
+        },
+    )
+
+    assert resp.status_code == 201, resp.data
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        (
+            "a dict where a type belongs",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "target_df": 1.8,
+                    "target_kf": 1.3,
+                    "sintering_type": {"a": 1},
+                }
+            },
+        ),
+        (
+            "a nested list where a type belongs",
+            {"parameter_grid": {"sintering_type": [["fixed"]]}},
+        ),
+    ],
+)
+def test_r12_an_unhashable_sintering_type_is_rejected_not_crashed(
+    api_client: APIClient, project: Project, case: str, overrides: dict[str, Any]
+) -> None:
+    """The membership test raised TypeError on an unhashable value, so the
+    caller got a 500 where R12 requires a 400. No row was written, but a 500
+    is not a useful rejection."""
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 400, f"{case} crashed instead of being rejected"
+    assert "sintering_type" in str(resp.data), resp.data
+
+
+def test_r12_a_later_invalid_element_on_the_extremes_surface_is_rejected(
+    api_client: APIClient, project: Project
+) -> None:
+    """Surface 6 expands one child per value (`utils.py:199-203`), so its
+    second element gets the same treatment as the grid's. Deleting the
+    extremes branch of the projection left every test green before this."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_coeff": 0.6,
+        },
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {"sintering_type": ["fixed", "uniform"]}
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "sintering_min" in str(resp.data) or "sintering_max" in str(resp.data), resp.data
+

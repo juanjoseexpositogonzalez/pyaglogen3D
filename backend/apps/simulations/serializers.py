@@ -482,7 +482,23 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # one works today and keeps working; a malformed one is rejected.
         swept_dicts = extremes.get("sintering_config")
         if swept_dicts is not None:
-            entries = swept_dicts if isinstance(swept_dicts, list) else [swept_dicts]
+            # This surface is swept: its value is written verbatim into each
+            # child and then iterated (`utils.py:199-203`). Wrapping a bare
+            # dict as a single entry hid that a dict iterates over its own
+            # keys, so the expansion wrote `sintering_config="distribution_type"`
+            # into children and blew up once four of them were already queued.
+            if not isinstance(swept_dicts, list):
+                raise serializers.ValidationError(
+                    {
+                        "limiting_cases_config.theoretical_extremes."
+                        "sintering_config": (
+                            "this surface is swept, so it must be a list of "
+                            f"sintering_config objects, got "
+                            f"{type(swept_dicts).__name__}"
+                        )
+                    }
+                )
+            entries = swept_dicts
             for i, entry in enumerate(entries):
                 try:
                     validate_dict_shape(entry, allow_empty=False)
