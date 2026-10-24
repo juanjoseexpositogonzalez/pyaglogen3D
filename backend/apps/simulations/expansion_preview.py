@@ -158,6 +158,14 @@ def preview_children(
                     extreme_child = dict(params)
                     _cast_integers(extreme_child, guarded=False)
                     children.append(extreme_child)
+        if not children:
+            # An empty sweep produces no child at all, so nothing above was
+            # checked. The base projection is then the only shape the study
+            # stores, and an incomplete one must not be stored. This sits
+            # inside the try on purpose: its first version did not, and
+            # reintroduced the very 500 that removing the previous branch was
+            # meant to close.
+            children.append(_as_child(dict(base_parameters), study_sintering_config))
     except ValueError:
         raise
     except (TypeError, AttributeError, KeyError, IndexError) as exc:
@@ -165,11 +173,6 @@ def preview_children(
             f"this study cannot be expanded as configured: {exc}"
         ) from exc
 
-    if not children:
-        # An empty sweep produces no child at all, so nothing above was
-        # checked. The base projection is then the only shape the study
-        # carries, and an incomplete one must not be stored.
-        children.append(_as_child(dict(base_parameters), study_sintering_config))
 
     return children
 

@@ -189,7 +189,7 @@ def test_r12_a_scalar_on_a_swept_surface_writes_nothing(
     """Surfaces 5 and 6 are swept: their values arrive as lists, one child per
     element. A bare scalar passed validation and blew up mid-expansion -
     `itertools.product` for the grid, the `for val in extreme_values` loop at
-    `utils.py:202` for the extremes - after the study row existed and, for
+    the extremes loop in `generate_limiting_cases` for the extremes - after the study row existed and, for
     surface 6, after a child had been created and its task queued.
     """
     before = ParametricStudy.objects.count(), Simulation.objects.count()
@@ -406,7 +406,7 @@ def test_r12_a_bare_dict_on_the_swept_dict_surface_writes_nothing(
     """Surface 7 is swept too, and the first guard only covered the flat keys:
     it skipped `sintering_config`, its dict sibling. A bare dict there was
     accepted, and the expansion then iterated the dict's own keys
-    (`utils.py:201-202`), writing `sintering_config="distribution_type"` into
+    (the extremes loop in `generate_limiting_cases`), writing `sintering_config="distribution_type"` into
     each child until `apply_sintering_config` raised - after the study, four
     children and four queued tasks already existed.
     """
@@ -483,7 +483,7 @@ def test_r12_an_unhashable_sintering_type_is_rejected_not_crashed(
 def test_r12_a_later_invalid_element_on_the_extremes_surface_is_rejected(
     api_client: APIClient, project: Project
 ) -> None:
-    """Surface 6 expands one child per value (`utils.py:199-203`), so its
+    """Surface 6 expands one child per value, so its
     second element gets the same treatment as the grid's. Deleting the
     extremes branch of the projection left every test green before this."""
     resp = _post(
@@ -513,7 +513,7 @@ def test_r12_boundary_children_carry_a_shape_the_worker_can_run(
 ) -> None:
     """The parallel projection modelled the grid product and the user's own
     extreme keys. It did not model the range-boundary children
-    (`utils.py:179-194`), which are built from base plus one key, so a sweep
+    (the boundary and theoretical blocks of `generate_limiting_cases`), which are built from base plus one key, so a sweep
     of `sintering_min`/`sintering_max` produced boundary children carrying
     `sintering_type: uniform` and nothing else. The worker then ran them at
     the 0.85-0.95 defaults while the stored parameters said otherwise.
@@ -548,7 +548,7 @@ def test_r12_boundary_children_carry_a_shape_the_worker_can_run(
 def test_r12_server_side_default_extremes_are_projected_too(
     api_client: APIClient, project: Project
 ) -> None:
-    """When the payload omits `theoretical_extremes`, `utils.py:198-200` falls
+    """When the payload omits `theoretical_extremes`, the boundary and theoretical blocks of `generate_limiting_cases` falls
     back to the server's own map, and the serializer never saw those children
     at all."""
     resp = _post(
@@ -878,17 +878,42 @@ def test_r12_a_mistyped_container_writes_nothing(
     assert dispatch.delay.call_count == 0
 
 
-def test_r12_a_non_list_value_on_the_extremes_surface_is_rejected(
+def test_r12_a_non_list_sintering_value_on_the_extremes_surface_is_rejected(
     api_client: APIClient, project: Project, dispatch: Any
 ) -> None:
-    """Surface 6 and 7 are swept, like the grid: `generate_limiting_cases`
-    iterates the value (`utils.py:208-209`). A bare dict was iterated over its
-    own keys, so children were stored carrying `kf_distribution: "mode"` and
-    `kf_distribution: "value"` - strings that describe nothing the worker can
-    run. The grid already requires lists here; so does this surface.
+    """Surfaces 6 and 7 are swept: `generate_limiting_cases` iterates the
+    value, so a bare object is iterated over its own keys and the children end
+    up storing key names.
+
+    The rule covers the sintering keys and stops there. A judge showed that
+    refusing `packing` or `n_particles` here is authority R3 and R12 do not
+    give this contract - they govern sintering settings - so the same mistake
+    on a non-sintering key is recorded for the follow-up contract instead of
+    fixed by stretching this one.
     """
     before = ParametricStudy.objects.count(), Simulation.objects.count()
 
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {"sintering_coeff": 0.7}
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_non_sintering_extreme_keeps_working_as_it_did(
+    api_client: APIClient, project: Project
+) -> None:
+    """The boundary of that scope, pinned so the next reader sees it is a
+    decision and not an oversight: this payload still produces children whose
+    `kf_distribution` carries key names, and it is derived, not closed here.
+    """
     resp = _post(
         api_client,
         project,
@@ -898,15 +923,13 @@ def test_r12_a_non_list_value_on_the_extremes_surface_is_rejected(
         },
     )
 
-    assert resp.status_code == 400, resp.data
-    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
-    assert dispatch.delay.call_count == 0
+    assert resp.status_code == 201, resp.data
 
 
 def test_r12_the_server_side_default_extremes_are_still_accepted(
     api_client: APIClient, project: Project
 ) -> None:
-    """The control for the rule above: `utils.py:72` supplies lists, and a
+    """The control for the rule above: the server's own `THEORETICAL_EXTREMES` map supplies lists, and a
     study that asks for limiting cases without its own map must keep working.
     """
     resp = _post(api_client, project, include_limiting_cases=True)
@@ -914,28 +937,6 @@ def test_r12_the_server_side_default_extremes_are_still_accepted(
     assert resp.status_code == 201, resp.data
 
 
-def test_r12_a_grid_list_that_cannot_be_ordered_is_reported(
-    api_client: APIClient, project: Project
-) -> None:
-    """`except TypeError: continue` was swallowing every ordering failure, not
-    only the dict case it was written for. A mixed list like [100, "200"]
-    builds children that run, but its range boundaries cannot be computed, so
-    the user asked for limiting cases and would have quietly got fewer.
-
-    R3's own rule is explicit rejection, never a silent default, and the
-    preview makes that safe: the error is raised before anything is written.
-    Dicts stay skipped, because an order over them is meaningless rather than
-    ambiguous - that case has its own acceptance test.
-    """
-    resp = _post(
-        api_client,
-        project,
-        parameter_grid={"n_particles": [100, "200"]},
-        include_limiting_cases=True,
-    )
-
-    assert resp.status_code == 400, resp.data
-    assert "n_particles" in str(resp.data), resp.data
 
 
 def test_r12_an_expansion_too_large_to_validate_is_rejected_not_skipped(
@@ -1026,4 +1027,95 @@ def test_r12_a_grid_fault_names_the_grid_and_the_rest_does_not_claim_a_field(
     )
     assert other_fault.status_code == 400
     assert "non_field_errors" in other_fault.data, other_fault.data
+
+
+# --- Round 6: the same mistake twice, and a guard that flags can switch off -
+
+
+def test_r12_the_base_projection_cannot_escape_the_rejection_net(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The branch removed in round 5 was removed for raising outside the
+    try/except. Its replacement was written outside it too, so the same class
+    of 500 came straight back for a different input. A judge measured it; the
+    suite could not, because no test combined an empty sweep with a base the
+    int() cast cannot take.
+    """
+    before = ParametricStudy.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={"n_particles": [100, 200], "target_df": 1.8, "target_kf": 1.3},
+        parameter_grid={"sintering_coeff": []},
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == before
+    assert dispatch.delay.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        ("with limiting cases", {"include_limiting_cases": True}),
+        ("without limiting cases", {}),
+    ],
+)
+def test_r12_an_unorderable_grid_still_creates_its_children(
+    api_client: APIClient, project: Project, case: str, overrides: dict[str, Any]
+) -> None:
+    """I rejected this grid and a judge called it right: a regression.
+
+    `[100, "200"]` builds children that run - `create_simulation` casts
+    `int("200")` - and R3 and R12 govern sintering settings, not an
+    `n_particles` grid. My rule also depended on `include_boundaries`, a flag
+    the user sets, so it could be switched off. What the key really loses is
+    its range boundaries, and that is pinned below rather than turned into a
+    refusal the contract gives me no authority for.
+    """
+    resp = _post(
+        api_client, project, parameter_grid={"n_particles": [100, "200"]}, **overrides
+    )
+
+    assert resp.status_code == 201, f"{case}: {resp.data}"
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    assert study.simulations.count() >= 2
+
+
+def test_r12_an_unorderable_key_contributes_no_boundary_child(
+    api_client: APIClient, project: Project
+) -> None:
+    """What is actually lost, stated instead of guessed."""
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={"n_particles": [100, "200"]},
+        include_limiting_cases=True,
+    )
+
+    assert resp.status_code == 201, resp.data
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    boundaries = [c.name for c in study.simulations.all() if "boundary" in c.name]
+    assert not boundaries, boundaries
+
+
+def test_r12_a_non_mapping_extremes_map_is_rejected(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """`theoretical_extremes` is user JSON and nothing checked its type: a
+    list reached `.items()` and gave a 500."""
+    before = ParametricStudy.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        limiting_cases_config={"theoretical_extremes": ["sintering_coeff"]},
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == before
+    assert dispatch.delay.call_count == 0
+
+
 

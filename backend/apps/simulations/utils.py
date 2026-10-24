@@ -188,16 +188,13 @@ def generate_limiting_cases(
                     continue
                 try:
                     sorted_values = sorted(values)
-                except TypeError as exc:
-                    # Anything else that cannot be ordered is a mistake worth
-                    # reporting: the children would run while the limiting
-                    # cases the user asked for went missing in silence. The
-                    # expansion preview raises this before the first write.
-                    raise TypeError(
-                        f"parameter_grid['{param_name}'] mixes values that "
-                        "cannot be ordered, so its range boundaries cannot be "
-                        f"computed: {exc}"
-                    ) from exc
+                except TypeError:
+                    # Any other unorderable list loses its range boundaries and
+                    # keeps its children, which run. Turning that into a 400
+                    # refused studies that work, over keys R3 does not govern,
+                    # and the refusal could be switched off with
+                    # `include_boundaries`. The gap is pinned by a test instead.
+                    continue
                 min_val = sorted_values[0]
                 max_val = sorted_values[-1]
 

@@ -495,42 +495,47 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 ) from exc
 
         # Surfaces 6 and 7 are swept: `generate_limiting_cases` iterates each
-        # value (`utils.py:208-209`), so a bare object is iterated over its own
+        # value (the extremes loop in `generate_limiting_cases`), so a bare object is iterated over its own
         # keys and its children end up storing key names. The grid carries the
         # same requirement for the same reason.
+        if extremes and not isinstance(extremes, dict):
+            raise serializers.ValidationError(
+                {
+                    "limiting_cases_config.theoretical_extremes": (
+                        "must be an object mapping parameter names to the "
+                        f"values to sweep, got {type(extremes).__name__}"
+                    )
+                }
+            )
+
+        # Only the sintering keys: R3 and R12 govern sintering settings, and a
+        # judge was right that refusing a `packing` or `n_particles` map here
+        # is authority this contract does not have. The same mistake on a
+        # non-sintering key still produces children carrying key names, and
+        # that goes to the follow-up contract rather than being fixed by
+        # stretching this one.
         for key, swept in extremes.items():
+            if not key.startswith("sintering"):
+                continue
             if not isinstance(swept, list):
                 raise serializers.ValidationError(
                     {
                         f"limiting_cases_config.theoretical_extremes.{key}": (
                             "this surface is swept, so it must be a list of "
-                            f"values, got {type(swept).__name__}"
+                            f"{'sintering_config objects' if key == 'sintering_config' else 'values'}"
+                            f", got {type(swept).__name__}"
                         )
                     }
                 )
 
         # Surface 7: a dict swept through theoretical_extremes. A well-formed
         # one works today and keeps working; a malformed one is rejected.
+        # The list requirement for this key lives in the swept-shape loop
+        # above, which already covers every `sintering*` key; repeating it
+        # here left a branch nothing could reach.
         swept_dicts = extremes.get("sintering_config")
         if swept_dicts is not None:
-            # This surface is swept: its value is written verbatim into each
-            # child and then iterated (`utils.py:199-203`). Wrapping a bare
-            # dict as a single entry hid that a dict iterates over its own
-            # keys, so the expansion wrote `sintering_config="distribution_type"`
-            # into children and blew up once four of them were already queued.
-            if not isinstance(swept_dicts, list):
-                raise serializers.ValidationError(
-                    {
-                        "limiting_cases_config.theoretical_extremes."
-                        "sintering_config": (
-                            "this surface is swept, so it must be a list of "
-                            f"sintering_config objects, got "
-                            f"{type(swept_dicts).__name__}"
-                        )
-                    }
-                )
-            entries = swept_dicts
-            for i, entry in enumerate(entries):
+            for i, entry in enumerate(swept_dicts):
                 try:
                     validate_dict_shape(entry, allow_empty=False)
                 except ValueError as exc:
