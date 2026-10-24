@@ -669,9 +669,15 @@
   en forma de dict revienta tras crear **8 hijos y encolar 8 tareas** (medido). No lo gobierna
   R12 —no es un ajuste de sinterizado—, así que va al contrato de seguimiento, que suma cinco
   puntos.
-  **Fuera de alcance, y el contrato ya lo dice**: un `parameter_grid.sintering_config` con dos o
-  más entradas junto a `include_limiting_cases` sigue reventando a media expansión por el
-  `sorted` de `utils.py:180`. Es anterior a este contrato y pertenece a `distribution-grid-wiring`.
+  **Fuera de alcance cuando se escribió esto, y ya no**: un `parameter_grid.sintering_config`
+  con dos o más entradas junto a `include_limiting_cases` reventaba a media expansión por el
+  `sorted` de `utils.py:183` (la referencia decía `:180`, y era otra cita mal copiada). El
+  contrato lo declara defecto ajeno, de `distribution-grid-wiring`. La ronda 4 lo cerró de
+  hecho, porque el preview obligó a mirarlo: hoy ese estudio **se crea**.
+  **El texto canónico de la spec sigue diciendo que está abierto, y no lo toco**: cambiar la
+  spec exige nueva aprobación, y este Log no es sitio para hacerlo por la puerta de atrás.
+  Queda señalado para que la persona decida si la nota de R12 se actualiza o se queda como
+  historia.
   **Segunda ronda de judgment-day, y aquí los jueces me cazaron a mí.** El arreglo anterior
   cerró tres agujeros y abrió **dos regresiones propias** más un riesgo de coste, las tres
   reproducidas por mí antes de tocar nada:
@@ -791,5 +797,10 @@
   nombrando la clave que falta.
   Gates de la ronda 5: `pytest` 15 failed / **1372** passed / 31 errors, con los nombres de los
   46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
-  Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
-  la revisión adversarial, no por alcance. Excepción declarada en la issue #97.
+  Tamaño: **1440 líneas** (1416 inserciones y 24 borrados) contra la base de merge `c264715`.
+  El PR abrió con **195**, la excepción que publiqué en #97 declaraba **552**, y hoy son 1440:
+  ha crecido **2,6 veces desde la excepción**, siempre por hallazgos de la revisión adversarial
+  y nunca por alcance nuevo. Lo cazó un juez, no yo: la cifra de este registro se quedó
+  congelada mientras el PR seguía creciendo. **Una excepción de tamaño que envejece sin
+  actualizarse deja de ser una excepción y pasa a ser una cifra que miente**, así que queda
+  dicho aquí y pendiente de decisión de la persona sobre la issue.

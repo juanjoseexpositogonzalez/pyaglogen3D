@@ -937,3 +937,93 @@ def test_r12_a_grid_list_that_cannot_be_ordered_is_reported(
     assert resp.status_code == 400, resp.data
     assert "n_particles" in str(resp.data), resp.data
 
+
+def test_r12_an_expansion_too_large_to_validate_is_rejected_not_skipped(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The preview used to return an empty list above its own size estimate,
+    on the premise that the batch cap would reject anything bigger. With
+    `seeds_per_combination: 0` the cap multiplies by zero and accepts, so the
+    study was created with nothing validated at all. Skipping validation must
+    never be silent: too big to check is itself a rejection.
+    """
+    before = ParametricStudy.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+        },
+        parameter_grid={"n_particles": ["100"] * 1001},
+        seeds_per_combination=0,
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_dict_grid_key_contributes_no_boundary_child(
+    api_client: APIClient, project: Project
+) -> None:
+    """The invariant behind skipping unorderable objects: those keys add no
+    range-boundary child. Replacing the skip with `list(values)` kept every
+    test green while emitting boundary children that duplicate the grid ones.
+    """
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "sintering_config": [
+                {"distribution_type": "fixed", "coefficient": 0.8},
+                {"distribution_type": "fixed", "coefficient": 0.9},
+            ]
+        },
+        include_limiting_cases=True,
+    )
+
+    assert resp.status_code == 201, resp.data
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    names = [child.name for child in study.simulations.all()]
+    boundaries = [name for name in names if "boundary" in name]
+    assert not boundaries, f"a dict key produced range boundaries: {boundaries}"
+
+
+def test_r12_particle_radius_config_with_two_entries_is_accepted(
+    api_client: APIClient, project: Project
+) -> None:
+    """The third key the old crash blocked, and the one with no test."""
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "particle_radius_config": [
+                {"distribution_type": "fixed", "value": 1.0},
+                {"distribution_type": "fixed", "value": 1.2},
+            ]
+        },
+        include_limiting_cases=True,
+    )
+
+    assert resp.status_code == 201, resp.data
+
+
+def test_r12_a_grid_fault_names_the_grid_and_the_rest_does_not_claim_a_field(
+    api_client: APIClient, project: Project
+) -> None:
+    """The error keys are a client-visible contract and nothing pinned them:
+    moving them back passed every test."""
+    grid_fault = _post(api_client, project, parameter_grid={"n_particles": 100})
+    assert grid_fault.status_code == 400
+    assert "parameter_grid" in grid_fault.data, grid_fault.data
+
+    other_fault = _post(
+        api_client, project, parameter_grid={"n_particles": ["abc"]}
+    )
+    assert other_fault.status_code == 400
+    assert "non_field_errors" in other_fault.data, other_fault.data
+

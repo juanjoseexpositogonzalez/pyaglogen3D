@@ -120,9 +120,16 @@ def preview_children(
 
     projected = prod(len(values) for values in param_values) if param_values else 1
     if projected > max_children:
-        # Above the cap the batch-size check owns the rejection, and it reaches
-        # the same number because every value is now a list.
-        return []
+        # Returning nothing here used to leave the request unvalidated on the
+        # premise that the batch cap would reject it anyway. The cap multiplies
+        # by `seeds_per_combination`, so with zero seeds it accepted and the
+        # study was created with nothing checked at all. Too big to validate is
+        # itself a rejection, and it is never silent.
+        raise ExpansionPreviewError(
+            f"projected batch size ({projected}) exceeds the maximum "
+            f"{max_children}, so this study cannot be validated before it is "
+            "written"
+        )
 
     children: list[dict[str, Any]] = []
     try:
