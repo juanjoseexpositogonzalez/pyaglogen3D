@@ -796,11 +796,19 @@
   con una base completa, y la guarda que le había debilitado vive ahora en su propio test
   nombrando la clave que falta.
   Gates de la ronda 5: `pytest` 15 failed / **1372** passed / 31 errors, con los nombres de los
-  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
-  Tamaño: **1440 líneas** (1416 inserciones y 24 borrados) contra la base de merge `c264715`.
-  El PR abrió con **195**, la excepción que publiqué en #97 declaraba **552**, y hoy son 1440:
-  ha crecido **2,6 veces desde la excepción**, siempre por hallazgos de la revisión adversarial
-  y nunca por alcance nuevo. Lo cazó un juez, no yo: la cifra de este registro se quedó
-  congelada mientras el PR seguía creciendo. **Una excepción de tamaño que envejece sin
-  actualizarse deja de ser una excepción y pasa a ser una cifra que miente**, así que queda
-  dicho aquí y pendiente de decisión de la persona sobre la issue.
+  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**. Un juez midió después
+  que esa suma no cuadra con los tests colectados en ese commit por **uno**: la cifra se
+  tomó con un fichero de probe temporal en el árbol. Queda dicho en vez de ajustado, porque
+  el número corregible sería el de la ronda, y lo que importa es cómo se tomó.
+  **Tamaño: la cifra de este registro ha mentido dos veces, así que deja de vivir aquí.**
+  Historia: el PR abrió con 195 líneas, la excepción de #97 declaró **552**, y esa cifra se
+  quedó congelada tres commits mientras el PR crecía. La corrigió un juez a **1440**; dos
+  commits después un segundo juez demostró que **esa corrección también estaba vieja**. Medido
+  en `f236e1e`: **1647 líneas** (1622 inserciones y 25 borrados) contra la base de merge
+  `c264715`.
+  La lección es de método, no de aritmética: **una cifra que describe el trabajo envejece a
+  cada commit, y ningún gate la vigila**. Así que la fuente de verdad del tamaño es la propia
+  página del PR, que se recalcula sola, y aquí queda sólo la razón del crecimiento: **ninguna
+  línea viene de alcance nuevo**; todas vienen de defectos hallados en revisión adversarial, y
+  una parte sustancial, de defectos que introduje al arreglar los anteriores. La excepción de
+  tamaño sigue pendiente de decisión de la persona en la issue.
