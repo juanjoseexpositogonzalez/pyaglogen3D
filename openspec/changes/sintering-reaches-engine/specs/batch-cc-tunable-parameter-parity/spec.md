@@ -418,12 +418,15 @@ mechanism: by then the study exists and some children are already queued. `perfo
 project defines no `ATOMIC_REQUESTS`, and `run_simulation_task.delay` is called inside the
 per-seed loop (`views.py:1841`), so a dispatched task is not undone by a database rollback.
 
-**Known remaining half-creation path, not closed here.** A `parameter_grid.sintering_config`
-with two or more entries — which R3 requires accepting — combined with `include_limiting_cases`
-still crashes mid-expansion: `generate_limiting_cases` sorts dict values (`utils.py:180`),
-raising `TypeError` after the study row and some children exist. That defect predates this
-change and belongs to `distribution-grid-wiring`. This requirement governs rejection of invalid
-settings, not every way the expansion can fail.
+**A half-creation path this requirement did not set out to close, and closed anyway.** A
+`parameter_grid.sintering_config` with two or more entries — which R3 requires accepting —
+combined with `include_limiting_cases` used to crash mid-expansion: `generate_limiting_cases`
+sorted dict values, raising `TypeError` after the study row and some children already existed.
+That defect predated this change and belonged to `distribution-grid-wiring`. Validating by
+previewing the real expansion forced it into the open: the boundary block now skips values it
+cannot order, because a range boundary over objects is not ambiguous but meaningless, and such
+a study is created. The requirement still governs rejection of invalid settings rather than
+every way the expansion can fail; what changed is that this particular way no longer happens.
 
 #### Scenario R12.1 — An invalid sintering setting creates nothing
 

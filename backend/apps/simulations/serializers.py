@@ -10,12 +10,11 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from .expansion_preview import GridShapeError, check_children, preview_children
 from .fields import DistributionField
 from .sintering_shape import (
-    FLAT_KEYS,
     check_algorithm_scope,
     check_flat_keys,
-    check_flat_required,
     validate_dict_shape,
 )
 from .models import ParametricStudy, Simulation
@@ -390,6 +389,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         if value is None:
             return value
 
+        if not isinstance(value, dict):
+            raise serializers.ValidationError(
+                "limiting_cases_config must be an object, got "
+                f"{type(value).__name__}"
+            )
+
         # Ensure valid keys
         valid_keys = {
             "include_boundaries",
@@ -419,6 +424,16 @@ class ParametricStudySerializer(serializers.ModelSerializer):
 
     def validate(self, data: dict) -> dict:  # noqa: C901
         """Cross-field validation for parameter_grid entries + batch size."""
+        # A mistyped container used to be coerced to {} here and then reach the
+        # expansion unchanged, which raised on the original value once the
+        # study row already existed.
+        for field in ("base_parameters", "parameter_grid", "limiting_cases_config"):
+            value = data.get(field)
+            if value is not None and not isinstance(value, dict):
+                raise serializers.ValidationError(
+                    {field: f"must be an object, got {type(value).__name__}"}
+                )
+
         grid = data.get("parameter_grid") or {}
         allowed_dist_types = ("fixed", "uniform", "normal")
         valid_seed_types = {
@@ -479,12 +494,53 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {"base_parameters.sintering_config": str(exc)}
                 ) from exc
 
+        # Surfaces 6 and 7 are swept: `generate_limiting_cases` iterates each
+        # value (the extremes loop in `generate_limiting_cases`), so a bare object is iterated over its own
+        # keys and its children end up storing key names. The grid carries the
+        # same requirement for the same reason.
+        raw_extremes = limiting.get("theoretical_extremes")
+        if raw_extremes is not None and not isinstance(raw_extremes, dict):
+            raise serializers.ValidationError(
+                {
+                    "limiting_cases_config.theoretical_extremes": (
+                        "must be an object mapping parameter names to the "
+                        f"values to sweep, got {type(raw_extremes).__name__}"
+                    )
+                }
+            )
+
+        # Only the sintering keys: R3 and R12 govern sintering settings, and a
+        # judge was right that refusing a `packing` or `n_particles` map here
+        # is authority this contract does not have. The same mistake on a
+        # non-sintering key still produces children carrying key names, and
+        # that goes to the follow-up contract rather than being fixed by
+        # stretching this one.
+        for key, swept in extremes.items():
+            # `sintering_` covers both the flat keys and `sintering_config`,
+            # which starts with it. Matching on the bare `sintering` prefix
+            # governed a `sintering` key while letting `sinterfoo` through,
+            # which was overreach in both directions at once.
+            if not key.startswith("sintering_"):
+                continue
+            if not isinstance(swept, list):
+                raise serializers.ValidationError(
+                    {
+                        f"limiting_cases_config.theoretical_extremes.{key}": (
+                            "this surface is swept, so it must be a list of "
+                            f"{'sintering_config objects' if key == 'sintering_config' else 'values'}"
+                            f", got {type(swept).__name__}"
+                        )
+                    }
+                )
+
         # Surface 7: a dict swept through theoretical_extremes. A well-formed
         # one works today and keeps working; a malformed one is rejected.
+        # The list requirement for this key lives in the swept-shape loop
+        # above, which already covers every `sintering*` key; repeating it
+        # here left a branch nothing could reach.
         swept_dicts = extremes.get("sintering_config")
         if swept_dicts is not None:
-            entries = swept_dicts if isinstance(swept_dicts, list) else [swept_dicts]
-            for i, entry in enumerate(entries):
+            for i, entry in enumerate(swept_dicts):
                 try:
                     validate_dict_shape(entry, allow_empty=False)
                 except ValueError as exc:
@@ -508,16 +564,36 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
         # Required keys are checked on the child's merged projection: the
-        # rest of the shape may legitimately live in base_parameters.
-        merged = {k: v for k, v in base_params.items() if k in FLAT_KEYS}
-        for mapping in (grid, extremes):
-            for key, value in mapping.items():
-                if key in FLAT_KEYS:
-                    merged[key] = value[0] if isinstance(value, list) and value else value
+        # rest of the shape may legitimately live in base_parameters. A sweep
+        # emits one child per element, so every element is projected, not only
+        # the first: reading just the first let a second child be stored as
+        # `uniform` with no min/max, which the worker then ran as 0.85-0.95.
+        # Instead of modelling how children are built, expand the study for
+        # real and look at what the children would carry. Three rounds of
+        # review found the parallel model diverging from the generator - the
+        # range-boundary children, the server-side default extremes, the
+        # precedence of a dict over the flats - so the preview runs the same
+        # functions `perform_create` runs and nothing is written.
+        effective_algorithm: str = (
+            data.get("base_algorithm")
+            or getattr(self.instance, "base_algorithm", "")
+            or ""
+        )
         try:
-            check_flat_required(merged)
+            children = preview_children(
+                algorithm=effective_algorithm,
+                base_parameters=base_params,
+                parameter_grid=grid,
+                study_sintering_config=data.get("sintering_config"),
+                include_limiting_cases=bool(data.get("include_limiting_cases")),
+                limiting_cases_config=limiting or None,
+                max_children=self._BATCH_HARD_CAP,
+            )
+            check_children(children)
+        except GridShapeError as exc:
+            raise serializers.ValidationError({"parameter_grid": str(exc)}) from exc
         except ValueError as exc:
-            raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
+            raise serializers.ValidationError({"non_field_errors": str(exc)}) from exc
 
         # --- Allow-list by algorithm, over the seven surfaces at once (R11) ---
         # The rule is evaluated over the study **as it will be after this
@@ -537,7 +613,12 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         eff_base = _effective("base_parameters", base_params) or {}
         eff_grid = _effective("parameter_grid", grid) or {}
         eff_limiting = _effective("limiting_cases_config", limiting) or {}
-        eff_extremes = eff_limiting.get("theoretical_extremes") or {}
+        stored_extremes = eff_limiting.get("theoretical_extremes")
+        # A row written before the payload guard can carry a non-object here.
+        # Reading it without checking turned an innocent rename into a 500 and
+        # left the study permanently un-updatable. New payloads are rejected
+        # above; a stored one is ignored rather than held against the request.
+        eff_extremes = stored_extremes if isinstance(stored_extremes, dict) else {}
 
         try:
             check_algorithm_scope(

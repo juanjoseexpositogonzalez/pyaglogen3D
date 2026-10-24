@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -179,7 +180,21 @@ def generate_limiting_cases(
     if config.get("include_boundaries", True):
         for param_name, values in parameter_grid.items():
             if len(values) >= 2:
-                sorted_values = sorted(values)
+                if any(isinstance(value, Mapping) for value in values):
+                    # Distribution grids hold objects, which have no order. A
+                    # range boundary is meaningless for them, so this key
+                    # contributes no boundary case instead of breaking the
+                    # expansion after the study row already exists.
+                    continue
+                try:
+                    sorted_values = sorted(values)
+                except TypeError:
+                    # Any other unorderable list loses its range boundaries and
+                    # keeps its children, which run. Turning that into a 400
+                    # refused studies that work, over keys R3 does not govern,
+                    # and the refusal could be switched off with
+                    # `include_boundaries`. The gap is pinned by a test instead.
+                    continue
                 min_val = sorted_values[0]
                 max_val = sorted_values[-1]
 
