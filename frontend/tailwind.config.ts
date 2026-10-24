@@ -105,6 +105,15 @@ const config: Config = {
           DEFAULT: 'var(--line)',
           strong: 'var(--line-strong)',
         },
+        rail: {
+          DEFAULT: 'var(--rail)',
+          ink: 'var(--rail-ink)',
+          'ink-muted': 'var(--rail-ink-muted)',
+          'ink-faint': 'var(--rail-ink-faint)',
+          accent: 'var(--rail-accent)',
+          active: 'var(--rail-active)',
+          scrim: 'var(--rail-scrim)',
+        },
         visual: {
           DEFAULT: 'var(--visual-background)',
           border: 'var(--visual-border)',
