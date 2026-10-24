@@ -167,13 +167,16 @@ El acceso a Jira es vía MCP Atlassian (session-shared o sesión peer con OAuth)
 Tras la aprobación de la issue **no hay rebase ni force-push**: la rama se
 actualiza con merge de `develop`. El merge del PR se hace con *merge commit*.
 
-Tras el merge, la entrega se cierra con una limpieza que **siempre ordena la
-persona** para esa entrega — no es una autorización permanente:
+Tras el merge, la limpieza es **parte de la entrega y no pide permiso**
+(decisión de la persona, 2026-10-23, sustituye a la regla anterior que la
+hacía depender de una orden por entrega):
 
-- **La rama de trabajo se borra**, local y en el remoto: la historia vive en
-  `develop`.
+- **La rama mergeada se borra**, local y en el remoto: la historia vive en
+  `develop`. Lo mismo su worktree, si lo tenía.
 - **Nunca se retira un worktree con cambios sin commitear**, propio ni ajeno.
 - **Las ramas sin merge se conservan** y se listan en el registro de la sesión.
+- La autorización cubre **lo mergeado**. Borrar una rama ajena, o una que no
+  ha entrado en `develop`, sigue necesitando una orden expresa.
 
 Si dos sesiones comparten el mismo clon, ninguna cambia de rama, borra ramas
 ni monta o retira worktrees sin avisar a las demás por el canal de
@@ -186,6 +189,11 @@ de la rama, PR enlazando el issue Jira (`AGLO-N`) con la etiqueta única
 limpieza de la rama— no pide autorización en cada paso: es la continuación
 ordinaria del flujo, salvo indicación en contrario de la persona para esa
 entrega concreta.
+
+**Las etiquetas `type:*` que existen en el repo son `type:feat`, `type:test`,
+`type:docs` y `type:chore`.** No hay `type:bug`: para un arreglo, la etiqueta
+es `bug`. Comprobado al intentar crear una issue con `type:bug` el
+2026-10-23.
 
 ## Convenciones
 
