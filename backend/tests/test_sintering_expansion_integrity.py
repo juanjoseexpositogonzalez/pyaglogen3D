@@ -279,6 +279,10 @@ def test_r12_an_empty_sweep_produces_no_child_and_no_task(
     showed that rejecting it was a rule of my own invention, inconsistent
     with the identical case on any non-sintering key, so what is pinned here
     is the real behaviour - and that nothing is queued.
+
+    The base is complete on purpose: an incomplete one is rejected even with
+    an empty sweep, which its own test covers. The first version of this test
+    confused the two.
     """
     resp = _post(
         api_client,
@@ -289,6 +293,7 @@ def test_r12_an_empty_sweep_produces_no_child_and_no_task(
             "target_kf": 1.3,
             "sintering_type": "uniform",
             "sintering_min": 0.8,
+            "sintering_max": 0.9,
         },
         parameter_grid={"n_particles": [100, 200], "sintering_coeff": []},
     )
@@ -772,20 +777,63 @@ def test_r12_a_dict_grid_with_limiting_cases_is_accepted(
     assert resp.status_code == 201, f"{case} is refused: {resp.data}"
 
 
-def test_r12_the_extremes_surface_is_validated_even_when_unused(
+def test_r12_an_unused_extremes_map_is_shape_checked_but_not_required(
     api_client: APIClient, project: Project
 ) -> None:
-    """R3 requires all seven surfaces validated. With the flag off, the
-    preview stopped looking at the extremes map, and an invalid shape there
-    went from 400 to 201."""
-    resp = _post(
+    """Rule settled in round 5, reversing what round 4 pinned here.
+
+    With `include_limiting_cases` off, the extremes map produces no child, and
+    projecting one anyway rejected valid studies - including maps that
+    `include_theoretical: false` makes unreachable even with the flag on. So
+    completeness is required of children that will exist, while the values on
+    the surface are still range- and unknown-key-checked whatever the flag
+    says.
+    """
+    incomplete = _post(
         api_client,
         project,
         include_limiting_cases=False,
         limiting_cases_config={"theoretical_extremes": {"sintering_type": ["uniform"]}},
     )
+    assert incomplete.status_code == 201, incomplete.data
+
+    out_of_range = _post(
+        api_client,
+        project,
+        include_limiting_cases=False,
+        limiting_cases_config={"theoretical_extremes": {"sintering_coeff": [42.0]}},
+    )
+    assert out_of_range.status_code == 400, out_of_range.data
+
+    legacy_key = _post(
+        api_client,
+        project,
+        include_limiting_cases=False,
+        limiting_cases_config={"theoretical_extremes": {"sintering_mean": [0.9]}},
+    )
+    assert legacy_key.status_code == 400, legacy_key.data
+
+
+def test_r12_an_incomplete_base_cannot_hide_behind_an_empty_sweep(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """With no child to check, the base projection is the study's only shape."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+            "sintering_min": 0.8,
+        },
+        parameter_grid={"sintering_max": []},
+    )
 
     assert resp.status_code == 400, resp.data
+    assert "sintering_max" in str(resp.data), resp.data
+    assert dispatch.delay.call_count == 0
 
 
 def test_r12_a_dict_n_particles_without_limiting_cases_is_accepted(
@@ -828,4 +876,64 @@ def test_r12_a_mistyped_container_writes_nothing(
     assert resp.status_code == 400, f"{case}: {resp.data}"
     assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
     assert dispatch.delay.call_count == 0
+
+
+def test_r12_a_non_list_value_on_the_extremes_surface_is_rejected(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """Surface 6 and 7 are swept, like the grid: `generate_limiting_cases`
+    iterates the value (`utils.py:208-209`). A bare dict was iterated over its
+    own keys, so children were stored carrying `kf_distribution: "mode"` and
+    `kf_distribution: "value"` - strings that describe nothing the worker can
+    run. The grid already requires lists here; so does this surface.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.5}}
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+def test_r12_the_server_side_default_extremes_are_still_accepted(
+    api_client: APIClient, project: Project
+) -> None:
+    """The control for the rule above: `utils.py:72` supplies lists, and a
+    study that asks for limiting cases without its own map must keep working.
+    """
+    resp = _post(api_client, project, include_limiting_cases=True)
+
+    assert resp.status_code == 201, resp.data
+
+
+def test_r12_a_grid_list_that_cannot_be_ordered_is_reported(
+    api_client: APIClient, project: Project
+) -> None:
+    """`except TypeError: continue` was swallowing every ordering failure, not
+    only the dict case it was written for. A mixed list like [100, "200"]
+    builds children that run, but its range boundaries cannot be computed, so
+    the user asked for limiting cases and would have quietly got fewer.
+
+    R3's own rule is explicit rejection, never a silent default, and the
+    preview makes that safe: the error is raised before anything is written.
+    Dicts stay skipped, because an order over them is meaningless rather than
+    ambiguous - that case has its own acceptance test.
+    """
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={"n_particles": [100, "200"]},
+        include_limiting_cases=True,
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "n_particles" in str(resp.data), resp.data
 

@@ -19,6 +19,15 @@ expansion - after the study row existed and some tasks were already dispatched -
 now blows up *here*, before anything is written, and becomes a 400. And the
 precedence rules do not need restating: whatever `create_simulation` does to a
 child's parameters is what the preview sees.
+
+    What this does **not** do, after a round that proved the alternative worse:
+    it does not invent children. A theoretical-extremes map supplied while
+    `include_limiting_cases` is off produces no child, and projecting one
+    anyway rejected valid studies - including maps that `include_theoretical:
+    false` makes unreachable even with the flag on. The values on that surface
+    are still range- and unknown-key-checked by `check_flat_keys` in the
+    serializer; what is not required of them is the completeness of a child
+    that will never exist.
 """
 
 from __future__ import annotations
@@ -149,18 +158,11 @@ def preview_children(
             f"this study cannot be expanded as configured: {exc}"
         ) from exc
 
-    if not include_limiting_cases:
-        # R3 requires all seven surfaces validated, and this one is supplied
-        # even when the flag that consumes it is off. Its children do not
-        # exist, so they are projected here rather than generated: base plus
-        # one swept value, which is how `add_case` would emit them.
-        extremes = (limiting_cases_config or {}).get("theoretical_extremes") or {}
-        if isinstance(extremes, Mapping):
-            for key, values in extremes.items():
-                for value in values if isinstance(values, list) else [values]:
-                    unused = dict(base_parameters)
-                    unused[key] = value
-                    children.append(_as_child(unused, study_sintering_config))
+    if not children:
+        # An empty sweep produces no child at all, so nothing above was
+        # checked. The base projection is then the only shape the study
+        # carries, and an incomplete one must not be stored.
+        children.append(_as_child(dict(base_parameters), study_sintering_config))
 
     return children
 

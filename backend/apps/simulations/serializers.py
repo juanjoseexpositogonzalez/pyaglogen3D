@@ -494,6 +494,21 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {"base_parameters.sintering_config": str(exc)}
                 ) from exc
 
+        # Surfaces 6 and 7 are swept: `generate_limiting_cases` iterates each
+        # value (`utils.py:208-209`), so a bare object is iterated over its own
+        # keys and its children end up storing key names. The grid carries the
+        # same requirement for the same reason.
+        for key, swept in extremes.items():
+            if not isinstance(swept, list):
+                raise serializers.ValidationError(
+                    {
+                        f"limiting_cases_config.theoretical_extremes.{key}": (
+                            "this surface is swept, so it must be a list of "
+                            f"values, got {type(swept).__name__}"
+                        )
+                    }
+                )
+
         # Surface 7: a dict swept through theoretical_extremes. A well-formed
         # one works today and keeps working; a malformed one is rejected.
         swept_dicts = extremes.get("sintering_config")

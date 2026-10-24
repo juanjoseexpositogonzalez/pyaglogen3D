@@ -763,5 +763,33 @@
   ordenar —un dict no tiene orden, así que esa clave no aporta caso de frontera— en vez de
   romper la expansión. Esos estudios se crean con 201. El test falso, retirado; en su lugar hay
   uno de aceptación por cada una de las dos claves.
+  **Ronda 5: tercer CRITICAL seguido introducido por mi propio arreglo.** La rama que añadí en
+  la ronda 4 para validar la superficie 6 con `include_limiting_cases` apagado quedó **fuera del
+  try/except**, así que un `theoretical_extremes: {n_particles: [null]}` daba **500**. Y al
+  medirla entera resultó peor que eso: validaba hijos **que no existen ni con la bandera
+  encendida**, porque `include_theoretical: false` hace ese mapa inalcanzable — un 400 falso
+  cuya única salida era borrar una clave que no hace nada. **Retirada la rama, no parcheada.**
+  La regla que la sustituye, escrita en el módulo: **la completitud se le exige a los hijos que
+  van a existir; los valores de una superficie se comprueban siempre**. Un mapa sin consumir
+  sigue rechazando `sintering_coeff: 42.0` o el legado `sintering_mean`, pero no se le exige
+  completar la forma de un hijo que nadie creará. Esto **revierte** lo que la ronda 4 había
+  fijado en un test, y se dice aquí en vez de cambiarlo en silencio.
+  Cerrados además: una base incompleta ya no se cuela tras un barrido vacío (si la expansión no
+  produce ningún hijo, la base es la única forma del estudio y se valida), y las superficies 6 y
+  7 exigen **listas** igual que el grid, porque `generate_limiting_cases` itera el valor y un
+  dict desnudo se iteraba sobre sus propias claves: los hijos acababan guardando
+  `kf_distribution: "mode"`.
+  **JD-A-004, decidido en vez de tragado**: el `except TypeError` se comía *cualquier* fallo de
+  orden. Ahora sólo se saltan los valores con forma de objeto —un orden sobre ellos no es
+  ambiguo, es inexistente— y una lista mixta como `[100, "200"]` se **reporta**: sus hijos
+  correrían, pero los casos límite que el usuario pidió desaparecerían en silencio, y R3 exige
+  rechazo explícito, nunca un default callado. Es seguro reportarlo porque el preview lo levanta
+  **antes de la primera escritura**.
+  Y una contradicción entre dos tests míos, encontrada al corregir: el del barrido vacío usaba
+  una base incompleta, así que afirmaba a la vez que eso se acepta y que se rechaza. Reescrito
+  con una base completa, y la guarda que le había debilitado vive ahora en su propio test
+  nombrando la clave que falta.
+  Gates de la ronda 5: `pytest` 15 failed / **1372** passed / 31 errors, con los nombres de los
+  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
   Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
   la revisión adversarial, no por alcance. Excepción declarada en la issue #97.
