@@ -197,23 +197,23 @@
 
 ## T6 — Frontend (R10)
 
-- [ ] T6.1 Función pura `toSinteringConfig(DistributionValue)` y su uso en el submit de
+- [x] T6.1 Función pura `toSinteringConfig(DistributionValue)` y su uso en el submit de
       `BatchSimulationForm`
-- [ ] T6.2 `parameterOptions` (`BatchSimulationForm.tsx:313-318`): ofrecer "Sintering
+- [x] T6.2 `parameterOptions` (`BatchSimulationForm.tsx:313-318`): ofrecer "Sintering
       coefficient distribution" sólo para los seis algoritmos que lo consumen
-- [ ] T6.3 Limpiar o marcar las variaciones que el nuevo algoritmo no acepta al cambiar de
+- [x] T6.3 Limpiar o marcar las variaciones que el nuevo algoritmo no acepta al cambiar de
       algoritmo (`setAlgorithm`, `BatchSimulationForm.tsx:358`, hoy no resetea `variations`)
-- [ ] T6.3b El campo "Base Sintering Coeff." de `limiting` (`BatchSimulationForm.tsx:409-418`,
+- [x] T6.3b El campo "Base Sintering Coeff." de `limiting` (`BatchSimulationForm.tsx:409-418`,
       enviado siempre en `:220`) no puede emitir `NaN`/`null` cuando se vacía
-- [ ] T6.4 Tests R10.4 (opción ausente para `fracval`/`gcca`/`box_rfa`, presente para
+- [x] T6.4 Tests R10.4 (opción ausente para `fracval`/`gcca`/`box_rfa`, presente para
       `ballistic`), R10.5 (forma del payload, y que el default de `uniform` del selector
       produce un payload aceptable sin edición) y R10.6 **entera**: el payload tras cambiar de
       algoritmo no lleva `sintering_coeff`, o lleva uno válido, nunca `null` ni `NaN` (primer
       THEN), y el cambio limpia o marca lo que ya no aplica (el AND)
-- [ ] T6.5 **Ningún test existente pasa a rojo por esta tarea** (verificado: los **nueve** casos
+- [x] T6.5 **Ningún test existente pasa a rojo por esta tarea** (verificado: los **nueve** casos
       de `BatchSimulationForm.test.tsx` seleccionan `tunable_cc`, ninguno afirma
       la forma del payload enviado y ninguno cambia de algoritmo tras configurar una variación)
-- [ ] T6.6 **No se toca** `DistributionSelector.tsx`: su default `min == max` con base `1.0` es
+- [x] T6.6 **No se toca** `DistributionSelector.tsx`: su default `min == max` con base `1.0` es
       válido para el sinterizado. Pertenece a `distribution-grid-wiring`
 
 ## T7 — Verificación
@@ -849,3 +849,42 @@
   lo que importa: **ninguna línea viene de alcance nuevo** — todas vienen de defectos hallados
   en revisión adversarial, y una parte sustancial de defectos que introduje al arreglar los
   anteriores. La excepción de tamaño sigue pendiente de decisión de la persona en la issue.
+- L35 (2026-10-24): **T6 completa** (R10). Frontend, y por fin el otro lado del desajuste que
+  T4 y T5 dejaron abierto: el backend rechaza desde T4 el sinterizado para `fracval`, `gcca` y
+  `box_rfa`, y el formulario **seguía ofreciéndolo**.
+  Test-first, medido: **6 rojos de 12** antes de tocar producción, y los seis por el motivo
+  correcto, verificado uno a uno —la opción presente en los tres algoritmos que no la consumen,
+  el payload saliendo con `{mode:'fixed', value:1}` (la forma del selector llegando a la API,
+  que es D2 visto desde el navegador), `Number.isFinite` en falso al vaciar el campo de
+  `limiting`, y la variación de sinterizado **sobreviviendo** al cambio a `fracval`—. Final:
+  **19 verdes** entre el módulo nuevo y el formulario.
+  **Lo que se entrega**: `lib/sinteringShape.ts` con `toSinteringConfig` —la traducción
+  `{mode,…}` → forma dict de R3 en **un solo sitio**, que es lo que T6.1 pedía— y la lista de
+  los seis algoritmos que consumen sinterizado; la opción del desplegable acotada a esos seis;
+  el campo de `limiting` que **omite la clave** en vez de mandar `NaN`; y el cambio de
+  algoritmo que **limpia** las variaciones que el nuevo no acepta.
+  **R10.6 dice «limpiar o marcar», y limpiar en silencio cumple la mitad de la frase**: la
+  regla termina con «sin decirle al usuario por qué». Así que el formulario avisa con
+  `kit/Callout` —tokenizado, sin literales de color, como exige la ola 1 de la peer— nombrando
+  la variación retirada y el algoritmo que la rechaza.
+  **Dos errores míos en los tests, encontrados antes de que los viera nadie**: el botón de
+  envío no se llama «Create Study» sino `Run N Simulations` y se deshabilita con cero
+  simulaciones; y `/fracval/i` casaba también con el `<option>` del desplegable, no sólo con el
+  aviso. Los dos eran test mal escrito, no defecto: separarlos del rojo real fue lo primero.
+  **Fuera de alcance a propósito**: el `onError` que falta en la página batch, que hace que
+  cualquier 400 se vea como un envío que no hace nada. T6.1-T6.6 no lo piden y R10 se satisface
+  en el formulario; estirar el contrato por el camino es justo lo que ocho rondas de jueces me
+  castigaron en T5. Queda como punto 6 de la issue **#115**.
+  Gates de frontend: **801 tests en 71 ficheros, todos verdes**; `tsc` **13 errores**, y
+  comprobado con `git stash` que son **exactamente los mismos 13** de `develop`, por nombre y
+  no por recuento — ni uno nuevo ni uno resuelto por accidente.
+  **Y la trampa del CRLF, que este repositorio ya tenía documentada desde T1 y volví a pisar.**
+  `BatchSimulationForm.tsx` tenía **714 líneas CRLF de 746**, y reescribirlo desde Python las
+  normalizó todas a LF: el commit declaraba **1508 líneas tocadas** cuando el cambio real eran
+  **116**. Reconstruido línea a línea conservando el final original de cada línea intacta, el
+  diff queda en 116 y con `-w` en 114. La comprobación que lo caza es contrastar `git diff
+  --stat` con `git diff -w --stat` **antes** de commitear; yo la hice después, al extrañarme
+  la cifra. Un diff con 700 líneas de ruido no se revisa: se hojea.
+  Coordinación: la peer confirmó que `BatchSimulationForm.tsx` y la página batch son míos (los
+  tenía reservados), y pidió aviso al mergear para arrancar su ola 2 desde un `develop` con
+  esto dentro.
