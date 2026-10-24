@@ -118,7 +118,9 @@ def validate_dict_shape(config: Any, *, allow_empty: bool) -> None:
         raise ValueError("sintering_config requires distribution_type")
 
     dist_type = config["distribution_type"]
-    if dist_type not in DISTRIBUTION_TYPES:
+    # `in` on a frozenset raises TypeError for an unhashable value, which
+    # surfaced as a 500 where the contract wants a 400.
+    if not isinstance(dist_type, str) or dist_type not in DISTRIBUTION_TYPES:
         raise ValueError(
             f"distribution_type must be one of: {', '.join(sorted(DISTRIBUTION_TYPES))}"
         )
@@ -157,10 +159,18 @@ def check_flat_keys(parameters: Mapping[str, Any], *, swept: bool) -> None:
                 f"unknown sintering key '{key}'. The worker reads only: "
                 f"{', '.join(sorted(FLAT_KEYS))}"
             )
+        if swept and not isinstance(value, list):
+            raise ValueError(
+                f"sintering key '{key}' is swept here, so it must be a list, got "
+                f"{type(value).__name__}. A bare value passed validation and then "
+                "broke the expansion once the study row already existed"
+            )
         values: Iterable[Any] = value if swept and isinstance(value, list) else [value]
         for item in values:
             if key == "sintering_type":
-                if item not in DISTRIBUTION_TYPES:
+                # `in` on a frozenset raises TypeError for an unhashable
+                # value, which surfaced as a 500 where R12 wants a 400.
+                if not isinstance(item, str) or item not in DISTRIBUTION_TYPES:
                     raise ValueError(
                         f"sintering_type must be one of: "
                         f"{', '.join(sorted(DISTRIBUTION_TYPES))}"
