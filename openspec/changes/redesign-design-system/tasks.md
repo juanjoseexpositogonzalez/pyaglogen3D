@@ -336,7 +336,7 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
-### L13 — La partición en siete trozos dejaba código inerte; rehecha en cinco (2026-10-24)
+### L13 — La partición dejaba código inerte; rehecha dos veces, de siete trozos a cuatro (2026-10-24)
 
 Al preparar la revisión adversarial de la partición anuncié como riesgo lo que ya era un
 defecto: **los trozos 4 y 5 metían en `develop` código que nada ejecutaba**. El rail y la barra
@@ -350,7 +350,7 @@ Se evaluaron tres particiones:
 
 | opción | primer trozo del shell | código inerte | código intermedio desechable |
 | --- | --- | --- | --- |
-| A — el shell como unidad | 1.215 | no | no |
+| A — el shell como unidad | 1.254 | no | no |
 | B — shell incremental | ~790 | no | **sí**: `AppShell` mínimo, reescrito después |
 | C — la de siete trozos | 605 | **sí, en dos trozos** | no |
 
@@ -360,31 +360,107 @@ breadcrumb y sus tests. El número real era ~790. Corregida la estimación, la d
 **A**, y por el argumento correcto: B evita el código inerte pero lo sustituye por código
 intermedio que nadie revisa y que el PR siguiente reescribe.
 
-**Por qué el shell no baja de 1.215.** Montar un shell exige simultáneamente algo que montar
+**Por qué el shell no baja de 1.254.** Montar un shell exige simultáneamente algo que montar
 (`Sidebar`, `TopBar`), dónde montarlo (`layout.tsx`) y que el header ceda. Separar cualquiera de
 los tres produce, o un componente sin ejecutar, o dos navegaciones a la vez. El límite de 400-500
 líneas **no sobrevive aquí**, y es mejor decirlo que fingir un corte que no existe.
 
-**Cadena resultante** (cada trozo ejecuta desde su propio merge):
+**Segunda refundición: el juez encontró el mismo defecto donde yo no miré.** Con la cadena ya
+en cinco trozos, una revisión adversarial de la partición devolvió cuatro hallazgos, los cuatro
+reproducibles:
+
+| hallazgo | qué probó | comprobación |
+| --- | --- | --- |
+| trozo 1 inerte | `lib/theme.ts` (89 líneas) no lo importaba **nadie** salvo su propio test | `git grep -n '@/lib/theme' feature/rd-1-theme-core -- frontend/src` → solo el test |
+| test partido en dos | el trozo del shell mergeaba con `readFileSync`, `readdirSync`, `statSync` y `join` importados y **cero usos**; los guards que los usan llegaban en el trozo de cierre | `grep -cE 'readFileSync\(' …/AppShell.test.tsx` en el trozo del shell → **0** |
+| el Log mentía | tres afirmaciones de esta misma entrada no se sostenían al reproducirlas: tamaño del cierre, diff supuestamente vacío, y «el tema resuelve» | `git diff --shortstat` y `git diff --stat` |
+| guard tardío | el guard de las superficies de auth (ola 1a) viajaba en el último PR, no con el código que vigila | `git diff --name-status` → esta cadena no toca `src/app/auth` |
+
+El primero es **exactamente el defecto que acabábamos de corregir**, en un sitio donde no busqué
+importadores: escribí «el tema resuelve» en la tabla de arriba sin ejecutar un solo `grep`.
+Corregir un defecto no vacuna contra volver a cometerlo doce líneas más abajo.
+
+Consecuencia: el trozo 1 se funde con el 2 —el store es el único consumidor del resolutor, y el
+montaje en `layout.tsx` es lo que hace que el tema resuelva de verdad— y los dos guards
+estáticos viajan con el código que vigilan. La cadena baja de cinco trozos a cuatro.
+
+**Cadena resultante** (cada trozo ejecuta desde su propio merge, verificado buscando
+importadores reales, no supuesto):
 
 | trozo | rama | líneas | qué hace al mergearse |
 | --- | --- | --- | --- |
-| 1 | `feature/rd-1-theme-core` | 225 | el tema resuelve |
-| 2 | `feature/rd-2-theme-store` | 212 | persiste y no parpadea |
-| 3 | `feature/rd-3-theme-graph` | 113 | el grafo lo sigue |
-| 4 | `feature/rd-4-shell` | 1.215 | el shell navega |
-| 5 | `feature/rd-5-close` | 261 | contrato y Log |
+| 1 | `feature/rd-1-theme` | 420 | el tema resuelve y no parpadea |
+| 2 | `feature/rd-2-graph` | 113 | el grafo lo sigue |
+| 3 | `feature/rd-3-shell` | 1.254 | el shell navega, y empieza a escribirse la preferencia |
+| 4 | `feature/rd-4-close` | 306 | contrato y Log |
 
-**Verificación de que la refundición no perdió ni duplicó nada**: `git diff` del árbol de
-`rd-4-shell` contra el antiguo `rd-6-appshell` y de `rd-5-close` contra `rd-7-close` → **ambos
-vacíos**. Los árboles son idénticos, de modo que la verificación ya corrida sobre los antiguos
-vale sin repetirse: build **0**, **780** y **782** tests en serie, `type-check` **13**.
+**Verificación de que las refundiciones no perdieron ni duplicaron nada.** Cada trozo se
+construyó aplicando el diff exacto del anterior y se contrastó contra su equivalente de la
+cadena previa: `rd-1-theme` vs `rd-2-theme-store`, `rd-2-graph` vs `rd-3-theme-graph` y
+`rd-4-close` vs `rd-5-close` → **los tres vacíos**; `rd-3-shell` vs `rd-4-shell` → difiere
+**solo** en `AppShell.test.tsx`, que es el movimiento de los guards. Frente a la rama íntegra de
+referencia, **ningún fichero de `frontend/` difiere**.
+
+La afirmación anterior de esta entrada («`rd-5-close` contra `rd-7-close` → vacío») era cierta
+cuando la medí y dejó de serlo al añadir esta misma entrada al Log, que son 50 líneas más. Una
+verificación que no se vuelve a correr después del último cambio caduca sin avisar.
+
+**Segundo juez: APROBADA, con cinco observaciones.** Una revisión adversarial independiente
+sobre la partición de cuatro trozos no encontró ningún defecto crítico ni mayor. Reconstruyó
+cada estado con `git archive` y levantó el grafo real de imports: **el conjunto de módulos
+inalcanzables desde cualquier punto de entrada es idéntico al de `develop`** en los cuatro
+estados (tres, los tres preexistentes). Ningún trozo añade un módulo sin importar, ninguno deja
+un import sin resolver, y `rd-4-close` contra la rama íntegra en `frontend/` sale vacío.
+
+De sus observaciones, dos se corrigieron en código y tres en el registro:
+
+**Código inerte a nivel de función, no de módulo.** `readPersistedPreference` (17 líneas) no la
+llamaba nadie salvo su propio test, en los cuatro estados: el script inline reimplementa esa
+lectura y es el único lector real. `isThemePreference` solo la usaba ella, así que caía con
+ella. El mismo defecto que esta entrada registra, una granularidad por debajo de donde yo había
+mirado: comprobé importadores de ficheros, no de funciones.
+
+**Y al borrarla apareció un defecto de verdad.** El comentario del módulo afirmaba que función
+y script «se mantienen en paralelo mediante un test que ejercita ambos contra los mismos
+casos». Ese test no existía: cada uno se probaba por su lado, con casos distintos. Al trasladar
+los casos de la función al script —que es el lector real— uno falló, y no por estar mal
+escrito:
+
+| entrada corrupta, sistema en oscuro | función borrada | script inline |
+| --- | --- | --- |
+| `'{not json'` | `system` → resuelve **dark** | fuerza **light** |
+
+El `try` del script envolvía todo, así que un JSON corrupto caía en el `catch` general y
+forzaba claro, ignorando la preferencia del sistema: **destello claro a un visitante con el
+sistema en oscuro**, que es justamente lo que el script existe para evitar. Corregido con un
+`catch` interno para el parseo, dejando el externo para cuando no hay almacenamiento. Los dos
+casos nuevos se falsificaron rompiendo el script a propósito: fallan. Dos afirmaciones de un
+comentario, ninguna comprobada, y una de ellas falsa.
+
+**El argumento de indivisibilidad era correcto pero flojo.** El juez intentó refutarlo y casi
+lo consigue: separar `TopBar` dejaría el rail montado, lo que cumple la letra del criterio. Lo
+que lo impide es más fuerte que «dos navegaciones»: el único `setDrawerOpen(true)` lo alimenta
+`TopBar`, de modo que sin ella el cajón móvil queda **inalcanzable**, y como el rail fijo es
+`hidden lg:block`, por debajo de 1024 px no habría navegación ninguna. El corte espejo deja el
+cajón vacío y el `Header` ya cedido. La dicotomía correcta no es «código inerte o doble
+navegación», sino **«o algo queda inalcanzable, o el `Header` cede sin relevo»**.
+
+**Radio de impacto del trozo 1, anotado como deuda aceptada.** Escribir `data-theme` despierta
+29 utilidades `dark:` repartidas en 9 ficheros heredados que en `develop` están dormidas,
+porque hoy nada escribe el atributo. Tras el primer merge se aplican a cualquier visitante con
+el sistema en oscuro. No están en la lista cerrada de ficheros editables de este change y
+ningún test cubre su render oscuro. **No se toca aquí**, pero el primer merge tiene más alcance
+visual del que sus 420 líneas sugieren, y las olas 2-4 deben verificar esas nueve superficies
+en oscuro al llegar a ellas.
+
+**`develop` avanzó durante el trabajo** (PR #105 de la sesión peer, solo backend). La cadena se
+actualizó con merge, no con rebase, como manda AGENTS.md tras la aprobación del contrato.
 
 **Lección.** Troceé optimizando el tamaño del diff, que es lo que mide un límite de líneas, en
 vez del estado del repositorio después de cada merge, que es lo que de verdad importa. Las dos
 métricas se contradicen cuando una pieza es indivisible, y entonces gana el estado del
-repositorio. Es la segunda vez en este change que una comprobación mide lo cómodo en lugar de lo
-que promete.
+repositorio. Y la lección que el juez me devolvió: **«ejecuta» es una afirmación comprobable con
+un `grep` de importadores**. Dos veces la di por buena sin comprobarla.
 
 ### L12 — Pasada fresca: el crítico seguía vivo y la corrección creó una regresión (2026-10-23)
 
