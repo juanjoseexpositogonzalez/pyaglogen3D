@@ -184,11 +184,16 @@
 
 ## T5 — Integridad de la expansión (R12)
 
-- [ ] T5.1 Garantizar que toda la validación de T1 y T4 ocurre en
-      `ParametricStudySerializer.validate()`, antes de la primera escritura
-- [ ] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
+- [x] T5.1 Garantizar que toda la validación de T1 y T4 ocurre **antes de la primera
+      escritura**. Enunciado corregido tras el judgment-day: la redacción original decía
+      «en `ParametricStudySerializer.validate()`» y es **falsa**, porque la forma de la
+      superficie 2 la valida `validate_sintering_config` (`serializers.py:366`), un validador
+      **de campo** que DRF ejecuta en `to_internal_value`, antes de `validate()`. Lo que el
+      contrato exige es la propiedad —nada se escribe sin validar—, no el método, y dejar el
+      enunciado viejo invitaba a mover comprobaciones que hoy funcionan
+- [x] T5.2 Tests R12.1 y R12.2: 400 con **cero** estudios, cero simulaciones y cero tareas
       encoladas (contar filas antes y después, y mockear `run_simulation_task.delay`)
-- [ ] T5.3 **Ningún test existente pasa a rojo por esta tarea**
+- [x] T5.3 **Ningún test existente pasa a rojo por esta tarea**
 
 ## T6 — Frontend (R10)
 
@@ -609,3 +614,238 @@
   Esta tarea cierra además la ventana que el judgment-day de T3 señaló (JD-A-003): entre T3 y
   T4, un estudio `limiting` con sinterizado `normal` almacenaba `normal` + `std` y corría a un
   0.8 constante. La persona decidió mergear T3 y encadenar T4 seguido, y esto es ese cierre.
+- L34 (2026-10-23): **T5 completa** (R12). **Aviso para quien lea sólo esta entrada: T5 acabó cambiando comportamiento en cinco sitios** —500→400 en escalares de las superficies 5 y 6, 201→400 en un `theoretical_extremes` mal tipado, 400→201 en listas mixtas de grid y en claves que no son de sinterizado, y la regla de los hijos de frontera—. Nació como tarea sin código de producción y ocho rondas de revisión la convirtieron en otra cosa; esta línea lo dice porque durante seis correcciones nadie releyó la primera frase de una entrada de 200 líneas. Lo que sigue es su historia, y el punto de partida fue: su trabajo es
+  demostrar que la barrera está donde el contrato exige, **antes de la primera escritura**, y
+  dejarla fijada. Lo demostrado, con evidencia propia: `perform_create` (`views.py:1750`) **no
+  valida nada**, `config/` **no define `ATOMIC_REQUESTS`**, y DRF llama `is_valid()` antes de
+  `perform_create`.
+  **Corrección de un juez, y la acepto**: la primera redacción decía que *toda* la validación
+  ocurre en `ParametricStudySerializer.validate()`, «la única barrera». Es **falso**. La forma
+  de la superficie 2 se valida en `validate_sintering_config` (`serializers.py:366`), un
+  validador **de campo** que DRF ejecuta en `to_internal_value`, es decir **antes** de
+  `validate()`. La propiedad que R12 exige se sostiene igual —ambos corren antes de la primera
+  escritura—, pero T5.1 enunciado como «todo en `validate()`» invitaba al siguiente auditor a
+  mover comprobaciones que hoy funcionan, o a leer como infracción un validador de campo que no
+  lo es. Lo que T5 garantiza es la propiedad, no el método.
+  **Qué pasa si esa barrera no está, medido en vez de supuesto** (probe con las cuatro funciones
+  de validación anuladas y el payload de R12.1): la expansión revienta a media faena con
+  `ValueError: unknown sintering_config keys: mode` y deja **1 estudio, 1 simulación y 1 tarea
+  encolada**. Esa tarea es la que ningún rollback deshace, y es la razón por la que el contrato
+  prohíbe apoyarse en que `apply_sintering_config` lance durante la expansión.
+  Los primeros seis tests de `tests/test_sintering_expansion_integrity.py` (CRLF) cuentan **filas y
+  despachos** antes y después: los cuatro ajustes inválidos que R12.1 y R12.2 nombran, uno por
+  superficie, más dos controles de que un ajuste **válido sí escribe y sí encola** — sin ellos,
+  un serializer que rechazara todo pasaría los cuatro primeros.
+  Los seis salieron **verdes de entrada**, porque T1 y T4 ya habían puesto la barrera; se
+  declara así en vez de venderlos como rojo-a-verde. Lo que los hace guardas es el probe de
+  arriba: en el mundo sin barrera, los cuatro fallan. **Pero no «por las tres aserciones a la
+  vez», como escribí**: los dos jueces lo midieron y es falso. Los dos casos de forma dict
+  revientan dentro de `_post`, así que las aserciones de filas y de despachos **ni se ejecutan**,
+  y el caso de `base_parameters` deja +1 estudio pero 0 despachos. La fuerza de la guarda varía
+  por caso, y el registro lo dice ahora en vez de redondearlo.
+  **Judgment-day sobre T5: cero severos en lo que escribí, tres defectos vivos en el código.**
+  T5 nació como tarea sin código de producción; deja de serlo por decisión de la persona, porque
+  los jueces encontraron tres caminos que **violan R12 hoy** y que ninguno de mis seis tests
+  tocaba. Reproducidos por mí antes de arreglar nada:
+  1. **Superficie 6 con un escalar** (`theoretical_extremes: {sintering_coeff: 0.7}`, sin lista):
+     `TypeError` en `utils.py:202` → **500**, con +1 estudio, +1 simulación y **+1 tarea
+     encolada**.
+  2. **Superficie 5 con un escalar** (`parameter_grid: {sintering_coeff: 0.7}`): `TypeError` en
+     `itertools.product` (`views.py:1777`) → **500** y un estudio huérfano en RUNNING.
+  3. **Barrido cuyo segundo elemento es inválido**
+     (`{sintering_type: ["fixed","uniform"], sintering_coeff: [0.6]}`): **201**, y el segundo
+     hijo queda almacenado como `uniform` **sin min/max**, que el worker corre como uniform
+     0.85-0.95 (`tasks.py:1596-1598`). El peor de los tres: no falla, miente.
+  Arreglados: `check_flat_keys` exige **lista** en las superficies barridas, y
+  `check_flat_required_over_sweeps` proyecta **cada hijo** que el barrido produce en vez de sólo
+  el primero — producto cartesiano para el grid, un hijo por par clave/valor para los extremos,
+  que es como los expande `add_case`. Tres tests nuevos en rojo antes, verdes después, más dos
+  controles de que un barrido **bien especificado** sigue aceptándose.
+  **Tests débiles, corregidos**: el sexto test era un duplicado byte a byte del control y no
+  podía fallar solo (retirado); los cuatro casos inválidos sólo exigían «400», así que cualquier
+  400 ajeno los dejaba verdes (ahora exigen que el 400 hable del sinterizado); y faltaban las
+  superficies 2, 5 y 7, que R12.2 cubre con su «lo mismo para las demás superficies».
+  **Derivado, no arreglado**: el bloque de extremos (`views.py:1869-1906`) con un `n_particles`
+  en forma de dict revienta tras crear **8 hijos y encolar 8 tareas** (medido). No lo gobierna
+  R12 —no es un ajuste de sinterizado—, así que va al contrato de seguimiento, que suma cinco
+  puntos.
+  **Fuera de alcance cuando se escribió esto, y ya no**: un `parameter_grid.sintering_config`
+  con dos o más entradas junto a `include_limiting_cases` reventaba a media expansión por el
+  `sorted` de `generate_limiting_cases` (la referencia llevaba número de línea, y era la tercera cita que envejecía: ahora se nombra la función). El
+  contrato lo declara defecto ajeno, de `distribution-grid-wiring`. La ronda 4 lo cerró de
+  hecho, porque el preview obligó a mirarlo: hoy ese estudio **se crea**.
+  **El texto canónico de la spec sigue diciendo que está abierto, y no lo toco**: cambiar la
+  spec exige nueva aprobación, y este Log no es sitio para hacerlo por la puerta de atrás.
+  Queda señalado para que la persona decida si la nota de R12 se actualiza o se queda como
+  historia.
+  **Segunda ronda de judgment-day, y aquí los jueces me cazaron a mí.** El arreglo anterior
+  cerró tres agujeros y abrió **dos regresiones propias** más un riesgo de coste, las tres
+  reproducidas por mí antes de tocar nada:
+  1. **Una lista vacía desactivaba la comprobación entera.** `{sintering_coeff: []}` sigue
+     siendo una clave barrida, así que entraba por la rama del producto, `product()` no daba
+     ninguna combinación y no se comprobaba nada. El mismo payload daba **400 antes** de mi
+     arreglo y **201 después**: la guarda desapareció en silencio.
+  2. **Un dict manda sobre los planos, y yo proyectaba los planos igual.** Con un
+     `sintering_config` en el estudio o en el grid, `apply_sintering_config` pisa las claves
+     planas antes de guardar el hijo, así que rechazaba con 400 payloads cuyos hijos reales son
+     válidos. Corregido distinguiendo **qué hijo recibe dict**: el del grid lo recibe de una
+     entrada de grid; los de límites y extremos sólo de `base_parameters` o del campo del
+     estudio (`views.py:1804-1808`).
+  3. **El producto cartesiano corría antes del tope de lote**: 4 claves × 40 valores = 2,56 M
+     combinaciones, **4,69 s** medidos, con un cuerpo de ~1,2 KB que el tope iba a rechazar de
+     todos modos. Acotado al tope (1000): por encima, el rechazo es suyo y sólo cuesta el
+     producto de las longitudes.
+  **Y una tercera regresión la cazó el gate, no yo ni los jueces**: al añadir la comprobación
+  de la proyección base la puse **incondicional**, y eso rompió
+  `tests/test_sintering_shape.py::test_r3_8_swept_value_completes_the_shape`, que afirma
+  exactamente lo contrario — el valor barrido **puede** completar la forma que falta en
+  `base_parameters`. Se vio porque la suite pasó de 15 a **16** fallos. La base sólo se comprueba
+  sola cuando ningún barrido de sinterizado la completa.
+  Lección, y es la misma que este Log lleva repitiendo: **añadir validación a una ruta común es
+  más peligroso que el defecto que arregla**. Tres de los cuatro problemas de esta ronda los
+  introdujo el arreglo anterior, no el código original.
+  Gates finales, ya con el dry run: `pytest` 15 failed / **1362** passed / 31 errors; `ruff`
+  **296**; `mypy`
+  **1727 en 132**, con los ficheros tocados aportando **0** errores propios. **T5.3 ya no es
+  trivial** — T5 cambia código de producción en la validación por la que pasan todos los
+  estudios— así que se midió comparando **los nombres** de los 46 fallos y errores
+  preexistentes con `git stash`, no su recuento: idénticos antes y después.
+  **Ronda 2b: el segundo juez revisó el árbol congelado y encontró un CRITICAL más**, que mi
+  arreglo anterior no tocaba. La guarda de forma barrida que añadí cubría sólo las claves
+  **planas** y se saltaba `sintering_config`, su hermana dict en la misma superficie. Un dict
+  **desnudo** (sin lista) en `theoretical_extremes.sintering_config` pasaba la validación, y la
+  expansión entonces **iteraba las claves del propio dict** (`utils.py:201-203`), escribiendo
+  `sintering_config="distribution_type"` en cada hijo hasta que `apply_sintering_config` lanzó.
+  Medido por mí en el árbol actual: **500 con +1 estudio, +4 simulaciones y +4 tareas
+  encoladas** — el peor saldo de todo el contrato. Arreglado exigiendo lista también ahí.
+  Segundo hallazgo suyo: un `sintering_type` **inhashable** (un dict, o una lista anidada)
+  reventaba el `in` contra el frozenset con `TypeError` → **500**, donde R12 pide 400. Sin
+  filas, pero un 500 no es un rechazo útil. Guardado con una comprobación de tipo.
+  Tercero: la rama de **extremos** de la proyección **no la fijaba ningún test** —borrarla
+  dejaba los 13 verdes—, así que su comportamiento correcto de hoy no estaba clavado. Ya lo
+  está, con un segundo elemento inválido en la superficie 6.
+  **Al seguimiento, no aquí** (JD-B-008): `parameter_grid={"n_particles": 100}` y
+  `{"n_particles": ["abc"]}` revientan igual con +1 estudio, y el `int()` sin guarda del bloque
+  de extremos (`views.py:1878-1880`, que sí está guardado en su copia de `views.py:1812-1815`)
+  deja +1 estudio, +1 simulación y 1 tarea. No son ajustes de sinterizado, así que R12 no los
+  gobierna; el seguimiento suma ya seis puntos.
+  **Nota de método del mismo juez**: revisó `git archive d8f45d0` y avisó de que el árbol de
+  trabajo tenía cambios posteriores. Tenía razón y conviene retenerlo: **un juez debe revisar
+  el commit, no el directorio**, o mide código que nadie ha entregado.
+  **Ronda 3: los dos jueces llegaron por separado a la misma raíz, y la raíz era el enfoque.**
+  Mi validación **simulaba** en un segundo sitio cómo se construyen los hijos, y divergía del
+  generador real una y otra vez: los hijos de **frontera de rango** (`utils.py:179-194`) y los
+  **extremos por defecto del servidor** (`utils.py:198-200`, que el serializer ni siquiera ve)
+  no se proyectaban nunca. Medido: un estudio con `sintering_type: uniform` en base y un barrido
+  de `min`/`max` entraba con **201** y guardaba **7 de 11 hijos** con `uniform` y sin min/max,
+  que el worker corre a 0.85-0.95. El daño central del contrato, **aceptado**. Y mi docstring
+  afirmaba cubrir «cada hijo que el barrido produce»: era falso.
+  Más hallazgos de esa ronda, todos reproducidos por mí: `null` en la superficie 7 → 500 con +1
+  estudio, +1 simulación y +1 tarea; un escalar en una clave **no** de sinterizado de los
+  extremos → lo mismo; `distribution_type` inhashable y un `limiting_cases_config` que no es un
+  objeto → 500 en vez de 400; y un **falso 400** preexistente cuando un dict de grid cubre un
+  plano incompleto de `base_parameters`.
+  **Decisión de la persona: dejar de parchear y validar con la expansión real.** Nace
+  `apps/simulations/expansion_preview.py`, que **no modela nada**: ejecuta las mismas funciones
+  que `perform_create` —`generate_limiting_cases`, `generate_sintering_extreme_cases`,
+  `apply_sintering_config`— sobre los mismos datos, replica su cast `int()` con la asimetría
+  real (guardado en `create_simulation`, sin guardar en el bloque de extremos) y mira los
+  parámetros que llevarían los hijos. No escribe: esas funciones son puras. La proyección
+  paralela y sus dos banderas se **retiran**; la precedencia ya no hay que reenunciarla, porque
+  lo que `create_simulation` le hace a un hijo es lo que el preview ve.
+  **Lo que cierra de rebote, medido y no reclamado como alcance**: lo que antes reventaba a
+  media expansión ahora revienta **antes de escribir** y es un 400 con cero filas. Eso incluye
+  los tres caminos que esta misma entrada había derivado al contrato de seguimiento
+  (`n_particles` escalar y no numérico, y el `int()` sin guarda de `views.py:1878-1880`, que
+  dejaba +1 estudio, +8 simulaciones y 8 tareas). El seguimiento baja de seis puntos a tres.
+  **Y aquí escribí algo falso que la ronda 4 me tumbó, así que queda corregido en el sitio.**
+  Afirmé que el dry run «cerraba» la exención del contrato —dos dicts en
+  `parameter_grid.sintering_config` con casos límite, el `sorted` de `utils.py:182`— porque
+  pasaba de 500 a 400 sin escribir filas. **Confundí «ya no revienta» con «ya se acepta»**: un
+  400 sigue siendo un rechazo, y R3 exige **aceptar** ese array. Peor, lo clavé con un test que
+  fijaba ese 400 como deseable: un test que protege un defecto. Y bloqueaba de paso
+  `kf_distribution` y `particle_radius_config` con dos entradas, que no son sinterizado.
+  Cerrado de verdad en la ronda 4: `generate_limiting_cases` **salta** los valores que no sabe
+  ordenar —un dict no tiene orden, así que esa clave no aporta caso de frontera— en vez de
+  romper la expansión. Esos estudios se crean con 201. El test falso, retirado; en su lugar hay
+  uno de aceptación por cada una de las dos claves.
+  **Ronda 5: tercer CRITICAL seguido introducido por mi propio arreglo.** La rama que añadí en
+  la ronda 4 para validar la superficie 6 con `include_limiting_cases` apagado quedó **fuera del
+  try/except**, así que un `theoretical_extremes: {n_particles: [null]}` daba **500**. Y al
+  medirla entera resultó peor que eso: validaba hijos **que no existen ni con la bandera
+  encendida**, porque `include_theoretical: false` hace ese mapa inalcanzable — un 400 falso
+  cuya única salida era borrar una clave que no hace nada. **Retirada la rama, no parcheada.**
+  La regla que la sustituye, escrita en el módulo: **la completitud se le exige a los hijos que
+  van a existir; los valores de una superficie se comprueban siempre**. Un mapa sin consumir
+  sigue rechazando `sintering_coeff: 42.0` o el legado `sintering_mean`, pero no se le exige
+  completar la forma de un hijo que nadie creará. Esto **revierte** lo que la ronda 4 había
+  fijado en un test, y se dice aquí en vez de cambiarlo en silencio.
+  Cerrados además: una base incompleta ya no se cuela tras un barrido vacío (si la expansión no
+  produce ningún hijo, la base es la única forma del estudio y se valida), y las superficies 6 y
+  7 exigen **listas** para sus claves de sinterizado.
+  **Dos reglas que este párrafo afirmaba se revirtieron en la ronda 6, y el párrafo siguió
+  diciendo lo contrario hasta que un juez lo leyó contra el código.** Corregido aquí, no
+  reescrito en silencio:
+  - La exigencia de listas cubre **sólo las claves de sinterizado**. Rechazar un `packing` o un
+    `kf_distribution` es autoridad que R3 y R12 no dan a este contrato.
+  - La lista mixta `[100, "200"]` **no se reporta**: se acepta, sus hijos corren, y lo que esa
+    clave pierde son sus casos de frontera. Rechazarla rompía estudios que funcionan, y la
+    guarda podía desactivarse con `include_boundaries`.
+  **Lo que ese límite de alcance deja abierto, medido y derivado**: un `theoretical_extremes`
+  con `{"target_df": {"mode": "fixed", "value": 1.8}}` entra con **201** y crea hijos que
+  guardan `target_df: "mode"` y `target_df: "value"`; el worker recibe esas cadenas y lanza.
+  Hijos que no pueden completarse nunca, en un estudio marcado RUNNING. No es un ajuste de
+  sinterizado, así que este contrato no lo cierra — pero **es el mismo daño**, y el contrato de
+  seguimiento tiene que existir para que no sea permanente.
+  **Y ya existe: la issue #115.** Hasta la octava ronda, «va al contrato de seguimiento» fue una
+  promesa sin destinatario — un juez comprobó que no hay tal change en `openspec/changes/` y que,
+  al archivar, un Log de 800 líneas habría sido su única casa. #115 recoge los **nueve** defectos
+  derivados con su evidencia medida, incluida la nota de R12 que esta entrada deja sin tocar.
+  El recuento que esta entrada fue llevando a mano («baja de seis a tres», «suma seis») queda
+  obsoleto a propósito: contar defectos en prosa fue otra cifra que envejecía sola.
+  Y una contradicción entre dos tests míos, encontrada al corregir: el del barrido vacío usaba
+  una base incompleta, así que afirmaba a la vez que eso se acepta y que se rechaza. Reescrito
+  con una base completa, y la guarda que le había debilitado vive ahora en su propio test
+  nombrando la clave que falta.
+  Gates de la ronda 5: `pytest` 15 failed / **1372** passed / 31 errors, con los nombres de los
+  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
+  **Esa suma no cuadra con los tests colectados en ese commit, y mi primera explicación era
+  falsa**: dije que se había medido con un fichero de probe en el árbol, y un juez demostró que
+  un probe sólo puede **añadir** tests, nunca restar. **No sé de dónde sale el desajuste de
+  uno.** Decirlo es mejor que inventar una causa plausible: una explicación que no se sostiene
+  es peor que un número sin explicar, porque cierra la pregunta.
+  **Ronda 7: ningún CRITICAL, y por primera vez un juez confirma que el arreglo anterior queda
+  fijado** — mover la proyección base fuera del `try` rompe exactamente su test, y borrarla
+  rompe dos. Lo que sí trajo la ronda:
+  - **El predicado de alcance no era el del módulo.** Escribí `startswith("sintering")`, así que
+    gobernaba una clave `sintering` pelada y dejaba pasar `sinterfoo`. Ninguna de las dos es un
+    ajuste de sinterizado para `check_flat_keys`. Corregido al mismo predicado que usa el resto
+    (`sintering_config` o prefijo `sintering_`), con un test de las tres claves.
+  - **`theoretical_extremes` vacío daba ocho hijos.** Mi guarda de tipo sólo saltaba con valores
+    *truthy*, y el serializer colapsa los falsy a `{}` antes, así que pedir **ningún** extremo
+    caía en el mapa por defecto del servidor. Ahora mira el valor crudo.
+  - **Mi justificación para revertir el rechazo de listas mixtas no generalizaba.** Dije «esos
+    hijos corren» y es cierto **sólo para `n_particles`**, el único de `INTEGER_PARAMS`: un
+    `target_df: [1.8, "abc"]` guarda la cadena y el binding del engine la rechaza.
+  **Dos huecos derivados pasan a fijarse como `xfail(strict=True)`, no como 201 deseable.** Un
+  test que afirma el 201 de un defecto obliga a quien lo arregle a editar una aserción que
+  pasaba; un `xfail` estricto falla hoy a propósito y **avisa el día que alguien lo cierre**.
+  Son el `target_df` mixto y el extremo no-sinterizado que guarda nombres de clave.
+  **Derivados nuevos, medidos**: `parameter_grid={"seed_type": [["monomers"]]}` da **500** por
+  un `in` contra un conjunto con valor inhashable. Preexistente, fuera de R12, y va al
+  seguimiento en vez de arreglarse estirando este contrato.
+  **Y aquí me equivoqué de dueño**: llamé «preexistente» también al 500 de un PATCH sobre una
+  fila cuyo `theoretical_extremes` no es un objeto. Un juez lo rastreó con `git log -S` y lo
+  confirmé: lo introdujo **`fb984fb`, la rebanada anterior de este mismo contrato**, mergeada
+  ayer en el PR #104. No era herencia, era mío y de anteayer. Arreglado aquí, no derivado,
+  porque la regla que necesitaba es la que esta misma tarea ya aplica al payload — y porque
+  dejaba un estudio **imposible de actualizar para siempre**, ni siquiera para renombrarlo.
+  Gates de la ronda 7: `pytest` 15 failed / **1383** passed / 31 errors **y 2 xfailed**, con los
+  nombres de los 46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
+  **Tamaño: aquí ya no hay cifra, porque esta es la tercera que envejece.** Se escribió una,
+  se quedó fija mientras el PR crecía, la corrigió un juez, y la corrección nació vieja; al
+  reescribir el párrafo puse otra y también estaba desfasada en el commit que la publicaba.
+  La fuente de verdad es la página del PR, que se recalcula sola. Lo único que no cambia, y es
+  lo que importa: **ninguna línea viene de alcance nuevo** — todas vienen de defectos hallados
+  en revisión adversarial, y una parte sustancial de defectos que introduje al arreglar los
+  anteriores. La excepción de tamaño sigue pendiente de decisión de la persona en la issue.

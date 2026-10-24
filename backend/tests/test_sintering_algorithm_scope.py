@@ -396,9 +396,7 @@ def test_r11_6_patch_of_a_dict_surface_on_a_non_consuming_study(
 
     resp = api_client.patch(
         f"/api/v1/projects/{project.id}/studies/{study_id}/",
-        data={
-            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}
-        },
+        data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
         format="json",
     )
 
@@ -416,9 +414,7 @@ def test_r11_6_patch_of_a_grid_dict_surface_is_rejected_too(
         f"/api/v1/projects/{project.id}/studies/{study_id}/",
         data={
             "parameter_grid": {
-                "sintering_config": [
-                    {"distribution_type": "fixed", "coefficient": 0.8}
-                ]
+                "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]
             }
         },
         format="json",
