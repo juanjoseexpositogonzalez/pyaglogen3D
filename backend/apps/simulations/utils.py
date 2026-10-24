@@ -4,6 +4,7 @@ import csv
 import io
 import logging
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
@@ -179,7 +180,24 @@ def generate_limiting_cases(
     if config.get("include_boundaries", True):
         for param_name, values in parameter_grid.items():
             if len(values) >= 2:
-                sorted_values = sorted(values)
+                if any(isinstance(value, Mapping) for value in values):
+                    # Distribution grids hold objects, which have no order. A
+                    # range boundary is meaningless for them, so this key
+                    # contributes no boundary case instead of breaking the
+                    # expansion after the study row already exists.
+                    continue
+                try:
+                    sorted_values = sorted(values)
+                except TypeError as exc:
+                    # Anything else that cannot be ordered is a mistake worth
+                    # reporting: the children would run while the limiting
+                    # cases the user asked for went missing in silence. The
+                    # expansion preview raises this before the first write.
+                    raise TypeError(
+                        f"parameter_grid['{param_name}'] mixes values that "
+                        "cannot be ordered, so its range boundaries cannot be "
+                        f"computed: {exc}"
+                    ) from exc
                 min_val = sorted_values[0]
                 max_val = sorted_values[-1]
 
