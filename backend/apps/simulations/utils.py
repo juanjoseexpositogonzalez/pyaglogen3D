@@ -179,7 +179,14 @@ def generate_limiting_cases(
     if config.get("include_boundaries", True):
         for param_name, values in parameter_grid.items():
             if len(values) >= 2:
-                sorted_values = sorted(values)
+                try:
+                    sorted_values = sorted(values)
+                except TypeError:
+                    # Distribution grids hold dicts, which have no order. A
+                    # range boundary is meaningless for them, so this key
+                    # simply contributes no boundary case instead of breaking
+                    # the expansion after the study row already exists.
+                    continue
                 min_val = sorted_values[0]
                 max_val = sorted_values[-1]
 

@@ -271,15 +271,15 @@ def test_r12_a_valid_swept_extreme_is_still_accepted(
 # --- Round 2: what the first fix broke, and what it made expensive ---------
 
 
-def test_r12_an_empty_sweep_does_not_disable_the_required_check(
+def test_r12_an_empty_sweep_produces_no_child_and_no_task(
     api_client: APIClient, project: Project, dispatch: Any
 ) -> None:
-    """An empty list is still a swept key, so the first fix took the base
-    projection down the product branch, where `product()` yields nothing and
-    the check never ran. This payload returned 400 before that fix and 201
-    after it: the guard disappeared in silence."""
-    before = ParametricStudy.objects.count(), Simulation.objects.count()
-
+    """An empty swept list is not an error for the expansion: `product()`
+    yields nothing and the study is created with no child at all. A judge
+    showed that rejecting it was a rule of my own invention, inconsistent
+    with the identical case on any non-sintering key, so what is pinned here
+    is the real behaviour - and that nothing is queued.
+    """
     resp = _post(
         api_client,
         project,
@@ -293,10 +293,32 @@ def test_r12_an_empty_sweep_does_not_disable_the_required_check(
         parameter_grid={"n_particles": [100, 200], "sintering_coeff": []},
     )
 
-    assert resp.status_code == 400, f"the required-key guard vanished: {resp.data}"
-    assert "sintering" in str(resp.data).lower(), resp.data
-    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert resp.status_code == 201, resp.data
+    study = ParametricStudy.objects.get(id=resp.data["id"])
+    assert study.simulations.count() == 0
     assert dispatch.delay.call_count == 0
+
+
+def test_r12_an_incomplete_flat_shape_is_still_rejected_without_a_sweep(
+    api_client: APIClient, project: Project
+) -> None:
+    """The guard the test above used to carry, asserted where it really
+    applies. The assertion names the missing key: weakening it to the word
+    "sintering" was how the property got masked in the first place."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+            "sintering_min": 0.8,
+        },
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "sintering_max" in str(resp.data), resp.data
 
 
 @pytest.mark.parametrize(
@@ -641,18 +663,6 @@ def test_r12_a_grid_dict_covers_an_incomplete_base_flat(
                 "sintering_config": {"distribution_type": "fixed", "coefficient": 0.9},
             },
         ),
-        (
-            "two grid dicts with limiting cases - the contract's declared exemption",
-            {
-                "parameter_grid": {
-                    "sintering_config": [
-                        {"distribution_type": "fixed", "coefficient": 0.8},
-                        {"distribution_type": "fixed", "coefficient": 0.9},
-                    ]
-                },
-                "include_limiting_cases": True,
-            },
-        ),
     ],
 )
 def test_r12_the_preview_also_closes_the_paths_r12_does_not_govern(
@@ -688,4 +698,134 @@ def test_r12_an_ordinary_study_still_expands(
     study = ParametricStudy.objects.get(id=resp.data["id"])
     assert study.simulations.count() == 2
     assert dispatch.delay.call_count == 2
+
+
+# --- Round 4: what the dry run itself broke -------------------------------
+
+
+def test_r12_a_non_list_grid_value_cannot_disable_validation(
+    api_client: APIClient, project: Project, dispatch: Any
+) -> None:
+    """The preview bailed out above its own size estimate while the batch cap
+    counted only list values, so the two disagreed and a string in the grid
+    turned validation off entirely: 201 with 1200 children, every one of them
+    storing `sintering_type: uniform` without min/max, and 1200 queued tasks.
+    One of the children even carried `target_df: '5'` - a character of the
+    string "1.5", which `itertools.product` iterated.
+    """
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(
+        api_client,
+        project,
+        base_algorithm="tunable",
+        base_parameters={
+            "n_particles": 300,
+            "target_df": 1.8,
+            "target_kf": 1.3,
+            "sintering_type": "uniform",
+        },
+        parameter_grid={"n_particles": ["300"] * 400, "target_df": "1.5"},
+    )
+
+    assert resp.status_code == 400, f"validation was skipped: {resp.data}"
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
+
+
+@pytest.mark.parametrize(
+    ("case", "grid"),
+    [
+        (
+            "two sintering dicts",
+            {
+                "sintering_config": [
+                    {"distribution_type": "fixed", "coefficient": 0.8},
+                    {"distribution_type": "fixed", "coefficient": 0.9},
+                ]
+            },
+        ),
+        (
+            "two kf distributions",
+            {
+                "kf_distribution": [
+                    {"distribution_type": "fixed", "value": 1.3},
+                    {"distribution_type": "fixed", "value": 1.5},
+                ]
+            },
+        ),
+    ],
+)
+def test_r12_a_dict_grid_with_limiting_cases_is_accepted(
+    api_client: APIClient, project: Project, case: str, grid: dict[str, Any]
+) -> None:
+    """R3 requires accepting a grid array of two entries, and R12's own note
+    says the mid-expansion crash on `sorted` is a defect, not a rule. Turning
+    that crash into a clean 400 is still a rejection: these studies must be
+    created. `kf_distribution` is not even a sintering key.
+    """
+    resp = _post(
+        api_client, project, base_algorithm="tunable", parameter_grid=grid,
+        include_limiting_cases=True,
+    )
+
+    assert resp.status_code == 201, f"{case} is refused: {resp.data}"
+
+
+def test_r12_the_extremes_surface_is_validated_even_when_unused(
+    api_client: APIClient, project: Project
+) -> None:
+    """R3 requires all seven surfaces validated. With the flag off, the
+    preview stopped looking at the extremes map, and an invalid shape there
+    went from 400 to 201."""
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=False,
+        limiting_cases_config={"theoretical_extremes": {"sintering_type": ["uniform"]}},
+    )
+
+    assert resp.status_code == 400, resp.data
+
+
+def test_r12_a_dict_n_particles_without_limiting_cases_is_accepted(
+    api_client: APIClient, project: Project
+) -> None:
+    """The real path skips dicts in its int() cast (`views.py:1812-1814`), so
+    this is a valid study. Nothing pinned that side of the mirrored cast:
+    flipping it rejected this payload with all 33 tests still green."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": {"distribution_type": "fixed", "value": 100},
+            "target_df": 1.8,
+            "target_kf": 1.3,
+        },
+    )
+
+    assert resp.status_code == 201, resp.data
+
+
+@pytest.mark.parametrize(
+    ("case", "overrides"),
+    [
+        ("a list where parameter_grid belongs", {"parameter_grid": []}),
+        ("a list where base_parameters belongs", {"base_parameters": []}),
+    ],
+)
+def test_r12_a_mistyped_container_writes_nothing(
+    api_client: APIClient, project: Project, dispatch: Any, case: str,
+    overrides: dict[str, Any],
+) -> None:
+    """Both were coerced to {} before the preview saw them, and the real
+    expansion then raised on the original value, leaving an orphan RUNNING
+    study."""
+    before = ParametricStudy.objects.count(), Simulation.objects.count()
+
+    resp = _post(api_client, project, **overrides)
+
+    assert resp.status_code == 400, f"{case}: {resp.data}"
+    assert (ParametricStudy.objects.count(), Simulation.objects.count()) == before
+    assert dispatch.delay.call_count == 0
 

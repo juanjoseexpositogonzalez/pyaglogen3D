@@ -40,6 +40,10 @@ class ExpansionPreviewError(ValueError):
     """An input that would have broken the expansion after writing rows."""
 
 
+class GridShapeError(ExpansionPreviewError):
+    """A `parameter_grid` value that is not a list of values."""
+
+
 #: `create_simulation` casts these before storing them (`views.py:1810-1815`).
 INTEGER_PARAMS = ("n_particles",)
 
@@ -93,14 +97,22 @@ def preview_children(
     param_names = list(parameter_grid.keys())
     param_values = [parameter_grid[name] for name in param_names]
 
-    try:
-        projected = prod(len(values) for values in param_values) if param_values else 1
-    except TypeError as exc:  # a grid value that is not a list at all
-        raise ExpansionPreviewError(
-            f"every parameter_grid value must be a list: {exc}"
-        ) from exc
+    # Every grid value must be a list. Without this the preview measured the
+    # `len()` of whatever it got - 3 for the string "1.5" - while the batch cap
+    # counted only list values, so the two disagreed, the preview bailed out of
+    # validating anything, and the cap let the request through: 1200 children,
+    # all of them storing a shape the worker would not run.
+    for name, values in zip(param_names, param_values, strict=True):
+        if not isinstance(values, list):
+            raise GridShapeError(
+                f"parameter_grid['{name}'] must be a list of values, got "
+                f"{type(values).__name__}"
+            )
 
+    projected = prod(len(values) for values in param_values) if param_values else 1
     if projected > max_children:
+        # Above the cap the batch-size check owns the rejection, and it reaches
+        # the same number because every value is now a list.
         return []
 
     children: list[dict[str, Any]] = []
@@ -134,8 +146,21 @@ def preview_children(
         raise
     except (TypeError, AttributeError, KeyError, IndexError) as exc:
         raise ExpansionPreviewError(
-            f"this study cannot be expanded: {type(exc).__name__}: {exc}"
+            f"this study cannot be expanded as configured: {exc}"
         ) from exc
+
+    if not include_limiting_cases:
+        # R3 requires all seven surfaces validated, and this one is supplied
+        # even when the flag that consumes it is off. Its children do not
+        # exist, so they are projected here rather than generated: base plus
+        # one swept value, which is how `add_case` would emit them.
+        extremes = (limiting_cases_config or {}).get("theoretical_extremes") or {}
+        if isinstance(extremes, Mapping):
+            for key, values in extremes.items():
+                for value in values if isinstance(values, list) else [values]:
+                    unused = dict(base_parameters)
+                    unused[key] = value
+                    children.append(_as_child(unused, study_sintering_config))
 
     return children
 

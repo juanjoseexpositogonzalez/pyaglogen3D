@@ -159,11 +159,6 @@ def check_flat_keys(parameters: Mapping[str, Any], *, swept: bool) -> None:
                 f"unknown sintering key '{key}'. The worker reads only: "
                 f"{', '.join(sorted(FLAT_KEYS))}"
             )
-        if swept and isinstance(value, list) and not value:
-            raise ValueError(
-                f"sintering key '{key}' is swept with an empty list, so the "
-                "expansion would produce no child at all"
-            )
         if swept and not isinstance(value, list):
             raise ValueError(
                 f"sintering key '{key}' is swept here, so it must be a list, got "

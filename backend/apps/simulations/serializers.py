@@ -10,7 +10,7 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .expansion_preview import check_children, preview_children
+from .expansion_preview import GridShapeError, check_children, preview_children
 from .fields import DistributionField
 from .sintering_shape import (
     check_algorithm_scope,
@@ -424,6 +424,16 @@ class ParametricStudySerializer(serializers.ModelSerializer):
 
     def validate(self, data: dict) -> dict:  # noqa: C901
         """Cross-field validation for parameter_grid entries + batch size."""
+        # A mistyped container used to be coerced to {} here and then reach the
+        # expansion unchanged, which raised on the original value once the
+        # study row already existed.
+        for field in ("base_parameters", "parameter_grid", "limiting_cases_config"):
+            value = data.get(field)
+            if value is not None and not isinstance(value, dict):
+                raise serializers.ValidationError(
+                    {field: f"must be an object, got {type(value).__name__}"}
+                )
+
         grid = data.get("parameter_grid") or {}
         allowed_dist_types = ("fixed", "uniform", "normal")
         valid_seed_types = {
@@ -555,8 +565,10 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 max_children=self._BATCH_HARD_CAP,
             )
             check_children(children)
+        except GridShapeError as exc:
+            raise serializers.ValidationError({"parameter_grid": str(exc)}) from exc
         except ValueError as exc:
-            raise serializers.ValidationError({"base_parameters": str(exc)}) from exc
+            raise serializers.ValidationError({"non_field_errors": str(exc)}) from exc
 
         # --- Allow-list by algorithm, over the seven surfaces at once (R11) ---
         # The rule is evaluated over the study **as it will be after this

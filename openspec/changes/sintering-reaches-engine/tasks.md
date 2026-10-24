@@ -751,10 +751,17 @@
   media expansión ahora revienta **antes de escribir** y es un 400 con cero filas. Eso incluye
   los tres caminos que esta misma entrada había derivado al contrato de seguimiento
   (`n_particles` escalar y no numérico, y el `int()` sin guarda de `views.py:1878-1880`, que
-  dejaba +1 estudio, +8 simulaciones y 8 tareas) y, sobre todo, **la exención que el propio
-  contrato declara no cerrada**: dos dicts en `parameter_grid.sintering_config` junto a casos
-  límite, el `sorted` de `utils.py:182`. Hoy da 400 sin escribir nada. El texto de la spec no se
-  toca —no se cambia el contrato por el camino—: queda dicho aquí que su exención ha dejado de
-  ser necesaria. El seguimiento baja de seis puntos a tres.
+  dejaba +1 estudio, +8 simulaciones y 8 tareas). El seguimiento baja de seis puntos a tres.
+  **Y aquí escribí algo falso que la ronda 4 me tumbó, así que queda corregido en el sitio.**
+  Afirmé que el dry run «cerraba» la exención del contrato —dos dicts en
+  `parameter_grid.sintering_config` con casos límite, el `sorted` de `utils.py:182`— porque
+  pasaba de 500 a 400 sin escribir filas. **Confundí «ya no revienta» con «ya se acepta»**: un
+  400 sigue siendo un rechazo, y R3 exige **aceptar** ese array. Peor, lo clavé con un test que
+  fijaba ese 400 como deseable: un test que protege un defecto. Y bloqueaba de paso
+  `kf_distribution` y `particle_radius_config` con dos entradas, que no son sinterizado.
+  Cerrado de verdad en la ronda 4: `generate_limiting_cases` **salta** los valores que no sabe
+  ordenar —un dict no tiene orden, así que esa clave no aporta caso de frontera— en vez de
+  romper la expansión. Esos estudios se crean con 201. El test falso, retirado; en su lugar hay
+  uno de aceptación por cada una de las dos claves.
   Tamaño: **552 líneas**, muy por encima del techo de 400. El PR abrió con **195** y creció por
   la revisión adversarial, no por alcance. Excepción declarada en la issue #97.
