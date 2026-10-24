@@ -336,6 +336,56 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L13 — La partición en siete trozos dejaba código inerte; rehecha en cinco (2026-10-24)
+
+Al preparar la revisión adversarial de la partición anuncié como riesgo lo que ya era un
+defecto: **los trozos 4 y 5 metían en `develop` código que nada ejecutaba**. El rail y la barra
+superior entraban como ficheros sin montar, y solo el trozo 6 los conectaba. Entre un merge y el
+siguiente, `develop` contenía componentes muertos.
+
+La persona zanjó el criterio: **el código inerte se elimina o se hace ejecutar.** No hay tercera
+opción, y «lo monta el PR siguiente» no es hacerlo ejecutar.
+
+Se evaluaron tres particiones:
+
+| opción | primer trozo del shell | código inerte | código intermedio desechable |
+| --- | --- | --- | --- |
+| A — el shell como unidad | 1.215 | no | no |
+| B — shell incremental | ~790 | no | **sí**: `AppShell` mínimo, reescrito después |
+| C — la de siete trozos | 605 | **sí, en dos trozos** | no |
+
+Primero estimé el trozo 4 de B en ~600 y la persona decidió sobre esa cifra. **La estimación era
+falsa**: omitía que montar el shell arrastra el guard de rutas públicas, el contexto, el
+breadcrumb y sus tests. El número real era ~790. Corregida la estimación, la decisión cambió a
+**A**, y por el argumento correcto: B evita el código inerte pero lo sustituye por código
+intermedio que nadie revisa y que el PR siguiente reescribe.
+
+**Por qué el shell no baja de 1.215.** Montar un shell exige simultáneamente algo que montar
+(`Sidebar`, `TopBar`), dónde montarlo (`layout.tsx`) y que el header ceda. Separar cualquiera de
+los tres produce, o un componente sin ejecutar, o dos navegaciones a la vez. El límite de 400-500
+líneas **no sobrevive aquí**, y es mejor decirlo que fingir un corte que no existe.
+
+**Cadena resultante** (cada trozo ejecuta desde su propio merge):
+
+| trozo | rama | líneas | qué hace al mergearse |
+| --- | --- | --- | --- |
+| 1 | `feature/rd-1-theme-core` | 225 | el tema resuelve |
+| 2 | `feature/rd-2-theme-store` | 212 | persiste y no parpadea |
+| 3 | `feature/rd-3-theme-graph` | 113 | el grafo lo sigue |
+| 4 | `feature/rd-4-shell` | 1.215 | el shell navega |
+| 5 | `feature/rd-5-close` | 261 | contrato y Log |
+
+**Verificación de que la refundición no perdió ni duplicó nada**: `git diff` del árbol de
+`rd-4-shell` contra el antiguo `rd-6-appshell` y de `rd-5-close` contra `rd-7-close` → **ambos
+vacíos**. Los árboles son idénticos, de modo que la verificación ya corrida sobre los antiguos
+vale sin repetirse: build **0**, **780** y **782** tests en serie, `type-check` **13**.
+
+**Lección.** Troceé optimizando el tamaño del diff, que es lo que mide un límite de líneas, en
+vez del estado del repositorio después de cada merge, que es lo que de verdad importa. Las dos
+métricas se contradicen cuando una pieza es indivisible, y entonces gana el estado del
+repositorio. Es la segunda vez en este change que una comprobación mide lo cómodo en lugar de lo
+que promete.
+
 ### L12 — Pasada fresca: el crítico seguía vivo y la corrección creó una regresión (2026-10-23)
 
 **Cuarta ronda consecutiva en la que corregir produce un defecto nuevo.**
