@@ -698,7 +698,8 @@
   Lección, y es la misma que este Log lleva repitiendo: **añadir validación a una ruta común es
   más peligroso que el defecto que arregla**. Tres de los cuatro problemas de esta ronda los
   introdujo el arreglo anterior, no el código original.
-  Gates finales: `pytest` 15 failed / **1346** passed / 31 errors; `ruff` **296**; `mypy`
+  Gates finales, ya con el dry run: `pytest` 15 failed / **1362** passed / 31 errors; `ruff`
+  **296**; `mypy`
   **1727 en 132**, con los ficheros tocados aportando **0** errores propios. **T5.3 ya no es
   trivial** — T5 cambia código de producción en la validación por la que pasan todos los
   estudios— así que se midió comparando **los nombres** de los 46 fallos y errores
