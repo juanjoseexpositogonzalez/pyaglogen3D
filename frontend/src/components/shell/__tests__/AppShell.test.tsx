@@ -153,6 +153,32 @@ describe('AppShell', () => {
   })
 })
 
+describe('the legacy Header inside the shell', () => {
+  it('renders nothing, so no route shows two navigations', () => {
+    // Eighteen files still import Header. Rather than edit pages belonging to
+    // later waves, it yields to the shell.
+    //
+    // Counting navigations named "Main" would not catch this: Header's own
+    // <nav> carries no such name, so a duplicated navigation would be
+    // invisible to that assertion. The brand mark is what both render.
+    pathname.current = '/dashboard'
+    render(
+      <AppShell>
+        <Header />
+        <p>page body</p>
+      </AppShell>,
+    )
+    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
+    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
+  })
+
+  it('still renders on its own, outside the shell', () => {
+    pathname.current = '/dashboard'
+    render(<Header />)
+    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
+  })
+})
+
 describe('the off-canvas drawer', () => {
   function openDrawer() {
     pathname.current = '/dashboard'
@@ -237,32 +263,6 @@ describe('the theme control', () => {
     fireEvent.click(screen.getByRole('radio', { name: 'Dark' }))
     expect(document.documentElement.dataset.theme).toBe('dark')
     delete document.documentElement.dataset.theme
-  })
-})
-
-describe('the legacy Header inside the shell', () => {
-  it('renders nothing, so no route shows two navigations', () => {
-    // Eighteen files still import Header. Rather than edit pages belonging to
-    // later waves, it yields to the shell.
-    //
-    // Counting navigations named "Main" would not catch this: Header's own
-    // <nav> carries no such name, so a duplicated navigation would be
-    // invisible to that assertion. The brand mark is what both render.
-    pathname.current = '/dashboard'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
-    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
-  })
-
-  it('still renders on its own, outside the shell', () => {
-    pathname.current = '/dashboard'
-    render(<Header />)
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
   })
 })
 
