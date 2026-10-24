@@ -91,6 +91,18 @@
     --visual-caption-background: rgba(7, 21, 29, 0.77);
     --visual-grid: #d7e8ec;
 
+    /* ── navigation rail: dark in both themes, like the visualisation canvas.
+       The rail is chrome, not content: it stays dark so the light page reads
+       as the working surface. Declared as tokens because R1 forbids a colour
+       literal in the files this change creates, the shell included. ──────── */
+    --rail: #102b3d;
+    --rail-ink: #d9e6ef;
+    --rail-ink-muted: #a9becb;
+    --rail-ink-faint: #8fa8b8;
+    --rail-accent: #8be0e4;
+    --rail-active: rgba(133, 214, 225, 0.15);
+    --rail-scrim: rgba(16, 43, 61, 0.45);
+
     /* ── tonal panel gradients ─────────────────────────────────────────── */
     --card-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.88), rgba(237, 247, 246, 0.72));
     --panel-gradient-teal: linear-gradient(155deg, #ffffff 0%, #f8fbfd 100%);
@@ -188,6 +200,18 @@
     --visual-border: rgba(231, 239, 233, 0.1);
     --visual-caption-background: rgba(7, 21, 29, 0.77);
     --visual-grid: #1d3b47;
+
+    /* ── navigation rail: dark in both themes, like the visualisation canvas.
+       The rail is chrome, not content: it stays dark so the light page reads
+       as the working surface. Declared as tokens because R1 forbids a colour
+       literal in the files this change creates, the shell included. ──────── */
+    --rail: #102b3d;
+    --rail-ink: #d9e6ef;
+    --rail-ink-muted: #a9becb;
+    --rail-ink-faint: #8fa8b8;
+    --rail-accent: #8be0e4;
+    --rail-active: rgba(133, 214, 225, 0.15);
+    --rail-scrim: rgba(16, 43, 61, 0.45);
 
     --card-gradient: linear-gradient(145deg, rgba(255, 255, 255, 0.07), rgba(255, 255, 255, 0.03));
     --panel-gradient-teal: linear-gradient(155deg, #112c38 0%, #0e2631 100%);
