@@ -782,33 +782,60 @@
   fijado en un test, y se dice aquí en vez de cambiarlo en silencio.
   Cerrados además: una base incompleta ya no se cuela tras un barrido vacío (si la expansión no
   produce ningún hijo, la base es la única forma del estudio y se valida), y las superficies 6 y
-  7 exigen **listas** igual que el grid, porque `generate_limiting_cases` itera el valor y un
-  dict desnudo se iteraba sobre sus propias claves: los hijos acababan guardando
-  `kf_distribution: "mode"`.
-  **JD-A-004, decidido en vez de tragado**: el `except TypeError` se comía *cualquier* fallo de
-  orden. Ahora sólo se saltan los valores con forma de objeto —un orden sobre ellos no es
-  ambiguo, es inexistente— y una lista mixta como `[100, "200"]` se **reporta**: sus hijos
-  correrían, pero los casos límite que el usuario pidió desaparecerían en silencio, y R3 exige
-  rechazo explícito, nunca un default callado. Es seguro reportarlo porque el preview lo levanta
-  **antes de la primera escritura**.
+  7 exigen **listas** para sus claves de sinterizado.
+  **Dos reglas que este párrafo afirmaba se revirtieron en la ronda 6, y el párrafo siguió
+  diciendo lo contrario hasta que un juez lo leyó contra el código.** Corregido aquí, no
+  reescrito en silencio:
+  - La exigencia de listas cubre **sólo las claves de sinterizado**. Rechazar un `packing` o un
+    `kf_distribution` es autoridad que R3 y R12 no dan a este contrato.
+  - La lista mixta `[100, "200"]` **no se reporta**: se acepta, sus hijos corren, y lo que esa
+    clave pierde son sus casos de frontera. Rechazarla rompía estudios que funcionan, y la
+    guarda podía desactivarse con `include_boundaries`.
+  **Lo que ese límite de alcance deja abierto, medido y derivado**: un `theoretical_extremes`
+  con `{"target_df": {"mode": "fixed", "value": 1.8}}` entra con **201** y crea hijos que
+  guardan `target_df: "mode"` y `target_df: "value"`; el worker recibe esas cadenas y lanza.
+  Hijos que no pueden completarse nunca, en un estudio marcado RUNNING. No es un ajuste de
+  sinterizado, así que este contrato no lo cierra — pero **es el mismo daño**, y el contrato de
+  seguimiento tiene que existir para que no sea permanente.
   Y una contradicción entre dos tests míos, encontrada al corregir: el del barrido vacío usaba
   una base incompleta, así que afirmaba a la vez que eso se acepta y que se rechaza. Reescrito
   con una base completa, y la guarda que le había debilitado vive ahora en su propio test
   nombrando la clave que falta.
   Gates de la ronda 5: `pytest` 15 failed / **1372** passed / 31 errors, con los nombres de los
-  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**. Un juez midió después
-  que esa suma no cuadra con los tests colectados en ese commit por **uno**: la cifra se
-  tomó con un fichero de probe temporal en el árbol. Queda dicho en vez de ajustado, porque
-  el número corregible sería el de la ronda, y lo que importa es cómo se tomó.
-  **Tamaño: la cifra de este registro ha mentido dos veces, así que deja de vivir aquí.**
-  Historia: el PR abrió con 195 líneas, la excepción de #97 declaró **552**, y esa cifra se
-  quedó congelada tres commits mientras el PR crecía. La corrigió un juez a **1440**; dos
-  commits después un segundo juez demostró que **esa corrección también estaba vieja**. Medido
-  en `f236e1e`: **1647 líneas** (1622 inserciones y 25 borrados) contra la base de merge
-  `c264715`.
-  La lección es de método, no de aritmética: **una cifra que describe el trabajo envejece a
-  cada commit, y ningún gate la vigila**. Así que la fuente de verdad del tamaño es la propia
-  página del PR, que se recalcula sola, y aquí queda sólo la razón del crecimiento: **ninguna
-  línea viene de alcance nuevo**; todas vienen de defectos hallados en revisión adversarial, y
-  una parte sustancial, de defectos que introduje al arreglar los anteriores. La excepción de
-  tamaño sigue pendiente de decisión de la persona en la issue.
+  46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
+  **Esa suma no cuadra con los tests colectados en ese commit, y mi primera explicación era
+  falsa**: dije que se había medido con un fichero de probe en el árbol, y un juez demostró que
+  un probe sólo puede **añadir** tests, nunca restar. **No sé de dónde sale el desajuste de
+  uno.** Decirlo es mejor que inventar una causa plausible: una explicación que no se sostiene
+  es peor que un número sin explicar, porque cierra la pregunta.
+  **Ronda 7: ningún CRITICAL, y por primera vez un juez confirma que el arreglo anterior queda
+  fijado** — mover la proyección base fuera del `try` rompe exactamente su test, y borrarla
+  rompe dos. Lo que sí trajo la ronda:
+  - **El predicado de alcance no era el del módulo.** Escribí `startswith("sintering")`, así que
+    gobernaba una clave `sintering` pelada y dejaba pasar `sinterfoo`. Ninguna de las dos es un
+    ajuste de sinterizado para `check_flat_keys`. Corregido al mismo predicado que usa el resto
+    (`sintering_config` o prefijo `sintering_`), con un test de las tres claves.
+  - **`theoretical_extremes` vacío daba ocho hijos.** Mi guarda de tipo sólo saltaba con valores
+    *truthy*, y el serializer colapsa los falsy a `{}` antes, así que pedir **ningún** extremo
+    caía en el mapa por defecto del servidor. Ahora mira el valor crudo.
+  - **Mi justificación para revertir el rechazo de listas mixtas no generalizaba.** Dije «esos
+    hijos corren» y es cierto **sólo para `n_particles`**, el único de `INTEGER_PARAMS`: un
+    `target_df: [1.8, "abc"]` guarda la cadena y el binding del engine la rechaza.
+  **Dos huecos derivados pasan a fijarse como `xfail(strict=True)`, no como 201 deseable.** Un
+  test que afirma el 201 de un defecto obliga a quien lo arregle a editar una aserción que
+  pasaba; un `xfail` estricto falla hoy a propósito y **avisa el día que alguien lo cierre**.
+  Son el `target_df` mixto y el extremo no-sinterizado que guarda nombres de clave.
+  **Derivados nuevos, medidos**: `parameter_grid={"seed_type": [["monomers"]]}` da **500** por
+  un `in` contra un conjunto con valor inhashable, y un PATCH sobre una fila antigua cuyo
+  `theoretical_extremes` no sea un objeto también. Preexistentes, fuera de R12, y van al
+  contrato de seguimiento en vez de arreglarse estirando éste — que es justo lo que las rondas
+  4 a 6 castigaron.
+  Gates de la ronda 7: `pytest` 15 failed / **1383** passed / 31 errors **y 2 xfailed**, con los
+  nombres de los 46 preexistentes idénticos; `ruff` **296**; `mypy` **1727 en 132**.
+  **Tamaño: aquí ya no hay cifra, porque esta es la tercera que envejece.** Se escribió una,
+  se quedó fija mientras el PR crecía, la corrigió un juez, y la corrección nació vieja; al
+  reescribir el párrafo puse otra y también estaba desfasada en el commit que la publicaba.
+  La fuente de verdad es la página del PR, que se recalcula sola. Lo único que no cambia, y es
+  lo que importa: **ninguna línea viene de alcance nuevo** — todas vienen de defectos hallados
+  en revisión adversarial, y una parte sustancial de defectos que introduje al arreglar los
+  anteriores. La excepción de tamaño sigue pendiente de decisión de la persona en la issue.

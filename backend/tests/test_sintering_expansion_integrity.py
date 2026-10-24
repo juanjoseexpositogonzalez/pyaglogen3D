@@ -907,13 +907,21 @@ def test_r12_a_non_list_sintering_value_on_the_extremes_surface_is_rejected(
     assert dispatch.delay.call_count == 0
 
 
-def test_r12_a_non_sintering_extreme_keeps_working_as_it_did(
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Derived to the follow-up contract: a non-sintering key swept with a "
+        "bare object stores key names in its children. R3 and R12 govern "
+        "sintering settings, so this contract has no authority to close it - "
+        "but pinning the 201 as desired would make a future fix edit a passing "
+        "assertion, so what is asserted here is the behaviour that should "
+        "exist. It fails today on purpose, and the day someone fixes it this "
+        "test says so."
+    ),
+)
+def test_r12_a_non_sintering_extreme_should_not_store_key_names(
     api_client: APIClient, project: Project
 ) -> None:
-    """The boundary of that scope, pinned so the next reader sees it is a
-    decision and not an oversight: this payload still produces children whose
-    `kf_distribution` carries key names, and it is derived, not closed here.
-    """
     resp = _post(
         api_client,
         project,
@@ -923,7 +931,68 @@ def test_r12_a_non_sintering_extreme_keeps_working_as_it_did(
         },
     )
 
-    assert resp.status_code == 201, resp.data
+    if resp.status_code == 201:
+        study = ParametricStudy.objects.get(id=resp.data["id"])
+        garbage = [
+            child.name
+            for child in study.simulations.all()
+            if child.parameters.get("kf_distribution") in {"mode", "value"}
+        ]
+        assert not garbage, garbage
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason=(
+        "Derived with the one above. Reverting my rejection of unorderable "
+        "grid lists was right for `n_particles`, whose children run because "
+        "`create_simulation` casts them - a judge showed the argument does not "
+        "generalise: a mixed `target_df` stores a string the engine binding "
+        "cannot take."
+    ),
+)
+def test_r12_a_mixed_target_df_grid_should_not_store_a_string(
+    api_client: APIClient, project: Project
+) -> None:
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={"target_df": [1.8, "abc"]},
+        include_limiting_cases=True,
+    )
+
+    if resp.status_code == 201:
+        study = ParametricStudy.objects.get(id=resp.data["id"])
+        strings = [
+            child.name
+            for child in study.simulations.all()
+            if isinstance(child.parameters.get("target_df"), str)
+        ]
+        assert not strings, strings
+
+
+def test_r12_the_scope_predicate_matches_the_rest_of_the_module(
+    api_client: APIClient, project: Project
+) -> None:
+    """`startswith("sintering")` governed a bare `sintering` key and let
+    `sinterfoo` through. Neither is a sintering setting for `check_flat_keys`,
+    so the rule now uses the same predicate it does."""
+    for key in ("sintering", "sinterfoo"):
+        resp = _post(
+            api_client,
+            project,
+            include_limiting_cases=True,
+            limiting_cases_config={"theoretical_extremes": {key: {"a": 1}}},
+        )
+        assert resp.status_code == 201, f"{key}: {resp.data}"
+
+    real_key = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": {"sintering_coeff": 0.7}},
+    )
+    assert real_key.status_code == 400, real_key.data
 
 
 def test_r12_the_server_side_default_extremes_are_still_accepted(
@@ -1118,4 +1187,21 @@ def test_r12_a_non_mapping_extremes_map_is_rejected(
     assert dispatch.delay.call_count == 0
 
 
+def test_r12_an_empty_extremes_map_means_none_not_the_server_defaults(
+    api_client: APIClient, project: Project
+) -> None:
+    """The type guard only fired for truthy values, because the serializer
+    collapses a falsy one to {} before it. So `theoretical_extremes: []` -
+    a user asking for no extremes - fell through to the server's own map and
+    produced eight children it never asked for.
+    """
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": []},
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "theoretical_extremes" in str(resp.data), resp.data
 

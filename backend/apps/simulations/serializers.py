@@ -498,12 +498,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # value (the extremes loop in `generate_limiting_cases`), so a bare object is iterated over its own
         # keys and its children end up storing key names. The grid carries the
         # same requirement for the same reason.
-        if extremes and not isinstance(extremes, dict):
+        raw_extremes = limiting.get("theoretical_extremes")
+        if raw_extremes is not None and not isinstance(raw_extremes, dict):
             raise serializers.ValidationError(
                 {
                     "limiting_cases_config.theoretical_extremes": (
                         "must be an object mapping parameter names to the "
-                        f"values to sweep, got {type(extremes).__name__}"
+                        f"values to sweep, got {type(raw_extremes).__name__}"
                     )
                 }
             )
@@ -515,7 +516,11 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # that goes to the follow-up contract rather than being fixed by
         # stretching this one.
         for key, swept in extremes.items():
-            if not key.startswith("sintering"):
+            # The same predicate the rest of the module uses: the flat keys are
+            # `sintering_*` and the dict one is `sintering_config`. Matching on
+            # the bare prefix governed `sintering` while letting `sinterfoo`
+            # through, which is the same overreach in both directions.
+            if key != "sintering_config" and not key.startswith("sintering_"):
                 continue
             if not isinstance(swept, list):
                 raise serializers.ValidationError(
