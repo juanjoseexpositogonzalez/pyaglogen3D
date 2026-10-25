@@ -1,3 +1,36 @@
+### sintering-reaches-engine (unreleased)
+
+Makes batch sintering actually reach the engine (SDD `sintering-reaches-engine`, issue #97,
+AGLO-10). A batch study could ask for sintering and run with **none at all**, silently, answering
+`201`. Four independent defects produced that same ending, and all four are now closed.
+
+### Fixed
+
+- **The declared mean reaches the engine (D5)** — a `normal` distribution's mean travelled in
+  `sintering_mean`, a key nothing read, so the binding always received the `1.0` default, which
+  means *no sintering*. The mean now travels in `sintering_coeff`, verified against the real
+  engine binding: a child asked for `0.8` receives `0.8`, and the resulting geometry differs
+  (2.0000 unsintered vs 1.2162 sintered).
+- **One translation of the form's shape (D2)** — the batch form sent `{mode, mean, std}` while
+  the backend expects `{distribution_type, …}`; the mismatch fell back to `fixed / 1.0`.
+  `frontend/src/lib/sinteringShape.ts` now owns that translation in one place.
+- **Seven input surfaces are validated before anything is written (D5b)** — including the two
+  that are copied verbatim into each child. Validation runs the real generators as a dry run, so
+  it cannot drift from what expansion actually does.
+- **Sintering is offered only to the algorithms that consume it (D6)** — allow-list enforced on
+  the API (POST and PATCH) and mirrored in the form, with a drift test that reads the backend
+  constant.
+
+### ⚠️ Action required: re-check earlier batch results
+
+**Any batch study run with `normal` sintering before this change executed without sintering.**
+Those numbers are valid as unsintered aggregates but do not answer the question they were asked;
+they need re-running. Affected children are identifiable without recomputation: they still carry
+the `sintering_mean` key in their `parameters`. The in-app warning is tracked in issue #131.
+
+Thirteen further defects measured along the way are derived to issue #115, two of them pinned in
+the suite as `xfail(strict=True)` so they report the day someone fixes them.
+
 ### cc-tunable-bc-alignment (unreleased)
 
 Aligns the 3D box-counting estimator's fit-window bias (Cycle 3.2, SDD `cc-tunable-bc-alignment`,
