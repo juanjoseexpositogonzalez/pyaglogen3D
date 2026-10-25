@@ -24,6 +24,12 @@ views read as `sim.parameters[grid key]` and which R5.2 requires, **and**
 *adding* the engine name, never replacing the grid key: removing it empties a column in
 `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` and `varyingParams`.
 
+One inherited scenario title contradicts its own body and cannot be renamed here: `R1.2 — Scalar
+shorthand normalized to fixed` now requires a 400, because a bare scalar has never been
+normalised (measured: `Distribution config must be a dict.`). The title survives because a
+MODIFIED block may not drop a scenario, and renaming it needs its own change. It is said here, in
+the requirement body, because a note written inside a scenario never reaches `requirement.text`.
+
 #### Scenario R1.1 — Happy path: two normal distributions expand correctly
 
 - GIVEN `parameter_grid = {kf_distribution: [{mode:"normal",mean:1.2,std:0.05},{mode:"normal",mean:1.3,std:0.05}]}` and `seeds_per_combination = 2`
@@ -137,9 +143,13 @@ silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out 
 (`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
 object. Not all of them used to answer `201`: on the two parity grid keys — the only two that
 reach the shared distribution validator — `std < 0` and `min > max` were already refused. On the
-other ten surfaces there was no distribution validation at all, so even those answered `201`. The ones that did answer `201` and produced a simulation ignoring what was
-asked are `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max`, and the
-identical-behaviour promise never covered those.
+other ten surfaces there was no distribution validation at all, so even those answered `201`. Those that did answer `201` and produced a simulation ignoring what was
+asked include `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max` on the parity
+keys, and — on the ten surfaces with no validation at all — **every** malformed shape, the
+unknown `mode` among them: measured, `parameter_grid.target_kf_distribution = [{mode:"lognormal",
+value:1.8}]` answers `201` and reaches the engine with no kwargs, so the simulation runs at the
+default. The identical-behaviour promise never covered any of them, which is what R7.4 and
+R13.1, R13.5 and R13.7 carve out.
 
 There is a third group, larger than the two above: a config that is **well formed** is still
 refused when the study's algorithm does not consume it, which R13 fixes as an allow-list. For
@@ -223,8 +233,8 @@ For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
 `sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff."
 input, rendered by `BatchSimulationForm` and sent by `handleSubmit` as
-`base_parameters.sintering_coeff` whenever it holds a usable number — never when it is empty,
-which R10.6 makes the required behaviour. Both are
+`base_parameters.sintering_coeff` whenever it holds a usable number — and never as `null` or `NaN` when it is
+empty, which is what R10.6 fixes. Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
 

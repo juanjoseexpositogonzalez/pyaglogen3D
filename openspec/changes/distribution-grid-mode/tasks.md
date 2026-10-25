@@ -1,10 +1,9 @@
 # Tasks: distribution-grid-mode
 
-> Estado del contrato: **redactado; siete spec-reviews ciegas pasadas (5, 4, 4, 2, 2, 2 y 2
-> CRITICAL), todas reparadas; en cinco de ellas parte de los CRITICAL los introdujeron mis
+> Estado del contrato: **redactado; nueve spec-reviews ciegas pasadas (5, 4, 4, 2, 2, 2, 2, 0 y 1
+> CRITICAL), todas reparadas; en seis de las nueve parte de los hallazgos los introdujeron mis
 > propias reparaciones;
-> pendiente de una octava sobre el diff de la última reparación y de la aprobación de la
-> persona**.
+> pendiente de la aprobación de la persona**.
 > El gate es una issue de GitHub con `status:approved`. **No se escribe código de producción
 > hasta que exista.**
 >
@@ -86,6 +85,9 @@
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
+- [ ] T3.8 **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
+  `DistributionSelector` ya soporta, así que el borde rojo y el mensaje no se pintan. O se
+  implementa la validación por campo, o se acota R8.4 a lo que el componente hace.
 - [ ] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
   carve-out de distribuciones), hoy sin tarea propia.
 - [ ] T2.4b **Re-apuntar las seis sondas que hoy fijan el estado anterior** y que se pondrán en
@@ -116,7 +118,9 @@
 - [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
   produce `target_kf_used` distinto del 1.3 por defecto.
 - [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
-- [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica; entrega en Jira y cierre
+- [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
+  `<!-- Last sync: ... -->`, que `openspec archive` NO reescribe** y hoy sigue nombrando al
+  contrato de sinterizado; entrega en Jira y cierre
   manual de la issue.
 - [ ] T4.5 **Cada PR de la cadena dice en su cuerpo qué parte de la delta todavía NO es cierta**,
   y el Log lo registra. Entre merges, `develop` sostiene un contrato que describe el estado
@@ -262,6 +266,11 @@ allí, y leer la canónica resultante**. Es la única comprobación que mira el 
 de la forma. Verificado así tras la reparación: R10 con ocho escenarios —R10.8 dentro— y R13 con
 once.
 
+**L21 — Y otra aserción mía que no podía fallar.** En el diagnóstico de D7 puse la comprobación
+**dentro** del `try`, y el `except Exception` se tragaba el `AssertionError`. Escribí la lección
+L18 —«20 passed incluía once tests que no podían fallar»— y en el mismo commit dejé una que
+tampoco podía. Ahora el `except` captura solo los tipos que la expansión lanzaba.
+
 **L22 — Y la reparación de L21 tampoco se aplicó: la escribí como hecha sin comprobarla.** La
 séptima revisión encontró que `_report` seguía dentro del `try`. **Tercera vez el mismo día**:
 las dos ediciones del cuerpo de #141 y la tarea T2.4b tampoco habían casado, y las tres las di
@@ -270,8 +279,3 @@ queda igual y el script informa de éxito. Desde aquí toda edición falla ruido
 ancla no está, y la primera vez que lo apliqué paró en seco en un ancla inventada. Es la misma
 lección del guarda del índice (#130): **una comprobación que solo puede pasar no es una
 comprobación.**
-
-**L21 — Y otra aserción mía que no podía fallar.** En el diagnóstico de D7 puse la comprobación
-**dentro** del `try`, y el `except Exception` se tragaba el `AssertionError`. Escribí la lección
-L18 —«20 passed incluía once tests que no podían fallar»— y en el mismo commit dejé una que
-tampoco podía. Ahora el `except` captura solo los tipos que la expansión lanzaba.

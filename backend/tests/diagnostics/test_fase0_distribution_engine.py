@@ -199,7 +199,7 @@ def _post(client: APIClient, project: Project, **overrides: Any) -> Any:
     )
 
 
-def _kwargs_reaching_engine(child_id: Any) -> dict[str, Any]:
+def _kwargs_reaching_engine(child_id: Any) -> dict[str, Any] | None:
     with patch("aglogen_core.run_tunable_cc") as engine:
         engine.return_value = MagicMock(
             coordinates=np.zeros((1, 3)),
