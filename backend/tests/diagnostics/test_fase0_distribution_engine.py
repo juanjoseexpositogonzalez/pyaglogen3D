@@ -116,7 +116,9 @@ def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:
             **ENGINE_BASE, dpo_mode="uniform", dpo_min=2.0, dpo_max=1.0
         )
     raised = excinfo.value
-    print(f"\n[panic] {type(raised).__name__}, es Exception: {isinstance(raised, Exception)}")
+    print(
+        f"\n[panic] {type(raised).__name__}, es Exception: {isinstance(raised, Exception)}"
+    )
     assert not isinstance(raised, Exception), (
         "the panic became an ordinary Exception; the worker guard would now catch it"
     )
@@ -162,13 +164,26 @@ def _post(client: APIClient, project: Project, **overrides: Any) -> Any:
 def _kwargs_reaching_engine(child_id: Any) -> dict[str, Any]:
     with patch("aglogen_core.run_tunable_cc") as engine:
         engine.return_value = MagicMock(
-            coordinates=np.zeros((1, 3)), radii=np.ones(1), fractal_dimension=2.0,
-            fractal_dimension_std=0.0, radius_of_gyration=1.0, prefactor=1.3,
-            coordination_mean=0.0, coordination_std=0.0, porosity=0.0,
-            execution_time_ms=1, seed=1, dpo_used=1.0, target_kf_used=1.3,
-            anisotropy=0.0, asphericity=0.0, acylindricity=0.0,
-            principal_moments=[1.0, 1.0, 1.0], principal_axes=np.eye(3),
-            rg_evolution=[], merge_trace=[],
+            coordinates=np.zeros((1, 3)),
+            radii=np.ones(1),
+            fractal_dimension=2.0,
+            fractal_dimension_std=0.0,
+            radius_of_gyration=1.0,
+            prefactor=1.3,
+            coordination_mean=0.0,
+            coordination_std=0.0,
+            porosity=0.0,
+            execution_time_ms=1,
+            seed=1,
+            dpo_used=1.0,
+            target_kf_used=1.3,
+            anisotropy=0.0,
+            asphericity=0.0,
+            acylindricity=0.0,
+            principal_moments=[1.0, 1.0, 1.0],
+            principal_axes=np.eye(3),
+            rg_evolution=[],
+            merge_trace=[],
         )
         try:
             run_simulation_task(str(child_id))
@@ -183,13 +198,32 @@ def _kwargs_reaching_engine(child_id: Any) -> dict[str, Any]:
 @pytest.mark.parametrize(
     ("door", "overrides"),
     [
-        ("puerta A: parameter_grid.target_kf_distribution",
-         {"parameter_grid": {"target_kf_distribution": [{"mode": "fixed", "value": 1.8}]}}),
-        ("puerta A invalida: {'mode':'lognormal'}",
-         {"parameter_grid": {"target_kf_distribution": [{"mode": "lognormal", "value": 1.8}]}}),
-        ("puerta B: base_parameters.target_kf_distribution",
-         {"base_parameters": {"n_particles": 60, "target_df": 2.0,
-                              "target_kf_distribution": {"mode": "fixed", "value": 1.8}}}),
+        (
+            "puerta A: parameter_grid.target_kf_distribution",
+            {
+                "parameter_grid": {
+                    "target_kf_distribution": [{"mode": "fixed", "value": 1.8}]
+                }
+            },
+        ),
+        (
+            "puerta A invalida: {'mode':'lognormal'}",
+            {
+                "parameter_grid": {
+                    "target_kf_distribution": [{"mode": "lognormal", "value": 1.8}]
+                }
+            },
+        ),
+        (
+            "puerta B: base_parameters.target_kf_distribution",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf_distribution": {"mode": "fixed", "value": 1.8},
+                }
+            },
+        ),
     ],
 )
 def test_undocumented_doors(

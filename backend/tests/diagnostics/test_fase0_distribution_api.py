@@ -63,17 +63,23 @@ def _report(name: str, resp: Any) -> None:
 # --- D1: ¿la forma {mode} sigue dando 400 en las otras dos rejillas? -------
 
 
-def test_d1_kf_distribution_selector_shape(api_client: APIClient, project: Project) -> None:
+def test_d1_kf_distribution_selector_shape(
+    api_client: APIClient, project: Project
+) -> None:
     resp = _post(
-        api_client, project,
+        api_client,
+        project,
         parameter_grid={"kf_distribution": [{"mode": "fixed", "value": 1.5}]},
     )
     _report("D1 kf_distribution {mode}", resp)
 
 
-def test_d1_particle_radius_selector_shape(api_client: APIClient, project: Project) -> None:
+def test_d1_particle_radius_selector_shape(
+    api_client: APIClient, project: Project
+) -> None:
     resp = _post(
-        api_client, project,
+        api_client,
+        project,
         parameter_grid={"particle_radius_config": [{"mode": "fixed", "value": 10.0}]},
     )
     _report("D1 particle_radius_config {mode}", resp)
@@ -81,14 +87,19 @@ def test_d1_particle_radius_selector_shape(api_client: APIClient, project: Proje
 
 def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -> None:
     resp = _post(
-        api_client, project,
-        parameter_grid={"kf_distribution": [{"distribution_type": "fixed", "value": 1.5}]},
+        api_client,
+        project,
+        parameter_grid={
+            "kf_distribution": [{"distribution_type": "fixed", "value": 1.5}]
+        },
     )
     _report("D1 kf_distribution {distribution_type}", resp)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         for child in study.simulations.all():
-            print(f"    hijo: kf_distribution={child.parameters.get('kf_distribution')!r}")
+            print(
+                f"    hijo: kf_distribution={child.parameters.get('kf_distribution')!r}"
+            )
 
 
 # --- #115 punto 1: objeto desnudo barrido en extremos teoricos -------------
@@ -98,7 +109,8 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
     api_client: APIClient, project: Project
 ) -> None:
     resp = _post(
-        api_client, project,
+        api_client,
+        project,
         include_limiting_cases=True,
         limiting_cases_config={
             "theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.5}}
@@ -123,7 +135,9 @@ def test_p115_2_mixed_type_grid_list(api_client: APIClient, project: Project) ->
     _report("#115.2 grid de tipos mezclados", resp)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
-        print(f"    valores: {[c.parameters.get('target_df') for c in study.simulations.all()]}")
+        print(
+            f"    valores: {[c.parameters.get('target_df') for c in study.simulations.all()]}"
+        )
 
 
 # --- #115 punto 4: 500 con valor inhashable --------------------------------
@@ -140,10 +154,13 @@ def test_p115_4_unhashable_seed_type(api_client: APIClient, project: Project) ->
 # --- D7: casos limite + dicts -> sorted() sobre dicts ----------------------
 
 
-def test_d7_limiting_cases_with_dict_grid(api_client: APIClient, project: Project) -> None:
+def test_d7_limiting_cases_with_dict_grid(
+    api_client: APIClient, project: Project
+) -> None:
     try:
         resp = _post(
-            api_client, project,
+            api_client,
+            project,
             include_limiting_cases=True,
             parameter_grid={
                 "kf_distribution": [
@@ -162,8 +179,11 @@ def test_d7_limiting_cases_with_dict_grid(api_client: APIClient, project: Projec
 
 def test_canon_r1_type_key(api_client: APIClient, project: Project) -> None:
     """R1 documenta `{type: "fixed", value}`. El codigo exige distribution_type."""
-    resp = _post(api_client, project,
-                 parameter_grid={"kf_distribution": [{"type": "fixed", "value": 1.5}]})
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={"kf_distribution": [{"type": "fixed", "value": 1.5}]},
+    )
     _report("canon R1 {type}", resp)
 
 
@@ -175,13 +195,27 @@ def test_canon_r1_2_scalar_shorthand(api_client: APIClient, project: Project) ->
 
 def test_canon_r2_3_fixed_mean_key(api_client: APIClient, project: Project) -> None:
     """R2.3: particle_radius_config usa la clave `mean`, no `value`."""
-    resp = _post(api_client, project,
-                 parameter_grid={"particle_radius_config": [{"distribution_type": "fixed", "mean": 1.5}]})
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "particle_radius_config": [{"distribution_type": "fixed", "mean": 1.5}]
+        },
+    )
     _report("canon R2.3 {fixed, mean}", resp)
 
 
-def test_canon_r2_2_std_over_mean_limit(api_client: APIClient, project: Project) -> None:
+def test_canon_r2_2_std_over_mean_limit(
+    api_client: APIClient, project: Project
+) -> None:
     """R2.2: std/mean > 0.3 se rechaza."""
-    resp = _post(api_client, project,
-                 parameter_grid={"particle_radius_config": [{"distribution_type": "normal", "mean": 1.0, "std": 0.5}]})
+    resp = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "particle_radius_config": [
+                {"distribution_type": "normal", "mean": 1.0, "std": 0.5}
+            ]
+        },
+    )
     _report("canon R2.2 std/mean=0.5", resp)
