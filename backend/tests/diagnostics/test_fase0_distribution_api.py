@@ -5,8 +5,6 @@ the sintering contract changed the serializer underneath it, so every
 claim in section 7.2 is re-measured against today's code before anything
 is locked into a contract.
 
-Run: cd backend && python -m pytest \
-       ../openspec/changes/distribution-grid-wiring/diagnostics/fase0_probe.py -q -s
 """
 
 from __future__ import annotations

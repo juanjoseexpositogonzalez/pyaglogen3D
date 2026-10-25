@@ -39,25 +39,31 @@
 
 ## T2 — Backend: validar lo que hoy pasa en silencio (lo urgente)
 
-- [ ] T2.1 `mode` desconocido → 400 en las cuatro superficies de R13 (dos rejillas con nombre de
-  engine y las mismas dos en `base_parameters`).
+- [ ] T2.1 `mode` desconocido → 400 en las **cinco** superficies de R13 (las dos de paridad, las
+  dos con nombre de engine, las mismas en `base_parameters`, y las barridas por
+  `theoretical_extremes`). Incluye `uniform` invertido y config que no es objeto.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
 - [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
   `dpo_distribution`. Ojo: **dos sitios expanden**, `create_simulation` y
   `expansion_preview._as_child`; si divergen, la validación previa valida una forma que la ruta
   real nunca escribe.
-- [ ] T2.4 Los tres tests de expansión que hoy afirman lo contrario
-  (`test_kf_distribution_passes_through`, `test_particle_radius_config_passes_through`,
-  `test_all_four_keys_expand_correctly`) se invierten **a conciencia**, con su motivo en el Log.
+- [ ] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
+  `test_particle_radius_config_passes_through`, `test_all_four_keys_expand_correctly`) **se
+  extienden, no se invierten**: lo que afirman —que el hijo conserva la clave de rejilla— es
+  justo lo que R5.2 y R13.3 exigen que siga siendo verdad. Lo que cambia es la grafía (`mode`) y
+  que además aparezca el nombre de engine. Ojo con el tercero: mezcla `kf_distribution`, que pasa
+  a `mode`, con `sintering_config`, que sigue en `distribution_type`.
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
-- [ ] T3.1 Testigo del **valor**, no de la columna: `fractal_analysis_summary`, `export_csv` y
-  `formatConfigLabel` leen `sim.parameters[clave de rejilla]`. Un testigo de «conserva la
-  columna» pasa con la columna vacía.
+- [ ] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
+  `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`. La cuarta se
+  me había caído al reescribir el contrato, y el §5 del mapa sí la listaba.
 - [ ] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
   ejecución (T0.5).
-- [ ] T3.3 `radius_max` deja de ofrecerse para `tunable_cc` (T0.6, R13.4).
+- [ ] ~~T3.3 `radius_max` deja de ofrecerse~~ **RETIRADA**: el formulario batch no lo ofrece, así
+  que el testigo habría pasado antes del cambio. La medición (el engine lo ignora) vale para el
+  formulario de simulación individual, declarado fuera de alcance.
 
 ## T4 — Verificación y cierre
 
@@ -83,3 +89,25 @@ tiene que medir **en** esa frontera.
 **L3 — Lo urgente se invirtió al medir.** Entré creyendo que el problema eran las dos rejillas
 rotas; dan 400, que es visible. El problema de verdad es la puerta que **funciona a medias**:
 acepta un `mode` que su traductor no entiende y corre con el valor por defecto sin decir nada.
+
+**L4 — La segunda spec-review encontró cinco CRITICAL, y uno era mi propia duda.** Pregunté
+expresamente si prometer en tareas el carve-out de R7 era un defecto del contrato que se
+aprobaría. Lo era: una delta que contradice un requisito en vigor convierte la aprobación en la
+aprobación de una promesa incumplida. Ahora R7 lleva su carve-out **dentro**, con los tres casos
+que pasan de 201 a 400.
+
+**L5 — «El único fallo silencioso vivo» era falso, y lo desmentía mi propio diagnóstico.** La
+ronda 1 mide que un objeto desnudo barrido por `theoretical_extremes` guarda `'mode'` y
+`'value'` **como valores**. Escribí «único» sin releer la evidencia que yo mismo había dejado
+versionada dos días antes.
+
+**L6 — Y la evidencia volvía a no correr, por tercera vez.** `python_files = ["test_*.py"]`:
+el comando que publiqué en la issue y en el PR, `pytest tests/diagnostics/`, colectaba **cero**.
+Los diagnósticos ahora se llaman `test_*.py`, los recoge la suite ordinaria (19) y sus
+mediciones son **aserciones**, no prints: si `target_kf_used` deja de llegar o el panic deja de
+ser `BaseException`, algo falla en rojo.
+
+**L7 — Un bloque MODIFIED debe reproducir todos los escenarios del canónico.** La herramienta
+rechaza omitir uno, así que el título falso de R1.2 («Scalar shorthand normalized to fixed», que
+nunca fue cierto) **se hereda por obligación**. Queda una NOTA dentro del escenario para que la
+contradicción sea visible en vez de silenciosa; renombrarlo necesita su propio change.

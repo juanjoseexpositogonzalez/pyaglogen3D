@@ -44,23 +44,36 @@ ignora** para `tunable_cc`: `radius_min=0.5, radius_max=2.0` da `dpo_used=0.5000
 ## What Changes
 
 1. **Se valida la puerta que hoy funciona sin validar.** Un `mode` desconocido en
-   `target_kf_distribution` o `dpo_distribution` —en rejilla o en `base_parameters`— devuelve
-   400 en vez de correr con el valor por defecto. Esto cierra el único fallo silencioso vivo de
-   esta superficie.
+   `target_kf_distribution` o `dpo_distribution` —en rejilla, en `base_parameters` o barrido por
+   `theoretical_extremes`— devuelve 400 en vez de correr con el valor por defecto. También el
+   `uniform` invertido (`min >= max`), que hoy entra con 201 y **revienta el worker con un
+   `PanicException` de Rust**: deriva de `BaseException`, así que escapa a los `except Exception`
+   que envuelven el encolado.
+
+   No es «el único fallo silencioso»: el mismo contrato deja fuera, **declarándolo**, la ruta de
+   simulación individual, que acepta estas distribuciones para algoritmos cuyo worker nunca las
+   lee (`dla`, `cca`, `fracval`, `gcca`, `box_rfa`). Es la misma familia y es real; ampliarlo
+   hasta ahí es lo que mató al contrato anterior.
 2. **Las claves de paridad aceptan la forma de la interfaz (`mode`) y se traducen** a los nombres
    que el worker lee, en el mismo sitio que ya traduce el resto de la expansión.
-3. **El `parameter_grid` del estudio conserva su clave y su valor**, porque las tres vistas de
-   resultados leen `sim.parameters[clave de rejilla]`: `fractal_analysis_summary`, `export_csv` y
-   `formatConfigLabel`. Un testigo que solo compruebe «conserva la columna» pasa con la columna
-   vacía, así que el testigo comprueba **el valor**.
+3. **El hijo guarda los DOS nombres**: la clave de rejilla, que leen **cuatro** vistas de
+   resultados (`fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`),
+   y el nombre que traduce el worker. Traducir es **añadir**, nunca sustituir: quitar la clave de
+   rejilla vacía una columna en las cuatro. Un testigo que solo compruebe «conserva la columna»
+   pasa con la columna vacía, así que el testigo comprueba **el valor**.
 4. **R7 recibe su carve-out**, como hizo #97: cada 400 nuevo se declara, en vez de contradecir la
    promesa de comportamiento idéntico.
-5. **La etiqueta deja de mentir**: «variación del radio por ejecución», no «polidispersidad». Y
-   `radius_max` deja de ofrecerse para `tunable_cc`, donde no hace nada.
+5. **La etiqueta deja de mentir**: R10 pasa a exigir «variación por ejecución del tamaño de
+   partícula primaria», no «polidispersidad», porque es lo que el engine entrega.
 
 ### Fuera de alcance, dicho para que nadie lo asuma
 
 - **Unificar `mode` y `distribution_type`** entre esta superficie y el sinterizado: tercer contrato.
 - **Polidispersidad real por partícula** en `tunable_cc`: es trabajo de engine, no de cableado.
 - **La puerta del asistente IA** (ORM directo, sin validación): `study-expansion-single-source`.
+- **`radius_max`**: medido que el engine lo ignora en `tunable_cc`, pero **el formulario batch no
+  lo ofrece**; quien lo promete es el formulario de simulación individual, que este contrato no
+  toca. La medición queda registrada para quien lo coja.
+- **La ruta de simulación individual** con distribuciones declaradas para algoritmos que no las
+  leen: misma familia, otra superficie, declarada arriba.
 - **El `onError` de la página batch** (#115 punto 6): sigue sin dueño.
