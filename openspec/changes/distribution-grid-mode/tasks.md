@@ -1,6 +1,8 @@
 # Tasks: distribution-grid-mode
 
-> Estado del contrato: **redactado, pendiente de spec-review y de aprobación de la persona**.
+> Estado del contrato: **redactado; tres spec-reviews pasadas (5, 4 y 4 CRITICAL), reparadas;
+> pendiente de una cuarta sobre el diff de la última reparación y de la aprobación de la
+> persona**.
 > El gate es una issue de GitHub con `status:approved`. **No se escribe código de producción
 > hasta que exista.**
 >
@@ -27,12 +29,13 @@
 
 ## T1 — Spec-review (agente fresco, antes de pedir aprobación)
 
-- [ ] T1.1 R8 y R10 canónicos: R8.4 documenta la grafía `type`. Con la convergencia a `mode`
+- [x] T1.1 R8 y R10 canónicos: **resuelto**, ambos entran como MODIFIED. R8.4 pasa de `type` a
+  `mode`; R10 cambia la etiqueta y añade R10.7. Original: R8 y R10 canónicos: R8.4 documenta la grafía `type`. Con la convergencia a `mode`
   queda desalineado; entra como MODIFIED o se declara fuera con motivo.
-- [ ] T1.2 Títulos de escenario de los bloques MODIFIED **verbatim** contra los canónicos.
+- [x] T1.2 Títulos de escenario de los bloques MODIFIED **verbatim** contra los canónicos.
 - [ ] T1.3 R5.2 canónico exige hoy que el hijo guarde `kf_distribution = d1`. Comprobar que R1 y
   R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
-- [ ] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
+- [x] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
   escenario: un MODIFIED reemplaza el requisito completo (ver L9).
 - [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
   `normal`, y la API acepta `uniform`.
@@ -50,6 +53,13 @@
 - [ ] T2.1a Los rangos no son cosmética: `kf_value=-1` y `kf uniform` invertido **revientan el
   worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
   Exception`. La simulación se queda en `RUNNING` para siempre.
+- [ ] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
+  magnitud, gana la rejilla (R13.9), y lo mismo para el par `particle_radius_config` /
+  `base_parameters.dpo_distribution`. Hoy **no** es así: `create_simulation` parte de
+  `dict(base_parameters)` y el worker acaba leyendo el valor de base.
+- [ ] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
+  descartan: las dos claves de paridad en `base_parameters` y las dos barridas por
+  `theoretical_extremes` (R13.10).
 - [ ] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
   estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
@@ -157,3 +167,25 @@ retirado; el escenario seguía en la delta. Tachar la tarea no borra el requisit
 **L11 — Y el cuerpo de la issue seguía citando un fichero renombrado.** Cuarta vez con la misma
 lección, ahora en el artefacto que la persona aprueba. Corregir el comentario no corrige el
 cuerpo: el gate apunta al cuerpo.
+
+**L12 — Tercera revisión: cuatro CRITICAL, dos míos otra vez, y los dos por sobrecorregir L9.**
+Reparando el borrado de prosa, extraje el bloque canónico de R7 **empezando en su segunda
+línea**: desapareció la premisa «cuando la rejilla no incluye ninguna de las cuatro claves», y lo
+que quedaba se puede leer al revés. Y en R10 restauré la etiqueta exacta
+`"Particle radius (polydispersity)"` **en el mismo requisito donde prohíbo esa palabra**: dos
+MUST opuestos sobre el mismo string.
+
+La lección no es «ten más cuidado». Es que **una reparación es código nuevo y no viene revisada
+por ser una reparación**. Tres rondas seguidas: 5 CRITICAL, 4 (dos míos), 4 (dos míos).
+
+**L13 — La posición de la prosa decide si existe.** Un párrafo colocado después de un escenario
+se absorbe en el `rawText` de ese escenario y **desaparece de `requirement.text`**: el carve-out
+de distribuciones de R7 y la prohibición de etiqueta de R10 estaban escritos y eran invisibles
+para `openspec show --json`, que es lo que lee el consumidor y lo que acaba en la canónica. Es la
+misma familia que la regla 4 de AGENTS.md. La prosa normativa va **antes del primer escenario**,
+y se comprueba con el parser, no con los ojos.
+
+**L14 — Cuatro de doce superficies se aceptaban y se descartaban.** R13 decía «entregar o
+rechazar» y solo había regla de entrega para las entradas de rejilla. Las dos claves de paridad
+en `base_parameters` y las dos barridas quedaban aceptadas y perdidas, que es la familia exacta
+que mató a los dos contratos anteriores.

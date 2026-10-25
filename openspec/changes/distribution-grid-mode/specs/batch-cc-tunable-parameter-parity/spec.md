@@ -16,8 +16,9 @@ the engine as nothing at all.
 | `{mode: "normal", mean, std}` | `mean > 0`, `std > 0` |
 | `{mode: "uniform", min, max}` | `min > 0`, `min < max` |
 
-Task expansion MUST produce one child sim per config entry x `seeds_per_combination`, and each
-child MUST carry the configuration under **both** names: `kf_distribution`, which four result
+Task expansion MUST produce one child sim per config entry x `seeds_per_combination`. Each
+child's params MUST include the distribution object **verbatim** (the engine samples it per
+#633), never normalised or rewritten, and MUST carry it under **both** names: `kf_distribution`, which four result
 views read as `sim.parameters[grid key]` and which R5.2 requires, **and**
 `target_kf_distribution`, which the worker translates for the engine. Translation here means
 *adding* the engine name, never replacing the grid key: removing it empties a column in
@@ -58,7 +59,7 @@ views read as `sim.parameters[grid key]` and which R5.2 requires, **and**
 
 - GIVEN `parameter_grid = {kf_distribution: [{mode:"uniform", min:1.5, max:1.0}]}`
 - WHEN the serializer validates
-- THEN a 400 response
+- THEN a 400 response whose message names the `min < max` constraint, not the discriminator
 
 #### Scenario R1.6 — An unknown mode is refused, not defaulted
 
@@ -114,6 +115,8 @@ on the same terms as R1.
 - AND the engine call for that child receives `dpo_mode="fixed"` and `dpo_value=1.5`
 
 ### Requirement: R7 — Backward Compatibility
+
+When `parameter_grid` includes none of the four keys added by the parity change
 (`kf_distribution`, `particle_radius_config`, `sintering_config`, `seed_type`), behavior MUST be
 IDENTICAL to before that change.
 
@@ -127,6 +130,17 @@ reach the engine as `1.0`.
 One more narrowing belongs in this list, recorded at archive time: a **study-level**
 `sintering_config = {distribution_type:"fixed"}` with no `coefficient` used to be accepted and
 defaulted; it now returns 400, because a setting that says nothing is not a setting.
+
+This change adds a second group of rejections, on top of the sintering ones above. A study is
+also refused when it declares a `kf` or primary-size distribution that used to be accepted and
+silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out of range
+(`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
+object. Each used to answer `201` and produce a simulation that ignored what was asked, so the
+identical-behaviour promise never covered them.
+
+A well-formed config in `base_parameters.kf_distribution` or
+`base_parameters.particle_radius_config` is **not** refused: R13 requires it to be delivered to
+the engine instead, which is why those surfaces are not in this list.
 
 #### Scenario R7.1 — Old grid with only scalar keys
 
@@ -147,29 +161,47 @@ defaulted; it now returns 400, because a setting that says nothing is not a sett
 - **THEN** 400, even though the grid contains none of the four added keys
 - **AND** `sintering_config = {distribution_type:"fixed", value:0.9}` also yields 400, although that is the payload canonical R3 documents
 
-This change adds a second group of rejections, on top of the sintering ones above. A study is
-now also refused when it declares a `kf` or primary-size distribution that used to be accepted
-and silently defaulted:
-
-- a `mode` outside `fixed`, `normal`, `uniform` — previously `201`, reaching the engine as no kwargs at all;
-- a config whose values are out of range (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) — previously `201`, and several of them panic the worker;
-- a config that is not an object — previously `201`, storing key names as values in the children.
-
-Each of those used to answer `201` and produce a simulation that ignored what was asked, so the
-identical-behaviour promise never covered them.
-
 #### Scenario R7.4 — The distribution carve-out is explicit
 
 - GIVEN `parameter_grid = {target_kf_distribution: [{mode:"lognormal", value:1.8}]}`, which contains none of the four parity keys
 - WHEN the serializer validates
-- THEN a 400 response, and R7's identical-behaviour promise does not apply to it
+- THEN a 400 response whose message names the accepted modes
+- AND R7's identical-behaviour promise does not apply to it
+
+### Requirement: R8 — Frontend: DistributionGridInput Component
+
+The system MUST provide a `DistributionGridInput` component that manages an array of distribution configs, embedding `DistributionSelector` per entry.
+
+#### Scenario R8.1 — Add entry
+
+- GIVEN a DistributionGridInput with 1 entry
+- WHEN the user clicks "+ Add distribution"
+- THEN a second DistributionSelector row appears
+
+#### Scenario R8.2 — Remove entry (min 1)
+
+- GIVEN a DistributionGridInput with 2 entries
+- WHEN the user clicks the trash icon on the first entry
+- THEN 1 entry remains
+
+#### Scenario R8.3 — Cannot remove last entry
+
+- GIVEN a DistributionGridInput with 1 entry
+- WHEN the user attempts to remove it
+- THEN the trash icon is disabled or hidden (min 1 required)
+
+#### Scenario R8.4 — Inline validation feedback
+
+- GIVEN a DistributionGridInput entry with `mode: "normal"` and `mean: -1`
+- WHEN the user blurs the mean field
+- THEN a red border and error message appear on that field
 
 ### Requirement: R10 — Frontend: Parameter-to-Vary Dropdown Extension
 
 The existing dropdown in `BatchSimulationForm.tsx` MUST gain 4 new options:
 
 - "kf distribution (normal/uniform/fixed)"
-- "Particle radius (polydispersity)"
+- "Particle radius (per-run variation)"
 - "Sintering coefficient distribution" — **only for the algorithms that consume sintering**
   (R11): `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `tunable_cc`
 - "Seed type (monomer/dimer/trimer)"
@@ -190,6 +222,11 @@ The `sintering_config` payload MUST be sent in R3's dict shape, not in the selec
 When the selected algorithm changes, any configured variation the new algorithm does not accept
 MUST be cleared or flagged, so the form cannot submit a payload R11 rejects without telling the
 user why.
+
+`particle_radius_config` MUST NOT be labelled polydispersity. The engine samples it once per run
+and every particle of that run shares the sampled value, so the label names per-run variation of
+the primary particle size. This replaces the label the previous version of this requirement
+fixed; keeping both would leave two opposite MUSTs about the same string.
 
 #### Scenario R10.1 — Selecting kf distribution shows DistributionGridInput
 
@@ -229,10 +266,6 @@ user why.
 - **THEN** the payload carries no `sintering_coeff`, or a valid one, never `null` or `NaN`
 - **AND** a `sintering_config` variation configured on `ballistic` is cleared or flagged when the user switches to `fracval`
 
-`particle_radius_config` MUST NOT be labelled polydispersity. The engine samples it once per run
-and every particle of that run shares the sampled value, so the honest label names per-run
-variation of the primary particle size.
-
 #### Scenario R10.7 — The primary size option does not promise polydispersity
 
 - GIVEN the batch form's parameter-to-vary dropdown
@@ -263,9 +296,9 @@ the engine as no kwargs at all, and the simulation silently runs with the defaul
 
 Range validation is part of delivering it, not a separate nicety, and it MUST match what
 `cc-tunable-aggregation` R11 and R12 already require of these same engine inputs: reject
-`value <= 0`, `std <= 0` for Normal, `min <= 0`, and `max <= min` for Uniform. Two of those are
-not cosmetic: measured against the real binding, `kf_mode="fixed", kf_value=-1.0` and
-`kf_mode="uniform", kf_min=2.0, kf_max=1.0` both raise a Rust `PanicException`, which derives
+`value <= 0`, `mean <= 0` and `std <= 0` for Normal, `min <= 0`, and `max <= min` for Uniform.
+Three of those are not cosmetic: measured against the real binding, `kf_mode="fixed", kf_value=-1.0`, `kf_mode="normal", kf_mean=-1.0`
+and `kf_mode="uniform", kf_min=2.0, kf_max=1.0` all raise a Rust `PanicException`, which derives
 from `BaseException` and escapes the worker's only outer `except Exception`, leaving the
 simulation stuck in `RUNNING`.
 
@@ -285,10 +318,18 @@ simulation stuck in `RUNNING`.
 
 #### Scenario R13.3 — The study keeps the value its result views read
 
-- GIVEN an accepted study declaring either parity grid key
+- GIVEN an accepted study declaring either parity grid key in the `mode` shape this change requires
 - WHEN its results are listed, summarised or exported
 - THEN the grid key is present in the study's `parameter_grid` with its configured values
 - AND each child exposes the configured value for that key, so a results column shows the configuration rather than an empty cell
+
+#### Scenario R13.10 — A parity key outside the grid is delivered, not discarded
+
+- GIVEN `base_parameters = {kf_distribution: {mode:"fixed", value:1.8}}` and a grid that does not mention it
+- WHEN the study is expanded
+- THEN every child carries it under `target_kf_distribution` as well, and the engine call receives `kf_mode="fixed", kf_value=1.8`
+- AND the same holds for `base_parameters.particle_radius_config`, and for both keys swept through `limiting_cases_config.theoretical_extremes`
+- AND no accepted surface of this requirement writes a configuration that no consumer reads
 
 #### Scenario R13.5 — The dpo surfaces are validated on the same terms
 
@@ -325,3 +366,10 @@ simulation stuck in `RUNNING`.
 - WHEN its children are expanded
 - THEN the grid entry wins for every child, because the grid is what the study is sweeping
 - AND that precedence is the same one R3 already fixes for the sintering equivalent
+
+#### Scenario R13.11 — The uniform option is submittable without a prior edit
+
+- GIVEN the batch form with `kf_distribution` selected and an entry switched to `uniform`
+- WHEN the form submits without the user editing the bounds
+- THEN the payload is accepted, because the selector does not emit `min == max` against a `min < max` rule
+- AND this is the property R10.5 already fixes for the sintering payload
