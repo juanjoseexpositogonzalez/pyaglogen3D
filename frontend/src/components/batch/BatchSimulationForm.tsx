@@ -11,7 +11,7 @@ import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
-import { consumesSintering, toSinteringConfig } from '@/lib/sinteringShape'
+import { consumesSintering, rejectsVariation, toSinteringConfig } from '@/lib/sinteringShape'
 import { Callout } from '@/components/kit/Callout'
 
 const limitingGeometryOptions = [
@@ -286,7 +286,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
         // Distribution grid values are objects, not scalars
         if (variation.distributionValues.length > 0) {
           // R10.5: sintering speaks its own shape. The other two grids keep
-          // the selector's, which is what their own contract expects.
+          // the selector's - NOT because it is right, but because translating
+          // them belongs to `distribution-grid-wiring`. A judge measured that
+          // the backend rejects `{mode, ...}` for them too, so choosing
+          // kf_distribution or particle_radius still produces an invisible
+          // 400. Recorded in issue #115, not fixed by stretching this task.
           parameterGrid[variation.name] =
             variation.name === 'sintering_config'
               ? variation.distributionValues.map(toSinteringConfig)
@@ -351,10 +355,20 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   // rejects with 400 - and the batch page shows no error, so the user saw a
   // button that did nothing.
   const handleAlgorithmChange = (next: SimulationAlgorithm) => {
-    const allowed = new Set(parameterOptionsFor(next).map((o) => o.value))
-    const dropped = variations.filter((v) => v.name && !allowed.has(v.name))
-    setVariations(variations.filter((v) => !v.name || allowed.has(v.name)))
-    setDroppedVariations(dropped.map((v) => v.name))
+    // The authority on what to clear is R11 - what the backend refuses - not
+    // which options this dropdown lists. Clearing by the dropdown deleted
+    // variations the server accepts (a flat sintering_coeff on ballistic,
+    // sticking_probability on tunable) and told the user they were rejected.
+    const labels = new Map(
+      [...parameterOptionsFor(next), ...parameterOptionsFor(algorithm)].map(
+        (o) => [o.value, o.label] as const,
+      ),
+    )
+    const rejected = (v: ParameterVariation) =>
+      Boolean(v.name) && rejectsVariation(next, v.name, v.distributionValues)
+    const dropped = variations.filter(rejected)
+    setVariations(variations.filter((v) => !rejected(v)))
+    setDroppedVariations(dropped.map((v) => labels.get(v.name) ?? v.name))
     setAlgorithm(next)
   }
 
@@ -403,9 +417,13 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               half of the rule and fail its sentence - the form must not submit
               something the backend rejects "without telling the user why". */}
           {droppedVariations.length > 0 && (
-            <Callout tone="warning" title="A variation no longer applies">
-              {`${droppedVariations.join(', ')} was removed because ${algorithm} does not accept it.`}
-            </Callout>
+            <div role="status" aria-live="polite">
+              <Callout tone="warning" title="A variation no longer applies">
+                {droppedVariations.length === 1
+                  ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
+                  : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
+              </Callout>
+            </div>
           )}
 
           {/* Base Parameters - conditional based on algorithm */}

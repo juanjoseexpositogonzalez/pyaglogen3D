@@ -140,8 +140,13 @@ describe('R10.6 — clearing a variation is not the same as hiding it', () => {
     // satisfy the payload half and fail the sentence.
     // Matching /fracval/i alone also hits the algorithm <option>; the notice
     // is the sentence, so that is what is asserted.
+    // The notice names what the user picked in the dropdown, not the API key:
+    // a judge pointed out that making people translate snake_case back to
+    // labels is its own small cruelty.
     expect(
-      screen.getByText(/sintering_config was removed because fracval/i),
+      screen.getByText(
+        /Sintering coefficient distribution was removed because fracval/i,
+      ),
     ).toBeDefined()
   })
 
@@ -159,5 +164,112 @@ describe('R10.6 — clearing a variation is not the same as hiding it', () => {
 
     expect(screen.queryByText(/no longer applies/i)).toBeNull()
   })
+})
+
+describe('R10.6 — what the new algorithm really rejects, not what the dropdown omits', () => {
+  it('keeps a flat sintering_coeff when moving from limiting to an algorithm that reads it', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    selectAlgorithm('limiting')
+    addVariation()
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'sintering_coeff' } })
+
+    selectAlgorithm('ballistic')
+
+    // The backend accepts a flat sintering_coeff sweep for ballistic. Clearing
+    // it deletes a configuration the server would have taken, and the notice
+    // that explains it says something false.
+    expect(screen.queryByText(/sintering_coeff was removed/i)).toBeNull()
+  })
+
+  it('keeps sticking_probability when moving to an algorithm whose dropdown omits it', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    selectAlgorithm('dla')
+    addVariation()
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'sticking_probability' } })
+
+    selectAlgorithm('tunable')
+
+    expect(screen.queryByText(/sticking_probability was removed/i)).toBeNull()
+  })
+
+  it('keeps a fixed sintering_config when moving to limiting, which accepts that shape', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    selectAlgorithm('ballistic')
+    addVariation()
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'sintering_config' } })
+
+    selectAlgorithm('limiting')
+
+    expect(screen.queryByText(/sintering_config was removed/i)).toBeNull()
+  })
+
+  it('still drops it for an algorithm that consumes no sintering at all', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    selectAlgorithm('ballistic')
+    addVariation()
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'sintering_config' } })
+
+    selectAlgorithm('gcca')
+
+    expect(
+      screen.getByText(
+        /Sintering coefficient distribution was removed because gcca/i,
+      ),
+    ).toBeDefined()
+  })
+})
+
+describe('R10.5 — the shape of every mode, not just the default', () => {
+  it('submits normal as mean and std, with no mode key', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+    selectAlgorithm('ballistic')
+    addVariation()
+
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], {
+      target: { value: 'sintering_config' },
+    })
+
+    // The distribution selector inside the grid: switch it to normal and set
+    // the scenario's own numbers. A judge mutated the translation to handle
+    // only `fixed` and every test stayed green, so this is the case that was
+    // missing: R10.5 names mean 0.8 and std 0.05 explicitly.
+    const modeSelect = screen.getAllByRole('combobox').pop() as HTMLSelectElement
+    fireEvent.change(modeSelect, { target: { value: 'normal' } })
+
+    const numbers = screen.getAllByRole('spinbutton')
+    fireEvent.change(numbers[numbers.length - 2], { target: { value: '0.8' } })
+    fireEvent.change(numbers[numbers.length - 1], { target: { value: '0.05' } })
+
+    submit()
+
+    const entry = onSubmit.mock.calls[0][0].parameter_grid.sintering_config[0]
+    expect(entry).toEqual({
+      distribution_type: 'normal',
+      mean: 0.8,
+      std: 0.05,
+    })
+  })
+})
+
+describe('the tests must notice if the algorithm never changed', () => {
+  it.each(['fracval', 'gcca', 'box_rfa', 'ballistic'])(
+    'actually selects %s',
+    (algorithm) => {
+      render(<BatchSimulationForm onSubmit={vi.fn()} />)
+      selectAlgorithm(algorithm)
+
+      // Without this, making an algorithm unselectable would leave the R10.4
+      // negatives green while the form silently submits base_algorithm ''.
+      expect((screen.getAllByRole('combobox')[0] as HTMLSelectElement).value).toBe(
+        algorithm,
+      )
+    },
+  )
 })
 

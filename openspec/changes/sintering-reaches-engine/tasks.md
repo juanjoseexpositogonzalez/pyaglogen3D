@@ -885,6 +885,29 @@
   diff queda en 116 y con `-w` en 114. La comprobación que lo caza es contrastar `git diff
   --stat` con `git diff -w --stat` **antes** de commitear; yo la hice después, al extrañarme
   la cifra. Un diff con 700 líneas de ruido no se revisa: se hojea.
+  **Judgment-day sobre T6: sin CRITICAL, y una regresión mía de las que no deja rastro.**
+  Mi limpieza al cambiar de algoritmo usaba como autoridad **el desplegable**, no R11. Resultado
+  medido: pasar de `limiting` a `ballistic` borraba un barrido de `sintering_coeff` que el
+  backend **sí acepta**, y de `dla` a `tunable` borraba `sticking_probability`, también
+  aceptado — y en ambos casos el aviso decía *«X does not accept it»*, que es **falso**. Borrar
+  en silencio lo que el servidor habría tomado es peor que no limpiar. Acotado a R11 con
+  `rejectsVariation`, con tres tests de supervivencia que estaban en rojo.
+  **El aviso, además, no servía a todo el mundo**: sin `aria-live`, quien usa lector de pantalla
+  perdía cada variación configurada sin enterarse — exactamente el «sin decirle al usuario por
+  qué» que R10.6 prohíbe, cumplido sólo para quien ve la pantalla. Ahora va en `role="status"`
+  con `aria-live`, nombra las **etiquetas** que el usuario eligió en vez de claves `snake_case`,
+  y concuerda en plural.
+  **Dos huecos de test que un juez demostró mutando el código**: traducir sólo `fixed` dejaba
+  los 19 verdes (el escenario de R10.5 con media 0.8 y desviación 0.05 no se enviaba nunca
+  desde el formulario), y los negativos de R10.4 seguían verdes si un algoritmo dejaba de ser
+  seleccionable, porque nada comprobaba que el `select` hubiera cambiado. Cerrados los dos.
+  **Y una copia a mano que nadie ataba**: `SINTERING_ALGORITHMS` del cliente replica la lista
+  del backend, y la deriva silenciosa es justo el fallo que T6 arregla. Hay ahora un test que
+  **lee la constante de `sintering_shape.py`** y compara los dos conjuntos.
+  **Corregido también un comentario mío que afirmaba un contrato inexistente**: escribí que
+  `kf_distribution` y `particle_radius_config` «mantienen la forma que su contrato espera», y
+  el backend las rechaza igual que rechazaba el sinterizado. No se arregla aquí —es de
+  `distribution-grid-wiring`— pero el comentario ya no lo bendice, y el caso queda en #115.
   Coordinación: la peer confirmó que `BatchSimulationForm.tsx` y la página batch son míos (los
   tenía reservados), y pidió aviso al mergear para arrancar su ola 2 desde un `develop` con
   esto dentro.

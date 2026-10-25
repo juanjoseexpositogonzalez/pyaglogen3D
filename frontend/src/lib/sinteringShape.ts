@@ -50,3 +50,33 @@ export const SINTERING_ALGORITHMS: readonly SimulationAlgorithm[] = [
 export function consumesSintering(algorithm: SimulationAlgorithm): boolean {
   return SINTERING_ALGORITHMS.includes(algorithm)
 }
+
+/** The variation names that carry a sintering setting into the payload. */
+const SINTERING_VARIATIONS = new Set(['sintering_config', 'sintering_coeff'])
+
+/**
+ * Does `algorithm` reject this configured variation?
+ *
+ * The authority is R11 — what the backend refuses — not which options the
+ * dropdown happens to list. Clearing by the dropdown deleted variations the
+ * server accepts: a flat `sintering_coeff` survives a move from `limiting` to
+ * `ballistic`, and `sticking_probability` is accepted by `tunable` even though
+ * neither is offered there. Deleting those is data loss, and saying "X does not
+ * accept it" about them is false.
+ */
+export function rejectsVariation(
+  algorithm: SimulationAlgorithm,
+  name: string,
+  values: DistributionValue[] = [],
+): boolean {
+  if (!SINTERING_VARIATIONS.has(name)) return false
+
+  // `limiting` reads the coefficient and ignores type, min, max and std, so it
+  // takes the fixed shape only (R11.5).
+  if (algorithm === 'limiting') {
+    return values.some((v) => v.mode !== 'fixed')
+  }
+
+  return !consumesSintering(algorithm)
+}
+
