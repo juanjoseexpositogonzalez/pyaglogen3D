@@ -65,6 +65,12 @@ def test_engine_kf_distribution_changes_the_run() -> None:
     assert declared.target_kf_used == pytest.approx(1.9, abs=1e-9), (
         "a declared kf no longer reaches the engine: the premise of this contract"
     )
+    # The contract and issue #141 cite this pair of prefactors as evidence, so the
+    # figure is asserted here rather than only printed: a number quoted in the gate
+    # artifact has to be reproducible by the command that artifact publishes.
+    print(f"[kf] prefactor {default.prefactor:.4f} -> {declared.prefactor:.4f}")
+    assert default.prefactor == pytest.approx(1.2204, abs=5e-4)
+    assert declared.prefactor == pytest.approx(1.0435, abs=5e-4)
 
 
 def test_engine_dpo_is_one_radius_per_run_not_polydispersity() -> None:

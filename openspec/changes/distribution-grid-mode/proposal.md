@@ -71,9 +71,13 @@ ignora** para `tunable_cc`: `radius_min=0.5, radius_max=2.0` da `dpo_used=0.5000
 - **Unificar `mode` y `distribution_type`** entre esta superficie y el sinterizado: tercer contrato.
 - **Polidispersidad real por partícula** en `tunable_cc`: es trabajo de engine, no de cableado.
 - **La puerta del asistente IA** (ORM directo, sin validación): `study-expansion-single-source`.
-- **`radius_max`**: medido que el engine lo ignora en `tunable_cc`, pero **el formulario batch no
-  lo ofrece**; quien lo promete es el formulario de simulación individual, que este contrato no
-  toca. La medición queda registrada para quien lo coja.
+- **`radius_max` y `radius_min`**: el engine ignora `radius_max` en `tunable_cc`, y el formulario
+  batch no ofrece ninguno de los dos. Pero el que sí tiene efecto es **`radius_min`**, y la API
+  batch lo acepta: `parameter_grid = {radius_min: [-1]}` entra con **201** y el hijo corre con
+  radio negativo (`dpo_used=-1.0`). Es la misma familia de fallo silencioso, sobre un escalar en
+  vez de sobre una config de distribución, así que R13 —escrita para configs— no lo alcanza.
+  **Queda fuera de alcance y dicho, no en silencio**: el silencio sobre superficies encontradas a
+  mitad de camino es lo que mató a los dos contratos anteriores.
 - **La ruta de simulación individual** con distribuciones declaradas para algoritmos que no las
   leen: misma familia, otra superficie, declarada arriba.
 - **El `onError` de la página batch** (#115 punto 6): sigue sin dueño.
