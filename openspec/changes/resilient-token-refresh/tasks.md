@@ -44,16 +44,16 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T3 — Un fallo deja de ser terminal (R4)
 
-- [ ] T3.1 Test primero: fallo con token ya rotado → relee almacenamiento, reintenta **una vez**
+- [x] T3.1 Test primero: fallo con token ya rotado → relee almacenamiento, reintenta **una vez**
       y **no** borra credenciales.
-- [ ] T3.2 Test primero: fallo llevando el token vigente → tras el reintento, cierra sesión.
-- [ ] T3.3 Test primero: error de red o 5xx al arrancar → **no** cierra sesión.
-- [ ] T3.4 Sustituir el `clearTokens()` incondicional de `auth-api.ts:124` por esa distinción.
-- [ ] T3.5 Aplicar la misma distinción en **los dos** manejadores de 401 de `api.ts`
+- [x] T3.2 Test primero: fallo llevando el token vigente → tras el reintento, cierra sesión.
+- [x] T3.3 Test primero: error de red o 5xx al arrancar → **no** cierra sesión.
+- [x] T3.4 Sustituir el `clearTokens()` incondicional de `auth-api.ts:124` por esa distinción.
+- [x] T3.5 Aplicar la misma distinción en **los dos** manejadores de 401 de `api.ts`
       (`:82`/`:89` y `:128`/`:133`). Arreglar uno solo deja el defecto vivo por el otro.
-- [ ] T3.6 Aplicarla también en `AuthContext.tsx` (`:58`, `:64`), que hoy borra credenciales
+- [x] T3.6 Aplicarla también en `AuthContext.tsx` (`:58`, `:64`), que hoy borra credenciales
       ante cualquier error del refresco o de la petición de identidad.
-- [ ] T3.7 Comprobar que el reintento está **acotado a uno**.
+- [x] T3.7 Comprobar que el reintento está **acotado a uno**.
 
 ## T4 — Cierre de sesión y visitante anónimo (R5, R6)
 
