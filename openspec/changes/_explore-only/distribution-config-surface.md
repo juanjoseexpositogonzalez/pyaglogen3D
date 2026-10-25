@@ -182,3 +182,46 @@ puerta de entrada (r3), y una tercera superficie de entrada más una segunda cap
 canónica más un consumidor de UI (r4). **Un contrato cuyo número de hallazgos deja de bajar y
 cuyos hallazgos cambian de "errata" a "superficie nueva" no necesita otra corrección: necesita
 otro mapa.** Este documento es ese mapa.
+
+---
+
+## 10. Correcciones medidas el 2026-10-25 (Fase 0 + spec-review del contrato refutado)
+
+Se redactó `distribution-grid-wiring` sobre este mapa, **se refutó antes de implementarse** y la
+issue se cerró (#136, AGLO-11). No se escribió código de producción. Lo que quedó medido, para
+que el siguiente intento no vuelva a pagarlo:
+
+**La tubería que llega al engine habla `mode`, no `distribution_type`.**
+`DistributionField.to_internal_value` discrimina por `mode`, y `expand_distribution_kwargs`
+—único lector del hijo— también: devuelve `{}` ante cualquier otra grafía, y el engine corre con
+el valor por defecto sin avisar. Un contrato que converja en `distribution_type` sin tocar esos
+dos sitios **reintroduce el fallo silencioso**. Decisión de la persona (2026-10-25): converger
+hacia `mode`, asumiendo que el sinterizado entregado en #97 habla `distribution_type` y que por
+tanto quedan **dos** formas hasta un tercer contrato.
+
+**D7 está cerrado**, no vigente: `add_case` en `utils.py` salta las listas con `Mapping` y
+captura el `TypeError` de `sorted()`.
+
+**D8 se sostiene, y la refutación que intenté era falsa.** `run_tunable_cc_internal` muestrea
+las distribuciones **una vez por corrida** y reescribe `radius_min`/`radius_max` con ese valor
+(`// monodisperse per run`). Que `random_radius` se llame por partícula no significa nada: recibe
+siempre la misma constante. **Leer una llamada no es medir su efecto.**
+
+**Hay dos puertas más que el §4 no listaba**, y hoy funcionan de punta a punta **sin validación**:
+`parameter_grid.target_kf_distribution` y `base_parameters.target_kf_distribution`, en forma
+`mode`. Son la única vía que hoy llega al engine, lo que rebaja la urgencia de las rejillas de
+paridad.
+
+**Los consumidores de resultados leen el VALOR, no solo la clave**: `fractal_analysis_summary`,
+`export_csv` y `formatConfigLabel` hacen `sim.parameters[clave de rejilla]`. Prohibir esa clave
+en el hijo les deja la columna vacía, y un testigo que compruebe «conserva su columna» **pasa
+igual**. Cualquier traducción necesita testigo del valor.
+
+**R7 exige carve-out para cada 400 nuevo** sobre rejillas sin claves de paridad, como hizo #97.
+Y el canónico **R8.4 documenta una tercera grafía** (`type`), así que la canónica entra en el
+alcance de cualquier unificación.
+
+**Diagnóstico re-ejecutable** de la parte medida por API:
+`backend/tests/diagnostics/fase0_distribution_grid_wiring.py`.
+No cubre el engine: ahí es donde se me coló D8.
+
