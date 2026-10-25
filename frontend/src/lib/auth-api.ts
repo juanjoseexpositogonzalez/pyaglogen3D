@@ -27,6 +27,36 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1
  */
 let refreshInFlight: Promise<{ access: string }> | null = null
 
+/**
+ * How long a caller waits for the shared refresh before giving up.
+ *
+ * Giving up is not cancelling: the request keeps running and the server may
+ * well rotate the token. That is deliberate: the answer, if it arrives, is
+ * stored, because discarding it would leave the client holding a credential
+ * the server has already replaced, and the next attempt would fail for good.
+ */
+export const REFRESH_TIMEOUT_MS = 10_000
+
+/** Rejects after the bound, leaving the underlying request to finish. */
+function withTimeout<T>(promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new AuthApiError('Token refresh timed out', 408)),
+      REFRESH_TIMEOUT_MS,
+    )
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
 class AuthApiError extends Error {
   constructor(
     message: string,
@@ -123,7 +153,7 @@ export const authApi = {
   async refreshToken(): Promise<{ access: string }> {
     // Callers that arrive while a refresh is running await that one rather
     // than presenting the same token again.
-    if (refreshInFlight) return refreshInFlight
+    if (refreshInFlight) return withTimeout(refreshInFlight)
 
     const run = (async () => {
       const refreshToken = tokenStorage.getRefreshToken()
@@ -153,6 +183,10 @@ export const authApi = {
       return data
     })()
 
+    // The slot holds the request itself, not the bounded wait: a caller whose
+    // wait expires must not take the request down with it, because the server
+    // may already have rotated the token.
+    //
     // Released whether it succeeds or fails. A slot that is never released
     // would leave the context unable to refresh again, which is a worse
     // failure than the one being fixed.
@@ -160,7 +194,7 @@ export const authApi = {
       refreshInFlight = null
     })
 
-    return refreshInFlight
+    return withTimeout(refreshInFlight)
   },
 
   /**
