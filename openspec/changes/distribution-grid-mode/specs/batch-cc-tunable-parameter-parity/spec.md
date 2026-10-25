@@ -135,8 +135,10 @@ This change adds a second group of rejections, on top of the sintering ones abov
 also refused when it declares a `kf` or primary-size distribution that used to be accepted and
 silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out of range
 (`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
-object. Each used to answer `201` and produce a simulation that ignored what was asked, so the
-identical-behaviour promise never covered them.
+object. Not all of them used to answer `201`: `std < 0` and `min > max` were already refused by
+the shared validator. The ones that did answer `201` and produced a simulation ignoring what was
+asked are `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max`, and the
+identical-behaviour promise never covered those.
 
 A well-formed config in `base_parameters.kf_distribution` or
 `base_parameters.particle_radius_config` is **not** refused: R13 requires it to be delivered to
@@ -283,13 +285,18 @@ surfaces are, exhaustively: `parameter_grid.kf_distribution` and
 `parameter_grid.dpo_distribution`; those four names inside `base_parameters`; and **all four**
 swept through `limiting_cases_config.theoretical_extremes`.
 
+These keys MUST be accepted only for an algorithm that consumes them, on the same terms R11
+already fixes for sintering. The worker expands `target_kf_distribution` and `dpo_distribution`
+into engine kwargs **only inside its `tunable_cc` branch**, and only `run_tunable_cc` declares
+`kf_mode`/`dpo_mode` in its signature, so for every other algorithm these keys are accepted,
+stored, and never read. A study whose algorithm does not consume them MUST be refused, and the
+batch form MUST NOT offer them there.
+
 One surface of the same family is deliberately left out, and this says so rather than leaving it
-to be discovered. The single-simulation serializer accepts `target_kf_distribution` and
-`dpo_distribution` for every algorithm, while the worker reads them only in its `tunable_cc`
-branch, so every other algorithm accepts and discards them. That is real and it is the same
-silent failure, but it belongs to the single-simulation path, not to batch expansion, and
-widening a contract mid-flight to cover a newly found surface is what killed this one's
-predecessor.
+to be discovered: the single-simulation serializer accepts the same two keys for every algorithm
+with the same result. That is real and it is the same silent failure, but it belongs to the
+single-simulation serializer, not to batch expansion, and widening a contract mid-flight to
+cover a newly found surface is what killed this one's predecessor.
 
 Storing a configuration whose `mode` the translator does not recognise is forbidden: it reaches
 the engine as no kwargs at all, and the simulation silently runs with the default.
@@ -325,7 +332,7 @@ simulation stuck in `RUNNING`.
 
 #### Scenario R13.10 — A parity key outside the grid is delivered, not discarded
 
-- GIVEN `base_parameters = {kf_distribution: {mode:"fixed", value:1.8}}` and a grid that does not mention it
+- GIVEN a `tunable_cc` study with `base_parameters = {kf_distribution: {mode:"fixed", value:1.8}}` and a grid that does not mention it
 - WHEN the study is expanded
 - THEN every child carries it under `target_kf_distribution` as well, and the engine call receives `kf_mode="fixed", kf_value=1.8`
 - AND the same holds for `base_parameters.particle_radius_config`, and for both keys swept through `limiting_cases_config.theoretical_extremes`
@@ -373,3 +380,10 @@ simulation stuck in `RUNNING`.
 - WHEN the form submits without the user editing the bounds
 - THEN the payload is accepted, because the selector does not emit `min == max` against a `min < max` rule
 - AND this is the property R10.5 already fixes for the sintering payload
+
+#### Scenario R13.12 — The keys are refused where the engine cannot receive them
+
+- GIVEN a study whose `base_algorithm` is `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `fracval`, `gcca` or `box_rfa`
+- WHEN it declares `kf_distribution`, `particle_radius_config`, `target_kf_distribution` or `dpo_distribution`, on any of the surfaces above
+- THEN a 400 response naming the algorithms that consume the key
+- AND the check runs on create and on update, so it cannot be bypassed by creating without the key and adding it afterwards
