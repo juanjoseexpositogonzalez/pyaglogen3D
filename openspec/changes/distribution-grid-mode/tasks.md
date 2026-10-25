@@ -73,6 +73,9 @@
 - [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
 - [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica; entrega en Jira y cierre
   manual de la issue.
+- [ ] T4.5 **Cada PR de la cadena dice en su cuerpo qué parte de la delta todavía NO es cierta**,
+  y el Log lo registra. Entre merges, `develop` sostiene un contrato que describe el estado
+  final: `openspec validate --strict` seguirá pasando, porque comprueba la forma, no la verdad.
 
 ## Log
 
@@ -111,3 +114,16 @@ ser `BaseException`, algo falla en rojo.
 rechaza omitir uno, así que el título falso de R1.2 («Scalar shorthand normalized to fixed», que
 nunca fue cierto) **se hereda por obligación**. Queda una NOTA dentro del escenario para que la
 contradicción sea visible en vez de silenciosa; renombrarlo necesita su propio change.
+
+**L8 — El riesgo de la cadena: entre merges, la delta miente, y la herramienta no lo nota.** Con
+tres PRs encadenados, `develop` sostiene desde el primero una delta que describe el estado final.
+Tras el PR 1, R1 ya promete que `parameter_grid.kf_distribution` acepta `{mode: …}`, y aún no es
+verdad; tras el PR 2, R10 todavía llama polidispersidad a lo que no lo es. `openspec validate
+--strict` pasa en todos esos puntos porque valida **forma**, no **verdad**, y el archive —que es
+donde la delta se vuelve canónica— ocurre solo al final.
+
+No es hipotético: este contrato existe porque una canónica afirmaba algo que el código no hacía,
+y el contrato anterior murió por creer a un documento antes que al código. Mitigación aceptada,
+sin inventar herramienta nueva: **T4.5**, cada PR declara en su cuerpo qué parte de la delta
+todavía no es cierta, y el Log lo registra. Es disciplina, no garantía; se dice para que la
+siguiente persona sepa que lo es.
