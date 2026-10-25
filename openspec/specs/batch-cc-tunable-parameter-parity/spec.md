@@ -1,4 +1,4 @@
-<!-- Last sync: 2026-05-13 from change batch-cc-tunable-parameter-parity -->
+<!-- Last sync: 2026-10-25 from change sintering-reaches-engine (R11, R12 added; R3, R7, R10 modified) -->
 
 # Spec: Batch CC Tunable — Parameter Grid Parity
 
@@ -100,7 +100,7 @@ not `value`.
 `parameter_grid.sintering_config` MUST be an **array** of such settings.
 
 Sintering also reaches a child as **flat scalars**, the shape the worker actually reads
-(`tasks.py:1592-1598`). Those MUST be validated too:
+(the sintering kwargs block of `run_simulation_task`). Those MUST be validated too:
 
 | `sintering_type` | Required keys | Validation |
 |---|---|---|
@@ -109,7 +109,7 @@ Sintering also reaches a child as **flat scalars**, the shape the worker actuall
 | `normal` | `sintering_coeff` (the mean), `sintering_std` | `0.5 <= sintering_coeff <= 1.0`, `0 < sintering_std <= 0.2` |
 
 A flat `sintering_coeff` with no `sintering_type` MUST be read as `fixed`: the batch form sends
-exactly that on every `limiting` submit (`BatchSimulationForm.tsx:220`), and rejecting it would
+exactly that on every `limiting` submit (the `limiting` payload built in `handleSubmit`), and rejecting it would
 break that algorithm's only sintering input. Any **flat** `sintering_*` key outside
 `{sintering_type, sintering_coeff, sintering_min, sintering_max, sintering_std}` MUST be
 rejected, in particular `sintering_mean`, which no consumer reads. The key `sintering_config`
@@ -129,8 +129,8 @@ be validated. Validation exists to return a useful 400 **before anything is writ
 | 7 | `limiting_cases_config.theoretical_extremes["sintering_config"]` | dict, swept | absent means no sintering |
 
 Surfaces 6 and 7 are the same user-supplied map, whose keys are written verbatim into each child
-(`utils.py:199-203`) and whose contents no validator inspects today. A **well-formed** dict swept
-there works today and MUST keep working; a malformed one — the `{mode, …}` shape the UI selector
+by `generate_limiting_cases`. Their contents MUST be validated before any write. A
+**well-formed** dict swept there MUST keep working; a malformed one — the `{mode, …}` shape the UI selector
 produces — MUST be rejected like any other.
 
 For the swept surfaces 5 and 6 the required-keys check applies to the child's **merged
@@ -138,19 +138,19 @@ projection** (base parameters plus the swept value), since the rest of the shape
 live in `base_parameters`; range and unknown-key checks apply per key, where they are written.
 
 **Precedence is unchanged by this contract.** On the path through `create_simulation`, any dict
-setting wins over any flat key regardless of where it came from, because `views.py:1804` pops
+setting wins over any flat key regardless of where it came from, because the `sintering_config` pop in `create_simulation` pops
 `sintering_config` from the merged parameters and `apply_sintering_config` then overwrites the
 flat keys; among dicts the order is grid, then `base_parameters`, then the study field.
 
 One path is exempt from that ordering and MUST stay that way: the sintering-extremes block
-(`views.py:1869-1906`) runs only when a study dict exists, yet deliberately does not call
+(the sintering-extremes block of `perform_create`) runs only when a study dict exists, yet deliberately does not call
 `apply_sintering_config`, so each child keeps the flat `sintering_coeff` that
 `generate_sintering_extreme_cases` wrote for it. A dict exists there and the flat key still
 wins. This contract validates these settings and reorders none of them.
 
 Being exempt from the ordering does **not** exempt that path from R11. Because it copies
-`base_parameters` verbatim (`utils.py:228`) and the `sintering_config` pop lives only in
-`create_simulation` (`views.py:1804`), its children today store a `sintering_config` dict that
+`base_parameters` verbatim in `generate_sintering_extreme_cases` and the `sintering_config` pop
+lives only in `create_simulation`, its children used to store a `sintering_config` dict that
 **contradicts** the coefficient they run at — surface 3 with `coefficient: 0.7` yields a child
 running the `0.5` extreme while storing `0.7`. That is a stored parameter that does not describe
 what ran, which is what this contract exists to close. R11.7 requires it removed.
@@ -160,7 +160,7 @@ unrecognised sintering setting and then apply defaults: the result would be a si
 declared parameters do not describe what ran. Any violation of the shape tables MUST produce 400.
 Additionally, `apply_sintering_config` MUST raise on a non-empty dict that violates the dict
 rules, including an unknown `distribution_type`, rather than passing it to the worker, where the
-engine falls through its default arm to `fixed(1.0)` (`lib.rs:600-604`).
+engine falls through its default arm to `fixed(1.0)` (`parse_sintering`).
 
 These settings are only valid for the algorithms R11 permits.
 
@@ -228,8 +228,8 @@ These settings are only valid for the algorithms R11 permits.
 - **WHEN** the serializer validates
 - **THEN** 400, and the same for `{"sintering_mean":[0.9]}` and `{"sintering_type":["lognormal"]}`
 - **AND** `{"sintering_coeff":[0.5, 0.9]}` is accepted for an algorithm R11 permits
-- **AND** a well-formed `{"sintering_config":[{distribution_type:"fixed", coefficient:0.8}]}` is accepted, as it is today, and its child runs at 0.8
-- **AND** a malformed `{"sintering_config":[{mode:"normal", mean:0.8, std:0.05}]}` yields 400, where today it returns 201 and the child runs at 1.0
+- **AND** a well-formed `{"sintering_config":[{distribution_type:"fixed", coefficient:0.8}]}` is accepted and its child runs at 0.8
+- **AND** a malformed `{"sintering_config":[{mode:"normal", mean:0.8, std:0.05}]}` yields 400
 
 #### Scenario R3.10 — The helper invents no default
 
@@ -245,7 +245,7 @@ These settings are only valid for the algorithms R11 permits.
 
 The system MUST accept `parameter_grid.seed_type` as an array of values from `{"monomers", "dimers", "trimers"}`.
 
-Each child sim MUST have `seed_type` set on the Simulation **MODEL FIELD** (not in the params blob). This is the fix for latent bug #634 (`views.py:1784-1792`).
+Each child sim MUST have `seed_type` set on the Simulation **MODEL FIELD** (not in the params blob). This is the fix for latent bug #634 (`create_simulation`).
 
 #### Scenario R4.1 — Valid seed_type grid expansion
 
@@ -339,8 +339,13 @@ IDENTICAL to before that change.
 **Carve-out.** That guarantee does not extend to sintering settings this contract now validates:
 flat `sintering_*` keys, a `sintering_config` in `base_parameters` or in
 `limiting_cases_config`, and the `fixed` payload the canonical documents with a `value` key —
-which runs today with no sintering at all, because nothing reads `value`. Nor does it extend to
-the `normal` mean, which used to travel in `sintering_mean` and reach the engine as `1.0`.
+which used to run with no sintering at all, because nothing read `value`, and is now rejected
+(R7.3). Nor does it extend to the `normal` mean, which used to travel in `sintering_mean` and
+reach the engine as `1.0`.
+
+One more narrowing belongs in this list, recorded at archive time: a **study-level**
+`sintering_config = {distribution_type:"fixed"}` with no `coefficient` used to be accepted and
+defaulted; it now returns 400, because a setting that says nothing is not a setting.
 
 #### Scenario R7.1 — Old grid with only scalar keys
 
@@ -425,7 +430,7 @@ Each option MUST swap the value input UI to the corresponding component (Distrib
 for distributions, multi-select chips for seed_type).
 
 For `base_algorithm = "limiting"` the dropdown keeps its own separate list
-(`BatchSimulationForm.tsx:289-297`), offering none of the four and instead a flat
+(the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
 `sintering_coeff` sweep (`:294`). That algorithm also has a dedicated "Base Sintering Coeff."
 input (`:409-418`) sent as `base_parameters.sintering_coeff` on every submit (`:220`). Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
@@ -482,25 +487,25 @@ user why.
 
 Sintering settings MUST reach the engine with the values the user declared. For
 `distribution_type: "normal"` the mean MUST travel in `sintering_coeff`, the parameter
-`parse_sintering` reads as the mean (`lib.rs:602`). The set of sintering parameters the worker
+`parse_sintering` reads as the mean (`parse_sintering`). The set of sintering parameters the worker
 reads is exactly `{sintering_type, sintering_coeff, sintering_min, sintering_max,
-sintering_std}` (`tasks.py:1592-1598`), and the system MUST NOT write any sintering key outside
+sintering_std}` (the sintering kwargs block of `run_simulation_task`), and the system MUST NOT write any sintering key outside
 that set into a child's parameters.
 
-**Algorithm scope, as an allow-list** (the model has eleven algorithms, `models.py:8-21`; any
+**Algorithm scope, as an allow-list** (the model has eleven algorithms, `SimulationAlgorithm`; any
 algorithm not listed is rejected with 400):
 
 | Setting | Allowed for |
 | --- | --- |
 | Sintering with any type | `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `tunable_cc` |
-| Sintering with `fixed` only | `limiting`, which reads `sintering_coeff` (`tasks.py:1800`) but ignores type, min, max and std |
+| Sintering with `fixed` only | `limiting`, which reads `sintering_coeff` (the `limiting` branch of `run_simulation_task`) but ignores type, min, max and std |
 | None | `fracval`, `gcca`, `box_rfa`, `imported` |
 
 The allow-list MUST apply to every input surface of R3. On a partial update that omits
 `base_algorithm`, it MUST be evaluated against the instance's stored `base_algorithm`.
 
 This requirement governs study expansion. The single-simulation endpoints, the Django admin and
-the AI assistant tool (`apps/ai_assistant/tools/study_tools.py:166`) are outside it; the chained
+the AI assistant tool (the AI assistant's study-creation tool) are outside it; the chained
 contract `study-expansion-single-source` covers the last one.
 
 #### Scenario R11.1 — Normal sintering arrives with its mean
@@ -535,7 +540,7 @@ contract `study-expansion-single-source` covers the last one.
 - **GIVEN** `base_algorithm = "limiting"` and a sintering setting `{distribution_type:"normal", mean:0.8, std:0.05}`
 - **WHEN** the serializer validates
 - **THEN** 400 stating that `limiting` accepts the fixed shape only
-- **AND** `{distribution_type:"fixed", coefficient:0.9}` is accepted, a flat sweep `{"sintering_coeff": [0.7, 0.9]}` is accepted, and the server-side default extremes (`utils.py:70`) remain accepted
+- **AND** `{distribution_type:"fixed", coefficient:0.9}` is accepted, a flat sweep `{"sintering_coeff": [0.7, 0.9]}` is accepted, and the server-side default extremes (the `limiting` entry of `THEORETICAL_EXTREMES`) remain accepted
 
 #### Scenario R11.6 — Partial update evaluates against the stored algorithm
 
@@ -547,7 +552,7 @@ contract `study-expansion-single-source` covers the last one.
 
 - **GIVEN** a study whose `base_parameters` carry a `sintering_config` dict, with
   `include_limiting_cases` and a study-level sintering config, so the sintering-extremes block
-  (`views.py:1869-1906`) runs
+  (the sintering-extremes block of `perform_create`) runs
 - **WHEN** its children are created
 - **THEN** no child's parameters contain `sintering_config`
 - **AND** each child keeps the flat `sintering_coeff` of its own extreme
@@ -562,9 +567,9 @@ the database**. An invalid setting MUST produce 400 **and zero rows**: no `Param
 
 The system MUST NOT rely on `apply_sintering_config` raising during expansion as its rejection
 mechanism: by then the study exists and some children are already queued. `perform_create`
-(`views.py:1750`) does not wrap the expansion in `try/except` or `transaction.atomic`, the
+(`ParametricStudyViewSet.perform_create`) does not wrap the expansion in `try/except` or `transaction.atomic`, the
 project defines no `ATOMIC_REQUESTS`, and `run_simulation_task.delay` is called inside the
-per-seed loop (`views.py:1841`), so a dispatched task is not undone by a database rollback.
+per-seed loop (the per-seed dispatch loop of `create_simulation`), so a dispatched task is not undone by a database rollback.
 
 **A half-creation path this requirement did not set out to close, and closed anyway.** A
 `parameter_grid.sintering_config` with two or more entries — which R3 requires accepting —

@@ -1,14 +1,14 @@
 # Tasks: sintering-reaches-engine
 
-> Estado del contrato: **spec-review pendiente** (agente fresco) y aprobación de la persona.
-> Desde el 2026-10-22 (issue #82) el gate es una **issue de GitHub con la etiqueta
-> `status:approved`**, no un `approval.md`. **No se escribe código hasta que exista.**
+> Estado del contrato: **entregado y archivado el 2026-10-25**. Aprobado por la persona el
+> 2026-10-22 en la issue **#97** con la etiqueta `status:approved` (gate vigente desde la issue
+> #82). Lo que sigue es el registro congelado del trabajo, no una lista de pendientes.
 >
 > Rama: `feature/sintering-reaches-engine`, con `develop` @ `f586946` ya fusionado (el merge
 > es `f5c93b4`, que sólo existe en esta rama). La base original era `c3ff055`; dos merges de
 > `develop` la movieron, y con ella la línea base de frontend.
 > Mapa de origen: `openspec/changes/_explore-only/distribution-config-surface.md` §7.1.
-> Jira: pendiente de crear al aprobar (issue AGLO, transición 21 → En curso).
+> Jira: **AGLO-10**, pasada a En curso al aprobar y cerrada al mergear el archive.
 
 ## T0 — Contrato
 
@@ -276,13 +276,13 @@
 
 ## T8 — Cierre
 
-- [ ] T8.1 judgment-day (revisión adversarial dual, agentes frescos en sesión nueva)
-- [ ] T8.2 Fix rounds hasta APPROVED
+- [x] T8.1 judgment-day (revisión adversarial dual, agentes frescos en sesión nueva)
+- [x] T8.2 Fix rounds hasta APPROVED
 - [x] T8.2b Estilo de encabezado: ya no hay dos estilos. `bb54fae` (PR #86) migró la canónica a
       `### Requirement: R3 — …`, el mismo que usa la delta, así que copiarla es directo
-- [ ] T8.3 Archive + sincronización canónica de `batch-cc-tunable-parameter-parity` (bloques
+- [x] T8.3 Archive + sincronización canónica de `batch-cc-tunable-parameter-parity` (bloques
       MODIFIED/ADDED completos, nunca diferidos) + `state.yaml`
-- [ ] T8.4 PR a `develop` con etiqueta `type:bug` enlazando el issue AGLO
+- [x] T8.4 PR a `develop` (etiqueta `type:docs`: `type:bug` no existe en este repo) enlazando el issue AGLO
 - [ ] T8.5 Comentario de entrega en Jira **haciendo constar** que los resultados batch
       anteriores con `sintering_config`, y los de cualquier estudio con sinterizado `normal`,
       se ejecutaron sin el sinterizado declarado; y transición 41
@@ -979,3 +979,34 @@
   mido 4, y `aglogen_core` es byte a byte el mismo árbol que entonces—. Así que lo correcto es:
   las cifras de T7 se conservan **como el dato de entonces, medido o no**, y esta entrada dice
   cuál es cuál.
+
+**L37 — T8.3, el archive, y el gate que el archive se llevó por delante.** `openspec archive
+sintering-reaches-engine --yes` aplicó las cinco deltas; la canónica
+`batch-cc-tunable-parameter-parity` pasa de **10 a 12 requisitos** (R11 y R12 nuevos; R3, R7 y
+R10 modificados) y `state.yaml` se actualizó a mano, porque el comando no lo toca.
+
+El gate de AGENTS.md se corrió **antes** de archivar, y aquí queda su salida porque ya no es
+reproducible: `openspec validate sintering-reaches-engine --strict` → `Change 'sintering-reaches-engine'
+is valid`; `openspec show sintering-reaches-engine --json --deltas-only` → las 5 deltas
+(R3, R7, R10 modified; R11, R12 added). Después del archive ambos responden `Unknown item`. Un
+juez lo señaló y tiene razón en la consecuencia: **quien lea este PR ya no puede ejecutar el gate
+que la política exige**. Lo que sí se puede verificar sobre el estado final:
+`openspec list --specs` → `batch-cc-tunable-parameter-parity requirements 12`.
+
+**L38 — Correcciones del juicio de cierre, sobre la canónica.** El juez A encontró un CRITICAL
+que yo no vi en ninguna de las rondas anteriores: las deltas estaban escritas **en presente para
+contar un cambio** («hoy devuelve 201 y el hijo corre a 1.0»), y al archivarse ese presente pasó
+a describir el estado actual. La canónica afirmaba que el defecto central seguía abierto, dos
+líneas debajo de la cláusula que lo cierra. Corregidos los cuatro párrafos (R3.9, R3 ×2, R7).
+Lección: **el texto de una delta y el texto de una canónica no son el mismo texto**; archivar no
+es copiar.
+
+Además: las 16 anclas por número de línea de la canónica pasan a nombres de símbolo (las de R10
+apuntaban a una revisión de 746 líneas, y el fichero tiene 812), y R7 registra un estrechamiento
+que no estaba en su lista de excepciones: un `sintering_config` de estudio con `fixed` y sin
+`coefficient` pasaba de 201 a 400.
+
+**L39 — El cambio de la nota de R12 (`b6063f1`) no estaba registrado aquí.** El 2026-10-24, con
+aprobación expresa de la persona, se corrigió la nota de R12 en la delta: describía un crash que
+el propio contrato ya había hecho imposible. L34 lo dejaba «para que la persona decida» y esa
+decisión ya se tomó. El punto 9 de la issue #115 queda obsoleto por esto y se cierra allí.
