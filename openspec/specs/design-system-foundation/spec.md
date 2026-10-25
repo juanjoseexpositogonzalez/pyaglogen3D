@@ -23,21 +23,21 @@ someone reading a dense table, printing in greyscale, or distinguishing colours 
 
 ### Requirement: R1. Design tokens are the single source of truth
 
-All colour, surface, line, shadow, radius and typography values introduced by this change MUST
+All colour, surface, line, shadow, radius and typography values of the design system MUST
 be declared as CSS custom properties in `frontend/src/app/globals.css`. `tailwind.config.ts`
 MUST derive its theme from those properties and MUST NOT restate any literal value.
 
-No file **created by this change** — under `frontend/src/components/kit/`,
-`frontend/src/components/shell/`, or `frontend/src/lib/chart-theme.ts` — may contain a colour
-literal, with one documented exception: the SSR fallback ramp in `chart-theme.ts`. The same
-rule covers the other files this change creates: `frontend/src/lib/theme.ts` and
+No file **owned by this capability** may contain a colour literal, with one documented
+exception: the SSR fallback ramp in `chart-theme.ts`. The owned files are those under
+`frontend/src/components/kit/` and `frontend/src/components/shell/`, plus
+`frontend/src/lib/chart-theme.ts`, `frontend/src/lib/theme.ts` and
 `frontend/src/stores/useThemeStore.ts`.
 
 This requirement does NOT demand the removal of pre-existing colour literals elsewhere in
 `frontend/src`. Some of them are mandated by other capability contracts: the coordination
 palette in `frontend/src/lib/graphUtils.ts` is fixed verbatim by `contacts-graph-viz`
-(`0→#9ca3af, 1→#ef4444, …`) and MUST NOT be tokenised by this change. Migration of the
-remaining literals belongs to the waves that rewrite their screens.
+(`0→#9ca3af, 1→#ef4444, …`) and MUST NOT be tokenised under this capability. Migration of the
+remaining literals belongs to the capability that owns each screen.
 
 #### Scenario: Tailwind derives rather than repeats `[test]`
 
@@ -48,7 +48,7 @@ remaining literals belongs to the waves that rewrite their screens.
 
 #### Scenario: New files carry no colour literals `[test]`
 
-- GIVEN the files created by this change, as listed above
+- GIVEN the files owned by this capability, as listed above
 - WHEN they are searched for `#[0-9a-fA-F]{3,8}` and `rgb(`
 - THEN the only matches are inside the documented SSR fallback ramp
 
@@ -123,7 +123,7 @@ may equal any series colour, and no series colour may be used to convey state.
 
 #### Scenario: Accent-bright carries no state meaning `[manual]`
 
-- GIVEN the files created by this change
+- GIVEN the files owned by this capability
 - WHEN uses of `--accent-bright` are reviewed by hand
 - THEN it appears only in focus, hover and active styling
 - AND never as the colour of a status chip, badge or callout
@@ -258,7 +258,7 @@ moment it adopts the kit, not before.
 ### Requirement: R8. Contrast and non-colour status
 
 The token palette MUST meet WCAG 2.1 AA contrast in both themes, including the small uppercase
-tracked labels on translucent surfaces, and the primitives this change delivers MUST NOT convey
+tracked labels on translucent surfaces, and the primitives of this capability MUST NOT convey
 status by colour alone.
 
 **Binding scope.** The guarantee binds the token palette and every component built on the kit.
