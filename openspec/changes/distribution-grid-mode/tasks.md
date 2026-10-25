@@ -197,7 +197,7 @@ que mató a los dos contratos anteriores.
 **L15 — Cuarta revisión: dos CRITICAL, y son el defecto que yo mismo cerré hace dos días.** R13.10
 prometía que una clave declarada llega al engine, **sin acotar por algoritmo**. Pero el worker
 expande `target_kf_distribution` y `dpo_distribution` **solo dentro de su rama `tunable_cc`**, y
-solo `run_tunable_cc` declara esos kwargs: para los otros ocho algoritmos la clave se acepta, se
+solo `run_tunable_cc` declara esos kwargs: para los otros **diez** algoritmos la clave se acepta, se
 guarda y no la lee nadie. El serializer no menciona `tunable_cc` ni una vez.
 
 Es **D6 otra vez** —ofrecer algo a algoritmos que no lo consumen—, el defecto que este mismo
@@ -208,3 +208,23 @@ defecto no te vacuna contra su clase**: hay que ir a buscarla.
 Peor: mi párrafo de exclusión atribuía ese fallo a la ruta de simulación individual, cuando los
 hijos del batch corren por **el mismo** `run_simulation_task`. Declaré fuera de alcance algo que
 estaba dentro.
+
+**L16 — Quinta revisión: enumerar lo excluido es el error, no un descuido.** Escribí la
+allow-list como lista de los ocho algoritmos rechazados. El modelo declara **once**, así que
+`limiting` e `imported` se quedaron fuera **en silencio**, aceptando claves que nadie lee: la
+misma D6 que esa misma reparación decía cerrar. Una lista de excluidos falla callando; una tabla
+de permitidos falla gritando. Ahora es tabla.
+
+**L17 — Y el MUST nuevo chocaba con otro vivo en mi propia delta.** R13 pasó a decir que el
+formulario no debe ofrecer esas claves, mientras R10 —bloque MODIFIED de la misma delta— manda
+añadirlas al desplegable. Dos MUST opuestos sobre la misma superficie, otra vez (L12). Cada
+requisito gobierna lo suyo: R10 dice qué se ofrece, R13 qué se acepta, y R13 ya no invade.
+
+**L18 — «20 passed» incluía once tests que no podían fallar.** El diagnóstico de API solo
+imprimía: cero `assert`. Publicarlo como evidencia era contar como medición lo que era un
+paseo. Cada caso que el contrato cita lleva ahora su estado esperado.
+
+**L19 — `seed_type` es la tercera instancia de D6 y no la cierro aquí.** R10 lo ofrece a todo
+algoritmo salvo `limiting`, y el worker solo lo lee en la rama `tunable_cc`. Es el mismo defecto
+una fila más abajo del desplegable. Queda **declarado**, no callado: va al seguimiento #115, y
+cerrarlo aquí sería estirar el contrato a mitad de revisión, que es lo que mató al anterior.

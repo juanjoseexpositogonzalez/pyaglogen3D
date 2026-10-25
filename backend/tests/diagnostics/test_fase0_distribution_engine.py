@@ -140,6 +140,9 @@ def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
         **ENGINE_BASE, kf_mode="normal", kf_mean=0.0, kf_std=0.1
     )
     print(f"[panic kf] normal mean=0 does NOT panic: target_kf_used={runs.target_kf_used:.4f}")
+    assert runs.target_kf_used == pytest.approx(0.0752, abs=5e-4), (
+        "the mean=0 boundary moved: rejecting mean <= 0 rests on R11/R12, not on a crash"
+    )
 
 
 def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:

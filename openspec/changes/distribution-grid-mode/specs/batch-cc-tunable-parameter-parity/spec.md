@@ -135,8 +135,9 @@ This change adds a second group of rejections, on top of the sintering ones abov
 also refused when it declares a `kf` or primary-size distribution that used to be accepted and
 silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out of range
 (`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
-object. Not all of them used to answer `201`: `std < 0` and `min > max` were already refused by
-the shared validator. The ones that did answer `201` and produced a simulation ignoring what was
+object. Not all of them used to answer `201`: on the two parity grid keys — the only two that
+reach the shared distribution validator — `std < 0` and `min > max` were already refused. On the
+other ten surfaces there was no distribution validation at all, so even those answered `201`. The ones that did answer `201` and produced a simulation ignoring what was
 asked are `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max`, and the
 identical-behaviour promise never covered those.
 
@@ -202,8 +203,8 @@ The system MUST provide a `DistributionGridInput` component that manages an arra
 
 The existing dropdown in `BatchSimulationForm.tsx` MUST gain 4 new options:
 
-- "kf distribution (normal/uniform/fixed)"
-- "Particle radius (per-run variation)"
+- "kf distribution (normal/uniform/fixed)" — only for the algorithms that consume it (R13)
+- "Particle radius (per-run variation)" — only for the algorithms that consume it (R13)
 - "Sintering coefficient distribution" — **only for the algorithms that consume sintering**
   (R11): `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `tunable_cc`
 - "Seed type (monomer/dimer/trimer)"
@@ -213,8 +214,8 @@ for distributions, multi-select chips for seed_type).
 
 For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
-`sintering_coeff` sweep (`:294`). That algorithm also has a dedicated "Base Sintering Coeff."
-input (`:409-418`) sent as `base_parameters.sintering_coeff` on every submit (`:220`). Both are
+`sintering_coeff` sweep (by symbol, not by line). That algorithm also has a dedicated "Base Sintering Coeff."
+input (by symbol, not by line) sent as `base_parameters.sintering_coeff` on every submit (by symbol, not by line). Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
 
@@ -286,17 +287,29 @@ surfaces are, exhaustively: `parameter_grid.kf_distribution` and
 swept through `limiting_cases_config.theoretical_extremes`.
 
 These keys MUST be accepted only for an algorithm that consumes them, on the same terms R11
-already fixes for sintering. The worker expands `target_kf_distribution` and `dpo_distribution`
-into engine kwargs **only inside its `tunable_cc` branch**, and only `run_tunable_cc` declares
-`kf_mode`/`dpo_mode` in its signature, so for every other algorithm these keys are accepted,
-stored, and never read. A study whose algorithm does not consume them MUST be refused, and the
-batch form MUST NOT offer them there.
+already fixes for sintering, and the allow-list MUST be written as the set that is permitted,
+never as a list of the excluded: the model declares eleven algorithms and an enumeration of the
+excluded silently omitted two of them.
 
-One surface of the same family is deliberately left out, and this says so rather than leaving it
+| Algorithm | These four keys |
+|---|---|
+| `tunable_cc` | **accepted** — its worker branch expands them and `run_tunable_cc` is the only binding declaring `kf_mode`/`dpo_mode` |
+| `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `fracval`, `gcca`, `box_rfa`, `limiting`, `imported` | **refused with 400** |
+
+Before this change, every algorithm outside the allow-list accepted these keys, stored them in
+its children and had no reader for them. The refusal MUST hold whichever way the mismatch is
+reached: declaring the key on a study whose algorithm does not consume it, adding the key later
+by update, **or changing the algorithm of a study that already carries it**. R10 governs what the
+form offers, and this requirement does not restate it.
+
+Two surfaces of the same family are deliberately left out, and this says so rather than leaving it
 to be discovered: the single-simulation serializer accepts the same two keys for every algorithm
 with the same result. That is real and it is the same silent failure, but it belongs to the
 single-simulation serializer, not to batch expansion, and widening a contract mid-flight to
-cover a newly found surface is what killed this one's predecessor.
+cover a newly found surface is what killed this one's predecessor. The second is the AI
+assistant's study tool, which writes `ParametricStudy` and `Simulation` rows through the ORM
+with no serializer, so no allow-list in this requirement reaches it; R11 named that same door and
+derived it to `study-expansion-single-source`, and so does this one.
 
 Storing a configuration whose `mode` the translator does not recognise is forbidden: it reaches
 the engine as no kwargs at all, and the simulation silently runs with the default.
@@ -383,7 +396,15 @@ simulation stuck in `RUNNING`.
 
 #### Scenario R13.12 — The keys are refused where the engine cannot receive them
 
-- GIVEN a study whose `base_algorithm` is `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `fracval`, `gcca` or `box_rfa`
+- GIVEN a study whose `base_algorithm` is any of the ten outside the allow-list above, `limiting` and `imported` included
 - WHEN it declares `kf_distribution`, `particle_radius_config`, `target_kf_distribution` or `dpo_distribution`, on any of the surfaces above
 - THEN a 400 response naming the algorithms that consume the key
 - AND the check runs on create and on update, so it cannot be bypassed by creating without the key and adding it afterwards
+- AND a `tunable_cc` study that already carries one of these keys cannot have its `base_algorithm` changed to an algorithm outside the allow-list, which is the mismatch reached from the other side
+
+#### Scenario R10.8 — The distribution options are not offered where the engine ignores them
+
+- GIVEN the batch form with an algorithm outside R13's allow-list, such as `fracval` or `imported`
+- WHEN the parameter-to-vary dropdown is opened
+- THEN `kf distribution` and `Particle radius` are not among the options
+- AND switching a `tunable_cc` study to such an algorithm clears or flags a configured variation of those keys, instead of submitting a payload the API refuses
