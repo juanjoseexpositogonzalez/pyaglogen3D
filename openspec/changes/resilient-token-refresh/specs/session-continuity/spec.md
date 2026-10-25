@@ -6,74 +6,75 @@ Delta del change `resilient-token-refresh`. Capacidad nueva.
 
 ### Requirement: R1. A signed-in session survives ordinary navigation
 
-A user who is signed in and navigating the application MUST NOT be returned to the sign-in
-screen unless their session has genuinely ended: the refresh token is absent, expired, or
-rejected by the server when presented on its own.
+A signed-in user MUST NOT be returned to the sign-in screen unless their session has genuinely
+ended: the refresh token is absent, or the server rejects it when presented on its own.
 
-Losing the in-memory access token is ordinary: it happens on every full page load. It MUST NOT
-end the session.
+Losing the in-memory access token is ordinary — it happens on every full page load — and MUST
+NOT end the session.
 
-#### Scenario: A data-heavy screen keeps the session `[test]`
+#### Scenario: The screen with the most concurrent requests keeps its session `[manual]`
 
-- GIVEN a signed-in user whose access token is not in memory, as after a full page load
-- WHEN they open the screen that issues the most concurrent requests
-- THEN every request completes against a valid access token
-- AND the user stays on the screen they asked for
-
-#### Scenario: Two tabs keep each other's session `[test]`
-
-- GIVEN a signed-in user with two tabs of the application open
-- WHEN both tabs load at the same time with no access token in memory
-- THEN neither tab is returned to the sign-in screen
-- AND both finish with a usable session
+- GIVEN a signed-in user loading the screen that issues the most concurrent requests
+- WHEN every request finds no access token in memory and asks for one
+- THEN the user stays on the screen they asked for
+- AND the diagnostic reports zero expulsions over the agreed number of runs
 
 ### Requirement: R2. At most one refresh is in flight per browsing context
 
 The application MUST NOT present the same refresh token to the server more than once
-concurrently. Requests that need a refreshed access token while a refresh is already running
-MUST await that refresh rather than start another.
+concurrently. A caller that needs a refreshed access token while a refresh is already running
+MUST await that refresh instead of starting another.
 
-#### Scenario: Concurrent failures share one refresh `[test]`
+The shared refresh MUST be released when it settles, whether it succeeds or fails. A refresh
+that is never released leaves the context unable to refresh again, which is a worse failure
+than the one being fixed.
+
+#### Scenario: Concurrent callers share one refresh `[test]`
 
 - GIVEN several requests that receive 401 at the same time
 - WHEN each asks for a refreshed access token
 - THEN exactly one refresh request is sent
 - AND every caller resumes with the access token that refresh produced
 
-### Requirement: R3. Refreshes are serialised across tabs of the same origin
+#### Scenario: A failed refresh does not block later ones `[test]`
 
-Tabs of the same origin share stored credentials, so they MUST coordinate their refreshes.
-The application MUST hold an origin-scoped lock for the duration of a refresh.
+- GIVEN a refresh that fails
+- WHEN a later request asks for a refreshed access token
+- THEN a new refresh is attempted rather than awaiting the settled one
 
-Where such a lock is unavailable, the application MUST fall back to bounded retry, and MUST
-NOT fall back to ending the session. Absence of the mechanism may make the application slower;
-it MUST NOT make it less correct than before.
+### Requirement: R3. Waiting for a refresh is bounded
 
-#### Scenario: A second tab waits rather than competing `[test]`
+A refresh MUST NOT be awaited indefinitely. When it exceeds its bound, the wait MUST end with a
+retryable error, and the stored credentials MUST be left untouched.
 
-- GIVEN one tab holding the refresh lock
-- WHEN a second tab needs a refreshed access token
-- THEN it waits for the lock instead of sending its own refresh
-- AND it proceeds with the token the first tab obtained
+This is a direct consequence of R2: once callers share one refresh, a refresh that never
+answers would hold the whole context. The bound is what keeps a slow network from becoming a
+frozen application.
 
-#### Scenario: Without locks, behaviour degrades to retry `[test]`
+#### Scenario: A refresh that never answers releases its callers `[test]`
 
-- GIVEN a context where the locking mechanism is unavailable
-- WHEN two refreshes collide
-- THEN the loser retries with the stored token
-- AND the session is not ended
+- GIVEN a refresh request that does not answer within its bound
+- WHEN the bound elapses
+- THEN every awaiting caller is rejected with a retryable error
+- AND the stored credentials are unchanged
+- AND a later request may start a new refresh
 
 ### Requirement: R4. A failed refresh is not by itself proof that the session ended
 
-Credentials MUST NOT be discarded on any failed refresh. A refresh that fails because its
-token was rotated by another refresh is recoverable: the application MUST re-read the stored
-token and retry once.
+Credentials MUST NOT be discarded because a refresh failed with a non-definitive error. A
+refresh whose token was rotated by another refresh is recoverable: the application MUST re-read
+the stored token and retry exactly once.
 
 Credentials MUST be discarded only when no token is stored, or when a retry carrying the
-currently stored token is itself rejected.
+currently stored token is itself rejected by the server.
 
-The retry MUST be bounded to a single attempt, so that a genuinely invalid credential ends the
-session promptly instead of looping.
+The retry MUST be bounded to a single attempt: a credential that is genuinely invalid has to
+end the session promptly rather than loop.
+
+This requirement governs **every** place that reacts to a failed refresh, including the two
+401 handlers in `frontend/src/lib/api.ts` (`:82`/`:89` and `:128`/`:133`) and the mount-time
+refresh in `frontend/src/contexts/AuthContext.tsx` (`:58`, `:64`). Fixing one path while
+another still discards credentials leaves the defect reachable.
 
 #### Scenario: A rotated token is recovered, not discarded `[test]`
 
@@ -90,18 +91,67 @@ session promptly instead of looping.
 - THEN the credentials are discarded
 - AND the user is returned to the sign-in screen
 
-### Requirement: R5. The fix is demonstrated by a repeatable diagnostic
+#### Scenario: A transport failure does not end the session `[test]`
 
-The change MUST ship a diagnostic that measures expulsions per scenario and can be run by
-someone who did not write the change.
+- GIVEN a refresh or identity request that fails with a network error or a server error
+- WHEN the failure is handled at application start
+- THEN the stored credentials are left in place
+- AND the session is not ended
 
-Because both failing scenarios are probabilistic — measured at one in three and two in three —
-a single passing run MUST NOT be accepted as evidence. The diagnostic MUST be run repeatedly
-and report the count, so that the claim is a number rather than an impression.
+### Requirement: R5. Signing out cancels work already in flight
 
-#### Scenario: The diagnostic reports expulsions per scenario `[manual]`
+When the user signs out, a refresh that answers afterwards MUST NOT restore credentials.
+
+Writing a refresh token also restores the cookie the route middleware reads
+(`frontend/src/lib/token-storage.ts:55`), so a late answer would leave the user signed in after
+asking to leave. Sharing one refresh between callers widens that window, so the change that
+introduces it MUST close it.
+
+#### Scenario: A late refresh after sign-out is discarded `[test]`
+
+- GIVEN a refresh in flight
+- WHEN the user signs out before it answers
+- AND the refresh then answers successfully
+- THEN no access token, refresh token or auth cookie is written
+- AND the user remains signed out
+
+### Requirement: R6. An anonymous visitor triggers no refresh machinery
+
+A visitor with no stored refresh token MUST NOT cause a refresh request, and MUST NOT be made
+to wait on refresh coordination.
+
+#### Scenario: A public page asks for nothing `[test]`
+
+- GIVEN no refresh token in storage
+- WHEN a public page loads and issues its requests
+- THEN no refresh request is sent
+- AND no caller waits on a refresh
+- AND the visitor is not redirected
+
+### Requirement: R7. The fix is demonstrated by a repeatable diagnostic
+
+The change MUST ship a diagnostic, versioned in the repository and runnable by someone who did
+not write the change, that reports expulsions per scenario.
+
+Because the failure is probabilistic — measured between one and three expulsions in eight runs
+— a single passing run MUST NOT be accepted as evidence. The diagnostic MUST support a run
+count, aggregate per scenario, and exit non-zero when any run ended at the sign-in screen, so
+the claim does not depend on a person reading console output.
+
+The diagnostic MUST distinguish a tab that died from its own rejected refresh from one that
+died because another tab discarded the shared credentials. Those have different causes and an
+instrument that conflates them argues for the wrong fix.
+
+#### Scenario: The diagnostic reports and fails loudly `[manual]`
 
 - GIVEN the diagnostic committed with this change
-- WHEN it is run against a production build repeatedly
-- THEN it reports, per scenario, how many runs ended in the sign-in screen
-- AND the recorded figure after the change is zero over the agreed number of runs
+- WHEN it is run against a production build with a run count
+- THEN it reports expulsions per scenario, separated by cause
+- AND its exit status is non-zero if any run ended at the sign-in screen
+
+#### Scenario: Two tabs are re-measured after the in-tab fix `[manual]`
+
+- GIVEN in-tab coalescing is in place
+- WHEN the two-tab scenario is measured again
+- THEN the expulsion count is recorded in the log
+- AND cross-tab coordination is opened as separate work only if expulsions remain

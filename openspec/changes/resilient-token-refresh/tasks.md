@@ -2,94 +2,121 @@
 
 GitHub: **#122**. Rama: `feature/resilient-token-refresh`.
 
-**No se escribe código hasta que exista `approval.md`.**
+**No se escribe código hasta que la issue #122 lleve la etiqueta `status:approved`.** Ese es el
+gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
-## T0 — Línea base
+## T0 — Instrumento y línea base
 
-- [ ] T0.1 Dejar el diagnóstico ejecutable en `frontend/scripts/diagnostics/refresh-storm.mjs`
-      y documentar cómo se corre (build de producción, backend real, datos sembrados). El
-      diagnóstico **ya existe** de Fase 0; esta tarea lo deja utilizable por otra persona.
-- [ ] T0.2 Registrar la línea base **con repeticiones**, no con una corrida: expulsiones por
-      escenario sobre **10 corridas** de cada uno. Las cifras de Fase 0 (1 de 3 en una pestaña,
-      2 de 3 en dos pestañas) provienen de tres corridas y son indicativas, no la línea base.
-- [ ] T0.3 Registrar la suite y `type-check` de partida, para no confundir una regresión propia
+- [ ] T0.1 Declarar **Playwright como dependencia de desarrollo** en `frontend/package.json`.
+      Hoy no está, y sin ella el diagnóstico no se ejecuta en un clon limpio.
+- [ ] T0.2 Verificar que el diagnóstico **está versionado de verdad**: `git ls-files
+      frontend/diagnostics` debe devolverlo. La ruta `frontend/scripts/` está en
+      `.gitignore:75`, y un intento anterior de versionarlo ahí fue ignorado en silencio
+      mientras el mensaje de commit afirmaba lo contrario.
+- [ ] T0.3 Documentar en el propio fichero cómo se ejecuta (build de producción, backend, un
+      proyecto con varias simulaciones) y comprobar que **otra persona puede correrlo** sin
+      ficheros de `/tmp` ni credenciales incrustadas.
+- [ ] T0.4 Registrar la línea base con **8 corridas por escenario** y guardar su salida JSON.
+- [ ] T0.5 Registrar suite y `type-check` de partida, para no confundir una regresión propia
       con la intermitencia ajena ya conocida de `FraktalBatchImageDetail` y `FraktalBatchUpload`.
 
 ## T1 — Un refresco en vuelo por pestaña (R2)
 
 - [ ] T1.1 Test primero: varias llamadas concurrentes producen **una** petición de refresco y
       todas resuelven con el mismo token.
-- [ ] T1.2 Implementar la promesa compartida en `auth-api.ts`, incluida su limpieza al terminar
-      —con éxito o con fallo— para que un fallo no deje la promesa pegada y bloquee los
-      refrescos siguientes.
-- [ ] T1.3 Falsificar el test: romper la coalescencia a propósito y comprobar que falla.
+- [ ] T1.2 Test primero: tras un refresco fallido, una llamada posterior **inicia uno nuevo**
+      en vez de heredar la promesa ya resuelta.
+- [ ] T1.3 Implementar la promesa compartida en `auth-api.ts`, liberándola al terminar con
+      éxito **o** con fallo.
+- [ ] T1.4 Falsificar ambos tests rompiendo la coalescencia y la liberación a propósito.
 
-## T2 — Coordinación entre pestañas (R3)
+## T2 — Espera acotada (R3)
 
-- [ ] T2.1 Test primero: con el cerrojo tomado, un segundo solicitante espera en vez de emitir
-      su propia petición.
-- [ ] T2.2 Implementar el cerrojo por origen (`navigator.locks`), tomándolo **alrededor de todo
-      el refresco**, no solo de la petición de red: entre recibir el token y guardarlo hay una
-      ventana en la que otra pestaña puede colarse.
-- [ ] T2.3 Camino de respaldo donde no haya cerrojos: reintento acotado con espera. Test que
-      cubra ese camino simulando su ausencia.
-- [ ] T2.4 Verificar que el respaldo **no cierra sesión**: sin cerrojos el sistema puede ser más
-      lento, nunca menos correcto que hoy.
+- [ ] T2.1 Test primero: un refresco que no responde dentro del plazo rechaza a quienes esperan
+      con un error reintentable y **no toca las credenciales**.
+- [ ] T2.2 Implementar el límite con `AbortController` en `auth-api.ts:117`.
+- [ ] T2.3 Comprobar que tras el vencimiento **se puede volver a intentar**: el plazo no debe
+      dejar la pestaña sin refresco posible.
 
 ## T3 — Un fallo deja de ser terminal (R4)
 
-- [ ] T3.1 Test primero: un refresco que falla con un token ya rotado **no** borra credenciales,
-      relee el almacenamiento y reintenta una vez.
-- [ ] T3.2 Test primero: un refresco que falla llevando el token vigente **sí** cierra sesión
-      tras el reintento.
-- [ ] T3.3 Retirar el `clearTokens()` incondicional de `auth-api.ts:125` y sustituirlo por la
-      distinción anterior.
-- [ ] T3.4 Revisar el otro extremo: `api.ts:88` redirige a `/auth/login` cuando el refresco
-      falla. Debe respetar la misma distinción, o reintroduce el defecto desde el otro lado.
-- [ ] T3.5 Comprobar que el reintento está **acotado a uno**: un token realmente inválido debe
-      cerrar sesión enseguida, no entrar en bucle.
+- [ ] T3.1 Test primero: fallo con token ya rotado → relee almacenamiento, reintenta **una vez**
+      y **no** borra credenciales.
+- [ ] T3.2 Test primero: fallo llevando el token vigente → tras el reintento, cierra sesión.
+- [ ] T3.3 Test primero: error de red o 5xx al arrancar → **no** cierra sesión.
+- [ ] T3.4 Sustituir el `clearTokens()` incondicional de `auth-api.ts:124` por esa distinción.
+- [ ] T3.5 Aplicar la misma distinción en **los dos** manejadores de 401 de `api.ts`
+      (`:82`/`:89` y `:128`/`:133`). Arreglar uno solo deja el defecto vivo por el otro.
+- [ ] T3.6 Aplicarla también en `AuthContext.tsx` (`:58`, `:64`), que hoy borra credenciales
+      ante cualquier error del refresco o de la petición de identidad.
+- [ ] T3.7 Comprobar que el reintento está **acotado a uno**.
 
-## T4 — Verificación
+## T4 — Cierre de sesión y visitante anónimo (R5, R6)
 
-- [ ] T4.1 Suite completa en verde; ningún test preexistente pasa a rojo.
-- [ ] T4.2 `npx tsc --noEmit` sin errores nuevos sobre la línea base de T0.3.
-- [ ] T4.3 `npm run build` en exit 0.
-- [ ] T4.4 Diagnóstico **10 corridas por escenario**: expulsiones **0** en ambos. Una sola
-      corrida verde no vale: los escenarios fallaban 1 y 2 de cada 3, así que una pasada puede
-      salir limpia con el defecto intacto.
-- [ ] T4.5 Comprobar a mano que el inicio de sesión, el cierre de sesión y la sesión realmente
-      caducada siguen funcionando. El cambio está en el camino crítico de todo usuario.
-- [ ] T4.6 Registrar en el Log las cifras de antes y después, no la impresión.
+- [ ] T4.1 Test primero: un refresco que responde **después** de cerrar sesión no escribe
+      token ni cookie, y el usuario sigue fuera.
+- [ ] T4.2 Implementarlo invalidando lo en vuelo al cerrar sesión.
+- [ ] T4.3 Test primero: sin token guardado, una página pública **no** emite refrescos, no hace
+      esperar a nadie y no redirige.
 
-## T5 — Entrega
+## T5 — Verificación
 
-- [ ] T5.1 PR a `develop` enlazando #122, etiqueta `type:bug`.
-- [ ] T5.2 Revisión adversarial antes del merge.
-- [ ] T5.3 Archive con sincronización canónica de `session-continuity`, **escribiendo el
-      `Purpose`**: el tooling lo deja en `TBD` y ese hueco ya tiene una issue abierta (#93).
-- [ ] T5.4 `state.yaml` actualizado.
+- [ ] T5.1 Suite completa en verde; ningún test preexistente pasa a rojo.
+- [ ] T5.2 `npx tsc --noEmit` sin errores nuevos sobre la línea base de T0.5.
+- [ ] T5.3 `npm run build` en exit 0.
+- [ ] T5.4 Diagnóstico con **8 corridas por escenario**, contrastado contra el JSON de T0.4:
+      expulsiones **0**, y **código de salida 0**. La evidencia es el código de salida, no una
+      lectura de consola.
+- [ ] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra. Si persisten
+      expulsiones, abrir la coordinación entre pestañas como trabajo propio con esta evidencia;
+      si no quedan, dejar escrito que el cerrojo no hizo falta.
+- [ ] T5.6 Verificación manual de acceso, cierre de sesión y sesión realmente caducada: el
+      cambio está en el camino crítico de todo usuario.
+- [ ] T5.7 Registrar en el Log las cifras de antes y después, no la impresión.
+
+## T6 — Entrega
+
+- [ ] T6.1 PR a `develop` enlazando #122, etiqueta `type:bug`.
+- [ ] T6.2 Revisión adversarial antes del merge.
+- [ ] T6.3 Archive con sincronización canónica de `session-continuity`, **escribiendo el
+      `Purpose`**: el tooling lo deja en `TBD` y ese hueco ya tiene issue abierta (#93).
+- [ ] T6.4 `state.yaml` actualizado.
 
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
-### L0 — Fase 0, antes de lockear nada (2026-10-25)
+### L0 — Fase 0, y dos instrumentos que mentían (2026-10-25)
 
-Medido con sesión aislada por pantalla, build de producción, tres corridas.
+Medición final: 8 corridas por escenario, sesión aislada, build de producción.
 
-Refrescos concurrentes en carga en frío, idénticos en las tres: detalle de proyecto **5**,
-detalle de simulación 3, batch 3, comparación 2, el resto 1.
+| escenario | solapamiento | expulsiones | causa |
+| --- | --- | --- | --- |
+| detalle de proyecto | 5 | 1 de 8 | colisión |
+| estudios batch | 3 | 1 de 8 | colisión |
+| dos pestañas, pesada + ligera | 5 | 3 de 8 | colisión |
+| dos pestañas, ligera + ligera | 1 | 0 de 8 | — |
+| resto | 1-2 | 0 de 8 | — |
 
-Expulsiones: detalle de proyecto **1 de 3**; dos pestañas **2 de 3**.
+**Cascada: cero.** La hipótesis de que las muertes se propagaran por el borrado de credenciales
+queda descartada con datos.
 
-**La hipótesis de partida quedó refutada por insuficiente.** Se suponía que bastaba compartir
-una promesa en vuelo dentro de la pestaña; eso cubre el caso de 1 de cada 3 y deja vivo el de
-2 de cada 3. Un arreglo así se vería funcionar mientras el defecto sigue ahí.
+**El alcance se recortó por falta de evidencia.** La propuesta inicial incluía un cerrojo entre
+pestañas. Dos pantallas ligeras no llegan a solapar refrescos y no fallan; el par pesada +
+ligera falla más que la pesada sola, pero las colisiones internas de la pesada explican ese
+aumento igual de bien y el instrumento no las separa. Se secuencia: arreglar lo demostrado,
+volver a medir, y abrir el cerrojo solo si queda defecto.
 
-**Hallazgo no buscado**: `auth-api.ts:125` borra las credenciales ante cualquier refresco
-fallido, así que una sola colisión mata la sesión entera. Es un defecto independiente de la
-concurrencia.
+**El instrumento mintió dos veces antes de servir.** Primero compartía sesión entre pantallas,
+así que tras la primera expulsión medía el cadáver. Después ignoraba las rutas que decía
+comparar, de modo que las dos «parejas» ejecutaban el mismo experimento y un 0 de 6 aparente
+era ruido. Lo cazó **una cifra inexplicable** —solapamiento 5 donde cabían 2—, no una relectura
+del código.
 
-**El instrumento tuvo que rehacerse.** La primera versión compartía sesión entre pantallas:
-tras la primera expulsión, las filas siguientes medían el cadáver. Con sesión aislada los
-números pasaron a ser estables.
+Regla que queda: **una cifra que no se sabe explicar no es evidencia**, aunque apunte en la
+dirección esperada.
+
+**Hallazgos del spec-review incorporados**: refresco sin límite de espera, cierre de sesión con
+refresco en vuelo que resucita la sesión, `AuthContext` destruyendo credenciales ante cualquier
+error, el segundo manejador de 401 en `api.ts` que nadie había citado, la carga anónima, y la
+contradicción interna de la antigua R4.

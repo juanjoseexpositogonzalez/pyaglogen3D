@@ -2,98 +2,120 @@
 
 ## Fase 0: lo que se midió antes de decidir
 
-El contrato depende de una hipótesis sobre concurrencia, así que se midió primero. El
-diagnóstico queda versionado en `frontend/scripts/diagnostics/refresh-storm.mjs`.
+Diagnóstico versionado en `frontend/diagnostics/refresh-storm.mjs`. Build de producción,
+backend real, **sesión aislada por pantalla** (contexto y acceso nuevos para cada una),
+**8 corridas por escenario**.
 
-**Montaje**: build de producción, backend real, sesión aislada por pantalla (un contexto de
-navegador y un inicio de sesión nuevos para cada una). Tres corridas.
+Mide tres cosas que una lectura de consola no da:
 
-**Refrescos concurrentes en una carga en frío**, idénticos en las tres corridas:
+1. **Solapamiento real en vuelo**, no «peticiones vistas en cuatro segundos». Son afirmaciones
+   distintas y solo la primera sostiene la palabra «concurrente».
+2. **Colisión frente a cascada**: una pestaña que muere sin ningún refresco rechazado propio no
+   colisionó, la mató otra al borrar el token compartido. Tienen arreglos distintos.
+3. Lo anterior **repetido**, porque el fallo es probabilístico.
 
-| pantalla | refrescos |
-| --- | --- |
-| detalle de proyecto | **5** |
-| detalle de simulación | 3 |
-| estudios batch | 3 |
-| comparación | 2 |
-| dashboard, proyectos, ajustes, admin | 1 |
+| escenario | solapamiento máximo | expulsiones | causa |
+| --- | --- | --- | --- |
+| detalle de proyecto | **5** | 1 de 8 | colisión |
+| estudios batch | 3 | 1 de 8 | colisión |
+| comparación / dashboard / proyectos | 1-2 | 0 de 8 | — |
+| dos pestañas, pesada + ligera | 5 | 3 de 8 | colisión |
+| dos pestañas, ligera + ligera | **1** | 0 de 8 | — |
 
-**Expulsiones**: detalle de proyecto falló en **1 de 3** corridas (4 de sus 5 refrescos en 401).
-El escenario de **dos pestañas** falló en **2 de 3**.
+**Cascada: cero en todos los escenarios.** La hipótesis alternativa —que las muertes se
+explicaran por el borrado destructivo propagándose entre pestañas— queda descartada con datos.
 
-### Lo que la medición refutó
+### Dos correcciones del instrumento, ambas necesarias
 
-La hipótesis de partida era que bastaba con compartir una promesa en vuelo dentro de la
-pestaña. **Es insuficiente.** Ese arreglo cubre el caso de 1 de cada 3, y deja vivo el de 2 de
-cada 3. Un arreglo así se vería funcionar —la pantalla culpable deja de fallar— mientras el
-defecto sigue presente para cualquiera con dos pestañas abiertas.
+La primera versión **compartía sesión entre pantallas**: tras la primera expulsión, las filas
+siguientes medían el cadáver y no la pantalla. La segunda **ignoraba las rutas** que decía
+comparar, de modo que las dos «parejas» de pestañas ejecutaban el mismo experimento; un
+resultado de 0 de 6 que parecía concluyente era ruido.
 
-### Lo que la medición descubrió sin buscarlo
-
-Un refresco fallido llama a `clearTokens()` (`auth-api.ts:125`). Eso borra el token de refresco,
-de modo que **una sola colisión mata la sesión completa**, no la petición que colisionó. Es
-independiente de la concurrencia y es un defecto por sí mismo: convierte un fallo recuperable
-en pérdida de sesión.
-
-Este hallazgo también contaminó la primera versión del diagnóstico, que compartía sesión entre
-pantallas: tras la primera expulsión, las filas siguientes medían el cadáver en vez de la
-pantalla. El instrumento se rehízo con sesión aislada, y solo entonces los números fueron
-estables.
+Lo detectó una cifra que no se podía explicar —un solapamiento de 5 donde como mucho cabían
+2—, no una relectura del código. Queda como regla: **una cifra que no se sabe explicar no es
+evidencia**, por mucho que apunte en la dirección esperada.
 
 ## Decisiones
 
 ### D1. El arreglo es del cliente; el backend no se toca
 
-`ROTATE_REFRESH_TOKENS` con `BLACKLIST_AFTER_ROTATION` es una defensa correcta: limita la
-ventana de uso de un token robado. El defecto no es que el servidor invalide el token anterior,
-sino que **el cliente presente el mismo token cinco veces a la vez**.
+`ROTATE_REFRESH_TOKENS` con `BLACKLIST_AFTER_ROTATION` limita la ventana de uso de un token
+robado. El defecto no es que el servidor invalide el token anterior, sino que **el cliente
+presente el mismo token cinco veces a la vez**.
 
-Alternativa descartada: desactivar la rotación o la lista negra. Resolvería el síntoma
-debilitando una propiedad de seguridad real para tapar un defecto de concurrencia nuestro.
+Alternativa descartada: desactivar rotación o lista negra. Cambia seguridad real por un defecto
+de concurrencia propio.
 
-### D2. Dos niveles de exclusión, no uno
+### D2. Coalescencia dentro de la pestaña, y nada más por ahora
 
-| nivel | mecanismo | cubre |
+**Lo que la evidencia sostiene**: las colisiones internas existen y expulsan. Una única promesa
+compartida en vuelo las elimina.
+
+**Lo que la evidencia NO sostiene**: que haga falta coordinar entre pestañas. Dos pantallas
+ligeras no llegan a solapar refrescos (`crossOverlap ≤ 1`) y no fallan. El par pesada + ligera
+falla más que la pesada sola, pero las cinco colisiones internas de la pesada explican ese
+aumento igual de bien, y el instrumento no puede separar ambas causas.
+
+**Por tanto se secuencia**: se elimina la colisión interna, se vuelve a medir el par pesada +
+ligera, y solo si persisten expulsiones se abre el trabajo de coordinación entre pestañas, ya
+con su propia evidencia. Un cerrojo por origen es complejidad permanente en el camino crítico
+de la autenticación: no se paga por una correlación sin aislar.
+
+### D3. Un 401 de refresco no prueba que la sesión haya terminado
+
+Hoy cualquier fallo borra las credenciales (`auth-api.ts:124`). La distinción:
+
+- **Recuperable**: el token presentado fue rotado por otro refresco. El vigente está en el
+  almacenamiento; basta releerlo y reintentar **una vez**.
+- **Definitivo**: no hay token, o el reintento con el token vigente también es rechazado.
+
+El reintento acotado a uno es deliberado: más convierte un fallo de credenciales en un bucle, y
+mantener viva una sesión que debe morir es una debilidad de autenticación, no una mejora.
+
+### D4. La espera tiene que estar acotada
+
+`authApi.refreshToken` hace `fetch` sin límite de tiempo (`auth-api.ts:117`). Hoy cada petición
+se cuelga por su cuenta; **con una promesa compartida, un cuelgue dejaría esperando a toda la
+pestaña**. El arreglo introduce ese riesgo, así que debe traer su límite: vencido el plazo, la
+espera termina con error reintentable y **sin tocar las credenciales**.
+
+### D5. Cerrar sesión invalida lo que esté en vuelo
+
+`logout()` borra los tokens (`auth-api.ts:104`), pero un refresco en curso los vuelve a
+escribir al responder (`:129`, `:133`), y escribir el de refresco repone la cookie que el
+middleware mira. El usuario quedaría autenticado tras pedir salir. Una promesa compartida
+alarga esa ventana, así que el cambio **debe** cerrarla: un refresco cuyo resultado llega
+después de un cierre de sesión se descarta.
+
+### D6. Los dos caminos del 401, no uno
+
+`api.ts` repite el manejo del 401 en dos sitios (`:82`/`:89` y `:128`/`:133`). Arreglar uno
+solo deja el defecto vivo por el otro.
+
+## Qué se puede testear y qué no
+
+| escenario | medio | por qué |
 | --- | --- | --- |
-| dentro de la pestaña | una promesa compartida en vuelo | el caso de 1 de cada 3 |
-| entre pestañas | cerrojo por origen (Web Locks), con respaldo | el caso de 2 de cada 3 |
+| coalescencia, clasificación de fallos, cierre de sesión, espera acotada | **vitest** | lógica pura con `fetch` doblado |
+| carga completa de página, varias pestañas | **diagnóstico de navegador** | jsdom es un único grafo de módulos y no tiene contextos de navegación reales |
 
-El respaldo importa: `navigator.locks` no existe en todos los contextos. Donde falte, la
-degradación debe ser **a reintento con espera**, nunca a cerrar la sesión. Un navegador sin
-cerrojos debe comportarse como hoy en el peor caso, no peor.
-
-### D3. Un 401 de refresco no es una prueba de que la sesión haya terminado
-
-Hoy cualquier fallo borra las credenciales. La distinción que hay que hacer:
-
-- **Recuperable**: el token presentado fue rotado por otro refresco concurrente. El token
-  vigente está en el almacenamiento, y basta releerlo y reintentar.
-- **Definitivo**: no hay token, está caducado, o el servidor lo rechaza tras un reintento con
-  el token vigente. Solo entonces se cierra la sesión.
-
-El reintento debe estar **acotado**: un intento tras releer el almacenamiento. Más que eso
-convierte un fallo de credenciales en un bucle.
-
-### D4. El diagnóstico se versiona con el cambio
-
-«Esto está arreglado» tiene que ser comprobable por alguien que no estuvo aquí. El diagnóstico
-mide expulsiones por escenario y se ejecuta igual antes y después, de modo que la afirmación
-sea una cifra y no una impresión.
+Los escenarios del segundo grupo se marcan `[manual]` y se respaldan con el diagnóstico. Son
+los que más importan, así que decirlo es obligatorio: **no hay testigo automático en la suite
+para el comportamiento central**, y por eso el diagnóstico es parte del contrato.
 
 ## Riesgos
 
-- **La concurrencia no se demuestra con una corrida.** Los escenarios fallan 1 y 2 de cada 3,
-  así que una verificación de una sola pasada puede salir verde con el defecto intacto. La
-  verificación exige **repeticiones**, y su número se fija en las tareas.
-- **Tocar autenticación puede romper el inicio de sesión.** El cambio es pequeño pero está en
-  el camino crítico de todo usuario.
-- **El caso multipestaña no se cubre con tests unitarios.** Requiere el diagnóstico de
-  navegador; es una limitación a declarar, no a disimular.
+- **Un solo pase verde no demuestra nada.** Los escenarios fallan entre 1 y 3 de cada 8: una
+  verificación de una pasada puede salir limpia con el defecto intacto.
+- **El cambio está en el camino crítico de todo usuario.** Acceso, cierre de sesión y sesión
+  realmente caducada se verifican a mano antes de entregar.
+- **La coalescencia mal implementada bloquea la aplicación**: si la promesa compartida no se
+  limpia al terminar, el primer fallo deja a la pestaña sin poder refrescar nunca más.
 
 ## Fuera de alcance
 
 - Cualquier cambio en `SIMPLE_JWT` o en el backend.
-- Mover el token de acceso fuera de memoria: es una decisión de seguridad con su propio
-  análisis, y esta ola no la prejuzga.
-- La experiencia de sesión caducada de verdad (avisar antes de expulsar, recuperar el trabajo
-  en curso), que merece su propio contrato.
+- Sacar el token de acceso de memoria: es una decisión de seguridad con su propio análisis.
+- Avisar al usuario antes de expulsarlo y preservar su trabajo en curso.
+- Coordinación entre pestañas, hasta que haya evidencia propia que la justifique (D2).
