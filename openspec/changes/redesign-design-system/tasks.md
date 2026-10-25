@@ -227,7 +227,7 @@
       `frontend/` y `openspec/`.
 - [x] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
       verde: la paleta canónica de `contacts-graph-viz` no se ha tocado.
-- [ ] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
+- [x] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
       sí afecta (hay 23 ficheros `page.tsx`; doce son pantallas distintas y 17 importan
       `Header`; aquí se recorren las doce): el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
       Recorrido manual de las doce pantallas en ambos temas a 1440px, con capturas en el Log.
@@ -335,6 +335,42 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L15 — T7.8 aceptada con la revisión visual diferida, y el archive (2026-10-25)
+
+**T7.8 no se cierra como «verificada», porque no lo está.** Las 60 capturas están publicadas en la
+issue **#124** y se preparó un recorrido guiado por riesgo —rail que roba ancho en las pantallas de
+tres paneles, las nueve superficies heredadas vistas por primera vez en tema oscuro, alineación
+numérica, los cuatro breakpoints, estados distinguibles sin color, paridad claro/oscuro—. La
+persona decidió **aceptar la entrega y diferir ese recorrido**, con los ajustes que salgan tratados
+después como trabajo aparte.
+
+Queda escrito así a propósito. Si más adelante aparece un defecto visual en estas pantallas, el
+registro explica por qué no se detectó aquí: no porque se mirara mal, sino porque **no se miró**,
+por una decisión tomada a sabiendas. Marcar T7.8 como verificada habría convertido una decisión
+legítima en una afirmación falsa.
+
+**Lo que sí está verificado** por medición, no por inspección: ausencia de flash de tema, contraste
+AA con mínimo **5.01:1** en claro y **7.04:1** en oscuro sobre 22 micro-etiquetas por tema con cero
+por debajo de 4.5:1, y cero desbordamientos horizontales a 360 px en las pantallas de esta ola.
+
+**Una premisa del propio contrato era falsa.** T8.2 afirmaba que `openspec list --specs` responde
+«No specs found» porque las 21 canónicas del repo son ficheros planos y el tooling no las ve, y
+que estas dos serían las primeras visibles. Comprobado hoy: **lista las 21 sin problema**. La
+afirmación se escribió sin ejecutar el comando, y se arrastró por cuatro rondas de spec-review. La
+exigencia que importaba sigue siendo correcta —las deltas deben vivir en `specs/<capability>/spec.md`
+en forma de carpeta— pero su justificación no lo era.
+
+**Defectos ajenos encontrados al verificar**, ambos con issue propia y ninguno dentro del alcance
+de este contrato:
+
+- **#122** — la sesión muere sola: refrescos de token concurrentes se invalidan entre sí por
+  rotación con lista negra. Medido: sesión muerta al refresco 36 con dos 401. Expulsa usuarios al
+  azar mientras trabajan.
+- **#123** — el header público desbordaba 3 px a 360 px. **Arreglado** por carril corto en el PR
+  **#127** y verificado en cuatro anchos y dos temas. Queda documentado allí un desbordamiento
+  distinto de 1 px en la landing a 320 px, de otra causa y preexistente, pendiente de decidir si
+  320 es un ancho soportado.
 
 ### L14 — Verificación manual: T7.4, T7.5 y T7.8 (2026-10-25)
 
