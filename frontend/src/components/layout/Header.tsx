@@ -61,13 +61,15 @@ export function Header() {
       <div className="container mx-auto px-4">
         <div className="flex h-16 items-center justify-between">
           {/* Logo */}
-          <Link href="/" className="flex items-center gap-2">
-            <Atom className="h-8 w-8 text-primary" />
-            <span className="font-bold text-xl">pyAgloGen3D</span>
+          <Link href="/" className="flex min-w-0 items-center gap-2">
+            <Atom className="h-8 w-8 shrink-0 text-primary" />
+            <span className="truncate text-lg font-bold sm:text-xl">pyAgloGen3D</span>
           </Link>
 
           {/* Navigation + Auth */}
-          <nav className="flex items-center gap-6">
+          {/* Tighter gaps below `sm`: at 360px the fixed logo plus `gap-6`
+              overflowed the document by three pixels (#123). */}
+          <nav className="flex shrink-0 items-center gap-3 sm:gap-6">
             {isAuthenticated && navigation.map((item) => {
               const isActive = pathname.startsWith(item.href)
               return (
@@ -112,6 +114,7 @@ export function Header() {
                     {user?.first_name || user?.email}
                   </span>
                   <button
+                    type="button"
                     onClick={() => logout()}
                     className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors"
                   >
