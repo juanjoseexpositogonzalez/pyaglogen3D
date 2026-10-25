@@ -1,0 +1,159 @@
+# Tasks: distribution-grid-mode
+
+> Estado del contrato: **redactado, pendiente de spec-review y de aprobación de la persona**.
+> El gate es una issue de GitHub con `status:approved`. **No se escribe código de producción
+> hasta que exista.**
+>
+> Sustituye a `distribution-grid-wiring` (issue #136, AGLO-11), **refutado antes de
+> implementarse**: elegía `distribution_type` creyendo que era la forma de la ruta single, y la
+> tubería que llega al engine habla `mode`. Lo medido entonces está en el §10 del mapa
+> `_explore-only/distribution-config-surface.md`.
+
+## T0 — Fase 0, dos rondas
+
+- [x] T0.1 Ronda 1, por API: `tests/diagnostics/fase0_distribution_grid_wiring.py`.
+- [x] T0.2 **Ronda 2, contra el engine**: `tests/diagnostics/fase0_distribution_engine_truth.py`.
+  La ronda 1 solo medía la API, y ahí se me coló una refutación falsa de D8.
+- [x] T0.3 **La frontera del engine es plana**: `run_tunable_cc` recibe `kf_mode`, `kf_value`,
+  `kf_mean`, `kf_std`, `kf_min`, `kf_max` y los `dpo_*`. Ningún diccionario.
+- [x] T0.4 **Un `mode` declarado sí cambia la física**: `target_kf_used` pasa de 1.3000 a
+  1.9000, y el prefactor de 1.2204 a 1.0435.
+- [x] T0.5 **D8 confirmado con medición, no con lectura**: `dpo` uniforme 0.5–2.0 deja las 60
+  partículas con radio idéntico (0.5008). Es variación por corrida, no polidispersidad.
+- [x] T0.6 **`radius_max` se ignora** en `tunable_cc`: `radius_min=0.5, radius_max=2.0` →
+  `dpo_used=0.5000`.
+- [x] T0.7 **Las dos puertas no mapeadas funcionan hoy**, y una falla en silencio:
+  `{mode:"lognormal"}` entra con 201 y el engine recibe `{}`.
+
+## T1 — Spec-review (agente fresco, antes de pedir aprobación)
+
+- [ ] T1.1 R8 y R10 canónicos: R8.4 documenta la grafía `type`. Con la convergencia a `mode`
+  queda desalineado; entra como MODIFIED o se declara fuera con motivo.
+- [ ] T1.2 Títulos de escenario de los bloques MODIFIED **verbatim** contra los canónicos.
+- [ ] T1.3 R5.2 canónico exige hoy que el hijo guarde `kf_distribution = d1`. Comprobar que R1 y
+  R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
+- [ ] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
+  escenario: un MODIFIED reemplaza el requisito completo (ver L9).
+- [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
+  `normal`, y la API acepta `uniform`.
+- [ ] T1.4 R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
+  hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
+- [ ] T1.5 `openspec validate --strict` y `show --json --deltas-only`, con la salida al Log,
+  **antes** del PR: archivar los vuelve irreproducibles.
+
+## T2 — Backend: validar lo que hoy pasa en silencio (lo urgente)
+
+- [ ] T2.1 400 en **todas** las superficies que enumera R13: las cuatro claves (dos de paridad y
+  dos con nombre de engine) en `parameter_grid`, las cuatro en `base_parameters`, y las cuatro
+  barridas por `theoretical_extremes`. Cubre `mode` desconocido, **rangos fuera de límite**
+  (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) y config que no es objeto.
+- [ ] T2.1a Los rangos no son cosmética: `kf_value=-1` y `kf uniform` invertido **revientan el
+  worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
+  Exception`. La simulación se queda en `RUNNING` para siempre.
+- [ ] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
+  estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
+- [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
+- [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
+  `dpo_distribution`. Ojo: **dos sitios expanden**, `create_simulation` y
+  `expansion_preview._as_child`; si divergen, la validación previa valida una forma que la ruta
+  real nunca escribe.
+- [ ] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
+  `test_particle_radius_config_passes_through`, `test_all_four_keys_expand_correctly`) **se
+  extienden, no se invierten**: lo que afirman —que el hijo conserva la clave de rejilla— es
+  justo lo que R5.2 y R13.3 exigen que siga siendo verdad. Lo que cambia es la grafía (`mode`) y
+  que además aparezca el nombre de engine. Ojo con el tercero: mezcla `kf_distribution`, que pasa
+  a `mode`, con `sintering_config`, que sigue en `distribution_type`.
+
+## T3 — Lo que se rompería sin que nadie se entere
+
+- [ ] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
+  `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`. La cuarta se
+  me había caído al reescribir el contrato, y el §5 del mapa sí la listaba.
+- [ ] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
+  ejecución (T0.5).
+- [ ] ~~T3.3 `radius_max` deja de ofrecerse~~ **RETIRADA**: el formulario batch no lo ofrece, así
+  que el testigo habría pasado antes del cambio. La medición (el engine lo ignora) vale para el
+  formulario de simulación individual, declarado fuera de alcance.
+
+## T4 — Verificación y cierre
+
+- [ ] T4.1 Los cinco gates, con cada deriva explicada contra la base.
+- [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
+  produce `target_kf_used` distinto del 1.3 por defecto.
+- [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
+- [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica; entrega en Jira y cierre
+  manual de la issue.
+- [ ] T4.5 **Cada PR de la cadena dice en su cuerpo qué parte de la delta todavía NO es cierta**,
+  y el Log lo registra. Entre merges, `develop` sostiene un contrato que describe el estado
+  final: `openspec validate --strict` seguirá pasando, porque comprueba la forma, no la verdad.
+
+## Log
+
+**L1 — El contrato anterior murió por una premisa que no medí.** Supuse que `distribution_type`
+era «la forma de la ruta single» porque lo era del sinterizado. Una spec-review fresca lo tumbó
+con dos líneas de código: `DistributionField` y `expand_distribution_kwargs` discriminan por
+`mode`. Coste: redacción y revisión, cero código. Eso es exactamente lo que compra el gate.
+
+**L2 — Medir por API no es medir.** La ronda 1 de Fase 0 solo tocaba la superficie REST, y la
+afirmación falsa que se coló era sobre el engine. La ronda 2 corre el engine de verdad y mide
+radios: `dpo` uniforme da 60 partículas con el mismo radio. Un contrato que toca una frontera
+tiene que medir **en** esa frontera.
+
+**L3 — Lo urgente se invirtió al medir.** Entré creyendo que el problema eran las dos rejillas
+rotas; dan 400, que es visible. El problema de verdad es la puerta que **funciona a medias**:
+acepta un `mode` que su traductor no entiende y corre con el valor por defecto sin decir nada.
+
+**L4 — La segunda spec-review encontró cinco CRITICAL, y uno era mi propia duda.** Pregunté
+expresamente si prometer en tareas el carve-out de R7 era un defecto del contrato que se
+aprobaría. Lo era: una delta que contradice un requisito en vigor convierte la aprobación en la
+aprobación de una promesa incumplida. Ahora R7 lleva su carve-out **dentro**, con los tres casos
+que pasan de 201 a 400.
+
+**L5 — «El único fallo silencioso vivo» era falso, y lo desmentía mi propio diagnóstico.** La
+ronda 1 mide que un objeto desnudo barrido por `theoretical_extremes` guarda `'mode'` y
+`'value'` **como valores**. Escribí «único» sin releer la evidencia que yo mismo había dejado
+versionada dos días antes.
+
+**L6 — Y la evidencia volvía a no correr, por tercera vez.** `python_files = ["test_*.py"]`:
+el comando que publiqué en la issue y en el PR, `pytest tests/diagnostics/`, colectaba **cero**.
+Los diagnósticos ahora se llaman `test_*.py`, los recoge la suite ordinaria (19) y sus
+mediciones son **aserciones**, no prints: si `target_kf_used` deja de llegar o el panic deja de
+ser `BaseException`, algo falla en rojo.
+
+**L7 — Un bloque MODIFIED debe reproducir todos los escenarios del canónico.** La herramienta
+rechaza omitir uno, así que el título falso de R1.2 («Scalar shorthand normalized to fixed», que
+nunca fue cierto) **se hereda por obligación**. Queda una NOTA dentro del escenario para que la
+contradicción sea visible en vez de silenciosa; renombrarlo necesita su propio change.
+
+**L8 — El riesgo de la cadena: entre merges, la delta miente, y la herramienta no lo nota.** Con
+tres PRs encadenados, `develop` sostiene desde el primero una delta que describe el estado final.
+Tras el PR 1, R1 ya promete que `parameter_grid.kf_distribution` acepta `{mode: …}`, y aún no es
+verdad; tras el PR 2, R10 todavía llama polidispersidad a lo que no lo es. `openspec validate
+--strict` pasa en todos esos puntos porque valida **forma**, no **verdad**, y el archive —que es
+donde la delta se vuelve canónica— ocurre solo al final.
+
+No es hipotético: este contrato existe porque una canónica afirmaba algo que el código no hacía,
+y el contrato anterior murió por creer a un documento antes que al código. Mitigación aceptada,
+sin inventar herramienta nueva: **T4.5**, cada PR declara en su cuerpo qué parte de la delta
+todavía no es cierta, y el Log lo registra. Es disciplina, no garantía; se dice para que la
+siguiente persona sepa que lo es.
+
+**L9 — Un bloque MODIFIED reemplaza el requisito ENTERO, y la herramienta solo compara nombres
+de escenario.** Reparando el hallazgo anterior reescribí R7 y R10 «a mano», conservando los
+títulos verbatim que el validador exige. Pasó el gate. Y habría **borrado prosa normativa viva**:
+el R7 canónico tiene **ocho** menciones al carve-out del sinterizado que entregué hace dos días,
+y mi bloque tenía **cero**; R10 habría perdido las etiquetas exactas, la regla de no enviar `NaN`
+y el MUST de que la traducción viva en una función pura.
+
+`openspec validate --strict` no lo caza: comprueba que no falte ningún *nombre* de escenario, no
+que no falte el *texto*. La reparación correcta es reconstruir el bloque **desde el canónico** y
+añadir encima, nunca reescribirlo de memoria. Lo encontró el juez al que le pedí expresamente
+que buscara qué habían roto mis propios arreglos; en el contrato anterior, cuatro de cinco
+CRITICAL los introdujeron mis correcciones, y éste iba por el mismo camino.
+
+**L10 — Afirmé una retirada que no hice.** Taché T3.3 y anuncié en la issue que R13.4 quedaba
+retirado; el escenario seguía en la delta. Tachar la tarea no borra el requisito.
+
+**L11 — Y el cuerpo de la issue seguía citando un fichero renombrado.** Cuarta vez con la misma
+lección, ahora en el artefacto que la persona aprueba. Corregir el comentario no corrige el
+cuerpo: el gate apunta al cuerpo.
