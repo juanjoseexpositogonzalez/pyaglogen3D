@@ -109,12 +109,30 @@ verificadas contra el binario `openspec`, y ninguna es evidente leyendo el docum
    de `schema` es inválido, el validador recorta del error la lista de nombres
    válidos: sondear no la revela.
 
+8. Un bloque `MODIFIED` **reemplaza el requisito entero**, y `validate --strict` sólo comprueba
+   que no falte ningún **nombre** de escenario: no que no falte **texto**. Un bloque reescrito a
+   mano con los títulos correctos **pasa el gate mientras borra prosa normativa viva** —MUSTs,
+   tablas, etiquetas exactas, párrafos de excepción— y el borrado sólo se materializa al
+   archivar. Medido el 2026-10-25: una reparación del contrato `distribution-grid-mode` habría
+   eliminado las **ocho** menciones del carve-out de sinterizado de R7 entregado en #97, más la
+   función pura de traducción y la prohibición de `NaN` de R10, con el validador en verde.
+   **Se reconstruye el bloque desde el canónico y se añade encima; nunca se reescribe de
+   memoria.** Y antes del PR se compara texto a texto, no por títulos.
+
 **Gate antes del PR, no en el archive:**
 
 ```bash
 openspec validate <change> --strict
 openspec show <change> --json --deltas-only
+
+# Y para cada bloque MODIFIED, la comprobación que el validador NO hace (regla 8):
+# comparar el texto del bloque contra el canónico, no sólo los títulos de escenario.
+diff <(awk '/^### Requirement: R7 /,/^### Requirement: R8 /' openspec/specs/<cap>/spec.md) \
+     <(awk '/^### Requirement: R7 /,/^### Requirement: R8 /' openspec/changes/<change>/specs/<cap>/spec.md)
 ```
+
+Un verde de `validate --strict` significa «la forma es correcta», no «el canónico conserva lo
+que decía». Las dos cosas se comprueban por separado.
 
 Por qué importa: `openspec show` no había funcionado nunca sobre ningún change de este
 repositorio, y el tooling no veía ninguna de las specs canónicas. Ésa es la causa
