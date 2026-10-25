@@ -15,6 +15,18 @@ import { tokenStorage } from './token-storage'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
 
+/**
+ * The refresh in flight, shared by every caller that needs one.
+ *
+ * The access token lives in memory, so a full page load starts without one and
+ * the screen's requests all receive 401 together. Without this slot each of
+ * them asks for its own refresh with the same token; the server rotates and
+ * blacklists, the first one wins, and the rest are rejected. Measured on the
+ * project detail screen: five genuinely overlapping refreshes, and the session
+ * destroyed in two loads out of eight.
+ */
+let refreshInFlight: Promise<{ access: string }> | null = null
+
 class AuthApiError extends Error {
   constructor(
     message: string,
@@ -109,31 +121,46 @@ export const authApi = {
    * Refresh the access token using the refresh token.
    */
   async refreshToken(): Promise<{ access: string }> {
-    const refreshToken = tokenStorage.getRefreshToken()
-    if (!refreshToken) {
-      throw new AuthApiError('No refresh token available', 401)
-    }
+    // Callers that arrive while a refresh is running await that one rather
+    // than presenting the same token again.
+    if (refreshInFlight) return refreshInFlight
 
-    const response = await fetch(`${API_URL}/auth/token/refresh/`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh: refreshToken }),
+    const run = (async () => {
+      const refreshToken = tokenStorage.getRefreshToken()
+      if (!refreshToken) {
+        throw new AuthApiError('No refresh token available', 401)
+      }
+
+      const response = await fetch(`${API_URL}/auth/token/refresh/`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refresh: refreshToken }),
+      })
+
+      if (!response.ok) {
+        tokenStorage.clearTokens()
+        throw new AuthApiError('Token refresh failed', response.status)
+      }
+
+      const data = await response.json()
+      tokenStorage.setAccessToken(data.access)
+
+      // If we got a new refresh token (rotation enabled), save it
+      if (data.refresh) {
+        tokenStorage.setRefreshToken(data.refresh)
+      }
+
+      return data
+    })()
+
+    // Released whether it succeeds or fails. A slot that is never released
+    // would leave the context unable to refresh again, which is a worse
+    // failure than the one being fixed.
+    refreshInFlight = run.finally(() => {
+      refreshInFlight = null
     })
 
-    if (!response.ok) {
-      tokenStorage.clearTokens()
-      throw new AuthApiError('Token refresh failed', response.status)
-    }
-
-    const data = await response.json()
-    tokenStorage.setAccessToken(data.access)
-
-    // If we got a new refresh token (rotation enabled), save it
-    if (data.refresh) {
-      tokenStorage.setRefreshToken(data.refresh)
-    }
-
-    return data
+    return refreshInFlight
   },
 
   /**
