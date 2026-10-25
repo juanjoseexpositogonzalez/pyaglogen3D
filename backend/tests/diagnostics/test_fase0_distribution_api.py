@@ -180,10 +180,12 @@ def test_d7_limiting_cases_with_dict_grid(
             },
         )
     except (RuntimeError, TypeError, ValueError) as exc:
-        # D7 is closed today (measured 201), so an exception here means the
-        # `sorted()`-over-dicts crash came back - the very regression this
-        # probe exists to catch. Returning quietly would turn that into a
-        # green run, so it fails loudly instead.
+        # D7 is closed today (measured 201). A regression of the
+        # `sorted()`-over-dicts crash does NOT surface here: `preview_children`
+        # catches TypeError and re-raises ExpansionPreviewError, which DRF
+        # turns into a 400, so what goes red is `_report`'s expected status.
+        # This branch covers whatever escapes that path, and fails loudly
+        # rather than returning into a green run.
         pytest.fail(f"D7 volvio a reventar la expansion: {type(exc).__name__}: {exc}")
     _report("D7 casos limite + dos dicts", resp, 201)
 
