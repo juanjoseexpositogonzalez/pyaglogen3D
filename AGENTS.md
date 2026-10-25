@@ -190,10 +190,15 @@ limpieza de la rama— no pide autorización en cada paso: es la continuación
 ordinaria del flujo, salvo indicación en contrario de la persona para esa
 entrega concreta.
 
-**Las etiquetas `type:*` que existen en el repo son `type:feat`, `type:test`,
-`type:docs` y `type:chore`.** No hay `type:bug`: para un arreglo, la etiqueta
-es `bug`. Comprobado al intentar crear una issue con `type:bug` el
-2026-10-23.
+**Las etiquetas `type:*` del repo son `type:feat`, `type:bug`, `type:test`,
+`type:docs` y `type:chore`.** `type:bug` no existía hasta el 2026-10-25, y
+hasta entonces los arreglos se etiquetaban con `bug` a secas. Se creó para que
+la familia fuera completa: una etiqueta suelta entre cuatro `type:*` era la
+anomalía, no la que faltaba.
+
+La etiqueta antigua `bug` sigue existiendo y marca issues anteriores a esa
+fecha. **No se reetiquetan**: mover etiquetas de issues cerradas reescribe el
+pasado sin aportar nada. Para trabajo nuevo, `type:bug`.
 
 ## Convenciones
 
