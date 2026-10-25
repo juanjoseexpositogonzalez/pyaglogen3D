@@ -1,7 +1,9 @@
 # Tasks: distribution-grid-mode
 
-> Estado del contrato: **redactado; tres spec-reviews pasadas (5, 4 y 4 CRITICAL), reparadas;
-> pendiente de una cuarta sobre el diff de la última reparación y de la aprobación de la
+> Estado del contrato: **redactado; siete spec-reviews ciegas pasadas (5, 4, 4, 2, 2, 2 y 2
+> CRITICAL), todas reparadas; en cinco de ellas parte de los CRITICAL los introdujeron mis
+> propias reparaciones;
+> pendiente de una octava sobre el diff de la última reparación y de la aprobación de la
 > persona**.
 > El gate es una issue de GitHub con `status:approved`. **No se escribe código de producción
 > hasta que exista.**
@@ -80,6 +82,18 @@
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
+- [ ] T2.4b **Re-apuntar las cinco sondas que hoy fijan el estado anterior** y que se pondrán en
+  rojo el día que se implemente lo aprobado. Se re-apuntan a conciencia o se marcan
+  `xfail(strict=True)` como hace #115; nunca se borran:
+  `test_d1_kf_distribution_selector_shape` (400 → 201),
+  `test_d1_particle_radius_selector_shape` (400 → 201),
+  `test_d1_correct_shape_is_accepted` (201 → 400, R1 prohíbe `distribution_type`),
+  `test_p115_1_bare_dict_in_theoretical_extremes` (201 → 400, R13.7) y
+  `test_d7_limiting_cases_with_dict_grid` (201 → 400, R1).
+- [ ] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
+  `particle_radius_config` fuera de la allow-list, y cambiar de algoritmo limpia o marca la
+  variación ya configurada.
+- [ ] T3.7 Testigo de **R13.11**: el selector no emite `min == max` al pasar a `uniform`.
 - [ ] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
   `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`. La cuarta se
   me había caído al reescribir el contrato, y el §5 del mapa sí la listaba.
@@ -240,6 +254,15 @@ La técnica que lo demuestra es barata y la adopto: **copiar `openspec/` a un te
 allí, y leer la canónica resultante**. Es la única comprobación que mira el estado final en vez
 de la forma. Verificado así tras la reparación: R10 con ocho escenarios —R10.8 dentro— y R13 con
 once.
+
+**L22 — Y la reparación de L21 tampoco se aplicó: la escribí como hecha sin comprobarla.** La
+séptima revisión encontró que `_report` seguía dentro del `try`. **Tercera vez el mismo día**:
+las dos ediciones del cuerpo de #141 y la tarea T2.4b tampoco habían casado, y las tres las di
+por hechas. **Causa común: `str.replace` sin aserción** — si el ancla no existe, el fichero se
+queda igual y el script informa de éxito. Desde aquí toda edición falla ruidosamente cuando su
+ancla no está, y la primera vez que lo apliqué paró en seco en un ancla inventada. Es la misma
+lección del guarda del índice (#130): **una comprobación que solo puede pasar no es una
+comprobación.**
 
 **L21 — Y otra aserción mía que no podía fallar.** En el diagnóstico de D7 puse la comprobación
 **dentro** del `try`, y el `except Exception` se tragaba el `AssertionError`. Escribí la lección

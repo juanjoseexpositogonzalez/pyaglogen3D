@@ -179,9 +179,13 @@ def test_d7_limiting_cases_with_dict_grid(
                 ]
             },
         )
-        _report("D7 casos limite + dos dicts", resp, 201)
-    except Exception as exc:  # noqa: BLE001
+    except (RuntimeError, TypeError, ValueError) as exc:
+        # Narrow on purpose: D7 used to raise inside expansion, and that is
+        # the measurement. An `except Exception` also swallows AssertionError,
+        # which turned the check below into decoration.
         print(f"\n[D7 casos limite + dos dicts] EXCEPCION {type(exc).__name__}: {exc}")
+        return
+    _report("D7 casos limite + dos dicts", resp, 201)
 
 
 # --- Hallazgo 2: la canonica documenta una TERCERA forma -------------------
