@@ -218,7 +218,13 @@
 
 ## T7 — Verificación
 
-- [ ] T7.1 Gates de backend, **cada uno con su línea base medida** en este árbol. NO se
+> **Las cifras de línea base de esta sección son las que se midieron cuando se escribió, y ya no
+> reproducen en el árbol actual.** No se reescriben a propósito: son el dato de entonces. La
+> medición de hoy, y la causa de cada diferencia, están en **L36**. Si lees sólo esta sección,
+> estás viendo un gate aprobado contra números que han caducado.
+
+
+- [x] T7.1 Gates de backend, **cada uno con su línea base medida** en este árbol. NO se
       encadenan con `&&`: así encadenados nunca llegan a `mypy` y el criterio sería
       insatisfacible.
       - `pytest` → base **15 failed, 31 errors, 1221 passed**. Los 31 errores son de *setup de
@@ -239,7 +245,7 @@
       que es justo quien afirma los kwargs worker→engine de sinterizado. (La "guarda declarada"
       de la ronda anterior era **falsa**: ese test sí aporta `sintering_min`/`sintering_max`
       en `:142-143` y no postea nada, escribe por ORM. No hay riesgo que declarar.)
-- [ ] T7.2 Gates de frontend, con su línea base:
+- [x] T7.2 Gates de frontend, con su línea base:
       - `npm test` → base **58 ficheros, 624 tests**, medida sobre la rama con `f586946` dentro. La base anterior
         (55/597) era la de `c3ff055`: los merges de `develop` (hasta `f586946`) añadieron
         `chart-theme.test.ts`
@@ -256,7 +262,7 @@
       - Nota: `frontend/tsconfig.tsbuildinfo` **ya no está trackeado** (PR #96), así que correr
         los gates no ensucia el árbol. Antes sí, y por eso cuatro rondas de revisión no
         pudieron reproducir estas cifras.
-- [ ] T7.3 Engine: este change **no toca `aglogen_core/`** (`git diff c3ff055..HEAD --
+- [x] T7.3 Engine: este change **no toca `aglogen_core/`** (`git diff c3ff055..HEAD --
       aglogen_core` sale vacío), pero la línea base **sí** se declara, porque medirla no cuesta
       nada y cuatro rondas la arrastraron como duda. Medida sobre `39207e0` con
       `PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test -p aglogen-engine --release`, salida
@@ -265,7 +271,7 @@
       `cc_tunable_low_df_test` 12, `integration_cc_tunable` 13 de 14 (1) y doc-tests 0 de 1 (1).
       Aceptación: **cero nuevos fallos**. Tarda unos 7 minutos en release; tres tests de
       rollback pasan de 60 s cada uno, así que no es un gate para correr a cada commit
-- [ ] T7.4 Verificación manual: estudio batch `ballistic` con sinterizado normal(0.8, 0.05) →
+- [x] T7.4 Verificación manual: estudio batch `ballistic` con sinterizado normal(0.8, 0.05) →
       comprobar en los parámetros del hijo y en el resultado que la media aplicada es **0.8**
 
 ## T8 — Cierre
@@ -911,3 +917,65 @@
   Coordinación: la peer confirmó que `BatchSimulationForm.tsx` y la página batch son míos (los
   tenía reservados), y pidió aviso al mergear para arrancar su ola 2 desde un `develop` con
   esto dentro.
+- L36 (2026-10-25): **T7 completa**. Los cinco gates medidos de nuevo en este árbol, y **cada
+  diferencia con la línea base del contrato explicada en vez de reescrita**:
+  - `pytest` **15 failed / 1389 passed / 31 errors / 2 xfailed**. La base decía 1221 passed: los
+    **+168** son los tests que añadieron T1 a T5. El desglose exacto, que un juez completó: se
+    **añadieron 171** y se **retiró 1**, y dos de los añadidos son `xfail(strict=True)`
+    deliberados, así que 171 − 1 − 2 = 168 que pasan. Esos dos xfail son los huecos derivados a
+    la issue #115: fallan hoy a propósito. Fallos y errores **idénticos**, verificados por
+    **nombre** con `git stash` a lo largo del contrato, no por recuento.
+  - Los **cinco módulos de la superficie**: **88 passed**, y la base decía 89. La diferencia no
+    es una pérdida: es `test_default_values_used`, que **T2 declaró retirar** porque afirmaba el
+    default que el contrato prohíbe. Confirmado con `git log -S`: lo retiró `0f1750a`.
+  - `ruff` **296**, igual que la base.
+  - `mypy` **1727 en 132**, y la base decía 1740 en 133. Los **−13** están explicados por tarea:
+    −11 de la anotación de `THEORETICAL_EXTREMES` (`ef72aef`), −1 de T1 y −1 de T2.
+  - Frontend: **811 tests en 72 ficheros**, y la base decía 58/624. Los **+187** son los tests de
+    T6 más los de las dos olas de rediseño que la sesión peer mergeó a `develop` mientras tanto.
+    `tsc` **13 errores**, los mismos. `npm run lint` sigue abriendo el asistente interactivo por
+    no haber configuración de ESLint: condición preexistente que el propio contrato declara.
+  - Engine (T7.3): **374 passed, 0 failed**, y `git diff` confirma que este contrato **no toca**
+    `aglogen_core`. Un apunte: la base declara «**5 ignored**» y su propio desglose suma **4**;
+    hoy mido **4**. La cifra estaba mal desde que se escribió — el mismo tipo de error que este
+    Log lleva corrigiendo todo el contrato, esta vez en la línea base y no en una entrega.
+  **T7.4, la verificación que de verdad cierra D5**, hecha con el **engine real** en vez de con
+  un clic: un estudio `ballistic` con `sintering_config` normal(0.8, 0.05) produce un hijo cuyos
+  claves de sinterizado son `{sintering_type: normal, sintering_coeff: 0.8, sintering_std: 0.05}`
+  —el dict completo del hijo lleva además `n_particles` y `sticking_probability`—, el
+  binding **recibe 0.8 y no 1.0**, y la simulación termina en `completed`. Antes de este
+  contrato ese mismo estudio corría a 1.0, es decir **sin sinterizar**, mientras sus parámetros
+  decían lo contrario.
+  **Evidencia por fichero, que es lo que T7.1 exige de verdad** (su tercera cláusula es «cero
+  nuevos **en los ficheros tocados**», y el Log sólo traía totales globales; un −13 global no
+  excluye un error nuevo en un fichero concreto). Medido contra `c3ff055`:
+  `serializers.py` 15→**14** mypy y 7→7 ruff; `utils.py` 11→**0** y 1→1;
+  `tests/test_utils.py` 69→**67** y 11→11; y los dos módulos nuevos —`sintering_shape.py` y
+  `expansion_preview.py`— en **0 y 0**. Cero nuevos en ninguno, y tres bajan.
+  **Tres imprecisiones de mi propio relato de deriva, corregidas**: los +168 tests son de **T1 a
+  T5**, no «T1 a T6» — T6 es frontend y no añadió ni un test de backend (`git diff 52a9f9d..
+  1d17cc2 -- backend/` sale vacío); el **−1 fichero** de mypy no es un misterio, es `utils.py`
+  pasando de 11 errores a 0 y saliendo de la lista; y L35 dice «801 en 71 ficheros» cuando en
+  ese mismo árbol ya eran **72**.
+  **Cómo observé T7.4, que el Log no decía**: envolví `aglogen_core.run_ballistic` con un espía
+  que registra los kwargs **y llama a la función real**, así que la simulación corre de verdad.
+  Y un juez señaló algo que hay que conceder: **`completed` no distingue nada**, porque el
+  defecto original también terminaba sin un solo error. La observación que sí distingue es la
+  geometría: con el mismo seed y 40 partículas de radio 1, la distancia mínima entre vecinos es
+  **2.0000 sin sinterizar** y **1.2162 con uniform(0.6, 0.7)** — las partículas se solapan, que
+  es lo que significa sinterizar.
+  **Y una acusación del juez que no se sostiene, comprobada antes de responder**: dijo que un
+  hijo `uniform` se queda sin `sintering_coeff` y el worker lo corre a 1.0, o sea sin
+  sinterizar. El hijo efectivamente guarda `{type: uniform, min, max}` sin coeficiente, pero
+  `parse_sintering` (`lib.rs:600-604`) usa `uniform(min, max)` para ese tipo e **ignora el
+  coeficiente**. La geometría de arriba es de ese caso: sinteriza. Los parámetros guardados sí
+  describen lo que corre.
+  **Por qué las líneas base del contrato ya no valen tal cual**: `develop` absorbió mis cuatro
+  tareas y las dos olas de rediseño de la sesión peer. Las cifras no se tocan en el texto de T7
+  y la deriva se explica aquí, que es donde se puede fechar.
+  **Con una salvedad que un juez me señaló y que me contradecía dentro de esta misma entrada**:
+  escribí que esas cifras «son lo que se midió cuando se escribió», y cuatro líneas más arriba
+  demuestro que el «5 ignorados» del engine **nunca se midió** —su propio desglose suma 4, hoy
+  mido 4, y `aglogen_core` es byte a byte el mismo árbol que entonces—. Así que lo correcto es:
+  las cifras de T7 se conservan **como el dato de entonces, medido o no**, y esta entrada dice
+  cuál es cuál.
