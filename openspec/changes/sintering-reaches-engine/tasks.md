@@ -218,6 +218,12 @@
 
 ## T7 — Verificación
 
+> **Las cifras de línea base de esta sección son las que se midieron cuando se escribió, y ya no
+> reproducen en el árbol actual.** No se reescriben a propósito: son el dato de entonces. La
+> medición de hoy, y la causa de cada diferencia, están en **L36**. Si lees sólo esta sección,
+> estás viendo un gate aprobado contra números que han caducado.
+
+
 - [x] T7.1 Gates de backend, **cada uno con su línea base medida** en este árbol. NO se
       encadenan con `&&`: así encadenados nunca llegan a `mypy` y el criterio sería
       insatisfacible.
@@ -936,6 +942,30 @@
   binding **recibe 0.8 y no 1.0**, y la simulación termina en `completed`. Antes de este
   contrato ese mismo estudio corría a 1.0, es decir **sin sinterizar**, mientras sus parámetros
   decían lo contrario.
+  **Evidencia por fichero, que es lo que T7.1 exige de verdad** (su tercera cláusula es «cero
+  nuevos **en los ficheros tocados**», y el Log sólo traía totales globales; un −13 global no
+  excluye un error nuevo en un fichero concreto). Medido contra `c3ff055`:
+  `serializers.py` 15→**14** mypy y 7→7 ruff; `utils.py` 11→**0** y 1→1;
+  `tests/test_utils.py` 69→**67** y 11→11; y los dos módulos nuevos —`sintering_shape.py` y
+  `expansion_preview.py`— en **0 y 0**. Cero nuevos en ninguno, y tres bajan.
+  **Tres imprecisiones de mi propio relato de deriva, corregidas**: los +168 tests son de **T1 a
+  T5**, no «T1 a T6» — T6 es frontend y no añadió ni un test de backend (`git diff 52a9f9d..
+  1d17cc2 -- backend/` sale vacío); el **−1 fichero** de mypy no es un misterio, es `utils.py`
+  pasando de 11 errores a 0 y saliendo de la lista; y L35 dice «801 en 71 ficheros» cuando en
+  ese mismo árbol ya eran **72**.
+  **Cómo observé T7.4, que el Log no decía**: envolví `aglogen_core.run_ballistic` con un espía
+  que registra los kwargs **y llama a la función real**, así que la simulación corre de verdad.
+  Y un juez señaló algo que hay que conceder: **`completed` no distingue nada**, porque el
+  defecto original también terminaba sin un solo error. La observación que sí distingue es la
+  geometría: con el mismo seed y 40 partículas de radio 1, la distancia mínima entre vecinos es
+  **2.0000 sin sinterizar** y **1.2162 con uniform(0.6, 0.7)** — las partículas se solapan, que
+  es lo que significa sinterizar.
+  **Y una acusación del juez que no se sostiene, comprobada antes de responder**: dijo que un
+  hijo `uniform` se queda sin `sintering_coeff` y el worker lo corre a 1.0, o sea sin
+  sinterizar. El hijo efectivamente guarda `{type: uniform, min, max}` sin coeficiente, pero
+  `parse_sintering` (`lib.rs:600-604`) usa `uniform(min, max)` para ese tipo e **ignora el
+  coeficiente**. La geometría de arriba es de ese caso: sinteriza. Los parámetros guardados sí
+  describen lo que corre.
   **Por qué las líneas base del contrato ya no valen tal cual**: `develop` absorbió mis cuatro
   tareas y las dos olas de rediseño de la sesión peer. Las cifras no se tocan en el texto de
   T7 —son lo que se midió cuando se escribió— y la deriva se explica aquí, que es donde se
