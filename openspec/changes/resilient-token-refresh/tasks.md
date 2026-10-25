@@ -77,7 +77,7 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
       expulsión: una muerte posterior al arreglo puede venir del límite de espera de R3, que no
       tiene nada que ver con las pestañas. Y si los solapes cruzados siguen siendo 0, dejar
       escrito que **no se ha medido**, nunca que el cerrojo no haga falta.
-- [ ] T5.6 Verificación manual de acceso, cierre de sesión y sesión realmente caducada: el
+- [x] T5.6 Verificación manual de acceso, cierre de sesión y sesión realmente caducada: el
       cambio está en el camino crítico de todo usuario.
 - [x] T5.7 Registrar en el Log las cifras de antes y después, no la impresión.
 
@@ -92,6 +92,37 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L3 — T5.6: el camino crítico, con lo que la comprobación NO cubre (2026-10-25)
+
+El cambio vive en el camino que recorre todo usuario, así que se comprobó contra el navegador y
+el backend reales, no solo con `fetch` doblado. El guion queda versionado en
+`frontend/diagnostics/critical-path.mjs`.
+
+| comprobación | resultado |
+| --- | --- |
+| acceso: la API responde 200 | OK |
+| acceso: aterriza fuera de `/auth/login` | OK |
+| acceso: cookie marcadora presente | OK |
+| acceso: el dashboard carga con sesión | OK |
+| sin credenciales, `/dashboard` manda a login | OK |
+| un token inválido termina en login | OK |
+
+**Lo que esto no demuestra, dicho antes de que alguien lo suponga.** La comprobación de cierre
+**no ejercita `logout()`**: borra las credenciales a mano y observa la redirección. Verifica que
+un navegador sin credenciales queda fuera, que no es lo mismo que verificar el cierre de sesión
+con un refresco en vuelo. **Esa carrera la cubre el test unitario de R5**, que sí la provoca.
+
+Llamar «cierre de sesión verificado» a lo que mide esta comprobación sería la clase de
+afirmación que esta sesión lleva todo el día corrigiendo.
+
+**Lo que sí añade sobre los tests unitarios**: la cookie que lee el middleware de rutas, la
+redirección real, y el veredicto del servidor sobre un token que de verdad no vale. Los tres
+solo participan en un navegador contra un backend.
+
+**Y la mitad que no se ha debilitado**: un token genuinamente inválido sigue terminando la
+sesión. Recuperarse de las colisiones no podía significar mantener viva una credencial revocada,
+y no lo significa.
 
 ### L2 — T5: de 9 expulsiones a 1, y la que queda demuestra lo que no sabíamos (2026-10-25)
 
