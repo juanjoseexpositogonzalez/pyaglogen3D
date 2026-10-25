@@ -365,3 +365,74 @@ def test_r11_3_holds_across_a_full_expansion(
         0.9,
         1.0,
     ]
+
+
+# --- Closing review — two canonical promises that had no witness -----------
+#
+# The closing judgment found that the canonical spec states two properties
+# which no test pins. Both are about a *value*, and both were "covered" by
+# tests that only assert the request was accepted. A regression storing the
+# wrong coefficient would have left the suite green - the exact silent
+# failure this whole contract exists to close.
+
+
+def test_r3_9_swept_well_formed_dict_child_really_runs_at_0_8(
+    api_client: APIClient, project: Project
+) -> None:
+    """R3.9 promises the child *runs at 0.8*, not merely that the POST is 201.
+
+    The two existing witnesses assert `201` / `is_valid()` and stop there.
+    """
+    study = _post_study(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {
+                "sintering_config": [
+                    {"distribution_type": "fixed", "coefficient": 0.8}
+                ]
+            }
+        },
+    )
+
+    swept = [
+        child
+        for child in study.simulations.all()
+        if child.parameters.get("sintering_coeff") == 0.8
+    ]
+    assert swept, (
+        "no child ran at the swept coefficient 0.8; "
+        f"saw {[c.parameters.get('sintering_coeff') for c in study.simulations.all()]}"
+    )
+    for child in swept:
+        assert child.parameters.get("sintering_coeff") != 1.0
+
+
+def test_r3_precedence_base_parameters_dict_beats_the_study_dict(
+    api_client: APIClient, project: Project
+) -> None:
+    """The middle rung of R3's precedence, which only prose asserted.
+
+    `test_sintering_precedence_regression` pins dict-over-flat on both
+    paths and says in its own docstring that the ordering *among* dicts
+    "needs an API-level test". The canonical states that order as
+    unchanged fact; this is the missing rung, so inverting it at grid
+    expansion can no longer pass a green suite.
+    """
+    study = _post_study(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 100,
+            "sticking_probability": 1.0,
+            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.6},
+        },
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.9},
+    )
+
+    child = _only_child(study)
+    assert child.parameters.get("sintering_coeff") == 0.6, (
+        "the study-level dict overrode the base_parameters dict; "
+        "R3 states base_parameters wins over the study field"
+    )
