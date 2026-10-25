@@ -145,17 +145,18 @@ object. Not all of them used to answer `201`: on the two parity grid keys — th
 reach the shared distribution validator — `std < 0` and `min > max` were already refused. On the
 other ten surfaces there was no distribution validation at all, so even those answered `201`. Those that did answer `201` and produced a simulation ignoring what was
 asked include `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max` on the parity
-keys, and — on the ten surfaces with no validation at all — **every** malformed shape, the
-unknown `mode` among them: measured, `parameter_grid.target_kf_distribution = [{mode:"lognormal",
+keys, and — on the ten surfaces with no validation at all — every malformed **config shape** of those
+three kinds, the unknown `mode` among them: measured, `parameter_grid.target_kf_distribution = [{mode:"lognormal",
 value:1.8}]` answers `201` and reaches the engine with no kwargs, so the simulation runs at the
-default. The identical-behaviour promise never covered any of them, which is what R7.4 and
-R13.1, R13.5 and R13.7 carve out.
+default. The identical-behaviour promise never covered any of them, which is what R7.4 carves out of this
+requirement and R13.1, R13.2, R13.5, R13.7 and R13.8 carve out of R13 — all seven, not a
+selection.
 
 There is a third group, larger than the two above: a config that is **well formed** is still
 refused when the study's algorithm does not consume it, which R13 fixes as an allow-list. For
 the ten algorithms outside it, every one of the four keys R13 governs — `kf_distribution`,
-`particle_radius_config`, `target_kf_distribution` and `dpo_distribution`, not the parity four
-named in the opening sentence — used to be accepted on every surface and read by nobody; now
+`particle_radius_config`, `target_kf_distribution` and `dpo_distribution` — two of them among
+the parity four named in the opening sentence, two of them the engine-facing names — used to be accepted on every surface and read by nobody; now
 each is a 400.
 
 A well-formed config in `base_parameters.kf_distribution` or
@@ -233,8 +234,7 @@ For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
 `sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff."
 input, rendered by `BatchSimulationForm` and sent by `handleSubmit` as
-`base_parameters.sintering_coeff` whenever it holds a usable number — and never as `null` or `NaN` when it is
-empty, which is what R10.6 fixes. Both are
+`base_parameters.sintering_coeff` whenever it holds a usable number — and not at all when it is empty. Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
 
