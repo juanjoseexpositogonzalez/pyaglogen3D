@@ -29,7 +29,7 @@
 
 ## T0 — Línea base
 
-- [ ] T0.1 **`npm ci` en este worktree primero.** Un worktree recién creado no tiene
+- [x] T0.1 **`npm ci` en este worktree primero.** Un worktree recién creado no tiene
       `node_modules`, y sin él `tsc --noEmit` falla con cientos de `TS2307` por dependencias
       ausentes y `next lint` muere con `next: command not found`. Después, registrar en el Log
       el estado de partida **observado aquí**, no heredado: `npm test` y `npm run type-check`.
@@ -37,7 +37,7 @@
       buena ninguna cifra previa. Verificado aparte: `frontend/` no tiene **ninguna**
       configuración ESLint (`.eslintrc*` y `eslint.config.*` ausentes) pese a declarar
       `eslint ^8` y `eslint-config-next 14.1`, así que `npm run lint` no es un gate utilizable.
-- [ ] T0.2 Capturar el recuento de literales de color bajo `frontend/src/components/` y
+- [x] T0.2 Capturar el recuento de literales de color bajo `frontend/src/components/` y
       `frontend/src/lib/`, **separando código de producción de ficheros de test**:
       - total: **170 en 24 ficheros**;
       - **producción (excluyendo `__tests__/`): 98** ← esta es la cifra que gobierna T7.3.
@@ -47,34 +47,34 @@
       exime expresamente la rampa de fallback SSR de `chart-theme.ts`, y que además castigaba
       los fixtures de los tests, que por definición necesitan valores de color concretos para
       aseverar contra ellos. Medir el total hacía imposible cumplir las dos reglas a la vez.
-- [ ] T0.3 Confirmar que la rama sale de `origin/develop` y que no hay solape con
+- [x] T0.3 Confirmar que la rama sale de `origin/develop` y que no hay solape con
       `sintering-reaches-engine` (`git diff --stat` contra su rama).
 
 ## T1 — Tokens
 
-- [ ] T1.1 Reescribir `frontend/src/app/globals.css`: superficies, tinta, acentos, semánticos,
+- [x] T1.1 Reescribir `frontend/src/app/globals.css`: superficies, tinta, acentos, semánticos,
       líneas, sombras, radio, canvas de visualización, gradientes tonales y rampa
       `--series-1…6`. Tema claro en `:root`, oscuro en `[data-theme="dark"]`.
-- [ ] T1.2 Retirar `body.app-background` y su overlay, y la clase fija `dark` de
+- [x] T1.2 Retirar `body.app-background` y su overlay, y la clase fija `dark` de
       `<html>` (`app/layout.tsx:19`), que hoy es inerte porque `globals.css` no tiene ningún
       selector `.dark` (D9) y lo seguiría siendo tras T2.2. **No borrar** `/pyAgloGen3DBNG.png`: lo
       reutiliza la ola 2 como hero de autenticación.
-- [ ] T1.3 Puente shadcn: re-derivar de los tokens nuevos las **20 declaraciones que ya
+- [x] T1.3 Puente shadcn: re-derivar de los tokens nuevos las **20 declaraciones que ya
       existen** bajo `:root` en `globals.css:7-26` (19 de color más `--radius`), y **añadir**
       `--chart-1…5`, que hoy **no existen** ni en `globals.css` ni en `tailwind.config.ts`,
       derivados de `--series-1…5` por si un componente shadcn futuro los espera.
       **Los alias que resuelven por `var()` no se redeclaran en el bloque oscuro**: heredan el
       cambio de su token de origen. R2-S4 los considera cubiertos; duplicarlos por satisfacer
       el test literalmente sería ruido, y debilitar el test está prohibido por AGENTS.md.
-- [ ] T1.4 Escala tipográfica y clases de micro-tipografía (`.label-xs`, `.eyebrow`, `.hint`).
-- [ ] T1.5 Tests automatizables de R2-S4 y R3-S1: paridad de tokens entre temas y disyunción
+- [x] T1.4 Escala tipográfica y clases de micro-tipografía (`.label-xs`, `.eyebrow`, `.hint`).
+- [x] T1.5 Tests automatizables de R2-S4 y R3-S1: paridad de tokens entre temas y disyunción
       semánticos/series, ambos por **parseo estático de `globals.css` como texto**.
       El motivo es que **PostCSS no corre bajo vitest**, así que la hoja importada por
       `layout.tsx` nunca llega al documento de prueba — no que jsdom sea incapaz de resolver
       custom properties. Lo es: una sonda sobre jsdom 23.2.0 (la versión fijada en
       `package-lock.json`) devuelve el valor correcto tanto tras `setProperty` como desde un
       `<style>` inyectado. Por eso T4.4 sí puede inyectarlas.
-- [ ] T1.6 `app/auth/layout.tsx` **y las cinco páginas de auth** (`login`, `register`,
+- [x] T1.6 `app/auth/layout.tsx` **y las cinco páginas de auth** (`login`, `register`,
       `check-email`, `verify-email`, `oauth-callback`) re-expresadas en tokens, con sus tests
       de R2-S3. `oauth-callback/page.tsx:45-46,56-57` fija `border-blue-600` y `text-gray-600`:
       gris oscuro sobre superficie oscura en cuanto exista el tema oscuro.
@@ -87,85 +87,85 @@
 
 ## T2 — Tailwind
 
-- [ ] T2.1 Reescribir `tailwind.config.ts` derivando de los tokens; añadir familia `mono` y
+- [x] T2.1 Reescribir `tailwind.config.ts` derivando de los tokens; añadir familia `mono` y
       `fontVariantNumeric` tabular. **Se mantiene `theme.extend`**, no `theme`: la paleta por
       defecto de Tailwind no se elimina, porque `hemisphere-grid-viz.md:67-73` fija estados por
       nombre (`gray-400`, `blue-500`, `blue-700`).
-- [ ] T2.2 **(1a por enmienda)** `darkMode: ['selector', '[data-theme="dark"]']`. Sin esto las
+- [x] T2.2 **(1a por enmienda)** `darkMode: ['selector', '[data-theme="dark"]']`. Sin esto las
       **38 variantes `dark:`** vivas en `src/` siguen a `prefers-color-scheme` y contradicen la
       elección explícita del usuario (D9). Quedan inertes hasta T6.1, que es el estado
       preferible entre los dos posibles.
-- [ ] T2.3a **(1a)** Test: `tailwind.config.ts` no contiene literal hexadecimal ni `rgb(`.
-- [ ] T2.3b **(1a, con T2.2)** Test: `darkMode` está anclado a `[data-theme]`.
+- [x] T2.3a **(1a)** Test: `tailwind.config.ts` no contiene literal hexadecimal ni `rgb(`.
+- [x] T2.3b **(1a, con T2.2)** Test: `darkMode` está anclado a `[data-theme]`.
 
 ## T3 — Kit de primitivas
 
-- [ ] T3.1 `Num` y `CopyText` — la regla de D7: número mono y tabular, unidad en elemento
+- [x] T3.1 `Num` y `CopyText` — la regla de D7: número mono y tabular, unidad en elemento
       hermano, nunca concatenados.
-- [ ] T3.2 `Panel`, `VisualPanel`, `PageHeader`, `DetailList`, `Callout`, `EmptyState`.
-- [ ] T3.3 `MetricCard` con tono, delta, barra de progreso y línea de detalle.
-- [ ] T3.4 `DataTable` **autónomo en `kit/`**, sin dependencia de `ui/table`: cabecera sticky,
+- [x] T3.2 `Panel`, `VisualPanel`, `PageHeader`, `DetailList`, `Callout`, `EmptyState`.
+- [x] T3.3 `MetricCard` con tono, delta, barra de progreso y línea de detalle.
+- [x] T3.4 `DataTable` **autónomo en `kit/`**, sin dependencia de `ui/table`: cabecera sticky,
       columnas numéricas a la derecha, sin cebra. `components/ui/table.tsx` **no existe** en
       este repo (shadcn está instalado parcialmente, sin `components.json`), y crearlo caería
       fuera de la lista cerrada de ficheros editables.
-- [ ] T3.5 `StatusChip`, `QualityBadge`, `StatusDot` — cada uno con etiqueta textual; el estado
+- [x] T3.5 `StatusChip`, `QualityBadge`, `StatusDot` — cada uno con etiqueta textual; el estado
       nunca se distingue solo por color. Conviven con los homónimos de `components/common/*`,
       que quedan deprecados sin cambiar ningún import existente (D4).
-- [ ] T3.6 `SegmentedControl`, `FilterBar`, `DisclosurePanel`, `DetailsDrawer` sobre
+- [x] T3.6 `SegmentedControl`, `FilterBar`, `DisclosurePanel`, `DetailsDrawer` sobre
       `ui/dialog` — este sí existe (`components/ui/dialog.tsx`), verificado.
-- [ ] T3.7 `ShowValues` — el conmutador de alternativa textual (D6). Entra ahora aunque sus
+- [x] T3.7 `ShowValues` — el conmutador de alternativa textual (D6). Entra ahora aunque sus
       consumidores lleguen en las olas 2 y 3.
-- [ ] T3.8 Tests de cada primitiva, incluidos los escenarios `[test]` de accesibilidad de R7
+- [x] T3.8 Tests de cada primitiva, incluidos los escenarios `[test]` de accesibilidad de R7
       y R8.
 
 ## T4 — Tema de gráficas Plotly
 
-- [ ] T4.1 `frontend/src/lib/chart-theme.ts`: `series(i)`, `dash(i)`, `marker(i)`, `layout()`.
-- [ ] T4.2 Lectura de las variables del documento + re-lectura al cambiar `data-theme`;
+- [x] T4.1 `frontend/src/lib/chart-theme.ts`: `series(i)`, `dash(i)`, `marker(i)`, `layout()`.
+- [x] T4.2 Lectura de las variables del documento + re-lectura al cambiar `data-theme`;
       literales solo como fallback SSR, única excepción permitida por R1.
-- [ ] T4.3 Adelgazamiento de marcadores: menos de 60 posiciones en una serie de 500 puntos.
-- [ ] T4.4 Tests de R4 y R5: tres señales distintas por serie e indexadas por la misma
+- [x] T4.3 Adelgazamiento de marcadores: menos de 60 posiciones en una serie de 500 puntos.
+- [x] T4.4 Tests de R4 y R5: tres señales distintas por serie e indexadas por la misma
       posición; **color respetado cuando lo fija el llamante**; serie única sólida y sin
       marcadores; repintado al mutar `data-theme` con las custom properties inyectadas en el
       test.
-- [ ] T4.5 **No se añade recharts.** Verificar que `package.json` no gana dependencias de
+- [x] T4.5 **No se añade recharts.** Verificar que `package.json` no gana dependencias de
       gráficas (D5).
-- [ ] T4.6b Test de R1-S2 (los ficheros creados por esta ola no contienen literales de color,
+- [x] T4.6b Test de R1-S2 (los ficheros creados por esta ola no contienen literales de color,
       salvo el fallback SSR documentado), en `src/lib/__tests__/chart-theme.test.ts`.
       **Barrido por glob tolerante a rutas ausentes.** En 1a solo existe `chart-theme.ts`;
       `kit/`, `shell/`, `theme.ts` y `useThemeStore.ts` los entrega 1b. Un test que lea los
       cinco caminos literalmente fallaría con ENOENT y dejaría la puerta T7.1 de 1a en rojo.
-- [ ] T4.6 La triple codificación **no invade colores atados por otra capacidad**:
+- [x] T4.6 La triple codificación **no invade colores atados por otra capacidad**:
       `multi-aggregate-comparison` R6/S5.3 ata cada serie de Rg al color de su simulación, el
       mismo del borde de su viewer. `series(i)` no se impone ahí; `dash(i)` y `marker(i)` sí.
 
 ## T5 — Shell
 
-- [ ] T5.1 `components/shell/Sidebar.tsx`: secciones agrupadas, sección de proyecto contextual,
+- [x] T5.1 `components/shell/Sidebar.tsx`: secciones agrupadas, sección de proyecto contextual,
       entrada de IA por acceso, sección admin por rol, `aria-current` en la activa.
-- [ ] T5.2 `components/shell/TopBar.tsx`: breadcrumb, conmutador de tema, notificaciones,
+- [x] T5.2 `components/shell/TopBar.tsx`: breadcrumb, conmutador de tema, notificaciones,
       usuario.
-- [ ] T5.3 `components/shell/AppShell.tsx` y montaje **único** en `app/layout.tsx` (D3).
-- [ ] T5.3b El shell **no** se monta en `/` ni en `/auth/*`. Se implementa como **guard por
+- [x] T5.3 `components/shell/AppShell.tsx` y montaje **único** en `app/layout.tsx` (D3).
+- [x] T5.3b El shell **no** se monta en `/` ni en `/auth/*`. Se implementa como **guard por
       `usePathname` dentro de `AppShell`**, no como route group, para que sea testable a nivel
       de componente (ver T5.6). `frontend/middleware.ts:12` solo protege `/dashboard` y
       `/projects`, y `:15` redirige fuera de `/auth/login` y `/auth/register` al usuario
       autenticado: un sidebar con breadcrumb y menú de usuario sobre la pantalla de login sería
       incoherente.
-- [ ] T5.3c `AppShellContext`, definido en `components/shell/` y montado en
+- [x] T5.3c `AppShellContext`, definido en `components/shell/` y montado en
       `app/providers.tsx`, para que `Header` sepa que debe renderizar `null` (D9). **No** en
       `src/contexts/`: esa ruta no está en la lista cerrada.
-- [ ] T5.4 `Header` deprecado: renderiza `null` bajo el shell. **Ninguna página de producto se
+- [x] T5.4 `Header` deprecado: renderiza `null` bajo el shell. **Ninguna página de producto se
       edita en esta ola.** Las únicas excepciones son el layout y las cinco páginas de auth
       (T1.6), que no son pantallas de producto ni están reservadas por ningún change. La
       autoridad sobre qué es editable es la lista cerrada del final de este fichero, no esta
       frase.
-- [ ] T5.5 Responsive: iconos a <1440px, drawer con trampa de foco a <900px, frame a 1440px.
+- [x] T5.5 Responsive: iconos a <1440px, drawer con trampa de foco a <900px, frame a 1440px.
       Solo la trampa de foco y el nombre accesible son testables; los breakpoints son media
       queries y van a T7.4 manual.
-- [ ] T5.4b Test de R3 en `components/layout/__tests__/Header.test.tsx`: bajo el shell,
+- [x] T5.4b Test de R3 en `components/layout/__tests__/Header.test.tsx`: bajo el shell,
       `Header` no renderiza navegación.
-- [ ] T5.6 Tests del shell **a nivel de componente**, renderizando `<AppShell>` con
+- [x] T5.6 Tests del shell **a nivel de componente**, renderizando `<AppShell>` con
       `next/navigation` mockeado, como ya hace
       `app/projects/[id]/fraktal/batch/__tests__/page.test.tsx:14-32`. **No se renderiza
       `app/layout.tsx`**: es Server Component e importa `next/font/google`, que ningún test del
@@ -177,22 +177,22 @@
 
 ## T6 — Tema
 
-- [ ] T6.0 `useThemeStore` (zustand + `persist`, consistente con `viewerStore`) montado en
+- [x] T6.0 `useThemeStore` (zustand + `persist`, consistente con `viewerStore`) montado en
       `app/providers.tsx`. Valor inicial leído de `document.documentElement.dataset.theme` para
       no romper la hidratación: `app/layout.tsx` es Server Component (D9).
-- [ ] T6.1 Script inline de resolución previa al primer paint. **Lee la misma clave y el mismo
+- [x] T6.1 Script inline de resolución previa al primer paint. **Lee la misma clave y el mismo
       formato que escribe `persist`**: zustand guarda `{"state":{…},"version":N}` bajo su
       `name` (precedente: `viewerStore.ts:173` → `'viewer-settings'`). Un
       `localStorage.getItem('theme')` ingenuo rompería el escenario de "sin flash" en silencio.
       La clave se fija en esta tarea y se documenta en el Log.
-- [ ] T6.2 Persistencia y precedencia sobre `prefers-color-scheme`. **`window.matchMedia` no
+- [x] T6.2 Persistencia y precedencia sobre `prefers-color-scheme`. **`window.matchMedia` no
       existe en jsdom 23.2.0** y `src/test/setup.ts` no lo stubea (verificado): el resolutor se
       escribe como función pura importable desde `src/lib/theme.ts`, que recibe la preferencia
       guardada y la del sistema como argumentos. Así T6.3 no depende de `matchMedia`.
-- [ ] T6.3 Tests de los escenarios `[test]` de R2: la función resolutora escribe el `data-theme`
+- [x] T6.3 Tests de los escenarios `[test]` de R2: la función resolutora escribe el `data-theme`
       correcto en cada combinación de preferencia guardada y preferencia del sistema. El
       escenario de "sin flash" es `[manual]` y va a T7.4.
-- [ ] T6.4 `NetworkCanvas.detectTheme()` (`components/topology/NetworkCanvas.tsx:9-12`) pasa a
+- [x] T6.4 `NetworkCanvas.detectTheme()` (`components/topology/NetworkCanvas.tsx:9-12`) pasa a
       leer `document.documentElement.dataset.theme` con fallback a `prefers-color-scheme`, y a
       escuchar el cambio de `data-theme` además del `MediaQueryList`. Hoy cumple
       `contacts-graph-viz.md:252` por accidente; esta ola introduce la divergencia, así que
@@ -201,14 +201,14 @@
 
 ## T7 — Verificación
 
-- [ ] T7.1 `cd frontend && npm test` verde; ningún test preexistente pasa a rojo.
-- [ ] T7.2 `npm run type-check` sin errores nuevos respecto a la línea base de T0.1.
-- [ ] T7.2b **`npm run build` en verde.** Gate añadido el 2026-10-23 tras el judgment day:
+- [x] T7.1 `cd frontend && npm test` verde; ningún test preexistente pasa a rojo.
+- [x] T7.2 `npm run type-check` sin errores nuevos respecto a la línea base de T0.1.
+- [x] T7.2b **`npm run build` en verde.** Gate añadido el 2026-10-23 tras el judgment day:
       `tsc --noEmit` y `next build` **no comprueban lo mismo**. El build type-chequea con los
       tipos de ruta generados en `.next/types`, y además hace prerender. Un `useSearchParams`
       sin frontera de Suspense dejó el PR #101 sin compilar mientras `type-check` daba 13
       errores preexistentes y ningún gate del contrato lo veía.
-- [ ] T7.3 **Los literales de color en código de producción no suben de 98** (T0.2), excluidos
+- [x] T7.3 **Los literales de color en código de producción no suben de 98** (T0.2), excluidos
       los ficheros bajo `__tests__/` y la rampa de fallback SSR que R1 documenta como su única
       excepción. No se exige cero: 98 son preexistentes y uno está mandado verbatim por
       `contacts-graph-viz` (D1).
@@ -218,14 +218,14 @@
       grep -rnoE '#[0-9a-fA-F]{3,8}\b|rgba?\(' src/components src/lib \
         --include=*.ts --include=*.tsx | grep -v '__tests__' | grep -v 'chart-theme.ts' | wc -l
       ```
-- [ ] T7.4 Verificación manual en navegador, con capturas en el Log, de **todos los escenarios
+- [x] T7.4 Verificación manual en navegador, con capturas en el Log, de **todos los escenarios
       `[manual]`** de las dos specs: ausencia de flash de tema, alineación de columnas
       numéricas y los cuatro breakpoints (1440, 1280, 900, 360). Es un change de interfaz: la
       suite no sustituye mirar.
-- [ ] T7.5 Contraste AA medido sobre las micro-etiquetas en ambos temas, con la cifra en el Log.
-- [ ] T7.6 Backend y engine **sin tocar**: `git diff --stat` no muestra cambios fuera de
+- [x] T7.5 Contraste AA medido sobre las micro-etiquetas en ambos temas, con la cifra en el Log.
+- [x] T7.6 Backend y engine **sin tocar**: `git diff --stat` no muestra cambios fuera de
       `frontend/` y `openspec/`.
-- [ ] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
+- [x] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
       verde: la paleta canónica de `contacts-graph-viz` no se ha tocado.
 - [ ] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
       sí afecta (hay 23 ficheros `page.tsx`; doce son pantallas distintas y 17 importan
@@ -238,10 +238,10 @@
 
 ## T8 — Entrega y limpieza
 
-- [ ] T8.1 **Dos PRs encadenados** a `develop`, etiqueta `type:feat` y su issue de Jira, con el
+- [x] T8.1 **Dos PRs encadenados** a `develop`, etiqueta `type:feat` y su issue de Jira, con el
       reparto de la tabla de cabecera de este fichero. Un único PR de ~5.000 líneas no es
       revisable y el repo tiene una skill cuyo disparador son los 400.
-- [ ] T8.0 `openspec validate redesign-design-system --strict` en verde **antes del PR de 1a**.
+- [x] T8.0 `openspec validate redesign-design-system --strict` en verde **antes del PR de 1a**.
       Es un gate real y barato que cuatro rondas de spec-review no ejecutaron: las deltas deben
       vivir en `specs/<capability>/spec.md`, no en `specs/<capability>.md`; un fichero plano se
       **ignora en silencio** al aplicar y al archivar.
@@ -263,7 +263,7 @@
       - `git worktree remove ~/code/.worktrees/pyaglogen3D-redesign-design-system` —
         **nunca con cambios sin commitear**, propios ni ajenos;
       - `git worktree prune` y `git gc` en el clon principal.
-- [ ] T8.5 Avisar por intercom a la sesión dueña de la cadena `distribution-config-surface` de
+- [x] T8.5 Avisar por intercom a la sesión dueña de la cadena `distribution-config-surface` de
       que la ola 1 está integrada, por si afecta a su rebase.
 
 ## Ficheros editables en esta ola — lista cerrada
@@ -335,6 +335,67 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L14 — Verificación manual: T7.4, T7.5 y T7.8 (2026-10-25)
+
+**Primero, un fallo propio que hay que decir.** El cuerpo del PR #118 afirmaba que entregaba «los
+escenarios del contrato **marcados** contra la implementación entregada». No lo hacía: `tasks.md`
+tenía **las 58 tareas sin marcar** y ese PR ya está mergeado, así que la afirmación falsa está en
+la historia. La escribí sin abrir el fichero. Esta entrada y las marcas de esta rama lo corrigen.
+
+**Entorno.** Build de **producción** (`next build` + `next start`), no servidor de desarrollo:
+postgres en `:5433` con volumen propio del worktree, Django en `:8000` con `DB_PORT` forzado
+—comprobado, porque nadie escucha en `:5432`—, y datos sembrados: 3 proyectos y 13 simulaciones
+con estados `completed`, `running`, `failed` y `queued` a propósito.
+
+**Resultados medidos**, sobre `065506f` (`develop` tras #116, #119, #117 y #118):
+
+| tarea | comprobación | resultado |
+| --- | --- | --- |
+| T7.4 | flash de tema (R2) | **pasa**: con preferencia oscura guardada, `data-theme="dark"` ya en el primer paint, antes de hidratar |
+| T7.4 | desbordamiento a 360 px | **ninguno** en las pantallas de la ola con sesión válida: `scrollWidth` 360 exacto |
+| T7.5 | contraste AA, tema claro | **mínimo 5.01:1**, mediana 14.64:1, 22 micro-etiquetas, **0** por debajo de 4.5:1 |
+| T7.5 | contraste AA, tema oscuro | **mínimo 7.04:1**, mediana 14.01:1, 22 micro-etiquetas, **0** por debajo de 4.5:1 |
+| T7.8 | 60 capturas, 18 superficies × 2 temas × 4 breakpoints | publicadas en la issue **#124** |
+
+Las tres peores etiquetas son las mismas en ambos temas (`Exclude first 0 points (small N)`,
+`Exclude last 0 points (large N)`, `Export`) y aun así pasan AA con margen.
+
+**T7.8 queda abierta a propósito.** Las capturas son el entregable; el juicio visual es de la
+persona. Un agente que no ve imágenes puede afirmar que nada desborda, no que nada quede mal.
+
+**Dos defectos encontrados, ninguno de esta ola, ambos con issue propia:**
+
+- **#122 — la sesión muere sola.** `ROTATE_REFRESH_TOKENS` con `BLACKLIST_AFTER_ROTATION`
+  (`backend/config/settings/base.py:173-174`) y refrescos concurrentes: el primero rota el token
+  y deja en lista negra el que los demás llevan en vuelo; el rezagado recibe 401 y el cliente
+  cierra sesión. Medido: **5 refrescos en 16 s** en el detalle de proyecto, y sesión muerta al
+  refresco **36** con 2×401. Expulsa usuarios al azar mientras trabajan.
+- **#123 — el header público heredado desborda 3 px a 360 px.** Marcado anterior a esta ola, que
+  solo le añadió la cesión ante el shell.
+
+**La lección, y es la misma tres veces.** El instrumento falló en tres pasadas y cada vez inventó
+defectos del producto: 22 hallazgos falsos, luego 14, luego 6.
+
+| pasada | qué hizo mal el instrumento | qué inventó |
+| --- | --- | --- |
+| 1ª | dio por bueno un login sin comprobarlo | 22 hallazgos, pantallas privadas inservibles |
+| 2ª | esperó `networkidle` en pantallas que sondean sin parar | 14, entre ellos «la sesión no persistió» por pantalla |
+| 3ª | lo mismo, atenuado | 6 |
+
+Lo que destapó el defecto real no fue medir mejor, sino preguntar **por qué el patrón era
+inconsistente entre temas**. Un fallo que cambia de sitio no es un fallo de sitio. Y clasificar
+mal un síntoma —repartir «la sesión no persistió» entre `/settings`, `/ai` y `/admin`— lo
+convierte en ruido que invita a ignorarlo, en vez de en el defecto de autenticación que era.
+
+Regla que queda: **una comprobación que puede fallar por un motivo distinto del que dice medir es
+peor que no tenerla**, porque produce hallazgos falsos con apariencia de evidencia. El script
+final espera la respuesta real de la API, exige HTTP 200, verifica la cookie que mira el
+middleware, y cuenta las expulsiones de sesión **aparte** de los hallazgos de maquetación.
+
+**Cobertura declarada, no implícita:** los datos son fabricados y las pantallas de FRAKTAL salen
+vacías porque no se sembraron análisis de imagen. Ambas cosas están dichas en la issue y en el
+README de la rama de evidencia, en lugar de dejar que el lector las descubra.
 
 ### L13 — La partición dejaba código inerte; rehecha dos veces, de siete trozos a cuatro (2026-10-24)
 
