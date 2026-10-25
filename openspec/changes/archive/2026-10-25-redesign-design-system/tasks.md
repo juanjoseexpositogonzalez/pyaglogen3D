@@ -336,6 +336,35 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
 
+### L17 — La revisión visual diferida se hizo: T7.8 pasa a verificada (2026-10-25)
+
+La entrada **L15 sigue siendo válida tal como está escrita** y no se corrige: en el momento del
+archive, T7.8 se aceptó **sin mirar**, por decisión explícita, y el registro lo dijo con esas
+palabras. Esta entrada no reescribe aquello; añade lo que pasó después.
+
+**La persona ha recorrido las 60 capturas de la issue #124 y no ha encontrado nada anómalo.**
+
+El recorrido se publicó en la propia issue, ordenado por riesgo y no por número de pantalla, con
+los ficheros concretos de cada comprobación:
+
+| comprobación | por qué estaba primero |
+| --- | --- |
+| el rail roba ancho en pantallas de tres paneles | el shell añade una barra lateral fija que antes no existía |
+| las nueve superficies heredadas en tema oscuro | 29 utilidades `dark:` que nadie había visto activas, sin ningún test que las cubra |
+| alineación numérica | la regla tipográfica de D7 no tiene testigo automático |
+| los cuatro breakpoints, estados sin color, paridad entre temas | el resto del escenario `[manual]` del contrato |
+
+Ninguna devolvió hallazgo. **T7.8 queda verificada**, no aceptada.
+
+**Lo que esto no cambia.** La cobertura declarada sigue siendo parcial y conviene que no se
+olvide al leer este cierre: los datos de las capturas son **fabricados**, y las pantallas de
+FRAKTAL salen **vacías** porque no se sembraron análisis de imagen. Se juzgó maquetación,
+densidad y estados; no valores ni contenido de FRAKTAL.
+
+**Y una limitación que sigue viva**: esas nueve superficies heredadas se miraron una vez, en
+capturas, sin test que las proteja. La primera ola que las toque debe verificarlas en ambos
+temas, porque hoy nada avisaría si se rompen.
+
 ### L16 — El archive, y dos cosas que el tooling no hizo (2026-10-25)
 
 `openspec archive redesign-design-system -y` escribió las dos capacidades nuevas en forma de
