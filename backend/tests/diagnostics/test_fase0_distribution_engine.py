@@ -276,4 +276,14 @@ def test_undocumented_doors(
     child = study.simulations.first()
     assert child is not None
     print(f"    hijo guarda: {child.parameters.get('target_kf_distribution')!r}")
-    print(f"    kwargs al engine: {_kwargs_reaching_engine(child.id)}")
+    kwargs = _kwargs_reaching_engine(child.id)
+    print(f"    kwargs al engine: {kwargs}")
+    # The contract's central premise is measured here, so it is asserted: a
+    # well-formed mode reaches the engine, an unknown one reaches it as
+    # nothing at all and the simulation silently runs at the default.
+    if "lognormal" in door:
+        assert kwargs == {}, "the unknown mode stopped being silently dropped"
+    else:
+        assert kwargs.get("kf_mode") == "fixed" and kwargs.get("kf_value") == 1.8, (
+            f"{door}: the declared distribution no longer reaches the engine: {kwargs}"
+        )

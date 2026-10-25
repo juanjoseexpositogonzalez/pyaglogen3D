@@ -143,8 +143,10 @@ identical-behaviour promise never covered those.
 
 There is a third group, larger than the two above: a config that is **well formed** is still
 refused when the study's algorithm does not consume it, which R13 fixes as an allow-list. For
-the ten algorithms outside it, every one of these four keys used to be accepted on every surface
-and read by nobody; now each is a 400.
+the ten algorithms outside it, every one of the four keys R13 governs — `kf_distribution`,
+`particle_radius_config`, `target_kf_distribution` and `dpo_distribution`, not the parity four
+named in the opening sentence — used to be accepted on every surface and read by nobody; now
+each is a 400.
 
 A well-formed config in `base_parameters.kf_distribution` or
 `base_parameters.particle_radius_config` is not refused **for its shape or its range** when the
@@ -219,7 +221,7 @@ for distributions, multi-select chips for seed_type).
 
 For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
-`sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff."
+`sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff." input, rendered by `BatchSimulationForm` and sent by `handleSubmit`,
 input (see `parameterOptionsFor`) sent as `base_parameters.sintering_coeff` on every submit (see `parameterOptionsFor`). Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
@@ -397,7 +399,7 @@ simulation stuck in `RUNNING`.
 - GIVEN a study whose `base_parameters` declares `target_kf_distribution` and whose `parameter_grid` declares `kf_distribution`
 - WHEN its children are expanded
 - THEN the grid entry wins for every child, because the grid is what the study is sweeping
-- AND the same holds for the pair `particle_radius_config` / `base_parameters.dpo_distribution`
+- AND the same holds for every pair naming the same magnitude, in either direction: a grid entry under `kf_distribution` or `target_kf_distribution` beats either name in `base_parameters`, and likewise for `particle_radius_config` and `dpo_distribution`
 - AND that precedence is the same one R3 already fixes for the sintering equivalent
 
 #### Scenario R13.11 — The uniform option is submittable without a prior edit
@@ -414,4 +416,5 @@ simulation stuck in `RUNNING`.
 - THEN a 400 response naming the algorithms that consume the key
 - AND the check runs on create and on update, so it cannot be bypassed by creating without the key and adding it afterwards
 - AND a `tunable_cc` study that already carries one of these keys cannot have its `base_algorithm` changed to an algorithm outside the allow-list, which is the mismatch reached from the other side
+- AND the check runs only on updates that touch one of these keys or the algorithm, so a row stored before this change stays editable in its other fields instead of becoming frozen
 
