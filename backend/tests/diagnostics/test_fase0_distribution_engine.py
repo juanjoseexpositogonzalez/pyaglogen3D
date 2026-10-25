@@ -113,6 +113,35 @@ def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     )
 
 
+def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
+    """The three panics R13 quotes as evidence, asserted instead of quoted.
+
+    A number cited in the gate artifact has to be reproducible by the command
+    that artifact publishes. Note the boundary: `kf_mean=0.0` does NOT panic
+    (it runs at target_kf_used ~0.075), so rejecting `mean <= 0` rests on
+    cc-tunable-aggregation R11/R12, not on a crash.
+    """
+    import aglogen_core
+
+    casos = {
+        "fixed value=-1": {"kf_mode": "fixed", "kf_value": -1.0},
+        "normal mean=-1": {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
+        "uniform 2..1": {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
+    }
+    for nombre, kwargs in casos.items():
+        with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+            aglogen_core.run_tunable_cc(**ENGINE_BASE, **kwargs)
+        print(f"\n[panic kf] {nombre}: {type(excinfo.value).__name__}")
+        assert not isinstance(excinfo.value, Exception), (
+            f"{nombre} stopped being a BaseException: the worker guard would now catch it"
+        )
+
+    runs = aglogen_core.run_tunable_cc(
+        **ENGINE_BASE, kf_mode="normal", kf_mean=0.0, kf_std=0.1
+    )
+    print(f"[panic kf] normal mean=0 does NOT panic: target_kf_used={runs.target_kf_used:.4f}")
+
+
 def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:
     """Found by the spec-review: this escapes `except Exception` in the worker."""
     import aglogen_core

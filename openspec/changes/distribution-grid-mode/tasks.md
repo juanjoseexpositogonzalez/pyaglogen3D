@@ -33,7 +33,7 @@
   `mode`; R10 cambia la etiqueta y añade R10.7. Original: R8 y R10 canónicos: R8.4 documenta la grafía `type`. Con la convergencia a `mode`
   queda desalineado; entra como MODIFIED o se declara fuera con motivo.
 - [x] T1.2 Títulos de escenario de los bloques MODIFIED **verbatim** contra los canónicos.
-- [ ] T1.3 R5.2 canónico exige hoy que el hijo guarde `kf_distribution = d1`. Comprobar que R1 y
+- [x] T1.3 **Resuelto**: R1 ya exige los dos nombres en el hijo, que es la dirección que R5.2 toma, así que no hace falta MODIFICAR R5. Original: R5.2 canónico exige hoy que el hijo guarde `kf_distribution = d1`. Comprobar que R1 y
   R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
 - [x] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
   escenario: un MODIFIED reemplaza el requisito completo (ver L9).
@@ -50,8 +50,12 @@
   dos con nombre de engine) en `parameter_grid`, las cuatro en `base_parameters`, y las cuatro
   barridas por `theoretical_extremes`. Cubre `mode` desconocido, **rangos fuera de límite**
   (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) y config que no es objeto.
-- [ ] T2.1a Los rangos no son cosmética: `kf_value=-1` y `kf uniform` invertido **revientan el
-  worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
+- [ ] T2.1e **Alcance por algoritmo (R13.12)**: estas cuatro claves solo se aceptan para un
+  algoritmo que las consuma —hoy solo `tunable_cc`—, en create **y** en update. Es el mismo D6
+  que cerró #97 para el sinterizado con `check_algorithm_scope`, y hay que reutilizar ese
+  precedente en vez de inventar otro.
+- [ ] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
+  **revientan el worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
   Exception`. La simulación se queda en `RUNNING` para siempre.
 - [ ] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
   magnitud, gana la rejilla (R13.9), y lo mismo para el par `particle_radius_config` /
@@ -189,3 +193,18 @@ y se comprueba con el parser, no con los ojos.
 rechazar» y solo había regla de entrega para las entradas de rejilla. Las dos claves de paridad
 en `base_parameters` y las dos barridas quedaban aceptadas y perdidas, que es la familia exacta
 que mató a los dos contratos anteriores.
+
+**L15 — Cuarta revisión: dos CRITICAL, y son el defecto que yo mismo cerré hace dos días.** R13.10
+prometía que una clave declarada llega al engine, **sin acotar por algoritmo**. Pero el worker
+expande `target_kf_distribution` y `dpo_distribution` **solo dentro de su rama `tunable_cc`**, y
+solo `run_tunable_cc` declara esos kwargs: para los otros ocho algoritmos la clave se acepta, se
+guarda y no la lee nadie. El serializer no menciona `tunable_cc` ni una vez.
+
+Es **D6 otra vez** —ofrecer algo a algoritmos que no lo consumen—, el defecto que este mismo
+repositorio cerró en #97 con `check_algorithm_scope`. Lo cerré para el sinterizado y no se me
+ocurrió preguntarme si valía para las otras dos rejillas. **Haber arreglado una instancia de un
+defecto no te vacuna contra su clase**: hay que ir a buscarla.
+
+Peor: mi párrafo de exclusión atribuía ese fallo a la ruta de simulación individual, cuando los
+hijos del batch corren por **el mismo** `run_simulation_task`. Declaré fuera de alcance algo que
+estaba dentro.
