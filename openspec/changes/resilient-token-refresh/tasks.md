@@ -15,13 +15,13 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
       frontend/diagnostics` debe devolverlo. La ruta `frontend/scripts/` está en
       `.gitignore:75`, y un intento anterior de versionarlo ahí fue ignorado en silencio
       mientras el mensaje de commit afirmaba lo contrario.
-- [ ] T0.3 Documentar en el propio fichero cómo se ejecuta (build de producción, backend, un
+- [x] T0.3 Documentar en el propio fichero cómo se ejecuta (build de producción, backend, un
       proyecto con varias simulaciones) y comprobar que **otra persona puede correrlo** sin
       ficheros de `/tmp` ni credenciales incrustadas.
 - [x] T0.4 Registrar la línea base con **8 corridas por escenario** y **versionar su salida
       JSON** junto al diagnóstico, con la fecha y el commit medido. Sin artefacto versionado, el
       «antes» de T5.7 no es contrastable por quien revise el PR.
-- [ ] T0.5 Registrar suite y `type-check` de partida, para no confundir una regresión propia
+- [x] T0.5 Registrar suite y `type-check` de partida, para no confundir una regresión propia
       con la intermitencia ajena ya conocida de `FraktalBatchImageDetail` y `FraktalBatchUpload`.
 
 ## T1 — Un refresco en vuelo por pestaña (R2)
@@ -135,6 +135,30 @@ absorbe el resto pero no todo.
 
 Si aquella afirmación hubiera sobrevivido, este dato habría llegado como una sorpresa en
 producción en vez de como una medición.
+
+### L0b — Línea base de suite y type-check, escrita y no solo medida (2026-10-25)
+
+Esta entrada existe porque T0.5 pedía **registrar** la línea base y durante casi todo el trabajo
+estuvo medida pero sin escribir. Medir no es registrar: una cifra que solo vive en una consola
+que ya se cerró no sirve para contrastar nada después.
+
+Partida, sobre `develop` antes de tocar autenticación:
+
+| gate | valor |
+| --- | --- |
+| suite (`--no-file-parallelism`) | **75 ficheros**, todos en verde |
+| `npx tsc --noEmit` | **13** errores, los preexistentes de siempre |
+| `npm run build` | exit 0 |
+
+Tras el cambio: **77 ficheros** (los dos ficheros de test nuevos de T3 y T4 se suman a los de T1
+y T2, que ya contaban), `tsc` **13**, build exit 0.
+
+Los 13 errores siguen siendo los mismos tres ficheros ajenos a este trabajo
+(`BatchProjectionExportPanel.test.tsx`, `NetworkCanvas.test.tsx`, `projection-grid.test.ts`).
+
+**Intermitencia ajena conocida**: `FraktalBatchImageDetail.test.tsx` y `FraktalBatchUpload.test.tsx`
+fallan ~1 de cada 5 corridas en serie. No es de este change, pero conviene tenerlo escrito aquí
+para que un rojo suelto no se confunda con una regresión propia.
 
 ### L1 — T1 y T2, con las mutaciones que las probaron (2026-10-25)
 

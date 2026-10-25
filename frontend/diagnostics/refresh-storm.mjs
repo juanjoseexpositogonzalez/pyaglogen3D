@@ -34,17 +34,30 @@ const FLAG = (name) => process.argv.includes(`--${name}`)
 
 const CONFIG = {
   app: arg('app', process.env.DIAG_APP ?? 'http://localhost:3000'),
-  email: arg('email', process.env.DIAG_EMAIL ?? 'demo@pyaglogen3d.dev'),
-  password: arg('password', process.env.DIAG_PASSWORD ?? 'demo-visual-2026'),
+  email: arg('email', process.env.DIAG_EMAIL ?? ''),
+  password: arg('password', process.env.DIAG_PASSWORD ?? ''),
   project: arg('project', process.env.DIAG_PROJECT ?? ''),
   simulation: arg('simulation', process.env.DIAG_SIMULATION ?? ''),
   runs: Number.parseInt(arg('runs', '3'), 10),
   json: FLAG('json'),
-  channel: arg('channel', process.env.DIAG_CHANNEL ?? 'chrome'),
+  // Empty means Playwright's own Chromium, which `npx playwright install
+  // chromium` provides. Branded Chrome is an override, not a requirement:
+  // defaulting to it fails on a clean machine for a reason unrelated to the
+  // thing being measured.
+  channel: arg('channel', process.env.DIAG_CHANNEL ?? ''),
 }
 
 if (!Number.isInteger(CONFIG.runs) || CONFIG.runs < 1) {
   console.error('--runs debe ser un entero >= 1. Con 0 el informe saldría verde sin medir nada.')
+  process.exit(2)
+}
+
+if (!CONFIG.email || !CONFIG.password) {
+  console.error(
+    'Faltan credenciales. Pasa --email y --password, o DIAG_EMAIL y\n' +
+      'DIAG_PASSWORD. No hay valores por defecto a propósito: unas\n' +
+      'credenciales incrustadas acaban commiteadas y usadas sin pensar.',
+  )
   process.exit(2)
 }
 
@@ -213,7 +226,7 @@ if (CONFIG.simulation) {
   SCREENS.push(['simulation-detail', `/projects/${CONFIG.project}/simulations/${CONFIG.simulation}`])
 }
 
-const browser = await chromium.launch({ channel: CONFIG.channel })
+const browser = await chromium.launch(CONFIG.channel ? { channel: CONFIG.channel } : {})
 const report = { config: { runs: CONFIG.runs, app: CONFIG.app }, screens: {}, twoTabs: [] }
 
 log(`Diagnóstico de #122 — ${CONFIG.runs} corrida(s) por escenario\n`)
