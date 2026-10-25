@@ -21,7 +21,9 @@
   ya declara los nombres buenos como `DistributionField` y los traduce.
 - [x] T0.4 **Refutado D7**: casos límite + dos dicts devuelve 201. Lo cerró `add_case` en
   `utils.py` (salta `Mapping`, captura `TypeError` en `sorted()`).
-- [x] T0.5 **Refutado D8**: `tunable_cc` no es monodisperso por construcción; `random_radius`
+- [ ] ~~T0.5 **Refutado D8**~~ **RETIRADO**: la refutación era falsa (ver L4). D8 se sostiene:
+  el engine muestrea una vez por corrida y declara `monodisperse per run`. Lo que sí es cierto
+  es que las entradas `dpo_distribution`/`target_kf_distribution` existen. Original: D8: `tunable_cc` no es monodisperso por construcción; `random_radius`
   se usa por partícula y el engine declara `dpo_distribution` y `target_kf_distribution`.
 - [x] T0.6 **Hallazgo nuevo**: la spec canónica R1/R2 es falsa en tres de cuatro escenarios
   medidos (`{type}` → 400, atajo escalar → 400, `{fixed, mean}` → 400). Sólo se cumple el cap
@@ -95,3 +97,20 @@ re-ejecutar. Lo encontré al verificar mi propia promesa, no por revisión. Vive
 `{type}`, un atajo escalar y la clave `mean`; las tres cosas dan 400. Medido, no leído. Un
 contrato que se hubiera escrito «contra la spec» habría pedido que el código volviera a una
 forma que nunca existió.
+
+**L4 — La spec-review tumbó la premisa, y tenía razón.** Seis CRITICAL. El que importa: elegí
+`distribution_type` como forma única porque creí que era «la que ya usa la ruta single», y no lo
+es —`DistributionField` y `expand_distribution_kwargs` discriminan por `mode`—. El contrato
+habría hecho que el hijo guardara una forma que su único lector devuelve como `{}`, o sea el
+mismo fallo silencioso que decía cerrar. **Verifiqué la acusación antes de aceptarla**:
+`fields.py` línea de `data.get("mode")` y el cuerpo de `expand_distribution_kwargs`.
+
+Y una lección repetida, no aprendida: refuté D8 leyendo que `random_radius` se llama por
+partícula, sin leer qué recibe. El engine reescribe `radius_min` y `radius_max` con el mismo
+valor muestreado y lo dice en un comentario literal. **Una lectura mecánica de una llamada no
+es una medición.** La sonda de Fase 0 tampoco cubría esto: medía la API, no el engine.
+
+**L5 — Y la cita de la sonda estaba muerta en el commit que escribió L3.** El proposal y la
+issue #136 citaban `backend/tests/_fase0_dgw_probe.py`, que ya no existe: lo moví y actualicé el
+Log, pero no los dos documentos que lo citaban. La lección «una evidencia que no se ejecuta no
+es evidencia» se incumplió en su propio commit.
