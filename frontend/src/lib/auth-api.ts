@@ -38,6 +38,15 @@ let refreshInFlight: Promise<{ access: string }> | null = null
  */
 export const REFRESH_TIMEOUT_MS = 10_000
 
+/**
+ * Bumped whenever the user signs out, so work started under the old session
+ * can recognise that it no longer speaks for anyone.
+ *
+ * Without it, a refresh answering during sign-out writes the tokens back and
+ * restores the auth cookie: the user asked to leave and stayed inside.
+ */
+let sessionGeneration = 0
+
 /** Rejects after the bound, leaving the underlying request to finish. */
 function withTimeout<T>(promise: Promise<T>): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -138,14 +147,21 @@ export const authApi = {
    */
   async logout(): Promise<void> {
     const refreshToken = tokenStorage.getRefreshToken()
-    try {
-      await authFetch('/logout/', {
-        method: 'POST',
-        body: JSON.stringify({ refresh: refreshToken }),
-      })
-    } finally {
-      tokenStorage.clearTokens()
-    }
+
+    // Invalidate on the way in, not in the `finally`. The credentials used to
+    // survive the whole round trip, so a 401 arriving mid-flight started a
+    // fresh refresh that wrote them straight back.
+    sessionGeneration += 1
+    refreshInFlight = null
+    tokenStorage.clearTokens()
+
+    await authFetch('/logout/', {
+      method: 'POST',
+      body: JSON.stringify({ refresh: refreshToken }),
+    }).catch(() => {
+      // The local session is already gone. Failing to tell the server is
+      // worth neither an error to the user nor keeping them signed in.
+    })
   },
 
   /**
@@ -156,6 +172,8 @@ export const authApi = {
     // than presenting the same token again.
     if (refreshInFlight) return withTimeout(refreshInFlight)
 
+    const startedUnder = sessionGeneration
+
     const run = (async () => {
       // `allowRetry` is what bounds recovery to a single extra attempt: a
       // credential the server keeps rejecting has to end the session promptly
@@ -163,7 +181,9 @@ export const authApi = {
       const attempt = async (allowRetry: boolean): Promise<{ access: string }> => {
         const presented = tokenStorage.getRefreshToken()
         if (!presented) {
-          endSession()
+          // No session to end: a visitor who never signed in must not be
+          // told theirs expired, and a sign-out in progress has already
+          // decided this.
           throw new AuthApiError('No refresh token available', 401)
         }
 
@@ -197,6 +217,14 @@ export const authApi = {
         }
 
         const data = await response.json()
+
+        // The user may have signed out while this was travelling. Writing now
+        // would restore both the tokens and the cookie the route middleware
+        // reads, putting them back inside the application they just left.
+        if (sessionGeneration !== startedUnder) {
+          throw new AuthApiError('Session ended while refreshing', 401)
+        }
+
         tokenStorage.setAccessToken(data.access)
 
         // If we got a new refresh token (rotation enabled), save it

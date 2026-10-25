@@ -57,10 +57,10 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T4 — Cierre de sesión y visitante anónimo (R5, R6)
 
-- [ ] T4.1 Test primero: un refresco que responde **después** de cerrar sesión no escribe
+- [x] T4.1 Test primero: un refresco que responde **después** de cerrar sesión no escribe
       token ni cookie, y el usuario sigue fuera.
-- [ ] T4.2 Implementarlo invalidando lo en vuelo al cerrar sesión.
-- [ ] T4.3 Test primero: sin token guardado, una página pública **no** emite refrescos, no hace
+- [x] T4.2 Implementarlo invalidando lo en vuelo al cerrar sesión.
+- [x] T4.3 Test primero: sin token guardado, una página pública **no** emite refrescos, no hace
       esperar a nadie y no redirige.
 
 ## T5 — Verificación
