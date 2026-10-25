@@ -8,7 +8,7 @@ single, y la tubería que llega al engine habla `mode`. Este contrato parte de l
 aquella premisa.
 
 Fase 0 ronda 2 midió **contra el engine**, que es donde se coló el error anterior
-(`tests/diagnostics/fase0_distribution_engine_truth.py`):
+(`tests/diagnostics/test_fase0_distribution_engine.py`):
 
 | Lo que se envía | Qué pasa | Qué recibe el engine |
 | --- | --- | --- |

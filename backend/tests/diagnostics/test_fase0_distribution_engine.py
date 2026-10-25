@@ -10,7 +10,7 @@ the explore map nor round 1 contained.
 
 Run (engine half needs no database):
     cd backend && python -m pytest \\
-        tests/diagnostics/fase0_distribution_engine_truth.py -q -s
+        tests/diagnostics/test_fase0_distribution_engine.py -q -s
 """
 
 from __future__ import annotations

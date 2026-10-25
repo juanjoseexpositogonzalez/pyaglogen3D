@@ -13,8 +13,8 @@
 
 ## T0 — Fase 0, dos rondas
 
-- [x] T0.1 Ronda 1, por API: `tests/diagnostics/fase0_distribution_grid_wiring.py`.
-- [x] T0.2 **Ronda 2, contra el engine**: `tests/diagnostics/fase0_distribution_engine_truth.py`.
+- [x] T0.1 Ronda 1, por API: `tests/diagnostics/test_fase0_distribution_api.py`.
+- [x] T0.2 **Ronda 2, contra el engine**: `tests/diagnostics/test_fase0_distribution_engine.py`.
   La ronda 1 solo medía la API, y ahí se me coló una refutación falsa de D8.
 - [x] T0.3 **La frontera del engine es plana**: `run_tunable_cc` recibe `kf_mode`, `kf_value`,
   `kf_mean`, `kf_std`, `kf_min`, `kf_max` y los `dpo_*`. Ningún diccionario.
@@ -39,7 +39,7 @@
   escenario: un MODIFIED reemplaza el requisito completo (ver L9).
 - [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
   `normal`, y la API acepta `uniform`.
-- [ ] T1.4 R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
+- [x] T1.4 **Hecho**: R7 declara ya los tres grupos, incluido el de la allow-list, que era el mayor y el único sin declarar. Original: R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
   hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
 - [ ] T1.5 `openspec validate --strict` y `show --json --deltas-only`, con la salida al Log,
   **antes** del PR: archivar los vuelve irreproducibles.
@@ -228,3 +228,20 @@ paseo. Cada caso que el contrato cita lleva ahora su estado esperado.
 algoritmo salvo `limiting`, y el worker solo lo lee en la rama `tunable_cc`. Es el mismo defecto
 una fila más abajo del desplegable. Queda **declarado**, no callado: va al seguimiento #115, y
 cerrarlo aquí sería estirar el contrato a mitad de revisión, que es lo que mató al anterior.
+
+**L20 — La sexta revisión reprodujo un defecto archivando sobre una copia, y yo no se me había
+ocurrido.** Escribí el escenario R10.8 después de R13.12, dentro de `## ADDED`, sin encabezado de
+R10 que lo abriera: el parser lo cuelga de **R13**. `openspec validate --strict` dice «valid» y
+`show --deltas-only` lo lista dentro de R13 sin quejarse. Al archivar, R10 **pierde** el escenario
+que el contrato quería añadir y R13 gana uno de interfaz, justo lo contrario de lo que L17 dejó
+escrito.
+
+La técnica que lo demuestra es barata y la adopto: **copiar `openspec/` a un temporal, archivar
+allí, y leer la canónica resultante**. Es la única comprobación que mira el estado final en vez
+de la forma. Verificado así tras la reparación: R10 con ocho escenarios —R10.8 dentro— y R13 con
+once.
+
+**L21 — Y otra aserción mía que no podía fallar.** En el diagnóstico de D7 puse la comprobación
+**dentro** del `try`, y el `except Exception` se tragaba el `AssertionError`. Escribí la lección
+L18 —«20 passed incluía once tests que no podían fallar»— y en el mismo commit dejé una que
+tampoco podía. Ahora el `except` captura solo los tipos que la expansión lanzaba.
