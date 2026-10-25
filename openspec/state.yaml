@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: fraktal-batch-extensions-2026-10-19
+last_archived: 2026-10-25-redesign-design-system
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -13,6 +13,7 @@ archived_changes:
   - cc-tunable-rg-fit-fix-2026-10-18
   - cc-tunable-bc-alignment-2026-10-18
   - fraktal-batch-extensions-2026-10-19
+  - 2026-10-25-redesign-design-system
 stack:
   rust:
     version: "1.94.0"
@@ -30,7 +31,10 @@ stack:
     framework: nextjs
     version: "14.2"
     test_cmd: "cd frontend && npm test"
-    lint_cmd: "cd frontend && npm run lint"
+    # No ejecutable: `frontend/` declara eslint pero no tiene ninguna
+    # configuración (.eslintrc* ni eslint.config.*), así que `next lint`
+    # no corre. No usar como gate hasta que exista configuración.
+    lint_cmd: null
     type_check_cmd: "cd frontend && npm run type-check"
 conventions:
   commits: conventional

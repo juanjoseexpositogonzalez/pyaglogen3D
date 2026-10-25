@@ -245,17 +245,17 @@
       Es un gate real y barato que cuatro rondas de spec-review no ejecutaron: las deltas deben
       vivir en `specs/<capability>/spec.md`, no en `specs/<capability>.md`; un fichero plano se
       **ignora en silencio** al aplicar y al archivar.
-- [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
+- [x] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
       `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros,
       nunca diferidos, en **`openspec/specs/<capability>/spec.md`** — forma de carpeta, no
       fichero plano. Verificado: `openspec list --specs` responde hoy **"No specs found"**
       porque las 21 canónicas del repo son planas y el tooling no ve ninguna. Estas dos serían
       las primeras visibles. Migrar las otras 21 es un chore aparte, decisión de la persona; no
       lo hace este change.
-- [ ] T8.2b Comprobar que, tras el archive, `openspec list --specs` lista
+- [x] T8.2b Comprobar que, tras el archive, `openspec list --specs` lista
       `design-system-foundation` y `app-shell-navigation` con sus 8 y 6 requisitos. Si no las
       lista, el archive fue silencioso y hay que repararlo antes de cerrar.
-- [ ] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
+- [x] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
       `lint_cmd: "cd frontend && npm run lint"` como gate cuando no existe configuración ESLint
       alguna (T0.1): o se anota como no ejecutable, o se retira.
 - [ ] T8.4 **Limpieza tras el merge**, ordenada por la persona para esta entrega:
@@ -335,6 +335,43 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L16 — El archive, y dos cosas que el tooling no hizo (2026-10-25)
+
+`openspec archive redesign-design-system -y` escribió las dos capacidades nuevas en forma de
+carpeta, que era la exigencia real de T8.2:
+
+| capacidad | requisitos | escenarios | líneas |
+| --- | --- | --- | --- |
+| `app-shell-navigation` | 6 | 16 | 166 |
+| `design-system-foundation` | 8 | 24 | 274 |
+
+**T8.2b pasa**: `openspec list --specs` lista ambas con sus 6 y 8 requisitos. Los bloques están
+completos, no diferidos: la lección del ciclo 2 se cumple.
+
+**Pero el tooling dejó dos huecos, y ninguno avisa de que los deja.**
+
+**Primero, un `TBD` en el `Purpose` de ambas specs canónicas:** *«TBD - created by archiving
+change redesign-design-system. Update Purpose after archive.»* Es exactamente el contenido
+diferido que AGENTS.md prohíbe, y no es hipotético: la issue **#93** existe por este mismo
+defecto en `multi-aggregate-comparison`, que se archivó en su día sin que nadie volviera a
+escribir el propósito. Ambos `Purpose` se han escrito aquí.
+
+**Segundo, el archive no toca `state.yaml`.** Hubo que actualizarlo a mano, como anticipa
+AGENTS.md. Al hacerlo apareció una deriva mayor que la tarea: el fichero declaraba **10 cambios
+archivados** cuando el directorio contiene **29**, y en otra convención de nombre
+(`nombre-fecha` frente al `fecha-nombre` que usa el tooling desde hace meses).
+
+Aquí solo se añadió la entrada propia con la convención real. **Reescribir las 19 entradas
+ausentes es trabajo ajeno a este contrato** y se deja anotado en vez de hacerse de paso: un
+índice que miente sobre dos tercios de su contenido merece su propia decisión, no un arreglo
+silencioso dentro del archive de otra cosa.
+
+**T8.3 incluía reconciliar el gate de lint**, y se hizo: `state.yaml` declaraba
+`lint_cmd: "cd frontend && npm run lint"` como si fuera un gate, cuando `frontend/` no tiene
+ninguna configuración ESLint y `next lint` no llega a ejecutarse. Ahora es `null`, con el motivo
+escrito al lado. Un gate declarado que no corre es peor que ningún gate: da por cubierto lo que
+nadie comprueba.
 
 ### L15 — T7.8 aceptada con la revisión visual diferida, y el archive (2026-10-25)
 
