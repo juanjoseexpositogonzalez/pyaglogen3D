@@ -32,6 +32,10 @@
 - [ ] T1.2 Títulos de escenario de los bloques MODIFIED **verbatim** contra los canónicos.
 - [ ] T1.3 R5.2 canónico exige hoy que el hijo guarde `kf_distribution = d1`. Comprobar que R1 y
   R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
+- [ ] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
+  escenario: un MODIFIED reemplaza el requisito completo (ver L9).
+- [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
+  `normal`, y la API acepta `uniform`.
 - [ ] T1.4 R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
   hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
 - [ ] T1.5 `openspec validate --strict` y `show --json --deltas-only`, con la salida al Log,
@@ -39,9 +43,15 @@
 
 ## T2 — Backend: validar lo que hoy pasa en silencio (lo urgente)
 
-- [ ] T2.1 `mode` desconocido → 400 en las **cinco** superficies de R13 (las dos de paridad, las
-  dos con nombre de engine, las mismas en `base_parameters`, y las barridas por
-  `theoretical_extremes`). Incluye `uniform` invertido y config que no es objeto.
+- [ ] T2.1 400 en **todas** las superficies que enumera R13: las cuatro claves (dos de paridad y
+  dos con nombre de engine) en `parameter_grid`, las cuatro en `base_parameters`, y las cuatro
+  barridas por `theoretical_extremes`. Cubre `mode` desconocido, **rangos fuera de límite**
+  (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) y config que no es objeto.
+- [ ] T2.1a Los rangos no son cosmética: `kf_value=-1` y `kf uniform` invertido **revientan el
+  worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
+  Exception`. La simulación se queda en `RUNNING` para siempre.
+- [ ] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
+  estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
 - [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
   `dpo_distribution`. Ojo: **dos sitios expanden**, `create_simulation` y
@@ -127,3 +137,23 @@ y el contrato anterior murió por creer a un documento antes que al código. Mit
 sin inventar herramienta nueva: **T4.5**, cada PR declara en su cuerpo qué parte de la delta
 todavía no es cierta, y el Log lo registra. Es disciplina, no garantía; se dice para que la
 siguiente persona sepa que lo es.
+
+**L9 — Un bloque MODIFIED reemplaza el requisito ENTERO, y la herramienta solo compara nombres
+de escenario.** Reparando el hallazgo anterior reescribí R7 y R10 «a mano», conservando los
+títulos verbatim que el validador exige. Pasó el gate. Y habría **borrado prosa normativa viva**:
+el R7 canónico tiene **ocho** menciones al carve-out del sinterizado que entregué hace dos días,
+y mi bloque tenía **cero**; R10 habría perdido las etiquetas exactas, la regla de no enviar `NaN`
+y el MUST de que la traducción viva en una función pura.
+
+`openspec validate --strict` no lo caza: comprueba que no falte ningún *nombre* de escenario, no
+que no falte el *texto*. La reparación correcta es reconstruir el bloque **desde el canónico** y
+añadir encima, nunca reescribirlo de memoria. Lo encontró el juez al que le pedí expresamente
+que buscara qué habían roto mis propios arreglos; en el contrato anterior, cuatro de cinco
+CRITICAL los introdujeron mis correcciones, y éste iba por el mismo camino.
+
+**L10 — Afirmé una retirada que no hice.** Taché T3.3 y anuncié en la issue que R13.4 quedaba
+retirado; el escenario seguía en la delta. Tachar la tarea no borra el requisito.
+
+**L11 — Y el cuerpo de la issue seguía citando un fichero renombrado.** Cuarta vez con la misma
+lección, ahora en el artefacto que la persona aprueba. Corregir el comentario no corrige el
+cuerpo: el gate apunta al cuerpo.
