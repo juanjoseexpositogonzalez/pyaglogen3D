@@ -141,9 +141,14 @@ other ten surfaces there was no distribution validation at all, so even those an
 asked are `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max`, and the
 identical-behaviour promise never covered those.
 
+There is a third group, larger than the two above: a config that is **well formed** is still
+refused when the study's algorithm does not consume it, which R13 fixes as an allow-list. For
+the ten algorithms outside it, every one of these four keys used to be accepted on every surface
+and read by nobody; now each is a 400.
+
 A well-formed config in `base_parameters.kf_distribution` or
-`base_parameters.particle_radius_config` is **not** refused: R13 requires it to be delivered to
-the engine instead, which is why those surfaces are not in this list.
+`base_parameters.particle_radius_config` is not refused **for its shape or its range** when the
+algorithm does consume it: R13 requires it to be delivered to the engine instead.
 
 #### Scenario R7.1 — Old grid with only scalar keys
 
@@ -214,8 +219,8 @@ for distributions, multi-select chips for seed_type).
 
 For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
-`sintering_coeff` sweep (by symbol, not by line). That algorithm also has a dedicated "Base Sintering Coeff."
-input (by symbol, not by line) sent as `base_parameters.sintering_coeff` on every submit (by symbol, not by line). Both are
+`sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff."
+input (see `parameterOptionsFor`) sent as `base_parameters.sintering_coeff` on every submit (see `parameterOptionsFor`). Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
 
@@ -276,6 +281,13 @@ fixed; keeping both would leave two opposite MUSTs about the same string.
 - THEN its label describes per-run variation of the primary particle size
 - AND it does not use the word polydispersity, which the engine does not deliver
 
+#### Scenario R10.8 — The distribution options are not offered where the engine ignores them
+
+- GIVEN the batch form with an algorithm outside R13's allow-list, such as `fracval`
+- WHEN the parameter-to-vary dropdown is opened
+- THEN `kf distribution` and `Particle radius` are not among the options
+- AND a `kf_distribution` variation configured while the algorithm was `tunable_cc` is cleared or flagged when the user switches to `fracval`, on the same terms R10.6 already fixes for sintering
+
 ## ADDED Requirements
 ### Requirement: R13 — A declared distribution reaches the engine, or the study is refused
 
@@ -303,8 +315,8 @@ by update, **or changing the algorithm of a study that already carries it**. R10
 form offers, and this requirement does not restate it.
 
 Two surfaces of the same family are deliberately left out, and this says so rather than leaving it
-to be discovered: the single-simulation serializer accepts the same two keys for every algorithm
-with the same result. That is real and it is the same silent failure, but it belongs to the
+to be discovered: the single-simulation serializer accepts the same two keys for every algorithm,
+and its worker reads them only for `tunable_cc`, so for the other ten they go nowhere. That is real and it is the same silent failure, but it belongs to the
 single-simulation serializer, not to batch expansion, and widening a contract mid-flight to
 cover a newly found surface is what killed this one's predecessor. The second is the AI
 assistant's study tool, which writes `ParametricStudy` and `Simulation` rows through the ORM
@@ -385,6 +397,7 @@ simulation stuck in `RUNNING`.
 - GIVEN a study whose `base_parameters` declares `target_kf_distribution` and whose `parameter_grid` declares `kf_distribution`
 - WHEN its children are expanded
 - THEN the grid entry wins for every child, because the grid is what the study is sweeping
+- AND the same holds for the pair `particle_radius_config` / `base_parameters.dpo_distribution`
 - AND that precedence is the same one R3 already fixes for the sintering equivalent
 
 #### Scenario R13.11 — The uniform option is submittable without a prior edit
@@ -402,9 +415,3 @@ simulation stuck in `RUNNING`.
 - AND the check runs on create and on update, so it cannot be bypassed by creating without the key and adding it afterwards
 - AND a `tunable_cc` study that already carries one of these keys cannot have its `base_algorithm` changed to an algorithm outside the allow-list, which is the mismatch reached from the other side
 
-#### Scenario R10.8 — The distribution options are not offered where the engine ignores them
-
-- GIVEN the batch form with an algorithm outside R13's allow-list, such as `fracval` or `imported`
-- WHEN the parameter-to-vary dropdown is opened
-- THEN `kf distribution` and `Particle radius` are not among the options
-- AND switching a `tunable_cc` study to such an algorithm clears or flags a configured variation of those keys, instead of submitting a payload the API refuses

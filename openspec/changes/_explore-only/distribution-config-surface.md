@@ -222,6 +222,6 @@ Y el canónico **R8.4 documenta una tercera grafía** (`type`), así que la can�
 alcance de cualquier unificación.
 
 **Diagnóstico re-ejecutable** de la parte medida por API:
-`backend/tests/diagnostics/fase0_distribution_grid_wiring.py`.
+`backend/tests/diagnostics/test_fase0_distribution_api.py`.
 No cubre el engine: ahí es donde se me coló D8.
 
