@@ -1,0 +1,481 @@
+{
+  "flash": {
+    "early": "dark",
+    "afterDom": "dark"
+  },
+  "findings": [
+    {
+      "level": "MAYOR",
+      "screen": "09-project-detail",
+      "theme": "light",
+      "viewport": "360",
+      "message": "Desbordamiento horizontal: scrollWidth 779 > viewport 360"
+    },
+    {
+      "level": "MAYOR",
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "900",
+      "message": "Sigue redirigiendo a login tras reautenticar: /projects/e386eec7-e838-4005-adfe-cdcdb9bf351b/compare"
+    },
+    {
+      "level": "MAYOR",
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "360",
+      "message": "Sigue redirigiendo a login tras reautenticar: /projects/e386eec7-e838-4005-adfe-cdcdb9bf351b/compare"
+    },
+    {
+      "level": "MAYOR",
+      "screen": "12-simulation-detail",
+      "theme": "light",
+      "viewport": "360",
+      "message": "Desbordamiento horizontal: scrollWidth 363 > viewport 360"
+    },
+    {
+      "level": "MAYOR",
+      "screen": "09-project-detail",
+      "theme": "dark",
+      "viewport": "360",
+      "message": "Desbordamiento horizontal: scrollWidth 779 > viewport 360"
+    },
+    {
+      "level": "MAYOR",
+      "screen": "12-simulation-detail",
+      "theme": "dark",
+      "viewport": "360",
+      "message": "Desbordamiento horizontal: scrollWidth 738 > viewport 360"
+    }
+  ],
+  "summary": [
+    {
+      "screen": "01-landing",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "02-login",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "03-register",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 5
+    },
+    {
+      "screen": "04-check-email",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "05-verify-email",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "light",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "light",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "light",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "08-project-new",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "light",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "light",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "light",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "900",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "light",
+      "viewport": "360",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "11-project-batch",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "light",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "light",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "light",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "13-simulation-new",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "14-fraktal-batch",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 5
+    },
+    {
+      "screen": "15-fraktal-new",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "16-settings",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "17-ai",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "18-admin",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "01-landing",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "02-login",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "03-register",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 5
+    },
+    {
+      "screen": "04-check-email",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "05-verify-email",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "dark",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "dark",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "06-dashboard",
+      "theme": "dark",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "08-project-new",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "dark",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "dark",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "09-project-detail",
+      "theme": "dark",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "dark",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "dark",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "10-project-compare",
+      "theme": "dark",
+      "viewport": "360",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "11-project-batch",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 12
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "dark",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 12
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "dark",
+      "viewport": "900",
+      "status": 200,
+      "labels": 12
+    },
+    {
+      "screen": "12-simulation-detail",
+      "theme": "dark",
+      "viewport": "360",
+      "status": 200,
+      "labels": 12
+    },
+    {
+      "screen": "13-simulation-new",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 8
+    },
+    {
+      "screen": "14-fraktal-batch",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 5
+    },
+    {
+      "screen": "15-fraktal-new",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 12
+    },
+    {
+      "screen": "16-settings",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 2
+    },
+    {
+      "screen": "17-ai",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "18-admin",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    }
+  ],
+  "sessionDeaths": [
+    "09-project-detail light/1440",
+    "09-project-detail light/900",
+    "10-project-compare light/900",
+    "10-project-compare light/360",
+    "16-settings light/1440",
+    "10-project-compare dark/360",
+    "12-simulation-detail dark/360"
+  ]
+}
