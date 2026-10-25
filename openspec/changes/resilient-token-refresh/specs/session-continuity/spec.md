@@ -36,6 +36,17 @@ than the one being fixed.
 - THEN exactly one refresh request is sent
 - AND every caller resumes with the access token that refresh produced
 
+A retry MUST occupy the same in-flight slot as the refresh it replaces. A retry that runs
+outside the shared slot lets a new caller open a second refresh with a different token, which
+rebuilds the very collision this change removes.
+
+#### Scenario: A retry keeps later callers waiting `[test]`
+
+- GIVEN a refresh that failed recoverably and is being retried
+- WHEN another caller asks for a refreshed access token during the retry
+- THEN no second refresh request is sent
+- AND the caller resumes with the token the retry produced
+
 #### Scenario: A failed refresh does not block later ones `[test]`
 
 - GIVEN a refresh that fails
@@ -50,6 +61,20 @@ retryable error, and the stored credentials MUST be left untouched.
 This is a direct consequence of R2: once callers share one refresh, a refresh that never
 answers would hold the whole context. The bound is what keeps a slow network from becoming a
 frozen application.
+
+Ending the wait MUST NOT be assumed to cancel the server's work. A refresh that is abandoned
+may still have rotated the token, leaving the stored credential intact and already invalid. The
+application MUST therefore re-read storage before treating a later failure as definitive, so
+that a slow network cannot turn into an expulsion — the exact symptom this change exists to
+remove.
+
+#### Scenario: An abandoned refresh that did rotate is reconciled `[test]`
+
+- GIVEN a refresh whose wait ended before the server answered
+- AND the server had already rotated the token
+- WHEN the next request needs an access token
+- THEN storage is re-read before deciding the failure is definitive
+- AND the session is not ended on that first failure
 
 #### Scenario: A refresh that never answers releases its callers `[test]`
 
@@ -103,9 +128,21 @@ another still discards credentials leaves the defect reachable.
 When the user signs out, a refresh that answers afterwards MUST NOT restore credentials.
 
 Writing a refresh token also restores the cookie the route middleware reads
-(`frontend/src/lib/token-storage.ts:55`), so a late answer would leave the user signed in after
+(`frontend/src/lib/token-storage.ts:59`), so a late answer would leave the user signed in after
 asking to leave. Sharing one refresh between callers widens that window, so the change that
 introduces it MUST close it.
+
+Sign-out MUST invalidate on entry, before its own network call. `authApi.logout` clears tokens
+in a `finally` (`frontend/src/lib/auth-api.ts:96-106`), so during that round trip the refresh
+token is still readable and a 401 arriving then starts a **new** refresh that would write
+credentials after the user asked to leave.
+
+#### Scenario: A refresh started during sign-out writes nothing `[test]`
+
+- GIVEN a sign-out in progress
+- WHEN a request receives 401 before sign-out completes
+- THEN no refresh is started
+- AND no credentials are written
 
 #### Scenario: A late refresh after sign-out is discarded `[test]`
 
@@ -115,10 +152,37 @@ introduces it MUST close it.
 - THEN no access token, refresh token or auth cookie is written
 - AND the user remains signed out
 
+### Requirement: R5b. Ending a session is observable
+
+Returning the user to the sign-in screen MUST happen through a seam a test can observe. Today
+it is `window.location.href = '/auth/login'` (`frontend/src/lib/api.ts:89` and `:133`), which
+jsdom silently ignores: an assertion that the user was redirected passes whether or not it
+happened, and so does its negation.
+
+Without this seam, the requirement that matters most — that a recoverable failure does **not**
+expel the user — cannot be tested at all.
+
+#### Scenario: A recoverable failure expels nobody `[test]`
+
+- GIVEN a refresh that fails recoverably
+- WHEN either 401 handler in `api.ts` processes it, or the mount-time refresh does
+- THEN no session-ended signal is emitted
+- AND the stored credentials are left in place
+
+#### Scenario: A definitive failure emits the session-ended signal `[test]`
+
+- GIVEN a refresh that fails definitively
+- WHEN the failure is handled
+- THEN the session-ended signal is emitted exactly once
+
 ### Requirement: R6. An anonymous visitor triggers no refresh machinery
 
 A visitor with no stored refresh token MUST NOT cause a refresh request, and MUST NOT be made
 to wait on refresh coordination.
+
+This requirement is a **regression guard**, not new behaviour: `api.ts:81`/`:127` already gate
+the refresh on a stored token. It exists because this change introduces shared coordination
+around refreshing, and coordination placed in the wrong layer would make anonymous pages wait.
 
 #### Scenario: A public page asks for nothing `[test]`
 

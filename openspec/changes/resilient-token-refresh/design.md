@@ -47,20 +47,35 @@ presente el mismo token cinco veces a la vez**.
 Alternativa descartada: desactivar rotación o lista negra. Cambia seguridad real por un defecto
 de concurrencia propio.
 
-### D2. Coalescencia dentro de la pestaña, y nada más por ahora
+### D2. Coalescencia dentro de la pestaña; el cerrojo entre pestañas no se decide aquí
 
-**Lo que la evidencia sostiene**: las colisiones internas existen y expulsan. Una única promesa
-compartida en vuelo las elimina.
+**Lo que la evidencia sostiene**: las colisiones dentro de una pestaña existen y expulsan. El
+detalle de proyecto emite 5 refrescos genuinamente solapados y muere 2 de cada 8 cargas, con la
+pestaña rechazando sus propios refrescos. Una única promesa compartida las elimina.
 
-**Lo que la evidencia NO sostiene**: que haga falta coordinar entre pestañas. Dos pantallas
-ligeras no llegan a solapar refrescos (`crossOverlap ≤ 1`) y no fallan. El par pesada + ligera
-falla más que la pesada sola, pero las cinco colisiones internas de la pesada explican ese
-aumento igual de bien, y el instrumento no puede separar ambas causas.
+**Lo que la evidencia NO dice.** El borrador anterior afirmaba que coordinar entre pestañas no
+hacía falta, apoyándose en un 0 de 8 del par de pantallas ligeras. **Esa conclusión era
+inválida** y una revisión la tumbó: un nulo solo refuta si el experimento pudo producir el
+efecto, y el mío no podía.
 
-**Por tanto se secuencia**: se elimina la colisión interna, se vuelve a medir el par pesada +
-ligera, y solo si persisten expulsiones se abre el trabajo de coordinación entre pestañas, ya
-con su propia evidencia. Un cerrojo por origen es complejidad permanente en el camino crítico
-de la autenticación: no se paga por una correlación sin aislar.
+Medido explícitamente después, con el instrumento ya capaz de contarlo: en **16 corridas de dos
+pestañas, los solapes cruzados reales fueron 0**. Ninguna corrida llegó a poner un refresco de
+cada pestaña en vuelo a la vez, así que **ninguna puso a prueba la hipótesis cruzada**. El
+0 de 8 medía ausencia de oportunidad, no ausencia de defecto.
+
+Ese mismo cero sí sostiene una afirmación más modesta y útil: la expulsión del par pesada +
+ligera (1 de 8) **no pudo ser cruzada**, porque no hubo cruce; fue colisión interna de la
+pestaña pesada. Eso es lo máximo que la medición permite decir.
+
+**Por tanto el contrato no decide sobre el cerrojo entre pestañas.** No lo declara innecesario
+—no lo sabemos— ni lo implementa a ciegas. Se arregla lo demostrado, se vuelve a medir, y la
+coordinación entre pestañas se abre como trabajo propio **si y solo si** quedan expulsiones por
+colisión en el escenario de dos pestañas una vez eliminada la colisión interna. Con la
+coalescencia en su sitio, una colisión superviviente ahí sí implica cruce.
+
+Un cerrojo por origen es complejidad permanente en el camino crítico de la autenticación.
+Añadirlo sin evidencia es tan malo como descartarlo sin evidencia; la diferencia es que lo
+primero además se paga todos los días.
 
 ### D3. Un 401 de refresco no prueba que la sesión haya terminado
 

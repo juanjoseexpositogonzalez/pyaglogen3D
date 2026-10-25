@@ -7,8 +7,10 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T0 — Instrumento y línea base
 
-- [ ] T0.1 Declarar **Playwright como dependencia de desarrollo** en `frontend/package.json`.
-      Hoy no está, y sin ella el diagnóstico no se ejecuta en un clon limpio.
+- [x] T0.1 Playwright declarado en `frontend/package.json` **y `package-lock.json`
+      regenerado**. Declararlo sin tocar el lock rompe `npm ci`, y `frontend/Dockerfile:19`
+      construye la imagen de producción con ese comando: el gate real es `npm ci --dry-run` en
+      verde, no la presencia de la línea en `package.json`.
 - [ ] T0.2 Verificar que el diagnóstico **está versionado de verdad**: `git ls-files
       frontend/diagnostics` debe devolverlo. La ruta `frontend/scripts/` está en
       `.gitignore:75`, y un intento anterior de versionarlo ahí fue ignorado en silencio
@@ -16,7 +18,9 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 - [ ] T0.3 Documentar en el propio fichero cómo se ejecuta (build de producción, backend, un
       proyecto con varias simulaciones) y comprobar que **otra persona puede correrlo** sin
       ficheros de `/tmp` ni credenciales incrustadas.
-- [ ] T0.4 Registrar la línea base con **8 corridas por escenario** y guardar su salida JSON.
+- [ ] T0.4 Registrar la línea base con **8 corridas por escenario** y **versionar su salida
+      JSON** junto al diagnóstico, con la fecha y el commit medido. Sin artefacto versionado, el
+      «antes» de T5.7 no es contrastable por quien revise el PR.
 - [ ] T0.5 Registrar suite y `type-check` de partida, para no confundir una regresión propia
       con la intermitencia ajena ya conocida de `FraktalBatchImageDetail` y `FraktalBatchUpload`.
 
@@ -67,16 +71,19 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 - [ ] T5.4 Diagnóstico con **8 corridas por escenario**, contrastado contra el JSON de T0.4:
       expulsiones **0**, y **código de salida 0**. La evidencia es el código de salida, no una
       lectura de consola.
-- [ ] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra. Si persisten
-      expulsiones, abrir la coordinación entre pestañas como trabajo propio con esta evidencia;
-      si no quedan, dejar escrito que el cerrojo no hizo falta.
+- [ ] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra **y los solapes
+      cruzados reales**. La coordinación entre pestañas se abre como trabajo propio **solo si
+      queda alguna expulsión con causa `collision` en ese escenario**, no ante cualquier
+      expulsión: una muerte posterior al arreglo puede venir del límite de espera de R3, que no
+      tiene nada que ver con las pestañas. Y si los solapes cruzados siguen siendo 0, dejar
+      escrito que **no se ha medido**, nunca que el cerrojo no haga falta.
 - [ ] T5.6 Verificación manual de acceso, cierre de sesión y sesión realmente caducada: el
       cambio está en el camino crítico de todo usuario.
 - [ ] T5.7 Registrar en el Log las cifras de antes y después, no la impresión.
 
 ## T6 — Entrega
 
-- [ ] T6.1 PR a `develop` enlazando #122, etiqueta `type:bug`.
+- [ ] T6.1 PR a `develop` enlazando #122, etiqueta `type:bug` (existe desde el 2026-10-25).
 - [ ] T6.2 Revisión adversarial antes del merge.
 - [ ] T6.3 Archive con sincronización canónica de `session-continuity`, **escribiendo el
       `Purpose`**: el tooling lo deja en `TBD` y ese hueco ya tiene issue abierta (#93).
