@@ -920,7 +920,10 @@
 - L36 (2026-10-25): **T7 completa**. Los cinco gates medidos de nuevo en este árbol, y **cada
   diferencia con la línea base del contrato explicada en vez de reescrita**:
   - `pytest` **15 failed / 1389 passed / 31 errors / 2 xfailed**. La base decía 1221 passed: los
-    **+168** son los tests que añadieron T1 a T6. Fallos y errores **idénticos**, verificados por
+    **+168** son los tests que añadieron T1 a T5. El desglose exacto, que un juez completó: se
+    **añadieron 171** y se **retiró 1**, y dos de los añadidos son `xfail(strict=True)`
+    deliberados, así que 171 − 1 − 2 = 168 que pasan. Esos dos xfail son los huecos derivados a
+    la issue #115: fallan hoy a propósito. Fallos y errores **idénticos**, verificados por
     **nombre** con `git stash` a lo largo del contrato, no por recuento.
   - Los **cinco módulos de la superficie**: **88 passed**, y la base decía 89. La diferencia no
     es una pérdida: es `test_default_values_used`, que **T2 declaró retirar** porque afirmaba el
@@ -938,7 +941,8 @@
     Log lleva corrigiendo todo el contrato, esta vez en la línea base y no en una entrega.
   **T7.4, la verificación que de verdad cierra D5**, hecha con el **engine real** en vez de con
   un clic: un estudio `ballistic` con `sintering_config` normal(0.8, 0.05) produce un hijo cuyos
-  parámetros son `{sintering_type: normal, sintering_coeff: 0.8, sintering_std: 0.05}`, el
+  claves de sinterizado son `{sintering_type: normal, sintering_coeff: 0.8, sintering_std: 0.05}`
+  —el dict completo del hijo lleva además `n_particles` y `sticking_probability`—, el
   binding **recibe 0.8 y no 1.0**, y la simulación termina en `completed`. Antes de este
   contrato ese mismo estudio corría a 1.0, es decir **sin sinterizar**, mientras sus parámetros
   decían lo contrario.
@@ -967,6 +971,11 @@
   coeficiente**. La geometría de arriba es de ese caso: sinteriza. Los parámetros guardados sí
   describen lo que corre.
   **Por qué las líneas base del contrato ya no valen tal cual**: `develop` absorbió mis cuatro
-  tareas y las dos olas de rediseño de la sesión peer. Las cifras no se tocan en el texto de
-  T7 —son lo que se midió cuando se escribió— y la deriva se explica aquí, que es donde se
-  puede fechar.
+  tareas y las dos olas de rediseño de la sesión peer. Las cifras no se tocan en el texto de T7
+  y la deriva se explica aquí, que es donde se puede fechar.
+  **Con una salvedad que un juez me señaló y que me contradecía dentro de esta misma entrada**:
+  escribí que esas cifras «son lo que se midió cuando se escribió», y cuatro líneas más arriba
+  demuestro que el «5 ignorados» del engine **nunca se midió** —su propio desglose suma 4, hoy
+  mido 4, y `aglogen_core` es byte a byte el mismo árbol que entonces—. Así que lo correcto es:
+  las cifras de T7 se conservan **como el dato de entonces, medido o no**, y esta entrada dice
+  cuál es cuál.
