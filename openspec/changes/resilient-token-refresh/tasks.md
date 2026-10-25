@@ -65,13 +65,13 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T5 — Verificación
 
-- [ ] T5.1 Suite completa en verde; ningún test preexistente pasa a rojo.
-- [ ] T5.2 `npx tsc --noEmit` sin errores nuevos sobre la línea base de T0.5.
-- [ ] T5.3 `npm run build` en exit 0.
-- [ ] T5.4 Diagnóstico con **8 corridas por escenario**, contrastado contra el JSON de T0.4:
+- [x] T5.1 Suite completa en verde; ningún test preexistente pasa a rojo.
+- [x] T5.2 `npx tsc --noEmit` sin errores nuevos sobre la línea base de T0.5.
+- [x] T5.3 `npm run build` en exit 0.
+- [x] T5.4 Diagnóstico con **8 corridas por escenario**, contrastado contra el JSON de T0.4:
       expulsiones **0**, y **código de salida 0**. La evidencia es el código de salida, no una
       lectura de consola.
-- [ ] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra **y los solapes
+- [x] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra **y los solapes
       cruzados reales**. La coordinación entre pestañas se abre como trabajo propio **solo si
       queda alguna expulsión con causa `collision` en ese escenario**, no ante cualquier
       expulsión: una muerte posterior al arreglo puede venir del límite de espera de R3, que no
@@ -79,7 +79,7 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
       escrito que **no se ha medido**, nunca que el cerrojo no haga falta.
 - [ ] T5.6 Verificación manual de acceso, cierre de sesión y sesión realmente caducada: el
       cambio está en el camino crítico de todo usuario.
-- [ ] T5.7 Registrar en el Log las cifras de antes y después, no la impresión.
+- [x] T5.7 Registrar en el Log las cifras de antes y después, no la impresión.
 
 ## T6 — Entrega
 
@@ -92,6 +92,49 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L2 — T5: de 9 expulsiones a 1, y la que queda demuestra lo que no sabíamos (2026-10-25)
+
+Ocho corridas por escenario, build de producción, contrastado contra la línea base versionada.
+
+| escenario | antes | ahora |
+| --- | --- | --- |
+| detalle de proyecto | **6 de 8** | **0 de 8** |
+| comparación | 1 de 8 | 0 de 8 |
+| dos pestañas, pesada + ligera | 2 de 8 | 0 de 8 |
+| dos pestañas, ligera + ligera | 0 de 8 | **1 de 8** |
+| **total** | **9** | **1** |
+
+**La colisión dentro de la pestaña está eliminada.** Era el defecto demostrado y ha desaparecido
+de todos los escenarios donde se medía.
+
+**Y entonces apareció lo que no se podía medir.** Con un solo refresco por pestaña, las ventanas
+de las dos pestañas por fin coinciden: **`cruce` real en 5 de 8 corridas**, cuando antes de este
+cambio fueron **0 en 16**. El experimento que no podía producir el efecto ahora sí lo produce.
+
+En esos cruces se ve el reintento de R4 haciendo su trabajo: la pestaña presenta un token que la
+otra acaba de rotar, recibe 401, relee el almacenamiento y **se recupera en 7 de los 8 casos**.
+En el octavo el reintento también llega tarde y la sesión muere.
+
+| corrida | cruce | refrescos t1 | rechazados | resultado |
+| --- | --- | --- | --- | --- |
+| c0, c4, c7 | 1 | 2 | 1 | recuperada |
+| **c6** | 1 | 2 | 1 | **expulsada (`collision`)** |
+| c1, c2, c3, c5 | 0 | 1 | 0 | sin cruce |
+
+**Esto activa la condición de T5.5 tal cual estaba escrita**: queda una expulsión con causa
+`collision` en el escenario de dos pestañas una vez eliminada la colisión interna, de modo que
+la coordinación entre pestañas se abre **como trabajo propio y con evidencia propia**, no por
+intuición.
+
+Merece subrayarse por qué el contrato acertó al no decidirlo antes. El primer borrador afirmaba
+que el cerrojo **no hacía falta**, apoyándose en un nulo que no probaba nada. La segunda
+revisión obligó a degradarlo a «no lo sabemos». Hoy lo sabemos, y la respuesta es la contraria
+de la que yo había escrito: **sí hace falta**, con 1 expulsión de cada 8 y un reintento que
+absorbe el resto pero no todo.
+
+Si aquella afirmación hubiera sobrevivido, este dato habría llegado como una sorpresa en
+producción en vez de como una medición.
 
 ### L1 — T1 y T2, con las mutaciones que las probaron (2026-10-25)
 
