@@ -228,7 +228,9 @@ def _kwargs_reaching_engine(child_id: Any) -> dict[str, Any]:
         except Exception as exc:  # noqa: BLE001 - the measurement, not a gate
             print(f"    (worker lanzo {type(exc).__name__}: {exc})")
         if not engine.called:
-            return {}
+            # Distinct from "called with no kf_* kwargs": the contract's claim
+            # is that the mode is dropped, not that dispatch never happened.
+            return None
         _, kwargs = engine.call_args
         return {k: v for k, v in kwargs.items() if k.startswith(("kf_", "dpo_"))}
 
@@ -271,7 +273,10 @@ def test_undocumented_doors(
     print(f"\n[{door}] status={resp.status_code}")
     if resp.status_code != 201:
         print(f"    error={resp.data}")
-        return
+        pytest.fail(
+            f"{door}: respondio {resp.status_code}. Si es porque el contrato ya esta "
+            "implementado, re-apunta esta sonda (tarea T2.4b) en vez de dejarla verde."
+        )
     study = ParametricStudy.objects.get(id=resp.data["id"])
     child = study.simulations.first()
     assert child is not None
@@ -281,6 +286,7 @@ def test_undocumented_doors(
     # The contract's central premise is measured here, so it is asserted: a
     # well-formed mode reaches the engine, an unknown one reaches it as
     # nothing at all and the simulation silently runs at the default.
+    assert kwargs is not None, f"{door}: el worker nunca llamo al engine"
     if "lognormal" in door:
         assert kwargs == {}, "the unknown mode stopped being silently dropped"
     else:

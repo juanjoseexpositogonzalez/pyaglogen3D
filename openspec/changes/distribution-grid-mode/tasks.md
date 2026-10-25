@@ -53,7 +53,11 @@
   barridas por `theoretical_extremes`. Cubre `mode` desconocido, **rangos fuera de límite**
   (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) y config que no es objeto.
 - [ ] T2.1e **Alcance por algoritmo (R13.12)**: estas cuatro claves solo se aceptan para un
-  algoritmo que las consuma —hoy solo `tunable_cc`—, en create **y** en update. Es el mismo D6
+  algoritmo que las consuma —hoy solo `tunable_cc`—, en create y en update. La comprobación en
+  update corre **solo si la petición trae alguna de las cuatro claves o cambia
+  `base_algorithm`**: «tocar» significa que la clave aparece en el cuerpo de la petición, no que
+  exista en la fila. Así una fila guardada antes del cambio sigue siendo editable en sus otros
+  campos, que es lo que R7.2 promete y lo que R13.12 exige. Es el mismo D6
   que cerró #97 para el sinterizado con `check_algorithm_scope`, y hay que reutilizar ese
   precedente en vez de inventar otro.
 - [ ] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
@@ -82,14 +86,17 @@
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
-- [ ] T2.4b **Re-apuntar las cinco sondas que hoy fijan el estado anterior** y que se pondrán en
+- [ ] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
+  carve-out de distribuciones), hoy sin tarea propia.
+- [ ] T2.4b **Re-apuntar las seis sondas que hoy fijan el estado anterior** y que se pondrán en
   rojo el día que se implemente lo aprobado. Se re-apuntan a conciencia o se marcan
   `xfail(strict=True)` como hace #115; nunca se borran:
   `test_d1_kf_distribution_selector_shape` (400 → 201),
   `test_d1_particle_radius_selector_shape` (400 → 201),
   `test_d1_correct_shape_is_accepted` (201 → 400, R1 prohíbe `distribution_type`),
   `test_p115_1_bare_dict_in_theoretical_extremes` (201 → 400, R13.7) y
-  `test_d7_limiting_cases_with_dict_grid` (201 → 400, R1).
+  `test_d7_limiting_cases_with_dict_grid` (201 → 400, R1) y la parametrización
+  `{mode:"lognormal"}` de `test_undocumented_doors`, que hoy mide 201 y pasará a 400.
 - [ ] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
   `particle_radius_config` fuera de la allow-list, y cambiar de algoritmo limpia o marca la
   variación ya configurada.
@@ -144,7 +151,7 @@ versionada dos días antes.
 
 **L6 — Y la evidencia volvía a no correr, por tercera vez.** `python_files = ["test_*.py"]`:
 el comando que publiqué en la issue y en el PR, `pytest tests/diagnostics/`, colectaba **cero**.
-Los diagnósticos ahora se llaman `test_*.py`, los recoge la suite ordinaria (19) y sus
+Los diagnósticos ahora se llaman `test_*.py`, los recoge la suite ordinaria (20) y sus
 mediciones son **aserciones**, no prints: si `target_kf_used` deja de llegar o el panic deja de
 ser `BaseException`, algo falla en rojo.
 

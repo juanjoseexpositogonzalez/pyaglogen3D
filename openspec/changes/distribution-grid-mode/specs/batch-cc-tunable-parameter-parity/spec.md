@@ -29,7 +29,7 @@ views read as `sim.parameters[grid key]` and which R5.2 requires, **and**
 - GIVEN `parameter_grid = {kf_distribution: [{mode:"normal",mean:1.2,std:0.05},{mode:"normal",mean:1.3,std:0.05}]}` and `seeds_per_combination = 2`
 - WHEN the ParametricStudy is created
 - THEN 4 child sims are created (2 configs x 2 seeds)
-- AND each child sim's params contains its corresponding config under `target_kf_distribution`
+- AND each child sim's params contains its corresponding config under **both** `kf_distribution`, which the result views read and R5.2 requires, and `target_kf_distribution`, which the worker translates
 - AND the engine call for that child receives `kf_mode="normal"` and `kf_mean` of that entry
 
 #### Scenario R1.2 — Scalar shorthand normalized to fixed
@@ -111,7 +111,7 @@ on the same terms as R1.
 
 - GIVEN `parameter_grid = {particle_radius_config: [{mode:"fixed", value:1.5}]}`
 - WHEN the serializer validates
-- THEN accepted; the child sim's params contain that config under `dpo_distribution`
+- THEN accepted; the child sim's params contain that config under **both** `particle_radius_config`, which the result views read, and `dpo_distribution`, which the worker translates
 - AND the engine call for that child receives `dpo_mode="fixed"` and `dpo_value=1.5`
 
 ### Requirement: R7 — Backward Compatibility
@@ -221,8 +221,10 @@ for distributions, multi-select chips for seed_type).
 
 For `base_algorithm = "limiting"` the dropdown keeps its own separate list
 (the `limiting` branch of `parameterOptionsFor`), offering none of the four and instead a flat
-`sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff." input, rendered by `BatchSimulationForm` and sent by `handleSubmit`,
-input (see `parameterOptionsFor`) sent as `base_parameters.sintering_coeff` on every submit (see `parameterOptionsFor`). Both are
+`sintering_coeff` sweep (see `parameterOptionsFor`). That algorithm also has a dedicated "Base Sintering Coeff."
+input, rendered by `BatchSimulationForm` and sent by `handleSubmit` as
+`base_parameters.sintering_coeff` whenever it holds a usable number — never when it is empty,
+which R10.6 makes the required behaviour. Both are
 sintering inputs under R3 and MUST produce a payload R3 accepts; in particular an emptied field
 MUST NOT be submitted as `null` or `NaN`.
 

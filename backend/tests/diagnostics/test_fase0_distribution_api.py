@@ -180,11 +180,11 @@ def test_d7_limiting_cases_with_dict_grid(
             },
         )
     except (RuntimeError, TypeError, ValueError) as exc:
-        # Narrow on purpose: D7 used to raise inside expansion, and that is
-        # the measurement. An `except Exception` also swallows AssertionError,
-        # which turned the check below into decoration.
-        print(f"\n[D7 casos limite + dos dicts] EXCEPCION {type(exc).__name__}: {exc}")
-        return
+        # D7 is closed today (measured 201), so an exception here means the
+        # `sorted()`-over-dicts crash came back - the very regression this
+        # probe exists to catch. Returning quietly would turn that into a
+        # green run, so it fails loudly instead.
+        pytest.fail(f"D7 volvio a reventar la expansion: {type(exc).__name__}: {exc}")
     _report("D7 casos limite + dos dicts", resp, 201)
 
 
