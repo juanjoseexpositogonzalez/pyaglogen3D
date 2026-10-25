@@ -55,17 +55,16 @@ def test_engine_kf_distribution_changes_the_run() -> None:
     """A declared kf distribution has a physical effect once it arrives."""
     import aglogen_core
 
-    cases = {
-        "default": {},
-        "fixed 1.9": {"kf_mode": "fixed", "kf_value": 1.9},
-        "normal mean 1.9": {"kf_mode": "normal", "kf_mean": 1.9, "kf_std": 0.05},
-    }
-    for name, kwargs in cases.items():
-        result = aglogen_core.run_tunable_cc(**ENGINE_BASE, **kwargs)
-        print(
-            f"\n[kf] {name:16s} target_kf_used={result.target_kf_used:.4f} "
-            f"prefactor={result.prefactor:.4f}"
-        )
+    default = aglogen_core.run_tunable_cc(**ENGINE_BASE)
+    declared = aglogen_core.run_tunable_cc(**ENGINE_BASE, kf_mode="fixed", kf_value=1.9)
+    print(
+        f"\n[kf] default target_kf_used={default.target_kf_used:.4f} "
+        f"-> declared {declared.target_kf_used:.4f}"
+    )
+    assert default.target_kf_used == pytest.approx(1.3, abs=1e-9)
+    assert declared.target_kf_used == pytest.approx(1.9, abs=1e-9), (
+        "a declared kf no longer reaches the engine: the premise of this contract"
+    )
 
 
 def test_engine_dpo_is_one_radius_per_run_not_polydispersity() -> None:
@@ -102,6 +101,24 @@ def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     print(
         f"\n[legacy] radius_min=0.5 radius_max=2.0 -> dpo_used={result.dpo_used:.4f} "
         f"distinct={len(set(np.round(radii, 9)))}"
+    )
+    assert result.dpo_used == pytest.approx(0.5, abs=1e-9), (
+        "radius_max started to matter: sweeping it would stop being a no-op"
+    )
+
+
+def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:
+    """Found by the spec-review: this escapes `except Exception` in the worker."""
+    import aglogen_core
+
+    with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+        aglogen_core.run_tunable_cc(
+            **ENGINE_BASE, dpo_mode="uniform", dpo_min=2.0, dpo_max=1.0
+        )
+    raised = excinfo.value
+    print(f"\n[panic] {type(raised).__name__}, es Exception: {isinstance(raised, Exception)}")
+    assert not isinstance(raised, Exception), (
+        "the panic became an ordinary Exception; the worker guard would now catch it"
     )
 
 
