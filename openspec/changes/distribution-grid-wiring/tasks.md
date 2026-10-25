@@ -11,7 +11,9 @@
 
 ## T0 — Fase 0 (hecha antes de redactar, no después)
 
-- [x] T0.1 Sonda ejecutada contra el código de hoy: `backend/tests/_fase0_dgw_probe.py`.
+- [x] T0.1 Sonda ejecutada contra el código de hoy, versionada y re-ejecutable:
+  `backend/tests/diagnostics/fase0_distribution_grid_wiring.py`
+  (`cd backend && python -m pytest tests/diagnostics/fase0_distribution_grid_wiring.py -q -s`).
 - [x] T0.2 **Confirmado D1**: `{mode, …}` da 400 en `kf_distribution` y en
   `particle_radius_config`, y `DistributionSelector.tsx` sigue emitiendo esa forma.
 - [x] T0.3 **Confirmado D3, y mejor planteado**: el worker lee `target_kf_distribution` y
@@ -24,7 +26,10 @@
 - [x] T0.6 **Hallazgo nuevo**: la spec canónica R1/R2 es falsa en tres de cuatro escenarios
   medidos (`{type}` → 400, atajo escalar → 400, `{fixed, mean}` → 400). Sólo se cumple el cap
   `std/mean <= 0.3`.
-- [ ] T0.7 Decidir qué pasa con la sonda: borrarla o convertirla en diagnóstico versionado.
+- [x] T0.7 Sonda convertida en diagnóstico versionado. Primero la dejé en `openspec/`, donde
+  **no se ejecutaba** por quedar fuera del rootdir de Django, mientras el PR prometía que sí:
+  vive en `backend/tests/diagnostics/`, sin prefijo `test_` para que la suite ordinaria no la
+  recoja (verificado: 11 pasan al invocarla, 0 al colectar la suite).
 
 ## T1 — Spec-review (agente fresco, antes de pedir aprobación)
 
@@ -81,6 +86,10 @@ este contrato ha cambiado el alcance antes de escribirlo: dos defectos del mapa 
 muertos o mal enunciados, y el que de verdad gobierna —que batch escribe claves que ningún
 consumidor lee— no estaba planteado así en ninguna parte. El mapa tenía cuatro días y el
 contrato anterior le movió el suelo.
+
+**L3 — Una evidencia que no se ejecuta no es evidencia.** Cometí el diagnóstico dentro de
+`openspec/`, donde pytest no puede colectarlo, y el PR afirmaba que las cifras se podían
+re-ejecutar. Lo encontré al verificar mi propia promesa, no por revisión. Vive donde corre.
 
 **L2 — La spec canónica es la tercera fuente de desacuerdo, no el árbitro.** R1 documenta
 `{type}`, un atajo escalar y la clave `mean`; las tres cosas dan 400. Medido, no leído. Un
