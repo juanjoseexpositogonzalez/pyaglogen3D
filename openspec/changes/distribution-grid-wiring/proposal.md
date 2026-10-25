@@ -1,12 +1,36 @@
 # distribution-grid-wiring
 
+> ⚠️ **NO APROBABLE EN ESTE ESTADO.** Una spec-review con agente fresco (2026-10-25) refutó la
+> premisa central y encontró seis defectos CRITICAL. Lo verificado, por mí, antes de aceptarlo:
+>
+> 1. **La premisa de R1 es falsa.** El contrato dice que `distribution_type` es «la misma clave
+>    que ya exige la ruta single»; no lo es: `DistributionField.to_internal_value` discrimina por
+>    `mode`, y `expand_distribution_kwargs` —el único lector del hijo— también. La tubería que
+>    llega al engine habla **`mode`**. Converger en `distribution_type` añadiría una cuarta
+>    grafía antes de retirar las otras tres, **y dejaría el hijo ilegible para el worker**.
+> 2. **D8 no estaba refutado.** `run_tunable_cc_internal` muestrea las distribuciones una sola
+>    vez por corrida y reescribe `radius_min`/`radius_max` con ese valor: el comentario del
+>    engine dice literal `monodisperse per run`. Mi refutación fue una lectura mecánica de que
+>    `random_radius` se llama por partícula, sin mirar qué recibe.
+> 3. **Hay dos puertas más que ya funcionan hoy**: `parameter_grid.target_kf_distribution` y
+>    `base_parameters.target_kf_distribution`, con la forma `mode`, sin validación. El contrato
+>    afirmaba que «no funcionan por ninguna de las dos vías posibles». Es falso.
+> 4. **R13.3 rompería las tablas de resultados**, que leen el **valor** en
+>    `sim.parameters[clave de rejilla]`; y **R13.5 contradice a R7**, que garantiza
+>    comportamiento idéntico para rejillas sin claves de paridad y no recibe carve-out.
+>
+> La dirección en la que converger —hacia `mode`, que es lo que el engine lee, o hacia
+> `distribution_type`, que es la forma del dominio de sinterizado— **es una decisión de contrato
+> y corresponde a la persona**. No se reescribe aquí.
+
 ## Why
 
 Las otras dos rejillas de distribución de un estudio batch —`kf_distribution` y
 `particle_radius_config`— **no funcionan por ninguna de las dos vías posibles**: la forma que
 envía la interfaz se rechaza siempre, y la forma que el backend acepta no la lee nadie.
 
-Fase 0 (2026-10-25, sonda `_fase0_dgw_probe.py`) lo mide contra el código de hoy:
+Fase 0 (2026-10-25, diagnóstico `backend/tests/diagnostics/fase0_distribution_grid_wiring.py`)
+lo mide contra el código de hoy:
 
 | Lo que se envía | Qué pasa | Medido |
 | --- | --- | --- |
