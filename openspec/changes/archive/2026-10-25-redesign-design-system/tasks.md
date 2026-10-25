@@ -227,7 +227,7 @@
       `frontend/` y `openspec/`.
 - [x] T7.7 `coordinationColor(0)` sigue devolviendo `'#9ca3af'` y la suite de `graphUtils` sigue
       verde: la paleta canónica de `contacts-graph-viz` no se ha tocado.
-- [ ] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
+- [x] T7.8 **Regresión visual de las doce pantallas de producto**, que esta ola no edita pero
       sí afecta (hay 23 ficheros `page.tsx`; doce son pantallas distintas y 17 importan
       `Header`; aquí se recorren las doce): el sidebar fijo les quita ancho útil y los tokens nuevos les cambian el fondo.
       Recorrido manual de las doce pantallas en ambos temas a 1440px, con capturas en el Log.
@@ -245,17 +245,17 @@
       Es un gate real y barato que cuatro rondas de spec-review no ejecutaron: las deltas deben
       vivir en `specs/<capability>/spec.md`, no en `specs/<capability>.md`; un fichero plano se
       **ignora en silencio** al aplicar y al archivar.
-- [ ] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
+- [x] T8.2 Archive con sincronización canónica: los bloques ADDED completos de
       `design-system-foundation` (R1–R8) y `app-shell-navigation` (R1–R6) se escriben íntegros,
       nunca diferidos, en **`openspec/specs/<capability>/spec.md`** — forma de carpeta, no
       fichero plano. Verificado: `openspec list --specs` responde hoy **"No specs found"**
       porque las 21 canónicas del repo son planas y el tooling no ve ninguna. Estas dos serían
       las primeras visibles. Migrar las otras 21 es un chore aparte, decisión de la persona; no
       lo hace este change.
-- [ ] T8.2b Comprobar que, tras el archive, `openspec list --specs` lista
+- [x] T8.2b Comprobar que, tras el archive, `openspec list --specs` lista
       `design-system-foundation` y `app-shell-navigation` con sus 8 y 6 requisitos. Si no las
       lista, el archive fue silencioso y hay que repararlo antes de cerrar.
-- [ ] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
+- [x] T8.3 `state.yaml` actualizado. Incluye reconciliar `state.yaml:33`, que declara
       `lint_cmd: "cd frontend && npm run lint"` como gate cuando no existe configuración ESLint
       alguna (T0.1): o se anota como no ejecutable, o se retira.
 - [ ] T8.4 **Limpieza tras el merge**, ordenada por la persona para esta entrega:
@@ -335,6 +335,79 @@ se crea nada bajo `frontend/src/components/ui/` ni se modifica `frontend/vitest.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L16 — El archive, y dos cosas que el tooling no hizo (2026-10-25)
+
+`openspec archive redesign-design-system -y` escribió las dos capacidades nuevas en forma de
+carpeta, que era la exigencia real de T8.2:
+
+| capacidad | requisitos | escenarios | líneas |
+| --- | --- | --- | --- |
+| `app-shell-navigation` | 6 | 16 | 166 |
+| `design-system-foundation` | 8 | 24 | 274 |
+
+**T8.2b pasa**: `openspec list --specs` lista ambas con sus 6 y 8 requisitos. Los bloques están
+completos, no diferidos: la lección del ciclo 2 se cumple.
+
+**Pero el tooling dejó dos huecos, y ninguno avisa de que los deja.**
+
+**Primero, un `TBD` en el `Purpose` de ambas specs canónicas:** *«TBD - created by archiving
+change redesign-design-system. Update Purpose after archive.»* Es exactamente el contenido
+diferido que AGENTS.md prohíbe, y no es hipotético: la issue **#93** existe por este mismo
+defecto en `multi-aggregate-comparison`, que se archivó en su día sin que nadie volviera a
+escribir el propósito. Ambos `Purpose` se han escrito aquí.
+
+**Segundo, el archive no toca `state.yaml`.** Hubo que actualizarlo a mano, como anticipa
+AGENTS.md. Al hacerlo apareció una deriva mayor que la tarea: el fichero declaraba **10 cambios
+archivados** cuando el directorio contiene **29**, y en otra convención de nombre
+(`nombre-fecha` frente al `fecha-nombre` que usa el tooling desde hace meses).
+
+Aquí solo se añadió la entrada propia con la convención real. **Reescribir las 19 entradas
+ausentes es trabajo ajeno a este contrato** y se deja anotado en vez de hacerse de paso: un
+índice que miente sobre dos tercios de su contenido merece su propia decisión, no un arreglo
+silencioso dentro del archive de otra cosa.
+
+**T8.3 incluía reconciliar el gate de lint**, y se hizo: `state.yaml` declaraba
+`lint_cmd: "cd frontend && npm run lint"` como si fuera un gate, cuando `frontend/` no tiene
+ninguna configuración ESLint y `next lint` no llega a ejecutarse. Ahora es `null`, con el motivo
+escrito al lado. Un gate declarado que no corre es peor que ningún gate: da por cubierto lo que
+nadie comprueba.
+
+### L15 — T7.8 aceptada con la revisión visual diferida, y el archive (2026-10-25)
+
+**T7.8 no se cierra como «verificada», porque no lo está.** Las 60 capturas están publicadas en la
+issue **#124** y se preparó un recorrido guiado por riesgo —rail que roba ancho en las pantallas de
+tres paneles, las nueve superficies heredadas vistas por primera vez en tema oscuro, alineación
+numérica, los cuatro breakpoints, estados distinguibles sin color, paridad claro/oscuro—. La
+persona decidió **aceptar la entrega y diferir ese recorrido**, con los ajustes que salgan tratados
+después como trabajo aparte.
+
+Queda escrito así a propósito. Si más adelante aparece un defecto visual en estas pantallas, el
+registro explica por qué no se detectó aquí: no porque se mirara mal, sino porque **no se miró**,
+por una decisión tomada a sabiendas. Marcar T7.8 como verificada habría convertido una decisión
+legítima en una afirmación falsa.
+
+**Lo que sí está verificado** por medición, no por inspección: ausencia de flash de tema, contraste
+AA con mínimo **5.01:1** en claro y **7.04:1** en oscuro sobre 22 micro-etiquetas por tema con cero
+por debajo de 4.5:1, y cero desbordamientos horizontales a 360 px en las pantallas de esta ola.
+
+**Una premisa del propio contrato era falsa.** T8.2 afirmaba que `openspec list --specs` responde
+«No specs found» porque las 21 canónicas del repo son ficheros planos y el tooling no las ve, y
+que estas dos serían las primeras visibles. Comprobado hoy: **lista las 21 sin problema**. La
+afirmación se escribió sin ejecutar el comando, y se arrastró por cuatro rondas de spec-review. La
+exigencia que importaba sigue siendo correcta —las deltas deben vivir en `specs/<capability>/spec.md`
+en forma de carpeta— pero su justificación no lo era.
+
+**Defectos ajenos encontrados al verificar**, ambos con issue propia y ninguno dentro del alcance
+de este contrato:
+
+- **#122** — la sesión muere sola: refrescos de token concurrentes se invalidan entre sí por
+  rotación con lista negra. Medido: sesión muerta al refresco 36 con dos 401. Expulsa usuarios al
+  azar mientras trabajan.
+- **#123** — el header público desbordaba 3 px a 360 px. **Arreglado** por carril corto en el PR
+  **#127** y verificado en cuatro anchos y dos temas. Queda documentado allí un desbordamiento
+  distinto de 1 px en la landing a 320 px, de otra causa y preexistente, pendiente de decidir si
+  320 es un ancho soportado.
 
 ### L14 — Verificación manual: T7.4, T7.5 y T7.8 (2026-10-25)
 
