@@ -11,14 +11,14 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
       regenerado**. Declararlo sin tocar el lock rompe `npm ci`, y `frontend/Dockerfile:19`
       construye la imagen de producción con ese comando: el gate real es `npm ci --dry-run` en
       verde, no la presencia de la línea en `package.json`.
-- [ ] T0.2 Verificar que el diagnóstico **está versionado de verdad**: `git ls-files
+- [x] T0.2 Verificar que el diagnóstico **está versionado de verdad**: `git ls-files
       frontend/diagnostics` debe devolverlo. La ruta `frontend/scripts/` está en
       `.gitignore:75`, y un intento anterior de versionarlo ahí fue ignorado en silencio
       mientras el mensaje de commit afirmaba lo contrario.
 - [ ] T0.3 Documentar en el propio fichero cómo se ejecuta (build de producción, backend, un
       proyecto con varias simulaciones) y comprobar que **otra persona puede correrlo** sin
       ficheros de `/tmp` ni credenciales incrustadas.
-- [ ] T0.4 Registrar la línea base con **8 corridas por escenario** y **versionar su salida
+- [x] T0.4 Registrar la línea base con **8 corridas por escenario** y **versionar su salida
       JSON** junto al diagnóstico, con la fecha y el commit medido. Sin artefacto versionado, el
       «antes» de T5.7 no es contrastable por quien revise el PR.
 - [ ] T0.5 Registrar suite y `type-check` de partida, para no confundir una regresión propia
@@ -26,20 +26,20 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T1 — Un refresco en vuelo por pestaña (R2)
 
-- [ ] T1.1 Test primero: varias llamadas concurrentes producen **una** petición de refresco y
+- [x] T1.1 Test primero: varias llamadas concurrentes producen **una** petición de refresco y
       todas resuelven con el mismo token.
-- [ ] T1.2 Test primero: tras un refresco fallido, una llamada posterior **inicia uno nuevo**
+- [x] T1.2 Test primero: tras un refresco fallido, una llamada posterior **inicia uno nuevo**
       en vez de heredar la promesa ya resuelta.
-- [ ] T1.3 Implementar la promesa compartida en `auth-api.ts`, liberándola al terminar con
+- [x] T1.3 Implementar la promesa compartida en `auth-api.ts`, liberándola al terminar con
       éxito **o** con fallo.
-- [ ] T1.4 Falsificar ambos tests rompiendo la coalescencia y la liberación a propósito.
+- [x] T1.4 Falsificar ambos tests rompiendo la coalescencia y la liberación a propósito.
 
 ## T2 — Espera acotada (R3)
 
-- [ ] T2.1 Test primero: un refresco que no responde dentro del plazo rechaza a quienes esperan
+- [x] T2.1 Test primero: un refresco que no responde dentro del plazo rechaza a quienes esperan
       con un error reintentable y **no toca las credenciales**.
-- [ ] T2.2 Implementar el límite con `AbortController` en `auth-api.ts:117`.
-- [ ] T2.3 Comprobar que tras el vencimiento **se puede volver a intentar**: el plazo no debe
+- [x] T2.2 Implementar el límite con `AbortController` en `auth-api.ts:117`.
+- [x] T2.3 Comprobar que tras el vencimiento **se puede volver a intentar**: el plazo no debe
       dejar la pestaña sin refresco posible.
 
 ## T3 — Un fallo deja de ser terminal (R4)
@@ -92,6 +92,42 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L1 — T1 y T2, con las mutaciones que las probaron (2026-10-25)
+
+**T1, coalescencia.** Una sola promesa en vuelo por contexto, liberada al terminar con éxito o
+con fallo. Tres tests. Mutaciones: quitar la ranura → 1 fallo; no liberarla → 2 fallos.
+
+**T2, espera acotada.** Cuatro tests. La decisión que importa: **la ranura guarda la petición,
+no la espera**. Rendirse no cancela la rotación del servidor, así que la respuesta se guarda si
+llega y las credenciales se dejan intactas si no.
+
+Mutaciones: sin límite → 3 fallos; **límite dentro de la ranura → 1 fallo**. Esta segunda es la
+que enseñó algo: pasa todos los demás tests y parece equivalente, pero al vencer libera el
+hueco y deja salir un segundo refresco mientras el primero sigue en vuelo, reconstruyendo la
+colisión. **El test que la caza se escribió porque la mutación encontró el hueco**, no porque
+estuviera previsto.
+
+**T3.4, clasificación del fallo** (el resto de T3 sigue pendiente). Cinco tests. Mutaciones:
+borrar siempre → 1 fallo; sin reintento → 2 fallos; reintento ilimitado → 1 fallo.
+
+La tercera no fallaba: **colgaba la suite**. Un guarda que solo detecta un defecto colgándose
+es un *timeout* en CI, no un diagnóstico. El mock ahora deja de rotar el token tras unos
+intentos, así que un reintento sin límite termina y falla por recuento de llamadas.
+
+**Dos trampas del instrumental, ambas de estado de módulo.** La ranura es estado de módulo, así
+que sin un módulo fresco por test uno se une al refresco que otro dejó colgado y mide la
+petición ajena. Y al resetear módulos, `auth-api` recibe una copia **nueva** de `session-end`:
+el listener del test escuchaba otra instancia, así que el código señalaba correctamente y el
+test veía cero.
+
+**Verificación**: 12 tests nuevos en verde, suite completa **75 ficheros**, `tsc` en los 13
+preexistentes.
+
+**Sin marcar a propósito**: T0.3, porque el diagnóstico aún lleva credenciales por defecto en
+vez de exigirlas por entorno; y T0.5, porque la línea base de suite y `type-check` no está
+escrita en este Log, solo medida.
+
 
 ### L0 — Fase 0, y dos instrumentos que mentían (2026-10-25)
 
