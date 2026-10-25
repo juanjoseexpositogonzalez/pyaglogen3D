@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: 2026-10-25-redesign-design-system
+last_archived: sintering-reaches-engine-2026-10-25
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -14,6 +14,7 @@ archived_changes:
   - cc-tunable-bc-alignment-2026-10-18
   - fraktal-batch-extensions-2026-10-19
   - 2026-10-25-redesign-design-system
+  - sintering-reaches-engine-2026-10-25
 stack:
   rust:
     version: "1.94.0"
