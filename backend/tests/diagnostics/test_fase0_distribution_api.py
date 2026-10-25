@@ -54,10 +54,20 @@ def _post(client: APIClient, project: Project, **overrides: Any) -> Any:
     )
 
 
-def _report(name: str, resp: Any) -> None:
+def _report(name: str, resp: Any, expected: int | None = None) -> None:
+    """Print the measurement and, when the contract quotes it, assert it.
+
+    A spec-review found this file had zero assertions while the contract
+    published its "20 passed" as evidence: half of that number could not
+    fail. Every case the contract cites now carries its expected status.
+    """
     print(f"\n[{name}] status={resp.status_code}")
     if resp.status_code >= 400:
         print(f"    error={resp.data}")
+    if expected is not None:
+        assert resp.status_code == expected, (
+            f"{name}: measured {resp.status_code}, the contract quotes {expected}"
+        )
 
 
 # --- D1: ¿la forma {mode} sigue dando 400 en las otras dos rejillas? -------
@@ -71,7 +81,7 @@ def test_d1_kf_distribution_selector_shape(
         project,
         parameter_grid={"kf_distribution": [{"mode": "fixed", "value": 1.5}]},
     )
-    _report("D1 kf_distribution {mode}", resp)
+    _report("D1 kf_distribution {mode}", resp, 400)
 
 
 def test_d1_particle_radius_selector_shape(
@@ -82,7 +92,7 @@ def test_d1_particle_radius_selector_shape(
         project,
         parameter_grid={"particle_radius_config": [{"mode": "fixed", "value": 10.0}]},
     )
-    _report("D1 particle_radius_config {mode}", resp)
+    _report("D1 particle_radius_config {mode}", resp, 400)
 
 
 def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -> None:
@@ -93,7 +103,7 @@ def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -
             "kf_distribution": [{"distribution_type": "fixed", "value": 1.5}]
         },
     )
-    _report("D1 kf_distribution {distribution_type}", resp)
+    _report("D1 kf_distribution {distribution_type}", resp, 201)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         for child in study.simulations.all():
@@ -116,7 +126,7 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
             "theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.5}}
         },
     )
-    _report("#115.1 objeto desnudo en extremos", resp)
+    _report("#115.1 objeto desnudo en extremos", resp, 201)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         vistos = {
@@ -132,7 +142,7 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
 
 def test_p115_2_mixed_type_grid_list(api_client: APIClient, project: Project) -> None:
     resp = _post(api_client, project, parameter_grid={"target_df": [1.8, "abc"]})
-    _report("#115.2 grid de tipos mezclados", resp)
+    _report("#115.2 grid de tipos mezclados", resp, 201)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         print(
@@ -169,7 +179,7 @@ def test_d7_limiting_cases_with_dict_grid(
                 ]
             },
         )
-        _report("D7 casos limite + dos dicts", resp)
+        _report("D7 casos limite + dos dicts", resp, 201)
     except Exception as exc:  # noqa: BLE001
         print(f"\n[D7 casos limite + dos dicts] EXCEPCION {type(exc).__name__}: {exc}")
 
@@ -184,13 +194,13 @@ def test_canon_r1_type_key(api_client: APIClient, project: Project) -> None:
         project,
         parameter_grid={"kf_distribution": [{"type": "fixed", "value": 1.5}]},
     )
-    _report("canon R1 {type}", resp)
+    _report("canon R1 {type}", resp, 400)
 
 
 def test_canon_r1_2_scalar_shorthand(api_client: APIClient, project: Project) -> None:
     """R1.2: un escalar se trata como {fixed, value}."""
     resp = _post(api_client, project, parameter_grid={"kf_distribution": [1.3]})
-    _report("canon R1.2 escalar", resp)
+    _report("canon R1.2 escalar", resp, 400)
 
 
 def test_canon_r2_3_fixed_mean_key(api_client: APIClient, project: Project) -> None:
@@ -202,7 +212,7 @@ def test_canon_r2_3_fixed_mean_key(api_client: APIClient, project: Project) -> N
             "particle_radius_config": [{"distribution_type": "fixed", "mean": 1.5}]
         },
     )
-    _report("canon R2.3 {fixed, mean}", resp)
+    _report("canon R2.3 {fixed, mean}", resp, 400)
 
 
 def test_canon_r2_2_std_over_mean_limit(
@@ -218,4 +228,4 @@ def test_canon_r2_2_std_over_mean_limit(
             ]
         },
     )
-    _report("canon R2.2 std/mean=0.5", resp)
+    _report("canon R2.2 std/mean=0.5", resp, 400)
