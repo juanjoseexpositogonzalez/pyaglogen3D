@@ -11,6 +11,7 @@ import type {
   UpdateProfileData,
   User,
 } from './auth-types'
+import { endSession } from './session-end'
 import { tokenStorage } from './token-storage'
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1'
@@ -156,31 +157,60 @@ export const authApi = {
     if (refreshInFlight) return withTimeout(refreshInFlight)
 
     const run = (async () => {
-      const refreshToken = tokenStorage.getRefreshToken()
-      if (!refreshToken) {
-        throw new AuthApiError('No refresh token available', 401)
+      // `allowRetry` is what bounds recovery to a single extra attempt: a
+      // credential the server keeps rejecting has to end the session promptly
+      // instead of looping.
+      const attempt = async (allowRetry: boolean): Promise<{ access: string }> => {
+        const presented = tokenStorage.getRefreshToken()
+        if (!presented) {
+          endSession()
+          throw new AuthApiError('No refresh token available', 401)
+        }
+
+        const response = await fetch(`${API_URL}/auth/token/refresh/`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh: presented }),
+        })
+
+        if (!response.ok) {
+          // Only the server saying "this credential is no good" can end a
+          // session. A 5xx says the server is unwell, which is not the same
+          // claim, and discarding credentials over it turns an outage into a
+          // logout.
+          const credentialRejected = response.status === 401 || response.status === 403
+          if (!credentialRejected) {
+            throw new AuthApiError('Token refresh failed', response.status)
+          }
+
+          // A rejection whose token has since been replaced in storage means
+          // another refresh rotated it underneath this one: our own
+          // concurrency, not a revoked credential. Retry with what is current.
+          const current = tokenStorage.getRefreshToken()
+          if (allowRetry && current && current !== presented) {
+            return attempt(false)
+          }
+
+          tokenStorage.clearTokens()
+          endSession()
+          throw new AuthApiError('Token refresh failed', response.status)
+        }
+
+        const data = await response.json()
+        tokenStorage.setAccessToken(data.access)
+
+        // If we got a new refresh token (rotation enabled), save it
+        if (data.refresh) {
+          tokenStorage.setRefreshToken(data.refresh)
+        }
+
+        return data
       }
 
-      const response = await fetch(`${API_URL}/auth/token/refresh/`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ refresh: refreshToken }),
-      })
-
-      if (!response.ok) {
-        tokenStorage.clearTokens()
-        throw new AuthApiError('Token refresh failed', response.status)
-      }
-
-      const data = await response.json()
-      tokenStorage.setAccessToken(data.access)
-
-      // If we got a new refresh token (rotation enabled), save it
-      if (data.refresh) {
-        tokenStorage.setRefreshToken(data.refresh)
-      }
-
-      return data
+      // A transport failure never reaches the checks above, and must not:
+      // the request never got an answer, so it says nothing about the
+      // credential. It propagates with the credentials untouched.
+      return attempt(true)
     })()
 
     // The slot holds the request itself, not the bounded wait: a caller whose
