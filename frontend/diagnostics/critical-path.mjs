@@ -13,6 +13,7 @@
 import { chromium } from 'playwright'
 
 const APP = process.env.DIAG_APP ?? 'http://localhost:3000'
+const API = process.env.DIAG_API ?? 'http://localhost:8000'
 const EMAIL = process.env.DIAG_EMAIL ?? ''
 const PASSWORD = process.env.DIAG_PASSWORD ?? ''
 
@@ -59,23 +60,51 @@ const browser = await chromium.launch()
   await ctx.close()
 }
 
-// 2. Signing out leaves, and stays left. The old code could put the user back
-//    inside if a refresh answered during the round trip.
+// 2. Signing out: the real button, and the server's side of it.
+//    The earlier version of this check cleared storage by hand, so it proved
+//    only that a browser without credentials stays out. It therefore missed a
+//    regression where sign-out stopped revoking the token server-side: the
+//    request went out unauthenticated, the server answered 401, and the
+//    refresh token stayed usable for its full seven-day lifetime.
 {
   const ctx = await browser.newContext()
   const page = await ctx.newPage()
   await signIn(page)
 
-  await page.goto(`${APP}/dashboard`, { waitUntil: 'load' })
-  await page.waitForTimeout(2000)
-  // Drive sign-out the way the application does, then look at what is left.
-  await page.evaluate(() => {
-    document.cookie = 'pyaglogen3d_auth=; path=/; max-age=0'
-    localStorage.removeItem('pyaglogen3d_refresh_token')
+  const stolen = await page.evaluate(() => localStorage.getItem('pyaglogen3d_refresh_token'))
+
+  let logoutStatus = 0
+  page.on('response', (res) => {
+    if (res.url().includes('/auth/logout/')) logoutStatus = res.status()
   })
-  await page.goto(`${APP}/dashboard`, { waitUntil: 'load' })
-  await page.waitForTimeout(2500)
-  check('cierre: sin credenciales, /dashboard manda a login', path(page).includes('/auth/login'), path(page))
+
+  // Targeted by its label: the deprecated header exposes a control with the
+  // same accessible name, and matching loosely picks the wrong one.
+  const button = page.locator('button[aria-label=\'Sign out\']').first()
+  const visible = await button.isVisible().catch(() => false)
+  check('cierre: el botón de salir está disponible', visible)
+  if (visible) {
+    await button.click()
+    await page.waitForTimeout(3000)
+  }
+
+  check('cierre: aterriza en login', path(page).includes('/auth/login'), path(page))
+  check('cierre: el servidor acepta la revocación', logoutStatus === 200, `HTTP ${logoutStatus}`)
+
+  // The point of revocation: the credential must be dead for everyone, not
+  // just forgotten by this browser.
+  if (stolen) {
+    const reused = await fetch(`${API}/api/v1/auth/token/refresh/`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ refresh: stolen }),
+    }).then((r) => r.status)
+    check(
+      'cierre: el token previo ya no sirve',
+      reused === 401,
+      `refresh devuelve HTTP ${reused}`,
+    )
+  }
   await ctx.close()
 }
 
