@@ -146,7 +146,13 @@ export const authApi = {
    * Logout and blacklist the refresh token.
    */
   async logout(): Promise<void> {
+    // Both tokens are captured BEFORE invalidating. `authFetch` only sends an
+    // Authorization header when one is in memory, so clearing first made the
+    // request arrive unauthenticated: the server answered 401 and never
+    // blacklisted the refresh token, leaving it usable for its full seven-day
+    // lifetime after the user signed out.
     const refreshToken = tokenStorage.getRefreshToken()
+    const accessToken = tokenStorage.getAccessToken()
 
     // Invalidate on the way in, not in the `finally`. The credentials used to
     // survive the whole round trip, so a 401 arriving mid-flight started a
@@ -155,12 +161,20 @@ export const authApi = {
     refreshInFlight = null
     tokenStorage.clearTokens()
 
-    await authFetch('/logout/', {
+    await fetch(`${API_URL}/auth/logout/`, {
       method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+      },
       body: JSON.stringify({ refresh: refreshToken }),
     }).catch(() => {
       // The local session is already gone. Failing to tell the server is
       // worth neither an error to the user nor keeping them signed in.
+      //
+      // Known residual: if the access token had already expired, the server
+      // still refuses and the refresh token survives. Revoking without a
+      // valid access token needs a backend change, which this one excludes.
     })
   },
 
@@ -179,6 +193,15 @@ export const authApi = {
       // credential the server keeps rejecting has to end the session promptly
       // instead of looping.
       const attempt = async (allowRetry: boolean): Promise<{ access: string }> => {
+        // Checked on the way in, not only before writing. A refresh born in a
+        // previous session would otherwise present the NEW session's token on
+        // retry, get it rotated by the server, and then discard the answer —
+        // leaving a blacklisted token in storage and killing the session that
+        // had just started.
+        if (sessionGeneration !== startedUnder) {
+          throw new AuthApiError('Session ended while refreshing', 401)
+        }
+
         const presented = tokenStorage.getRefreshToken()
         if (!presented) {
           // No session to end: a visitor who never signed in must not be
@@ -248,11 +271,17 @@ export const authApi = {
     // Released whether it succeeds or fails. A slot that is never released
     // would leave the context unable to refresh again, which is a worse
     // failure than the one being fixed.
-    refreshInFlight = run.finally(() => {
-      refreshInFlight = null
+    // Released only if the slot is still this run's. A run abandoned by a
+    // sign-out can settle long after a new session opened its own slot;
+    // clearing unconditionally would wipe that one, and the next caller would
+    // start a second refresh with the same token — rebuilding the collision
+    // this change exists to remove.
+    const shared: Promise<{ access: string }> = run.finally(() => {
+      if (refreshInFlight === shared) refreshInFlight = null
     })
+    refreshInFlight = shared
 
-    return withTimeout(refreshInFlight)
+    return withTimeout(shared)
   },
 
   /**

@@ -14,13 +14,25 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { tokenStorage } from '../token-storage'
 
+/**
+ * The access token lives in a module variable, so a statically imported
+ * `tokenStorage` is a DIFFERENT instance from the one the code writes to:
+ * asserting on it always sees null and proves nothing. Everything comes from
+ * the same reset graph. (The refresh token goes through localStorage, which
+ * is shared, which is why that half of the assertion did work.)
+ */
 async function freshAuth() {
   vi.resetModules()
-  const [authApiModule, sessionEndModule] = await Promise.all([
+  const [authApiModule, sessionEndModule, storageModule] = await Promise.all([
     import('../auth-api'),
     import('../session-end'),
+    import('../token-storage'),
   ])
-  return { authApi: authApiModule.authApi, onSessionEnd: sessionEndModule.onSessionEnd }
+  return {
+    authApi: authApiModule.authApi,
+    onSessionEnd: sessionEndModule.onSessionEnd,
+    storage: storageModule.tokenStorage,
+  }
 }
 
 function jsonResponse(status: number, body: unknown = {}): Response {
@@ -47,7 +59,8 @@ describe('sign-out versus a refresh in flight', () => {
   })
 
   it('discards a refresh that answers after sign-out', async () => {
-    const { authApi } = await freshAuth()
+    const { authApi, storage } = await freshAuth()
+    storage.setRefreshToken('refresh-1')
 
     let settleRefresh!: (value: Response) => void
     const fetchMock = global.fetch as ReturnType<typeof vi.fn>
@@ -69,8 +82,8 @@ describe('sign-out versus a refresh in flight', () => {
 
     // Writing the refresh token also restores the auth cookie, so a late
     // answer would put the user back inside the application.
-    expect(tokenStorage.getRefreshToken()).toBeNull()
-    expect(tokenStorage.getAccessToken()).toBeNull()
+    expect(storage.getRefreshToken()).toBeNull()
+    expect(storage.getAccessToken()).toBeNull()
   })
 
   it('does not start a refresh once sign-out has begun', async () => {
