@@ -314,6 +314,10 @@ class SimulationDetailSerializer(SimulationSerializer):
         return obj.geometry is not None
 
 
+class _SkipSinteringScope(Exception):
+    """Internal signal: this request touches no sintering setting."""
+
+
 class ParametricStudySerializer(serializers.ModelSerializer):
     """Serializer for ParametricStudy model."""
 
@@ -640,7 +644,31 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # above; a stored one is ignored rather than held against the request.
         eff_extremes = stored_extremes if isinstance(stored_extremes, dict) else {}
 
+        # Same gate R13.12 states for the distribution keys, and for the same
+        # reason: R11 fixes *which* algorithm the rule is evaluated against -
+        # the stored one, on a partial update that omits it - not *when* it
+        # runs. Running it on a request that touches no sintering setting and
+        # no algorithm froze every row stored before the allow-list existed:
+        # renaming one answered 400 with no way out but deleting it. The
+        # bypass #97 closed stays closed, because adding the setting touches
+        # it and changing the algorithm touches the algorithm.
+        sintering_touched = (
+            "base_algorithm" in data
+            or "sintering_config" in data
+            or any(
+                key == "sintering_config" or key.startswith("sintering_")
+                for carrier in (
+                    data.get("parameter_grid"),
+                    data.get("base_parameters"),
+                    (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+                )
+                if isinstance(carrier, Mapping)
+                for key in carrier
+            )
+        )
         try:
+            if not sintering_touched:
+                raise _SkipSinteringScope
             check_algorithm_scope(
                 algorithm,
                 dicts=(
@@ -651,6 +679,8 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 ),
                 flats=(eff_base, eff_grid, eff_extremes),
             )
+        except _SkipSinteringScope:
+            pass
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 

@@ -597,3 +597,93 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
     )
 
     assert resp.status_code == 200, resp.data
+
+
+# --- The freeze R11 never asked for -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "stored"),
+    [
+        ("grid dict", {"parameter_grid": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}),
+        ("study field", {"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}),
+        ("base_parameters dict", {"base_parameters": {"n_particles": 100, "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}}),
+        ("base_parameters flat", {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
+        ("grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
+    ],
+)
+def test_a_stored_row_outside_the_allow_list_stays_editable(
+    api_client: APIClient, project: Project, label: str, stored: dict[str, Any]
+) -> None:
+    """R11 fixes *which* algorithm the rule is evaluated against, not *when*.
+
+    R11.6's own scenario is a PATCH that supplies a sintering key: it says
+    such a request is evaluated against the stored algorithm. Nothing in R11
+    asks for the rule to run on a request that touches no sintering key and
+    no algorithm - and running it there froze every row stored before the
+    allow-list existed, so renaming one answered 400 with no way out but
+    deleting it. R13.12 states the gate explicitly for its own four keys;
+    this is the same gate for R11's.
+    """
+    payload: dict[str, Any] = {
+        "name": f"historical: {label}",
+        "base_algorithm": "fracval",
+        "base_parameters": {"n_particles": 100},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    payload.update(stored)
+    row = ParametricStudy.objects.create(project=project, **payload)
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a stored study carrying {label} can no longer be renamed: {resp.data}"
+    )
+
+
+def test_the_bypass_that_was_critical_in_97_stays_closed(
+    api_client: APIClient, project: Project
+) -> None:
+    """Gating must not reopen what the sintering contract closed.
+
+    Creating without the setting and adding it by PATCH touches the key, so
+    the rule still runs; changing the algorithm of a row that already carries
+    it touches the algorithm, so it runs there too.
+    """
+    created = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    added = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{created.id}/",
+        data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        format="json",
+    )
+    assert added.status_code == 400, f"PATCH slipped sintering past the allow-list: {added.data}"
+
+    consuming = ParametricStudy.objects.create(
+        project=project,
+        name="consuming",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100},
+        parameter_grid={"sintering_coeff": [0.8]},
+        seeds_per_combination=1,
+    )
+    moved = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{consuming.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+    assert moved.status_code == 400, (
+        f"the algorithm moved out of the allow-list while sintering was stored: {moved.data}"
+    )
