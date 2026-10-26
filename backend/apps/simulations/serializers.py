@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import base64
 import random
-from math import prod
 from collections.abc import Mapping
+from math import prod
 from typing import Any
 
 from rest_framework import serializers
