@@ -610,6 +610,8 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
         ("base_parameters dict", {"base_parameters": {"n_particles": 100, "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}}),
         ("base_parameters flat", {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
         ("grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
+        ("extremes flat sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_coeff": [0.8]}}}),
+        ("extremes dict sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
     ],
 )
 def test_a_stored_row_outside_the_allow_list_stays_editable(
@@ -644,6 +646,14 @@ def test_a_stored_row_outside_the_allow_list_stays_editable(
     assert resp.status_code == 200, (
         f"a stored study carrying {label} can no longer be renamed: {resp.data}"
     )
+    # Not only the status: a plausible "repair" of this gate is to heal the
+    # row by stripping the stored setting, which would keep every assertion
+    # above green while destroying what the user configured.
+    row.refresh_from_db()
+    for field, expected in stored.items():
+        assert getattr(row, field) == expected, (
+            f"the rename rewrote {field}: {getattr(row, field)!r} instead of {expected!r}"
+        )
 
 
 def test_the_bypass_that_was_critical_in_97_stays_closed(
@@ -670,6 +680,10 @@ def test_the_bypass_that_was_critical_in_97_stays_closed(
         format="json",
     )
     assert added.status_code == 400, f"PATCH slipped sintering past the allow-list: {added.data}"
+    created.refresh_from_db()
+    assert not created.sintering_config, (
+        f"refused with 400 and persisted it anyway: {created.sintering_config!r}"
+    )
 
     consuming = ParametricStudy.objects.create(
         project=project,
@@ -686,4 +700,94 @@ def test_the_bypass_that_was_critical_in_97_stays_closed(
     )
     assert moved.status_code == 400, (
         f"the algorithm moved out of the allow-list while sintering was stored: {moved.data}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        ("extremes flat sweep", {"limiting_cases_config": {"theoretical_extremes": {"sintering_coeff": [0.8]}}}),
+        ("extremes dict sweep", {"limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
+    ],
+)
+def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
+    api_client: APIClient, project: Project, label: str, payload: dict[str, Any]
+) -> None:
+    """Surfaces 6 and 7 of R3, which the first version of this guard missed.
+
+    A judge measured that dropping the swept carrier from the gate left the
+    whole suite green while a PATCH persisted sintering on `fracval` - the
+    exact bypass #97 closed as CRITICAL. The code was right; the witness did
+    not exist, and a witness that cannot fail is what this file keeps
+    learning about.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"include_limiting_cases": True, **payload},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        f"{label} slipped sintering onto an algorithm that ignores it: {resp.data}"
+    )
+    row.refresh_from_db()
+    assert not (row.limiting_cases_config or {}).get("theoretical_extremes"), (
+        f"{label} persisted despite the 400: {row.limiting_cases_config!r}"
+    )
+
+
+def test_a_full_representation_is_judged_even_when_the_algorithm_is_unchanged(
+    api_client: APIClient, project: Project
+) -> None:
+    """R11.8's second clause: echoing the algorithm counts as touching it.
+
+    The thaw covers requests that leave the algorithm alone. A PUT must carry
+    `base_algorithm`, so a stored row stays refused there - decided rather
+    than left implicit, because a full representation asserting "this
+    algorithm with this sintering setting" asserts a combination the
+    allow-list forbids. The same holds for a PATCH that echoes it, which is
+    what a GET-then-write client sends.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="historical",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={"sintering_coeff": [0.8]},
+        seeds_per_combination=1,
+    )
+    url = f"/api/v1/projects/{project.id}/studies/{row.id}/"
+
+    echoed = api_client.patch(url, data={"base_algorithm": "fracval"}, format="json")
+    assert echoed.status_code == 400, (
+        f"echoing the algorithm skipped the allow-list: {echoed.data}"
+    )
+
+    replaced = api_client.put(
+        url,
+        data={
+            "name": "historical",
+            "base_algorithm": "fracval",
+            "base_parameters": {"n_particles": 100},
+            "parameter_grid": {"sintering_coeff": [0.8]},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+    assert replaced.status_code == 400, (
+        f"a full representation of an invalid combination was accepted: {replaced.data}"
+    )
+
+    renamed = api_client.patch(url, data={"name": "renamed"}, format="json")
+    assert renamed.status_code == 200, (
+        f"the rename that the thaw exists for stopped working: {renamed.data}"
     )

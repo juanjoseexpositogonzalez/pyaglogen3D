@@ -314,8 +314,16 @@ class SimulationDetailSerializer(SimulationSerializer):
         return obj.geometry is not None
 
 
-class _SkipSinteringScope(Exception):
-    """Internal signal: this request touches no sintering setting."""
+def _swept_payload(limiting: Any) -> Any:
+    """The swept map of a payload, or nothing when the container is not one.
+
+    Dereferencing it directly worked only because the container guard runs
+    earlier in `validate`. This function does not depend on that ordering:
+    the same `.get` on a list is what turned a rename into a 500 twice.
+    """
+    if not isinstance(limiting, Mapping):
+        return None
+    return limiting.get("theoretical_extremes")
 
 
 class ParametricStudySerializer(serializers.ModelSerializer):
@@ -656,31 +664,28 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             "base_algorithm" in data
             or "sintering_config" in data
             or any(
-                key == "sintering_config" or key.startswith("sintering_")
+                key.startswith("sintering_")
                 for carrier in (
                     data.get("parameter_grid"),
                     data.get("base_parameters"),
-                    (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+                    _swept_payload(data.get("limiting_cases_config")),
                 )
                 if isinstance(carrier, Mapping)
                 for key in carrier
             )
         )
         try:
-            if not sintering_touched:
-                raise _SkipSinteringScope
-            check_algorithm_scope(
-                algorithm,
-                dicts=(
-                    eff_grid.get("sintering_config"),
-                    _effective("sintering_config", data.get("sintering_config")),
-                    eff_base.get("sintering_config"),
-                    eff_extremes.get("sintering_config"),
-                ),
-                flats=(eff_base, eff_grid, eff_extremes),
-            )
-        except _SkipSinteringScope:
-            pass
+            if sintering_touched:
+                check_algorithm_scope(
+                    algorithm,
+                    dicts=(
+                        eff_grid.get("sintering_config"),
+                        _effective("sintering_config", data.get("sintering_config")),
+                        eff_base.get("sintering_config"),
+                        eff_extremes.get("sintering_config"),
+                    ),
+                    flats=(eff_base, eff_grid, eff_extremes),
+                )
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 

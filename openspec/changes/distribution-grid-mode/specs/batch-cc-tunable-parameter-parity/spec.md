@@ -313,6 +313,101 @@ fixed; keeping both would leave two opposite MUSTs about the same string.
 - THEN `kf distribution` and `Particle radius` are not among the options
 - AND a `kf_distribution` variation configured while the algorithm was `tunable_cc` is cleared or flagged when the user switches to `fracval`, on the same terms R10.6 already fixes for sintering
 
+### Requirement: R11 — Sintering reaches the engine, and only where it is consumed
+
+Sintering settings MUST reach the engine with the values the user declared. For
+`distribution_type: "normal"` the mean MUST travel in `sintering_coeff`, the parameter
+`parse_sintering` reads as the mean (`parse_sintering`). The set of sintering parameters the worker
+reads is exactly `{sintering_type, sintering_coeff, sintering_min, sintering_max,
+sintering_std}` (the sintering kwargs block of `run_simulation_task`), and the system MUST NOT write any sintering key outside
+that set into a child's parameters.
+
+**Algorithm scope, as an allow-list** (the model has eleven algorithms, `SimulationAlgorithm`; any
+algorithm not listed is rejected with 400):
+
+| Setting | Allowed for |
+| --- | --- |
+| Sintering with any type | `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `tunable_cc` |
+| Sintering with `fixed` only | `limiting`, which reads `sintering_coeff` (the `limiting` branch of `run_simulation_task`) but ignores type, min, max and std |
+| None | `fracval`, `gcca`, `box_rfa`, `imported` |
+
+The allow-list MUST apply to every input surface of R3. On a partial update that omits
+`base_algorithm`, it MUST be evaluated against the instance's stored `base_algorithm`.
+
+This requirement governs study expansion. The single-simulation endpoints, the Django admin and
+the AI assistant tool (the AI assistant's study-creation tool) are outside it; the chained
+contract `study-expansion-single-source` covers the last one.
+
+The allow-list is evaluated **only when the request touches a sintering setting or the
+algorithm**. R11.6 fixes *which* algorithm a partial update is judged against — the stored one —
+not *when* the rule runs, and running it over the stored values on every request froze rows
+written before the allow-list existed: a `fracval` study carrying a sintering setting could not
+be renamed, and recovering it meant clearing the setting or moving the study to an algorithm
+that consumes it. Echoing the algorithm counts as touching it, so a `PUT`, which must carry
+`base_algorithm`, is always judged: a full representation that asserts "this algorithm with this
+sintering setting" is asserting a combination the allow-list forbids.
+
+This is the same gate R13.12 states for the four distribution keys, written here so the two
+requirements say it rather than one of them implying it (approved by the person on 2026-10-26,
+after a judgment-day round measured the freeze on seven stored shapes).
+
+#### Scenario R11.1 — Normal sintering arrives with its mean
+
+- **GIVEN** a `ballistic` study with `parameter_grid = {sintering_config: [{distribution_type:"normal", mean:0.8, std:0.05}]}`
+- **WHEN** the child's task runs
+- **THEN** the engine binding is invoked with `sintering_type="normal"` and `sintering_coeff=0.8`, not 1.0
+
+#### Scenario R11.2 — Fixed and uniform still arrive
+
+- **GIVEN** studies with `{distribution_type:"fixed", coefficient:0.9}` and with `{distribution_type:"uniform", min:0.7, max:0.95}`
+- **WHEN** the children's tasks run
+- **THEN** the binding receives `sintering_type="fixed"` with `sintering_coeff=0.9` for the first
+- **AND** `sintering_type="uniform"` with `sintering_min=0.7` and `sintering_max=0.95` for the second
+
+#### Scenario R11.3 — No sintering key without a reader
+
+- **GIVEN** any valid sintering setting from any surface of R3
+- **WHEN** it is expanded into a child's parameters
+- **THEN** the sintering keys written are contained in the set the worker reads
+- **AND** `sintering_mean` is never written
+
+#### Scenario R11.4 — Rejected for algorithms that do not consume sintering
+
+- **GIVEN** `base_algorithm` in `{fracval, gcca, box_rfa, imported}` and a sintering setting on any surface of R3
+- **WHEN** the serializer validates
+- **THEN** 400 stating that this algorithm does not consume sintering
+- **AND** in particular `base_parameters = {"sintering_coeff": 0.8}` and a theoretical extreme `{"sintering_coeff":[0.8]}` are both rejected
+
+#### Scenario R11.5 — limiting accepts the fixed shape only
+
+- **GIVEN** `base_algorithm = "limiting"` and a sintering setting `{distribution_type:"normal", mean:0.8, std:0.05}`
+- **WHEN** the serializer validates
+- **THEN** 400 stating that `limiting` accepts the fixed shape only
+- **AND** `{distribution_type:"fixed", coefficient:0.9}` is accepted, a flat sweep `{"sintering_coeff": [0.7, 0.9]}` is accepted, and the server-side default extremes (the `limiting` entry of `THEORETICAL_EXTREMES`) remain accepted
+
+#### Scenario R11.6 — Partial update evaluates against the stored algorithm
+
+- **GIVEN** an existing study with `base_algorithm = "fracval"`
+- **WHEN** a `PATCH` supplies only `base_parameters = {"sintering_coeff": 0.8}`
+- **THEN** the rule is evaluated against the instance's `base_algorithm` and the request is rejected with 400
+
+#### Scenario R11.7 — Sintering-extreme children carry no sintering_config
+
+- **GIVEN** a study whose `base_parameters` carry a `sintering_config` dict, with
+  `include_limiting_cases` and a study-level sintering config, so the sintering-extremes block
+  (the sintering-extremes block of `perform_create`) runs
+- **WHEN** its children are created
+- **THEN** no child's parameters contain `sintering_config`
+- **AND** each child keeps the flat `sintering_coeff` of its own extreme
+
+#### Scenario R11.8 — A stored row stays editable, and a full representation is still judged
+
+- **GIVEN** a stored study with `base_algorithm = "fracval"` carrying a sintering setting on any surface of R3
+- **WHEN** a `PATCH` changes only its name
+- **THEN** 200, and the stored setting is left exactly as it was
+- **AND** a `PUT`, or any request that carries `base_algorithm` even unchanged, is judged and rejected with 400
+- **AND** adding a sintering setting by update, or moving the algorithm out of the allow-list, is still rejected
+
 ## ADDED Requirements
 ### Requirement: R13 — A declared distribution reaches the engine, or the study is refused
 
