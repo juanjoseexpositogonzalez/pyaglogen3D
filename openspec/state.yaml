@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: 2026-10-25-sintering-reaches-engine
+last_archived: 2026-10-26-resilient-token-refresh
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -33,6 +33,7 @@ archived_changes:
   - 2026-10-19-fraktal-batch-extensions
   - 2026-10-25-redesign-design-system
   - 2026-10-25-sintering-reaches-engine
+  - 2026-10-26-resilient-token-refresh
 # Los nombres son los directorios reales de openspec/changes/archive/. Conviven dos
 # convenciones historicas (fecha al principio y fecha al final); no se renombran aqui
 # porque un rename rompe cualquier enlace existente a esas rutas. Issue #130.
