@@ -74,6 +74,11 @@ frontend/tsconfig.tsbuildinfo
 # Local validation/automation scripts (not versioned)
 scripts/
 
+# Base44 design export: reference material for the UI redesign port, kept
+# locally and never committed. It is a generated Vite/React app, so every
+# analyser in the repo reports on it as if it were our code.
+docs/design/fierce-fractal-logic-lab/
+
 # Local agent state (Engram/SDD client data)
 .atl/
 .venv/
