@@ -97,6 +97,10 @@ def validate_shape(
                 )
     else:
         _positive(config, "min")
+        # `max` needs the same type guard as the rest: a string bound reaches
+        # the binding and raises there, after the row is written, and a bool
+        # runs silently as 1.0.
+        _positive(config, "max")
         low, high = float(config["min"]), float(config["max"])
         if high <= low:
             raise ValueError(f"uniform requires min < max, got min={low}, max={high}")

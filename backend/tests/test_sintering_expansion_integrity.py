@@ -940,14 +940,11 @@ def test_r12_a_non_sintering_extreme_should_not_store_key_names(
         },
     )
 
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        garbage = [
-            child.name
-            for child in study.simulations.all()
-            if child.parameters.get("kf_distribution") in {"mode", "value"}
-        ]
-        assert not garbage, garbage
+    # Retiring the strict marker without asserting the status would leave the
+    # test green if the endpoint ever answered 201 with no children at all,
+    # which the marker used to report.
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == 0, "refused and wrote a study anyway"
 
 
 @pytest.mark.xfail(

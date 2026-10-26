@@ -296,20 +296,40 @@ def test_a_bare_object_on_the_swept_carrier_is_refused(
 
 @pytest.mark.parametrize("key", ALL_KEYS)
 @pytest.mark.parametrize("value", ["1.8", True])
+@pytest.mark.parametrize(
+    "shape",
+    [
+        {"mode": "fixed", "value": "@"},
+        {"mode": "normal", "mean": "@", "std": 0.1},
+        {"mode": "normal", "mean": 1.5, "std": "@"},
+        {"mode": "uniform", "min": "@", "max": 9.0},
+        {"mode": "uniform", "min": 0.5, "max": "@"},
+    ],
+)
 def test_a_non_numeric_magnitude_is_refused(
-    api_client: APIClient, project: Project, key: str, value: Any
+    api_client: APIClient,
+    project: Project,
+    key: str,
+    value: Any,
+    shape: dict[str, Any],
 ) -> None:
-    """A string reaches the binding and fails there; a bool is silently 1.0."""
-    resp = _post(
-        api_client, project, **_on_surface(key, "parameter_grid", {"mode": "fixed", "value": value})
-    )
+    """A string reaches the binding and fails there; a bool is silently 1.0.
 
-    assert resp.status_code == 400, f"{key} accepted value={value!r}: {resp.data}"
+    Crossing the *mode* axis as well as the key axis: the first version of
+    this witness only parametrized `{mode: fixed, value}`, so `max` went
+    unguarded and a string bound shipped - a regression this very PR had
+    introduced by making the legacy validator yield on `mode` entries.
+    """
+    config = {field: (value if raw == "@" else raw) for field, raw in shape.items()}
+    resp = _post(api_client, project, **_on_surface(key, "parameter_grid", config))
+
+    assert resp.status_code == 400, f"{key} accepted {config}: {resp.data}"
 
 
 @pytest.mark.parametrize("key", ("particle_radius_config", "dpo_distribution"))
+@pytest.mark.parametrize("carrier", CARRIERS)
 def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
-    api_client: APIClient, project: Project, key: str
+    api_client: APIClient, project: Project, key: str, carrier: str
 ) -> None:
     """R2: the cap exists to prevent negative radii and MUST NOT be weakened.
 
@@ -319,10 +339,60 @@ def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
     resp = _post(
         api_client,
         project,
-        **_on_surface(key, "parameter_grid", {"mode": "normal", "mean": 1.0, "std": 0.5}),
+        **_on_surface(key, carrier, {"mode": "normal", "mean": 1.0, "std": 0.5}),
     )
 
-    assert resp.status_code == 400, f"{key} accepted std/mean = 0.5: {resp.data}"
+    assert resp.status_code == 400, (
+        f"{carrier}.{key} accepted std/mean = 0.5: {resp.data}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "grid", "limiting"),
+    [
+        ("legacy spelling on a parity key", {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
+        ("unknown mode", {"kf_distribution": [{"mode": "lognormal"}]}, None),
+        ("legacy spelling on an engine key", {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
+        ("over the std/mean cap", {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]}, None),
+        ("a bare object swept", {}, {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}),
+        ("a non-numeric bound", {"kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]}, None),
+    ],
+)
+def test_every_shape_develop_used_to_store_stays_editable(
+    api_client: APIClient,
+    project: Project,
+    label: str,
+    grid: dict[str, Any],
+    limiting: dict[str, Any] | None,
+) -> None:
+    """R13.12's last clause, across the shapes this change starts refusing.
+
+    Each of these was accepted by the API before this contract, so rows
+    holding them exist. Gating only the allow-list left the shape checks
+    reading the stored values, and a rename answered 400 - a row editable
+    in no field at all, which R7.2 promises against. The batch page shows
+    no submit error (#115 point 6), so the user would see a dead button.
+    """
+    stored = ParametricStudy.objects.create(
+        project=project,
+        name=f"historical: {label}",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 60},
+        parameter_grid=grid,
+        limiting_cases_config=limiting or {},
+        include_limiting_cases=limiting is not None,
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{stored.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a study storing {label} can no longer be renamed: {resp.data}"
+    )
 
 
 def test_a_row_stored_before_this_change_stays_editable(

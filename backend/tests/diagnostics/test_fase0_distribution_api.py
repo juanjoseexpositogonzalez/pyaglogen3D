@@ -136,14 +136,9 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
     # and leave children storing the strings "mode" and "value" as their
     # configuration - which is point 1 of issue #115, closed by this PR.
     _report("#115.1 objeto desnudo en extremos", resp, 400)
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        vistos = {
-            repr(c.parameters.get("kf_distribution"))
-            for c in study.simulations.all()
-            if "kf_distribution" in c.parameters
-        }
-        print(f"    valores guardados: {vistos or 'ninguno'}")
+    # The block that printed the stored key names is gone: with the 400
+    # asserted above it could never run, and unreachable code that claims to
+    # measure something is the shape this file's own lessons are about.
 
 
 # --- #115 punto 2: lista de tipos mezclados --------------------------------

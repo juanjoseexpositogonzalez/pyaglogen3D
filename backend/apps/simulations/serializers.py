@@ -10,7 +10,7 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .distribution_shape import CAPPED_MAGNITUDE, SweptShapeError
+from .distribution_shape import CAPPED_MAGNITUDE, PARITY_KEYS, SweptShapeError
 from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
 from .distribution_shape import check_algorithm_scope as check_distribution_scope
 from .distribution_shape import collect_surfaces as collect_distribution_surfaces
@@ -649,21 +649,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # --- R13: the four distribution keys, on all twelve surfaces ---
         # Scope first, shape second: a key declared for an algorithm that
         # cannot receive it must be told that, not told its shape is wrong.
-        try:
-            distribution_surfaces = collect_distribution_surfaces(
-                grid=eff_grid,
-                base_parameters=eff_base,
-                limiting_cases_config=eff_limiting,
-            )
-        except SweptShapeError as exc:
-            raise serializers.ValidationError({exc.label: str(exc)}) from exc
-
-        # R13.12's last clause: the check runs only when the request touches a
-        # distribution key or the algorithm. Evaluating the stored values on
-        # every request froze historical rows - a study carrying one of these
-        # keys on a non-consuming algorithm could not even be renamed, which
-        # R7.2 promises against.
-        touched = "base_algorithm" in data or any(
+        # R13.12's last clause: this requirement is evaluated only when the
+        # request touches a distribution key or the algorithm. The first
+        # attempt gated the allow-list alone and left shape validation reading
+        # the stored values, so a row holding a malformed config - which the
+        # API used to accept - still could not be renamed. Creation always
+        # evaluates, because every field of a new study is being written now.
+        touched = self.instance is None or "base_algorithm" in data or any(
             key in (carrier or {})
             for carrier in (
                 data.get("parameter_grid"),
@@ -674,6 +666,15 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         )
         if touched:
             try:
+                distribution_surfaces = collect_distribution_surfaces(
+                    grid=eff_grid,
+                    base_parameters=eff_base,
+                    limiting_cases_config=eff_limiting,
+                )
+            except SweptShapeError as exc:
+                raise serializers.ValidationError({exc.label: str(exc)}) from exc
+
+            try:
                 check_distribution_scope(algorithm, distribution_surfaces)
             except ValueError as exc:
                 label = (
@@ -683,16 +684,16 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 )
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
-        for label, config in distribution_surfaces:
-            key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
-            try:
-                validate_distribution_shape(
-                    config,
-                    max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
-                    allow_legacy_spelling=key in ("kf_distribution", "particle_radius_config"),
-                )
-            except ValueError as exc:
-                raise serializers.ValidationError({label: str(exc)}) from exc
+            for label, config in distribution_surfaces:
+                key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
+                try:
+                    validate_distribution_shape(
+                        config,
+                        max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
+                        allow_legacy_spelling=key in PARITY_KEYS,
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError({label: str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")
