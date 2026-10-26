@@ -914,21 +914,23 @@ def test_r12_a_non_list_sintering_value_on_the_extremes_surface_is_rejected(
     assert dispatch.delay.call_count == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Derived to the follow-up contract: a non-sintering key swept with a "
-        "bare object stores key names in its children. R3 and R12 govern "
-        "sintering settings, so this contract has no authority to close it - "
-        "but pinning the 201 as desired would make a future fix edit a passing "
-        "assertion, so what is asserted here is the behaviour that should "
-        "exist. It fails today on purpose, and the day someone fixes it this "
-        "test says so."
-    ),
-)
 def test_r12_a_non_sintering_extreme_should_not_store_key_names(
     api_client: APIClient, project: Project
 ) -> None:
+    """Closed by the follow-up contract, and this is how we found out.
+
+    This was an `xfail(strict=True)` while `sintering-reaches-engine` ran:
+    R3 and R12 govern sintering settings, so that contract had no authority
+    here, and pinning the 201 as desired would have made a future fix edit a
+    passing assertion. Asserting the behaviour that should exist instead
+    meant the suite would say so the day it arrived.
+
+    It arrived with R13.7 of `distribution-grid-mode` (issue #141), which
+    requires a list on the swept carrier, so the bare object is now refused
+    before anything is written. The strict xfail turned into a failure the
+    moment that landed - which is the whole point of pinning it that way -
+    and the marker comes off here. Point 1 of issue #115 is closed.
+    """
     resp = _post(
         api_client,
         project,

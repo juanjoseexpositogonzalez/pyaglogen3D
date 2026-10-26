@@ -90,7 +90,13 @@ the name the worker reads (`dpo_distribution`).
 on it being reachable. The batch form restricts this key to `fixed` and `normal`; aligning the
 form is part of this change, not a licence for the API to differ from it.
 
-The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened.
+The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened. It therefore
+follows the **magnitude**, not the spelling: it applies to `particle_radius_config` and to
+`dpo_distribution` alike, on every surface R13 enumerates. Guarding one name and leaving the
+other open would let the same value reach the same engine input by renaming the key, which is
+weakening it by another route. Approved by the person on 2026-10-26, after the first
+judgment-day measured `particle_radius_config` answering 400 and `dpo_distribution` answering
+201 for the same `std/mean = 0.5`.
 
 This key varies the primary particle size **per run**, not within a run: the engine samples the
 distribution once at run start and every particle of that run shares the sampled value (measured:
@@ -141,7 +147,9 @@ This change adds a second group of rejections, on top of the sintering ones abov
 also refused when it declares a `kf` or primary-size distribution that used to be accepted and
 silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out of range
 (`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
-object. Not all of them used to answer `201`: on the two parity grid keys — the only two that
+object, and a primary-size config whose `std/mean` exceeds the cap R2 fixes — on any surface,
+not only in the grid, because that cap exists to prevent negative radii and the magnitude
+reaches the engine under either of its two names. Not all of them used to answer `201`: on the two parity grid keys — the only two that
 reach the shared distribution validator — `std < 0` and `min > max` were already refused. On the
 other ten surfaces there was no distribution validation at all, so even those answered `201`. Those that did answer `201` and produced a simulation ignoring what was
 asked include `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max` on the parity

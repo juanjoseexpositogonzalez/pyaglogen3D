@@ -47,7 +47,17 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
 }
 
 
-def validate_shape(config: Any, *, max_std_over_mean: float | None = None) -> None:
+#: Magnitudes whose std/mean is capped, under either spelling: the cap exists
+#: to prevent negative radii, so it follows the magnitude, not the key name.
+CAPPED_MAGNITUDE: frozenset[str] = frozenset({"particle_radius_config", "dpo_distribution"})
+
+
+def validate_shape(
+    config: Any,
+    *,
+    max_std_over_mean: float | None = None,
+    allow_legacy_spelling: bool = False,
+) -> None:
     """Raise `ValueError` unless `config` is a distribution the engine can run.
 
     Accepts the `mode` shape the engine pipeline speaks. The parity keys also
@@ -60,7 +70,13 @@ def validate_shape(config: Any, *, max_std_over_mean: float | None = None) -> No
             f"must be an object with a 'mode' field, got {type(config).__name__}"
         )
 
-    mode = config.get("mode", config.get("distribution_type"))
+    # `distribution_type` is tolerated only on the two parity keys, until the
+    # next chained PR translates them. On the engine-named keys it would be
+    # stored and handed to `expand_distribution_kwargs`, which reads `mode`
+    # and returns {} for anything else: the silent default this closes.
+    mode = config.get("mode")
+    if mode is None and allow_legacy_spelling:
+        mode = config.get("distribution_type")
     if mode not in MODES:
         raise ValueError(f"mode must be one of {list(MODES)}, got {mode!r}")
 
@@ -87,12 +103,26 @@ def validate_shape(config: Any, *, max_std_over_mean: float | None = None) -> No
 
 
 def _positive(config: Mapping[str, Any], field: str) -> None:
+    raw = config[field]
+    # A bool is an int in Python, and `float("1.8")` succeeds: both used to
+    # pass here. The first reaches the binding as True and runs as 1.0 with
+    # nothing said; the second raises inside the worker after the write.
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"'{field}' must be a number, got {raw!r}")
     try:
-        value = float(config[field])
+        value = float(raw)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"'{field}' must be a number, got {config[field]!r}") from exc
+        raise ValueError(f"'{field}' must be a number, got {raw!r}") from exc
     if value <= 0:
         raise ValueError(f"'{field}' must be greater than 0, got {value}")
+
+
+class SweptShapeError(ValueError):
+    """A swept carrier holds something other than a list of configs."""
+
+    def __init__(self, label: str, message: str) -> None:
+        super().__init__(message)
+        self.label = label
 
 
 def collect_surfaces(
@@ -119,13 +149,18 @@ def collect_surfaces(
             entries = carrier.get(key)
             if entries is None:
                 continue
-            if isinstance(entries, list):
-                found.extend(
-                    (f"{carrier_name}.{key}[{i}]", entry)
-                    for i, entry in enumerate(entries)
+            if not isinstance(entries, list):
+                # A sweep needs a list. An object here used to be iterated by
+                # key, so each child stored the string "mode" or "value" as
+                # its configuration and failed at run time (R13.7).
+                raise SweptShapeError(
+                    f"{carrier_name}.{key}",
+                    f"must be a list of distribution configs, got {type(entries).__name__}",
                 )
-            else:
-                found.append((f"{carrier_name}.{key}", entries))
+            found.extend(
+                (f"{carrier_name}.{key}[{i}]", entry)
+                for i, entry in enumerate(entries)
+            )
 
     if isinstance(base_parameters, Mapping):
         for key in DISTRIBUTION_KEYS:

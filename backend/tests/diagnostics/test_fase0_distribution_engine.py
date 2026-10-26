@@ -295,9 +295,10 @@ def test_undocumented_doors(
     # well-formed mode reaches the engine, an unknown one reaches it as
     # nothing at all and the simulation silently runs at the default.
     assert kwargs is not None, f"{door}: el worker nunca llamo al engine"
-    if "lognormal" in door:
-        assert kwargs == {}, "the unknown mode stopped being silently dropped"
-    else:
-        assert kwargs.get("kf_mode") == "fixed" and kwargs.get("kf_value") == 1.8, (
-            f"{door}: the declared distribution no longer reaches the engine: {kwargs}"
-        )
+    # The lognormal door returns before reaching this point, because it is a
+    # 400 now and creates no child. Keeping a branch for it here would be
+    # unreachable code claiming to assert something - the shape this file's
+    # own lessons are about.
+    assert kwargs.get("kf_mode") == "fixed" and kwargs.get("kf_value") == 1.8, (
+        f"{door}: the declared distribution no longer reaches the engine: {kwargs}"
+    )

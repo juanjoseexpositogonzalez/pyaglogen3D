@@ -131,7 +131,11 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
             "theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.5}}
         },
     )
-    _report("#115.1 objeto desnudo en extremos", resp, 201)
+    # Re-pointed by PR 1 (T2.4b): the swept carrier now requires a list, so
+    # this shape is refused before anything is written. It used to answer 201
+    # and leave children storing the strings "mode" and "value" as their
+    # configuration - which is point 1 of issue #115, closed by this PR.
+    _report("#115.1 objeto desnudo en extremos", resp, 400)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         vistos = {

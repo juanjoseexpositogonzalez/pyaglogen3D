@@ -245,6 +245,117 @@ def test_an_unrelated_update_still_works(api_client: APIClient, project: Project
     )
 
 
+# --- What the first round of judges found the tests could not see ---------
+#
+# The 104 cases below passed while three measured defects were live, because
+# of what they did not parametrize: the carrier axis on the rules where the
+# swept carrier differs, the legacy spelling on the engine-named keys, and a
+# row that already carries the key when the request touches neither it nor
+# the algorithm.
+
+
+@pytest.mark.parametrize("key", ENGINE_KEYS)
+@pytest.mark.parametrize("carrier", CARRIERS)
+def test_the_legacy_spelling_is_refused_on_the_engine_named_keys(
+    api_client: APIClient, project: Project, key: str, carrier: str
+) -> None:
+    """R1/R13: `expand_distribution_kwargs` reads `mode` and nothing else.
+
+    Accepting `distribution_type` here stores a config the translator hands
+    to the engine as `{}` - the silent default this contract exists to close.
+    """
+    resp = _post(
+        api_client,
+        project,
+        **_on_surface(key, carrier, {"distribution_type": "fixed", "value": 1.8}),
+    )
+
+    assert resp.status_code == 400, (
+        f"{carrier}.{key} accepted the legacy spelling; the engine would receive "
+        f"no kwargs at all: {resp.data}"
+    )
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+def test_a_bare_object_on_the_swept_carrier_is_refused(
+    api_client: APIClient, project: Project, key: str
+) -> None:
+    """R13.7: the sweep needs a list; an object makes children store key names."""
+    resp = _post(
+        api_client,
+        project,
+        include_limiting_cases=True,
+        limiting_cases_config={"theoretical_extremes": {key: GOOD}},
+    )
+
+    assert resp.status_code == 400, (
+        f"theoretical_extremes.{key} accepted a bare object; its children would "
+        f"store the strings 'mode' and 'value' as the configuration: {resp.data}"
+    )
+
+
+@pytest.mark.parametrize("key", ALL_KEYS)
+@pytest.mark.parametrize("value", ["1.8", True])
+def test_a_non_numeric_magnitude_is_refused(
+    api_client: APIClient, project: Project, key: str, value: Any
+) -> None:
+    """A string reaches the binding and fails there; a bool is silently 1.0."""
+    resp = _post(
+        api_client, project, **_on_surface(key, "parameter_grid", {"mode": "fixed", "value": value})
+    )
+
+    assert resp.status_code == 400, f"{key} accepted value={value!r}: {resp.data}"
+
+
+@pytest.mark.parametrize("key", ("particle_radius_config", "dpo_distribution"))
+def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
+    api_client: APIClient, project: Project, key: str
+) -> None:
+    """R2: the cap exists to prevent negative radii and MUST NOT be weakened.
+
+    Both names carry the same magnitude into the same engine input, so
+    guarding one and not the other weakens it by renaming.
+    """
+    resp = _post(
+        api_client,
+        project,
+        **_on_surface(key, "parameter_grid", {"mode": "normal", "mean": 1.0, "std": 0.5}),
+    )
+
+    assert resp.status_code == 400, f"{key} accepted std/mean = 0.5: {resp.data}"
+
+
+def test_a_row_stored_before_this_change_stays_editable(
+    api_client: APIClient, project: Project
+) -> None:
+    """R13.12's last clause, on a row the check would otherwise freeze.
+
+    Written through the ORM on purpose: the API refuses this shape now, and
+    the clause is about rows that already exist. The previous witness created
+    its study on `tunable_cc`, where the scope check is a no-op, so it could
+    not fail.
+    """
+    stored = ParametricStudy.objects.create(
+        project=project,
+        name="historical",
+        base_algorithm="tunable",
+        base_parameters={"n_particles": 60},
+        parameter_grid={"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{stored.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        "a study stored before this change can no longer be renamed, which "
+        f"R13.12 forbids and R7.2 promises against: {resp.data}"
+    )
+
+
 # --- R13.10 — a well-formed config is delivered, not discarded -------------
 
 
