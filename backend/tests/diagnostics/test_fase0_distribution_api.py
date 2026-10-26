@@ -81,7 +81,11 @@ def test_d1_kf_distribution_selector_shape(
         project,
         parameter_grid={"kf_distribution": [{"mode": "fixed", "value": 1.5}]},
     )
-    _report("D1 kf_distribution {mode}", resp, 400)
+    # Re-pointed by PR 1 of distribution-grid-mode (task T2.4b): the `mode`
+    # shape the form emits is now accepted on this key, where it used to be
+    # refused for missing `distribution_type`. The measurement stands; what
+    # changed is the behaviour it measures.
+    _report("D1 kf_distribution {mode}", resp, 201)
 
 
 def test_d1_particle_radius_selector_shape(
@@ -92,7 +96,8 @@ def test_d1_particle_radius_selector_shape(
         project,
         parameter_grid={"particle_radius_config": [{"mode": "fixed", "value": 10.0}]},
     )
-    _report("D1 particle_radius_config {mode}", resp, 400)
+    # Re-pointed by PR 1 (T2.4b), same reason as the kf case above.
+    _report("D1 particle_radius_config {mode}", resp, 201)
 
 
 def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -> None:

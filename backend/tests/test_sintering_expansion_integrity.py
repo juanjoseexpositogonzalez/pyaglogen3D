@@ -768,9 +768,16 @@ def test_r12_a_dict_grid_with_limiting_cases_is_accepted(
     says the mid-expansion crash on `sorted` is a defect, not a rule. Turning
     that crash into a clean 400 is still a rejection: these studies must be
     created. `kf_distribution` is not even a sintering key.
+
+    Re-pointed by the distribution-grid-mode contract (R13.12): the algorithm
+    was incidental here, and `tunable` does not consume `kf_distribution` -
+    its worker branch never expands it, so declaring it there is the defect
+    that contract closes. The property under test is unchanged: a dict grid
+    plus limiting cases must be accepted, now asserted on an algorithm that
+    can actually receive the key.
     """
     resp = _post(
-        api_client, project, base_algorithm="tunable", parameter_grid=grid,
+        api_client, project, base_algorithm="tunable_cc", parameter_grid=grid,
         include_limiting_cases=True,
     )
 

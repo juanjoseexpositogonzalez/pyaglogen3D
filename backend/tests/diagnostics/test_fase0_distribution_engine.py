@@ -271,12 +271,20 @@ def test_undocumented_doors(
 ) -> None:
     resp = _post(api_client, project, **overrides)
     print(f"\n[{door}] status={resp.status_code}")
+    if "lognormal" in door:
+        # Re-pointed by PR 1 (T2.4b): this door used to answer 201 and hand the
+        # engine nothing at all, which is the silent failure the contract
+        # exists to close. It is a 400 now, and the kwargs assertion below no
+        # longer applies because no child is created.
+        assert resp.status_code == 400, (
+            f"{door}: the unknown mode is accepted again, and the simulation "
+            f"would run at the engine default: {resp.status_code}"
+        )
+        print("    refused, as R13.1 requires")
+        return
     if resp.status_code != 201:
         print(f"    error={resp.data}")
-        pytest.fail(
-            f"{door}: respondio {resp.status_code}. Si es porque el contrato ya esta "
-            "implementado, re-apunta esta sonda (tarea T2.4b) en vez de dejarla verde."
-        )
+        pytest.fail(f"{door}: respondio {resp.status_code}, se esperaba 201")
     study = ParametricStudy.objects.get(id=resp.data["id"])
     child = study.simulations.first()
     assert child is not None

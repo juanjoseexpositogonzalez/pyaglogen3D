@@ -10,13 +10,11 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from .distribution_shape import check_algorithm_scope as check_distribution_scope
+from .distribution_shape import collect_surfaces as collect_distribution_surfaces
+from .distribution_shape import validate_shape as validate_distribution_shape
 from .expansion_preview import GridShapeError, check_children, preview_children
 from .fields import DistributionField
-from .sintering_shape import (
-    check_algorithm_scope,
-    check_flat_keys,
-    validate_dict_shape,
-)
 from .models import ParametricStudy, Simulation
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
@@ -24,6 +22,11 @@ from .services.params import (
     PARAM_KEY_RADIUS_LEGACY,
     PARAM_KEY_SCHEMA_VERSION,
     SCHEMA_VERSION_CURRENT,
+)
+from .sintering_shape import (
+    check_algorithm_scope,
+    check_flat_keys,
+    validate_dict_shape,
 )
 from .utils import generate_simulation_name
 
@@ -450,6 +453,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {f"parameter_grid.{key}": "Must be a list of distribution configs."}
                 )
             for i, entry in enumerate(entries):
+                # An entry in the `mode` shape belongs to R13's validator,
+                # which checks every surface alike and knows the algorithm
+                # scope. Letting the legacy one answer first would report a
+                # missing `distribution_type` for a shape this contract
+                # accepts, and would hide the allow-list message.
+                if isinstance(entry, dict) and "mode" in entry:
+                    continue
                 try:
                     validate_distribution_config(
                         entry, allowed_dist_types, **constraints
@@ -633,6 +643,28 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             )
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
+
+        # --- R13: the four distribution keys, on all twelve surfaces ---
+        # Scope first, shape second: a key declared for an algorithm that
+        # cannot receive it must be told that, not told its shape is wrong.
+        distribution_surfaces = collect_distribution_surfaces(
+            grid=eff_grid,
+            base_parameters=eff_base,
+            limiting_cases_config=eff_limiting,
+        )
+        try:
+            check_distribution_scope(algorithm, distribution_surfaces)
+        except ValueError as exc:
+            raise serializers.ValidationError(
+                {"parameter_grid": str(exc)}
+            ) from exc
+
+        for label, config in distribution_surfaces:
+            cap = 0.3 if label.split(".")[-1].startswith("particle_radius_config") else None
+            try:
+                validate_distribution_shape(config, max_std_over_mean=cap)
+            except ValueError as exc:
+                raise serializers.ValidationError({label: str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")
