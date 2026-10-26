@@ -317,8 +317,12 @@ class SimulationDetailSerializer(SimulationSerializer):
 def _as_mapping(value: Any) -> Mapping[str, Any]:
     """A stored container, or an empty one when it is not a mapping.
 
-    Rows written outside the serializer can hold anything in these JSON
-    fields, and `.get` on a list raises where a 400 belongs.
+    Rows written outside the serializer - the admin and the AI assistant's
+    tool both write these JSON fields directly - can hold anything, and
+    `.get` on a list raised instead of answering. Such a stored value is
+    ignored rather than held against the request: the request is judged on
+    what it carries, and a row that holds a non-mapping cannot be expanded
+    anyway.
     """
     return value if isinstance(value, Mapping) else {}
 
@@ -326,11 +330,11 @@ def _as_mapping(value: Any) -> Mapping[str, Any]:
 def _swept_payload(limiting: Any) -> Any:
     """The swept map of a payload, or nothing when the container is not one.
 
-    The guard carries two cases and the common one is dull: the field is
-    absent, so `limiting` is `None`. The interesting one is a stored
-    non-mapping, which only reaches here through writers that skip the
-    serializer. Keeping the check here means this helper does not depend on
-    the container guard at the top of `validate` having run first.
+    Called only with payload values, so the case that actually happens is
+    the dull one: the field is absent and `limiting` is `None`. A payload
+    holding a non-mapping is already refused at the top of `validate`, so
+    that branch is defensive - it exists so this helper does not depend on
+    the ordering of a guard elsewhere, not because a list reaches it today.
     """
     if not isinstance(limiting, Mapping):
         return None

@@ -344,8 +344,9 @@ not *when* the rule runs, and running it over the stored values on every request
 written before the allow-list existed: a `fracval` study carrying a sintering setting could not
 be renamed, and recovering it meant clearing the setting or moving the study to an algorithm
 that consumes it. Echoing the algorithm counts as touching it, so a `PUT`, which must carry
-`base_algorithm`, is always judged: a full representation that asserts "this algorithm with this
-sintering setting" is asserting a combination the allow-list forbids.
+`base_algorithm`, is always **judged**: a full representation asserts "this algorithm with these
+settings", and the allow-list decides. When the combination is allowed the update succeeds; when
+it is not, it is refused — the judging is unconditional, the refusal is not.
 
 This is the same gate R13.12 states for the four distribution keys, written here so the two
 requirements say it rather than one of them implying it (approved by the person on 2026-10-26 while
@@ -408,7 +409,7 @@ the measurement and the decision are recorded in issue #115, point 17).
 - **THEN** 200, and the stored setting is left exactly as it was
 - **AND** a `PUT`, or any request that carries `base_algorithm` even unchanged, is judged, and refused with 400 when the combination it asserts is one the allow-list forbids — a full update of a study whose settings are allowed still succeeds
 - **AND** adding a sintering setting by update, or moving the algorithm out of the allow-list, is still rejected
-- **AND** a stored `theoretical_extremes` that is not an object is ignored rather than judged, because it cannot be expanded either; only writers that skip the serializer can produce one
+- **AND** any stored container that is not an object — `base_parameters`, `parameter_grid`, `limiting_cases_config` or its `theoretical_extremes` — is ignored rather than judged, because such a row cannot be expanded either; only writers that skip the serializer can produce one, since a payload holding one is refused
 
 ## ADDED Requirements
 ### Requirement: R13 — A declared distribution reaches the engine, or the study is refused
