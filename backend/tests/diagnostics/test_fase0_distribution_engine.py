@@ -98,6 +98,29 @@ def test_engine_dpo_is_one_radius_per_run_not_polydispersity() -> None:
         assert distinct == 1, "a run with more than one radius would refute D8"
 
 
+def test_an_over_cap_dpo_spread_reaches_the_engine_and_runs() -> None:
+    """The measurement R7 cites for the std/mean cap, made reproducible.
+
+    The carve-out says this config was *not* silently defaulted: it reached
+    the engine and ran, with a spread wide enough to produce negative radii,
+    which is what the cap exists to prevent. That sentence said "measured"
+    while no probe in the tree measured it - so here it is.
+    """
+    import aglogen_core
+
+    result = aglogen_core.run_tunable_cc(
+        **ENGINE_BASE, dpo_mode="normal", dpo_mean=1.0, dpo_std=0.5
+    )
+    radii = np.asarray(result.radii, dtype=float).ravel()
+    print(
+        f"\n[cap] dpo normal mean=1.0 std=0.5 -> ran, dpo_used={result.dpo_used:.4f}, "
+        f"min radius {radii.min():.4f}"
+    )
+    assert result.dpo_used != 1.0, (
+        "the engine stopped sampling this spread, so the cap's premise moved"
+    )
+
+
 def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     """Sweeping `radius_max` in a grid does nothing for this algorithm."""
     import aglogen_core
@@ -271,12 +294,20 @@ def test_undocumented_doors(
 ) -> None:
     resp = _post(api_client, project, **overrides)
     print(f"\n[{door}] status={resp.status_code}")
+    if "lognormal" in door:
+        # Re-pointed by PR 1 (T2.4b): this door used to answer 201 and hand the
+        # engine nothing at all, which is the silent failure the contract
+        # exists to close. It is a 400 now, and the kwargs assertion below no
+        # longer applies because no child is created.
+        assert resp.status_code == 400, (
+            f"{door}: the unknown mode is accepted again, and the simulation "
+            f"would run at the engine default: {resp.status_code}"
+        )
+        print("    refused, as R13.1 requires")
+        return
     if resp.status_code != 201:
         print(f"    error={resp.data}")
-        pytest.fail(
-            f"{door}: respondio {resp.status_code}. Si es porque el contrato ya esta "
-            "implementado, re-apunta esta sonda (tarea T2.4b) en vez de dejarla verde."
-        )
+        pytest.fail(f"{door}: respondio {resp.status_code}, se esperaba 201")
     study = ParametricStudy.objects.get(id=resp.data["id"])
     child = study.simulations.first()
     assert child is not None
@@ -287,9 +318,10 @@ def test_undocumented_doors(
     # well-formed mode reaches the engine, an unknown one reaches it as
     # nothing at all and the simulation silently runs at the default.
     assert kwargs is not None, f"{door}: el worker nunca llamo al engine"
-    if "lognormal" in door:
-        assert kwargs == {}, "the unknown mode stopped being silently dropped"
-    else:
-        assert kwargs.get("kf_mode") == "fixed" and kwargs.get("kf_value") == 1.8, (
-            f"{door}: the declared distribution no longer reaches the engine: {kwargs}"
-        )
+    # The lognormal door returns before reaching this point, because it is a
+    # 400 now and creates no child. Keeping a branch for it here would be
+    # unreachable code claiming to assert something - the shape this file's
+    # own lessons are about.
+    assert kwargs.get("kf_mode") == "fixed" and kwargs.get("kf_value") == 1.8, (
+        f"{door}: the declared distribution no longer reaches the engine: {kwargs}"
+    )

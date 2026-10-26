@@ -768,9 +768,16 @@ def test_r12_a_dict_grid_with_limiting_cases_is_accepted(
     says the mid-expansion crash on `sorted` is a defect, not a rule. Turning
     that crash into a clean 400 is still a rejection: these studies must be
     created. `kf_distribution` is not even a sintering key.
+
+    Re-pointed by the distribution-grid-mode contract (R13.12): the algorithm
+    was incidental here, and `tunable` does not consume `kf_distribution` -
+    its worker branch never expands it, so declaring it there is the defect
+    that contract closes. The property under test is unchanged: a dict grid
+    plus limiting cases must be accepted, now asserted on an algorithm that
+    can actually receive the key.
     """
     resp = _post(
-        api_client, project, base_algorithm="tunable", parameter_grid=grid,
+        api_client, project, base_algorithm="tunable_cc", parameter_grid=grid,
         include_limiting_cases=True,
     )
 
@@ -907,21 +914,23 @@ def test_r12_a_non_list_sintering_value_on_the_extremes_surface_is_rejected(
     assert dispatch.delay.call_count == 0
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Derived to the follow-up contract: a non-sintering key swept with a "
-        "bare object stores key names in its children. R3 and R12 govern "
-        "sintering settings, so this contract has no authority to close it - "
-        "but pinning the 201 as desired would make a future fix edit a passing "
-        "assertion, so what is asserted here is the behaviour that should "
-        "exist. It fails today on purpose, and the day someone fixes it this "
-        "test says so."
-    ),
-)
 def test_r12_a_non_sintering_extreme_should_not_store_key_names(
     api_client: APIClient, project: Project
 ) -> None:
+    """Closed by the follow-up contract, and this is how we found out.
+
+    This was an `xfail(strict=True)` while `sintering-reaches-engine` ran:
+    R3 and R12 govern sintering settings, so that contract had no authority
+    here, and pinning the 201 as desired would have made a future fix edit a
+    passing assertion. Asserting the behaviour that should exist instead
+    meant the suite would say so the day it arrived.
+
+    It arrived with R13.7 of `distribution-grid-mode` (issue #141), which
+    requires a list on the swept carrier, so the bare object is now refused
+    before anything is written. The strict xfail turned into a failure the
+    moment that landed - which is the whole point of pinning it that way -
+    and the marker comes off here. Point 1 of issue #115 is closed.
+    """
     resp = _post(
         api_client,
         project,
@@ -931,14 +940,11 @@ def test_r12_a_non_sintering_extreme_should_not_store_key_names(
         },
     )
 
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        garbage = [
-            child.name
-            for child in study.simulations.all()
-            if child.parameters.get("kf_distribution") in {"mode", "value"}
-        ]
-        assert not garbage, garbage
+    # Retiring the strict marker without asserting the status would leave the
+    # test green if the endpoint ever answered 201 with no children at all,
+    # which the marker used to report.
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == 0, "refused and wrote a study anyway"
 
 
 @pytest.mark.xfail(

@@ -4,19 +4,20 @@ from __future__ import annotations
 
 import base64
 import random
+from collections.abc import Mapping
 from math import prod
 from typing import Any
 
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
+from .distribution_shape import CAPPED_MAGNITUDE, PARITY_KEYS, SweptShapeError
+from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
+from .distribution_shape import check_algorithm_scope as check_distribution_scope
+from .distribution_shape import collect_surfaces as collect_distribution_surfaces
+from .distribution_shape import validate_shape as validate_distribution_shape
 from .expansion_preview import GridShapeError, check_children, preview_children
 from .fields import DistributionField
-from .sintering_shape import (
-    check_algorithm_scope,
-    check_flat_keys,
-    validate_dict_shape,
-)
 from .models import ParametricStudy, Simulation
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
@@ -24,6 +25,11 @@ from .services.params import (
     PARAM_KEY_RADIUS_LEGACY,
     PARAM_KEY_SCHEMA_VERSION,
     SCHEMA_VERSION_CURRENT,
+)
+from .sintering_shape import (
+    check_algorithm_scope,
+    check_flat_keys,
+    validate_dict_shape,
 )
 from .utils import generate_simulation_name
 
@@ -450,6 +456,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {f"parameter_grid.{key}": "Must be a list of distribution configs."}
                 )
             for i, entry in enumerate(entries):
+                # An entry in the `mode` shape belongs to R13's validator,
+                # which checks every surface alike and knows the algorithm
+                # scope. Letting the legacy one answer first would report a
+                # missing `distribution_type` for a shape this contract
+                # accepts, and would hide the allow-list message.
+                if isinstance(entry, dict) and "mode" in entry:
+                    continue
                 try:
                     validate_distribution_config(
                         entry, allowed_dist_types, **constraints
@@ -613,6 +626,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         eff_base = _effective("base_parameters", base_params) or {}
         eff_grid = _effective("parameter_grid", grid) or {}
         eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        # A stored container can be a truthy non-mapping on rows written
+        # through the ORM - the AI assistant's tool and admin both do - and
+        # `.get` on a list turned a rename into a 500. New payloads are
+        # rejected above; a stored one is ignored rather than held against
+        # the request, like the extremes map one level deeper.
+        if not isinstance(eff_limiting, Mapping):
+            eff_limiting = {}
         stored_extremes = eff_limiting.get("theoretical_extremes")
         # A row written before the payload guard can carry a non-object here.
         # Reading it without checking turned an innocent rename into a 500 and
@@ -633,6 +653,59 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             )
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
+
+        # --- R13: the four distribution keys, on all twelve surfaces ---
+        # Scope first, shape second: a key declared for an algorithm that
+        # cannot receive it must be told that, not told its shape is wrong.
+        # R13.12's last clause: this requirement is evaluated only when the
+        # request touches a distribution key or the algorithm. The first
+        # attempt gated the allow-list alone and left shape validation reading
+        # the stored values, so a row holding a malformed config - which the
+        # API used to accept - still could not be renamed. Creation always
+        # evaluates, because every field of a new study is being written now.
+        # No `self.instance is None` clause: a create that carries one of the
+        # four keys carries it in one of the three carriers below, and one
+        # that carries none has nothing to collect. Adding it would be a
+        # branch no mutation can falsify.
+        touched = "base_algorithm" in data or any(
+            key in (carrier or {})
+            for carrier in (
+                data.get("parameter_grid"),
+                data.get("base_parameters"),
+                (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+            )
+            for key in _DIST_KEYS
+        )
+        if touched:
+            try:
+                distribution_surfaces = collect_distribution_surfaces(
+                    grid=eff_grid,
+                    base_parameters=eff_base,
+                    limiting_cases_config=eff_limiting,
+                )
+            except SweptShapeError as exc:
+                raise serializers.ValidationError({exc.label: str(exc)}) from exc
+
+            try:
+                check_distribution_scope(algorithm, distribution_surfaces)
+            except ValueError as exc:
+                label = (
+                    distribution_surfaces[0][0].rsplit("[", 1)[0]
+                    if distribution_surfaces
+                    else "parameter_grid"
+                )
+                raise serializers.ValidationError({label: str(exc)}) from exc
+
+            for label, config in distribution_surfaces:
+                key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
+                try:
+                    validate_distribution_shape(
+                        config,
+                        max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
+                        allow_legacy_spelling=key in PARITY_KEYS,
+                    )
+                except ValueError as exc:
+                    raise serializers.ValidationError({label: str(exc)}) from exc
 
         # --- Validate seed_type grid key ---
         seed_type_entries = grid.get("seed_type")

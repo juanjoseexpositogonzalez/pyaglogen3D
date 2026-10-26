@@ -90,7 +90,13 @@ the name the worker reads (`dpo_distribution`).
 on it being reachable. The batch form restricts this key to `fixed` and `normal`; aligning the
 form is part of this change, not a licence for the API to differ from it.
 
-The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened.
+The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened. It therefore
+follows the **magnitude**, not the spelling: it applies to `particle_radius_config` and to
+`dpo_distribution` alike, on every surface R13 enumerates. Guarding one name and leaving the
+other open would let the same value reach the same engine input by renaming the key, which is
+weakening it by another route. Approved by the person on 2026-10-26, after the first
+judgment-day measured `particle_radius_config` answering 400 and `dpo_distribution` answering
+201 for the same `std/mean = 0.5`.
 
 This key varies the primary particle size **per run**, not within a run: the engine samples the
 distribution once at run start and every particle of that run shares the sampled value (measured:
@@ -141,7 +147,12 @@ This change adds a second group of rejections, on top of the sintering ones abov
 also refused when it declares a `kf` or primary-size distribution that used to be accepted and
 silently defaulted: a `mode` outside `fixed`, `normal`, `uniform`; a config out of range
 (`value <= 0`, `mean <= 0`, `std <= 0`, `min <= 0`, `max <= min`); or a config that is not an
-object. Not all of them used to answer `201`: on the two parity grid keys — the only two that
+object. A primary-size config whose `std/mean` exceeds the cap R2 fixes is also refused now, on
+any surface rather than only in the grid — and it belongs to a different group than the rest:
+it was **not** silently defaulted. Measured, `base_parameters.dpo_distribution` with
+`std/mean = 0.5` reached the engine as `dpo_mode="normal", dpo_std=0.5` and ran, with a spread
+wide enough to produce negative radii, which is what that cap exists to prevent. Not all of the
+others used to answer `201`: on the two parity grid keys — the only two that
 reach the shared distribution validator — `std < 0` and `min > max` were already refused. On the
 other ten surfaces there was no distribution validation at all, so even those answered `201`. Those that did answer `201` and produced a simulation ignoring what was
 asked include `value <= 0`, `mean <= 0`, `std == 0`, `min <= 0` and `min == max` on the parity
@@ -342,7 +353,12 @@ the engine as no kwargs at all, and the simulation silently runs with the defaul
 
 Range validation is part of delivering it, not a separate nicety, and it MUST match what
 `cc-tunable-aggregation` R11 and R12 already require of these same engine inputs: reject
-`value <= 0`, `mean <= 0` and `std <= 0` for Normal, `min <= 0`, and `max <= min` for Uniform.
+`value <= 0`, `mean <= 0` and `std <= 0` for Normal, `min <= 0`, and `max <= min` for Uniform,
+plus the `std/mean` cap R2 fixes for the primary-size magnitude under either of its names, and
+every magnitude MUST be a number rather than a string or a boolean: a string bound reaches the
+binding and raises there, after the row is written, and a boolean runs silently as `1.0`. Both
+belong in this list because this requirement is where the surfaces and their mandatory
+rejections live: stating a rule only in R2 lets an implementer reading R13 drop half of it.
 Three of those are not cosmetic: measured against the real binding, `kf_mode="fixed", kf_value=-1.0`, `kf_mode="normal", kf_mean=-1.0`
 and `kf_mode="uniform", kf_min=2.0, kf_max=1.0` all raise a Rust `PanicException`, which derives
 from `BaseException` and escapes the worker's only outer `except Exception`, leaving the
