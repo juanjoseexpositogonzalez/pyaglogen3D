@@ -348,8 +348,9 @@ that consumes it. Echoing the algorithm counts as touching it, so a `PUT`, which
 sintering setting" is asserting a combination the allow-list forbids.
 
 This is the same gate R13.12 states for the four distribution keys, written here so the two
-requirements say it rather than one of them implying it (approved by the person on 2026-10-26,
-after a judgment-day round measured the freeze on seven stored shapes).
+requirements say it rather than one of them implying it (approved by the person on 2026-10-26 while
+implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
+the measurement and the decision are recorded in issue #115, point 17).
 
 #### Scenario R11.1 — Normal sintering arrives with its mean
 
@@ -373,7 +374,7 @@ after a judgment-day round measured the freeze on seven stored shapes).
 
 #### Scenario R11.4 — Rejected for algorithms that do not consume sintering
 
-- **GIVEN** `base_algorithm` in `{fracval, gcca, box_rfa, imported}` and a sintering setting on any surface of R3
+- **GIVEN** `base_algorithm` in `{fracval, gcca, box_rfa, imported}` and a sintering setting **declared in the request** on any surface of R3
 - **WHEN** the serializer validates
 - **THEN** 400 stating that this algorithm does not consume sintering
 - **AND** in particular `base_parameters = {"sintering_coeff": 0.8}` and a theoretical extreme `{"sintering_coeff":[0.8]}` are both rejected
@@ -405,8 +406,9 @@ after a judgment-day round measured the freeze on seven stored shapes).
 - **GIVEN** a stored study with `base_algorithm = "fracval"` carrying a sintering setting on any surface of R3
 - **WHEN** a `PATCH` changes only its name
 - **THEN** 200, and the stored setting is left exactly as it was
-- **AND** a `PUT`, or any request that carries `base_algorithm` even unchanged, is judged and rejected with 400
+- **AND** a `PUT`, or any request that carries `base_algorithm` even unchanged, is judged, and refused with 400 when the combination it asserts is one the allow-list forbids — a full update of a study whose settings are allowed still succeeds
 - **AND** adding a sintering setting by update, or moving the algorithm out of the allow-list, is still rejected
+- **AND** a stored `theoretical_extremes` that is not an object is ignored rather than judged, because it cannot be expanded either; only writers that skip the serializer can produce one
 
 ## ADDED Requirements
 ### Requirement: R13 — A declared distribution reaches the engine, or the study is refused

@@ -314,12 +314,23 @@ class SimulationDetailSerializer(SimulationSerializer):
         return obj.geometry is not None
 
 
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    """A stored container, or an empty one when it is not a mapping.
+
+    Rows written outside the serializer can hold anything in these JSON
+    fields, and `.get` on a list raises where a 400 belongs.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
 def _swept_payload(limiting: Any) -> Any:
     """The swept map of a payload, or nothing when the container is not one.
 
-    Dereferencing it directly worked only because the container guard runs
-    earlier in `validate`. This function does not depend on that ordering:
-    the same `.get` on a list is what turned a rename into a 500 twice.
+    The guard carries two cases and the common one is dull: the field is
+    absent, so `limiting` is `None`. The interesting one is a stored
+    non-mapping, which only reaches here through writers that skip the
+    serializer. Keeping the check here means this helper does not depend on
+    the container guard at the top of `validate` having run first.
     """
     if not isinstance(limiting, Mapping):
         return None
@@ -635,16 +646,18 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             return getattr(self.instance, field, None)
 
         algorithm = _effective("base_algorithm", data.get("base_algorithm"))
-        eff_base = _effective("base_parameters", base_params) or {}
-        eff_grid = _effective("parameter_grid", grid) or {}
-        eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        # All four stored containers get the same guard. Giving it to two of
+        # them and not to the other two left `.get` on a list raising a 500
+        # where a 400 belongs, for rows written outside the serializer - the
+        # admin and the AI assistant's tool both do that.
+        eff_base = _as_mapping(_effective("base_parameters", base_params))
+        eff_grid = _as_mapping(_effective("parameter_grid", grid))
+        eff_limiting = _as_mapping(_effective("limiting_cases_config", limiting))
         # A stored container can be a truthy non-mapping on rows written
         # through the ORM - the AI assistant's tool and admin both do - and
         # `.get` on a list turned a rename into a 500. New payloads are
         # rejected above; a stored one is ignored rather than held against
         # the request, like the extremes map one level deeper.
-        if not isinstance(eff_limiting, Mapping):
-            eff_limiting = {}
         stored_extremes = eff_limiting.get("theoretical_extremes")
         # A row written before the payload guard can carry a non-object here.
         # Reading it without checking turned an innocent rename into a 500 and
@@ -707,7 +720,7 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             for carrier in (
                 data.get("parameter_grid"),
                 data.get("base_parameters"),
-                (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+                _swept_payload(data.get("limiting_cases_config")),
             )
             for key in _DIST_KEYS
         )

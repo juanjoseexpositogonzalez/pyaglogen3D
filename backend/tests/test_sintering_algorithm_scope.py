@@ -612,6 +612,8 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
         ("grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
         ("extremes flat sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_coeff": [0.8]}}}),
         ("extremes dict sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
+        ("grid stored as a list", {"parameter_grid": [1, 2, 3], "base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
+        ("base_parameters stored as a string", {"base_parameters": "oops", "parameter_grid": {"sintering_coeff": [0.8]}}),
     ],
 )
 def test_a_stored_row_outside_the_allow_list_stays_editable(
@@ -710,8 +712,9 @@ def test_the_bypass_that_was_critical_in_97_stays_closed(
         ("extremes dict sweep", {"limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
     ],
 )
+@pytest.mark.parametrize("algorithm", NO_SINTERING)
 def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
-    api_client: APIClient, project: Project, label: str, payload: dict[str, Any]
+    api_client: APIClient, project: Project, label: str, payload: dict[str, Any], algorithm: str
 ) -> None:
     """Surfaces 6 and 7 of R3, which the first version of this guard missed.
 
@@ -724,7 +727,7 @@ def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
     row = ParametricStudy.objects.create(
         project=project,
         name="clean",
-        base_algorithm="fracval",
+        base_algorithm=algorithm,
         base_parameters={"n_particles": 100},
         parameter_grid={},
         seeds_per_combination=1,
@@ -791,3 +794,35 @@ def test_a_full_representation_is_judged_even_when_the_algorithm_is_unchanged(
     assert renamed.status_code == 200, (
         f"the rename that the thaw exists for stopped working: {renamed.data}"
     )
+
+    # The PUT above carries the setting, so its 400 arrives through the
+    # ordinary carrier and would survive the echo clause being deleted. These
+    # two leave the setting out of the body, so the stored one plus the
+    # echoed algorithm are the only thing left to judge.
+    for field, stored in (
+        ("sintering_config", {"distribution_type": "fixed", "coefficient": 0.8}),
+        ("limiting_cases_config", {"theoretical_extremes": {"sintering_coeff": [0.8]}}),
+    ):
+        carrier = ParametricStudy.objects.create(
+            project=project,
+            name=f"stored {field}",
+            base_algorithm="fracval",
+            base_parameters={"n_particles": 100},
+            parameter_grid={},
+            seeds_per_combination=1,
+            **{field: stored},
+        )
+        echo_only = api_client.put(
+            f"/api/v1/projects/{project.id}/studies/{carrier.id}/",
+            data={
+                "name": f"stored {field}",
+                "base_algorithm": "fracval",
+                "base_parameters": {"n_particles": 100},
+                "parameter_grid": {},
+                "seeds_per_combination": 1,
+            },
+            format="json",
+        )
+        assert echo_only.status_code == 400, (
+            f"the echoed algorithm alone did not judge the stored {field}: {echo_only.data}"
+        )
