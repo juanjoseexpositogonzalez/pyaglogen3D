@@ -62,6 +62,13 @@ This is a direct consequence of R2: once callers share one refresh, a refresh th
 answers would hold the whole context. The bound is what keeps a slow network from becoming a
 frozen application.
 
+The bound applies to the **wait**, not to the request. Releasing the slot when the wait expires
+would let a second refresh go out while the first is still travelling, rebuilding the collision
+this capability removes. **Residual, stated rather than hidden**: if an abandoned request never
+settles at all, the context cannot refresh again until the page is reloaded. Every caller fails
+with a retryable error and nobody is expelled, but liveness is not restored. Closing that needs
+a mechanism this capability does not define.
+
 Ending the wait MUST NOT be assumed to cancel the server's work. A refresh that is abandoned
 may still have rotated the token, leaving the stored credential intact and already invalid. The
 application MUST therefore re-read storage before treating a later failure as definitive, so
@@ -82,7 +89,8 @@ remove.
 - WHEN the bound elapses
 - THEN every awaiting caller is rejected with a retryable error
 - AND the stored credentials are unchanged
-- AND a later request may start a new refresh
+- AND the slot is retained until the abandoned request settles, so a later caller waits
+  rather than presenting the same token a second time
 
 ### Requirement: R4. A failed refresh is not by itself proof that the session ended
 

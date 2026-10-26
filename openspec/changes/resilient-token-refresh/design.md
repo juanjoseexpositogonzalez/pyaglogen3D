@@ -128,6 +128,29 @@ para el comportamiento central**, y por eso el diagnóstico es parte del contrat
 - **La coalescencia mal implementada bloquea la aplicación**: si la promesa compartida no se
   limpia al terminar, el primer fallo deja a la pestaña sin poder refrescar nunca más.
 
+## Residuales declarados
+
+Tres cosas que este cambio **no** cierra y que no deben descubrirse leyendo el código:
+
+1. **Resurrección de sesión entre pestañas.** La generación de sesión es estado de módulo, es
+   decir, **por pestaña**. Si la pestaña B tiene un refresco en vuelo cuando el usuario cierra
+   sesión en la pestaña A, la respuesta tardía de B escribe los tokens y repone la cookie: la
+   sesión revive para todo el origen. R5 está redactado en absoluto y aquí se cumple solo
+   dentro de una pestaña. Pertenece al trabajo de coordinación entre pestañas (#160), porque
+   necesita el mismo mecanismo compartido.
+
+2. **Revocación con el access token caducado.** Cerrar sesión exige una credencial válida para
+   que el servidor acepte la revocación. Si el access token ya venció, el refresco no se pone
+   en lista negra. Resolverlo pide un cambio de backend que este contrato excluye.
+
+3. **Una petición abandonada que nunca se asienta** deja la pestaña sin poder refrescar hasta
+   recargar. Nadie es expulsado, pero la vivacidad no se recupera (ver R3).
+
+**Desajuste de herramienta, anotado**: `playwright@1.64.1` declara `engines.node >= 20` mientras
+`frontend/package.json` fija `"node": "18.x"` y el Dockerfile usa `node:18-alpine`. Hoy solo
+emite `EBADENGINE` porque `engine-strict` está apagado, así que no rompe la instalación — pero
+el diagnóstico se apoya en que siga apagado.
+
 ## Fuera de alcance
 
 - Cualquier cambio en `SIMPLE_JWT` o en el backend.

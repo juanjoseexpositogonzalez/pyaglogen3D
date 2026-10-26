@@ -105,12 +105,18 @@ function instrument(page, calls) {
 }
 
 /**
- * Instants where both tabs had a refresh in flight at once. Grouped
- * concurrency is not the same claim: a peak of five can come entirely from
- * one tab, and reporting that as "overlap between tabs" would dress a
- * single-tab measurement up as a cross-tab one.
+ * Pairs of refresh windows, one from each tab, that overlap in time.
+ *
+ * It counts PAIRS, not instants: two windows in A against one in B that all
+ * coincide report 2, not 1. The decision it feeds is zero versus non-zero —
+ * did a crossing ever happen — and for that the distinction does not matter.
+ * It is named for what it measures so nobody reads it as a count of moments.
+ *
+ * Grouped concurrency would be the wrong measure entirely: a peak of five can
+ * come from one tab alone, and reporting that as overlap between tabs dresses
+ * a single-tab measurement up as a cross-tab one.
  */
-function crossTabOverlap(a, b) {
+function overlappingWindowPairs(a, b) {
   const windows = (calls) => calls.filter((c) => c.end !== null).map((c) => [c.start, c.end])
   let found = 0
   for (const [aStart, aEnd] of windows(a)) {
@@ -207,7 +213,7 @@ async function twoTabRun(browser, routeA, routeB) {
     return {
       tab1: { refreshes: c1.length, rejected: c1.filter((c) => c.status && c.status !== 200).length, dead: d1, cause: classify(c1, d1) },
       tab2: { refreshes: c2.length, rejected: c2.filter((c) => c.status && c.status !== 200).length, dead: d2, cause: classify(c2, d2) },
-      crossOverlap: crossTabOverlap(c1, c2),
+      crossOverlap: overlappingWindowPairs(c1, c2),
       groupedPeak: peakOverlap([...c1, ...c2]),
     }
   } finally {

@@ -17,11 +17,15 @@ Medición con sesión aislada por pantalla, build de producción, **8 corridas p
 
 | escenario | refrescos solapados a la vez | expulsiones |
 | --- | --- | --- |
-| detalle de proyecto | **5** | **1 de 8** |
-| estudios batch | 3 | 1 de 8 |
-| comparación, dashboard, proyectos | 1-2 | 0 de 8 |
-| dos pestañas: una pesada y una ligera | 5 | **3 de 8** |
+| detalle de proyecto | **5** | **6 de 8** |
+| comparación | 2 | 1 de 8 |
+| estudios batch, dashboard, proyectos | 1-3 | 0 de 8 |
+| dos pestañas: una pesada y una ligera | 5 | **2 de 8** |
 | dos pestañas: dos ligeras | 1 | 0 de 8 |
+
+Estas cifras salen de `frontend/diagnostics/baseline-368b0e6.json`, el artefacto
+versionado. Una versión anterior de esta tabla traía otros números: eran de una corrida
+previa, tomada con el instrumento cuyos cuatro defectos este mismo documento describe.
 
 El servidor rota el token de refresco en cada uso y deja el anterior en lista negra, que es una
 defensa correcta contra el robo de credenciales. Con varios refrescos en vuelo, el primero gana

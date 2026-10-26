@@ -38,9 +38,21 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 - [x] T2.1 Test primero: un refresco que no responde dentro del plazo rechaza a quienes esperan
       con un error reintentable y **no toca las credenciales**.
-- [x] T2.2 Implementar el límite con `AbortController` en `auth-api.ts:117`.
-- [x] T2.3 Comprobar que tras el vencimiento **se puede volver a intentar**: el plazo no debe
-      dejar la pestaña sin refresco posible.
+- [x] T2.2 Implementar el límite de espera en `auth-api.ts`. **No con `AbortController`**,
+      como decía esta tarea al escribirse: abortar no impide que el servidor procese la
+      petición y rote el token, así que cancelar dejaría al cliente con una credencial intacta
+      y ya inválida — convirtiendo una red lenta en una expulsión. Se acota **la espera**, no
+      la petición.
+- [x] T2.3 Comprobar el comportamiento tras el vencimiento. **La ranura se conserva hasta que
+      la petición abandonada se asienta**, de modo que un llamador posterior espera en vez de
+      emitir un segundo refresco con el mismo token.
+
+      Esta tarea se escribió prometiendo lo contrario («el plazo no debe dejar la pestaña sin
+      refresco posible»), y el contrato tenía la misma frase. **Es una contradicción real**: si
+      la ranura se liberase al vencer, reaparecería la colisión que el change elimina. Se
+      resuelve a favor de no reintroducir el defecto, y queda el residual escrito: si la
+      petición **nunca** se asienta, la pestaña no vuelve a refrescar hasta recargar. No se ha
+      observado, y cerrarlo pedía otro mecanismo que este contrato no incluye.
 
 ## T3 — Un fallo deja de ser terminal (R4)
 
@@ -69,8 +81,12 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 - [x] T5.2 `npx tsc --noEmit` sin errores nuevos sobre la línea base de T0.5.
 - [x] T5.3 `npm run build` en exit 0.
 - [x] T5.4 Diagnóstico con **8 corridas por escenario**, contrastado contra el JSON de T0.4:
-      expulsiones **0**, y **código de salida 0**. La evidencia es el código de salida, no una
-      lectura de consola.
+      de **9 expulsiones a 1**, artefacto en `after-fix-2026-10-25.json`.
+
+      **El código de salida sigue siendo 1, a propósito.** La expulsión que queda es el caso
+      entre pestañas que este contrato no cubre y que **#160** recoge con su evidencia. Dejar
+      el gate en rojo es deliberado: pondría en verde algo que no está resuelto. Se cerrará
+      cuando se cierre #160.
 - [x] T5.5 **Volver a medir el par de dos pestañas** (R7). Registrar la cifra **y los solapes
       cruzados reales**. La coordinación entre pestañas se abre como trabajo propio **solo si
       queda alguna expulsión con causa `collision` en ese escenario**, no ante cualquier
