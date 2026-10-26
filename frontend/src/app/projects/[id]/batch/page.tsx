@@ -7,11 +7,14 @@ import { useProject } from '@/hooks/useProjects'
 import { studiesApi, pollBoxCountingJobStatus } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
+import { SinteringWarning } from '@/components/batch/SinteringWarning'
+import { studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
+import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import type { CreateParametricStudyInput, ParametricStudyResults } from '@/lib/types'
 
 export default function BatchSimulationsPage({
@@ -143,6 +146,31 @@ export default function BatchSimulationsPage({
   }
 
   const studies = studiesData?.results || []
+  const selectedStudy = studies.find((study) => study.id === selectedStudyId)
+
+  /**
+   * Relaunch an affected study with the configuration it always declared.
+   *
+   * Creates a NEW study and leaves the original untouched: overwriting would
+   * destroy the evidence of what ran, which is exactly what someone who
+   * published conclusions from it may need.
+   *
+   * The configuration arrives already normalised and validated — re-sending
+   * what is stored is rejected in almost every shape, and this page has no
+   * error handling, so a rejected request would be an invisible dead button.
+   */
+  const handleRelaunch = (sintering_config: SinteringConfig) => {
+    if (!selectedStudy) return
+    createStudy.mutate({
+      name: `${selectedStudy.name} (relaunched with sintering)`,
+      description: selectedStudy.description,
+      base_algorithm: selectedStudy.base_algorithm,
+      base_parameters: selectedStudy.base_parameters,
+      parameter_grid: selectedStudy.parameter_grid,
+      seeds_per_combination: selectedStudy.seeds_per_combination,
+      sintering_config,
+    } as CreateParametricStudyInput)
+  }
 
   return (
     <div className="min-h-screen">
@@ -218,6 +246,15 @@ export default function BatchSimulationsPage({
                             <p className="text-xs text-muted-foreground">
                               {study.completed_simulations}/{study.total_simulations} completed
                             </p>
+                            {/* Cheap criterion: it may mark one study too
+                                many, never one too few. Opening it applies
+                                the exact test against its children. */}
+                            {studyMayHaveRunWithoutSintering(study) && (
+                              <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-warning">
+                                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                May have run without sintering
+                              </p>
+                            )}
                           </button>
                           {deleteConfirm === study.id ? (
                             <div className="flex gap-1">
@@ -260,6 +297,17 @@ export default function BatchSimulationsPage({
           <div className="lg:col-span-2 space-y-6">
             {selectedStudyId && studyResults ? (
               <>
+                <SinteringWarning
+                  study={{
+                    created_at: selectedStudy?.created_at,
+                    base_algorithm: studyResults.base_algorithm,
+                    sintering_config: selectedStudy?.sintering_config,
+                    total_simulations: selectedStudy?.total_simulations,
+                  }}
+                  childResults={studyResults.results}
+                  isRelaunching={createStudy.isPending}
+                  onRelaunch={handleRelaunch}
+                />
                 {/* Tab bar (P3): Results | Fractal Analysis — additive; the
                     Results tab content below is unchanged. */}
                 <div className="flex gap-1 border-b">
