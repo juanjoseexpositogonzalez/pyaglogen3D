@@ -99,15 +99,53 @@ gate vigente desde el 2026-10-22; `approval.md` ya no se usa.
 
 ## T6 — Entrega
 
-- [ ] T6.1 PR a `develop` enlazando #122, etiqueta `type:bug` (existe desde el 2026-10-25).
-- [ ] T6.2 Revisión adversarial antes del merge.
-- [ ] T6.3 Archive con sincronización canónica de `session-continuity`, **escribiendo el
+- [x] T6.1 PR a `develop` enlazando #122, etiqueta `type:bug` (existe desde el 2026-10-25).
+- [x] T6.2 Revisión adversarial antes del merge.
+- [x] T6.3 Archive con sincronización canónica de `session-continuity`, **escribiendo el
       `Purpose`**: el tooling lo deja en `TBD` y ese hueco ya tiene issue abierta (#93).
-- [ ] T6.4 `state.yaml` actualizado.
+- [x] T6.4 `state.yaml` actualizado.
 
 ## Log
 
 <!-- Una entrada por tarea completada, con la evidencia que la respalda. -->
+
+### L4 — Entrega: el judgment day encontró una regresión de seguridad mía (2026-10-26)
+
+**El hallazgo crítico lo introduje cumpliendo el contrato.** R5 pide invalidar las credenciales
+al entrar en `logout()`, y eso hice: el access token quedaba a `null` antes de la petición. Como
+`authFetch` solo manda cabecera si hay token en memoria, el POST salía sin autenticar, el
+servidor respondía 401 y **`token.blacklist()` nunca se ejecutaba**. Mi propio `catch` de
+cortesía se tragaba el 401.
+
+| | logout | refresh posterior |
+| --- | --- | --- |
+| con mi cambio | 401 | **200 — el token seguía vivo** |
+| como estaba antes | 200 | 401 — revocado |
+
+Con un refresco de **7 días**, un token robado antes de cerrar sesión servía una semana después.
+
+Lo que esto enseña es más incómodo que un descuido: **el requisito, bien implementado, producía
+el daño**. Un revisor que validara contra el contrato lo habría aprobado. Solo cazarlo pedía
+ejecutar el cierre de sesión contra el servidor real y mirar si el token seguía sirviendo.
+
+Y la comprobación que debía verlo estaba verde: la de camino crítico borraba credenciales a mano
+en vez de pulsar el botón. Ahora pulsa el control real, exige 200 del servidor y comprueba que
+el token previo ya no refresca. **Habría cazado esto desde el principio.**
+
+**Resto de hallazgos**: generación de sesión comprobada al entrar en cada intento (un refresco
+viejo podía hacer rotar el token de la sesión nueva y matarla); ranura liberada solo si sigue
+siendo suya (una ejecución abandonada podía borrar la ranura de la sesión siguiente); una
+aserción mía sobre el access token que **no probaba nada**, porque el test importaba el
+almacenamiento de otra instancia de módulo; y tres rutas que el contrato nombraba sin testigo.
+
+**Fuera de alcance, con issue propia**: #162 (los guardas de cinco páginas expulsan ante un 5xx)
+y #164 (la revocación falla si el access token ya caducó, que es backend).
+
+**Gates finales**: suite **79 ficheros**, `tsc` **13** preexistentes, build exit 0, camino
+crítico **9/9**, diagnóstico **de 9 expulsiones a 1**.
+
+**El código de salida del diagnóstico sigue siendo 1, a propósito**: la expulsión restante es el
+caso entre pestañas de #160. Ponerlo en verde afirmaría algo que no es cierto.
 
 ### L3 — T5.6: el camino crítico, con lo que la comprobación NO cubre (2026-10-25)
 
