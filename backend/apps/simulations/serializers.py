@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 import random
 from math import prod
+from collections.abc import Mapping
 from typing import Any
 
 from rest_framework import serializers
@@ -625,6 +626,13 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         eff_base = _effective("base_parameters", base_params) or {}
         eff_grid = _effective("parameter_grid", grid) or {}
         eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        # A stored container can be a truthy non-mapping on rows written
+        # through the ORM - the AI assistant's tool and admin both do - and
+        # `.get` on a list turned a rename into a 500. New payloads are
+        # rejected above; a stored one is ignored rather than held against
+        # the request, like the extremes map one level deeper.
+        if not isinstance(eff_limiting, Mapping):
+            eff_limiting = {}
         stored_extremes = eff_limiting.get("theoretical_extremes")
         # A row written before the payload guard can carry a non-object here.
         # Reading it without checking turned an innocent rename into a 500 and
@@ -655,7 +663,11 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # the stored values, so a row holding a malformed config - which the
         # API used to accept - still could not be renamed. Creation always
         # evaluates, because every field of a new study is being written now.
-        touched = self.instance is None or "base_algorithm" in data or any(
+        # No `self.instance is None` clause: a create that carries one of the
+        # four keys carries it in one of the three carriers below, and one
+        # that carries none has nothing to collect. Adding it would be a
+        # branch no mutation can falsify.
+        touched = "base_algorithm" in data or any(
             key in (carrier or {})
             for carrier in (
                 data.get("parameter_grid"),

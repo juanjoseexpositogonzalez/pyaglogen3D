@@ -163,7 +163,13 @@ def test_out_of_range_is_refused(
 def test_non_object_config_is_refused(
     api_client: APIClient, project: Project, key: str, value: Any
 ) -> None:
-    """R13.7. A bare object swept through extremes stored key names as values."""
+    """R13.7. A bare object swept through extremes stored key names as values.
+
+    On the two parity keys the 400 still comes from the legacy validator,
+    which answers first and says "Distribution config must be a dict." Only
+    the engine-named keys exercise R13.7's own message here; that asymmetry
+    disappears in PR 2, when the legacy spelling goes.
+    """
     resp = _post(api_client, project, **_on_surface(key, "parameter_grid", value))
 
     assert resp.status_code == 400, f"{key}: accepted {value!r}: {resp.data}"
@@ -292,6 +298,16 @@ def test_a_bare_object_on_the_swept_carrier_is_refused(
         f"theoretical_extremes.{key} accepted a bare object; its children would "
         f"store the strings 'mode' and 'value' as the configuration: {resp.data}"
     )
+    # Asserting the message, not only the status: removing the "a sweep needs
+    # a list" rule left the whole suite green, because a Mapping enumerates to
+    # its keys and `validate_shape` then rejects the strings. The 400 was
+    # overdetermined, so nothing distinguished the rule from an accident.
+    assert f"limiting_cases_config.theoretical_extremes.{key}" in resp.data, (
+        f"the error does not name the surface that carried it: {resp.data}"
+    )
+    assert "must be a list" in str(resp.data), (
+        f"refused for some other reason than the missing list: {resp.data}"
+    )
 
 
 @pytest.mark.parametrize("key", ALL_KEYS)
@@ -351,24 +367,31 @@ def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
     ("label", "grid", "limiting"),
     [
         ("legacy spelling on a parity key", {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
-        ("unknown mode", {"kf_distribution": [{"mode": "lognormal"}]}, None),
+        ("unknown mode", {"target_kf_distribution": [{"mode": "lognormal"}]}, None),
         ("legacy spelling on an engine key", {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
         ("over the std/mean cap", {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]}, None),
         ("a bare object swept", {}, {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}),
-        ("a non-numeric bound", {"kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]}, None),
+        ("a non-numeric bound", {"target_kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]}, None),
+        ("a negative value", {"kf_distribution": [{"mode": "fixed", "value": -1.0}]}, None),
+        ("a non-object entry swept", {}, {"theoretical_extremes": {"dpo_distribution": ["1.8"]}}),
     ],
 )
+@pytest.mark.parametrize("algorithm", (CONSUMES, "fracval"))
 def test_every_shape_develop_used_to_store_stays_editable(
     api_client: APIClient,
     project: Project,
     label: str,
     grid: dict[str, Any],
     limiting: dict[str, Any] | None,
+    algorithm: str,
 ) -> None:
     """R13.12's last clause, across the shapes this change starts refusing.
 
-    Each of these was accepted by the API before this contract, so rows
-    holding them exist. Gating only the allow-list left the shape checks
+    Each of these was accepted by the API before this contract **on the key
+    it is declared under here**, so rows holding them exist. A judge measured
+    that two of them answered 400 on a parity key even then, because the
+    legacy validator covered that lane: they are declared on the
+    engine-named key, which did answer 201. Gating only the allow-list left the shape checks
     reading the stored values, and a rename answered 400 - a row editable
     in no field at all, which R7.2 promises against. The batch page shows
     no submit error (#115 point 6), so the user would see a dead button.
@@ -376,7 +399,7 @@ def test_every_shape_develop_used_to_store_stays_editable(
     stored = ParametricStudy.objects.create(
         project=project,
         name=f"historical: {label}",
-        base_algorithm="tunable_cc",
+        base_algorithm=algorithm,
         base_parameters={"n_particles": 60},
         parameter_grid=grid,
         limiting_cases_config=limiting or {},
@@ -391,8 +414,74 @@ def test_every_shape_develop_used_to_store_stays_editable(
     )
 
     assert resp.status_code == 200, (
-        f"a study storing {label} can no longer be renamed: {resp.data}"
+        f"a {algorithm} study storing {label} can no longer be renamed: {resp.data}"
     )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [
+        {"kf_distribution": "1.8"},
+        {"kf_distribution": [{"mode": "fixed", "value": 1.3}]},
+        {"dpo_distribution": {"mode": "normal", "mean": 1.0, "std": 0.5}},
+        {"target_kf_distribution": {"distribution_type": "fixed", "value": 1.3}},
+    ],
+)
+def test_a_malformed_config_stored_in_base_parameters_stays_editable(
+    api_client: APIClient, project: Project, stored: dict[str, Any]
+) -> None:
+    """The carrier the previous witness never crossed.
+
+    `base_parameters` is read by the same `_effective` fallback, so leaving
+    it out of the witness left a third of the clause unpinned.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="historical base_parameters",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 60, **stored},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a row storing {stored} in base_parameters can no longer be renamed: {resp.data}"
+    )
+
+
+@pytest.mark.parametrize("stored", [["x"], "nope", 5])
+def test_a_mistyped_limiting_container_does_not_turn_a_rename_into_a_500(
+    api_client: APIClient, project: Project, stored: Any
+) -> None:
+    """Found in round 3: `.get` on a stored list raised instead of answering.
+
+    Only ORM writers reach this - the payload guard rejects a non-object -
+    and the AI assistant's study tool is one of them, which the contract
+    names as a door it does not govern.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="mistyped container",
+        base_algorithm=CONSUMES,
+        base_parameters={"n_particles": 60},
+        parameter_grid={},
+        limiting_cases_config=stored,
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, f"stored {stored!r} broke a rename: {resp.data}"
 
 
 def test_a_row_stored_before_this_change_stays_editable(
@@ -433,7 +522,12 @@ def test_a_row_stored_before_this_change_stays_editable(
 def test_a_well_formed_config_is_accepted_where_it_is_consumed(
     api_client: APIClient, project: Project, carrier: str
 ) -> None:
-    """R13.10: refusing it would be the other half of the same defect."""
+    """Acceptance, which is this PR's half of R13.10.
+
+    Delivery under the engine-facing name is the other half and belongs to
+    PR 2, so this witness does not assert it: the child carries the grid key
+    today and `target_kf_distribution` only after the translation lands.
+    """
     resp = _post(api_client, project, **_on_surface("kf_distribution", carrier, GOOD))
 
     assert resp.status_code == 201, (

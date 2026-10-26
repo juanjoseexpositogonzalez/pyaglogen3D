@@ -98,6 +98,29 @@ def test_engine_dpo_is_one_radius_per_run_not_polydispersity() -> None:
         assert distinct == 1, "a run with more than one radius would refute D8"
 
 
+def test_an_over_cap_dpo_spread_reaches_the_engine_and_runs() -> None:
+    """The measurement R7 cites for the std/mean cap, made reproducible.
+
+    The carve-out says this config was *not* silently defaulted: it reached
+    the engine and ran, with a spread wide enough to produce negative radii,
+    which is what the cap exists to prevent. That sentence said "measured"
+    while no probe in the tree measured it - so here it is.
+    """
+    import aglogen_core
+
+    result = aglogen_core.run_tunable_cc(
+        **ENGINE_BASE, dpo_mode="normal", dpo_mean=1.0, dpo_std=0.5
+    )
+    radii = np.asarray(result.radii, dtype=float).ravel()
+    print(
+        f"\n[cap] dpo normal mean=1.0 std=0.5 -> ran, dpo_used={result.dpo_used:.4f}, "
+        f"min radius {radii.min():.4f}"
+    )
+    assert result.dpo_used != 1.0, (
+        "the engine stopped sampling this spread, so the cap's premise moved"
+    )
+
+
 def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     """Sweeping `radius_max` in a grid does nothing for this algorithm."""
     import aglogen_core

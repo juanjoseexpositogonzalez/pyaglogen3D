@@ -354,9 +354,11 @@ the engine as no kwargs at all, and the simulation silently runs with the defaul
 Range validation is part of delivering it, not a separate nicety, and it MUST match what
 `cc-tunable-aggregation` R11 and R12 already require of these same engine inputs: reject
 `value <= 0`, `mean <= 0` and `std <= 0` for Normal, `min <= 0`, and `max <= min` for Uniform,
-plus the `std/mean` cap R2 fixes for the primary-size magnitude under either of its names. The
-cap belongs in this list because this requirement is where the surfaces and their mandatory
-rejections live: stating it only in R2 lets an implementer reading R13 drop half of it.
+plus the `std/mean` cap R2 fixes for the primary-size magnitude under either of its names, and
+every magnitude MUST be a number rather than a string or a boolean: a string bound reaches the
+binding and raises there, after the row is written, and a boolean runs silently as `1.0`. Both
+belong in this list because this requirement is where the surfaces and their mandatory
+rejections live: stating a rule only in R2 lets an implementer reading R13 drop half of it.
 Three of those are not cosmetic: measured against the real binding, `kf_mode="fixed", kf_value=-1.0`, `kf_mode="normal", kf_mean=-1.0`
 and `kf_mode="uniform", kf_min=2.0, kf_max=1.0` all raise a Rust `PanicException`, which derives
 from `BaseException` and escapes the worker's only outer `except Exception`, leaving the

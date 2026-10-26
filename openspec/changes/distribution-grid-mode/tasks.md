@@ -42,16 +42,16 @@
   `normal`, y la API acepta `uniform`.
 - [x] T1.4 **Hecho**: R7 declara ya los tres grupos, incluido el de la allow-list, que era el mayor y el único sin declarar. Original: R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
   hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
-- [ ] T1.5 `openspec validate --strict` y `show --json --deltas-only`, con la salida al Log,
+- [x] T1.5 `openspec validate --strict` y `show --json --deltas-only`, con la salida al Log,
   **antes** del PR: archivar los vuelve irreproducibles.
 
 ## T2 — Backend: validar lo que hoy pasa en silencio (lo urgente)
 
-- [ ] T2.1 400 en **todas** las superficies que enumera R13: las cuatro claves (dos de paridad y
+- [x] T2.1 400 en **todas** las superficies que enumera R13: las cuatro claves (dos de paridad y
   dos con nombre de engine) en `parameter_grid`, las cuatro en `base_parameters`, y las cuatro
   barridas por `theoretical_extremes`. Cubre `mode` desconocido, **rangos fuera de límite**
   (`value <= 0`, `std <= 0`, `min <= 0`, `max <= min`) y config que no es objeto.
-- [ ] T2.1e **Alcance por algoritmo (R13.12)**: estas cuatro claves solo se aceptan para un
+- [x] T2.1e **Alcance por algoritmo (R13.12)**: estas cuatro claves solo se aceptan para un
   algoritmo que las consuma —hoy solo `tunable_cc`—, en create y en update. La comprobación en
   update corre **solo si la petición trae alguna de las cuatro claves o cambia
   `base_algorithm`**: «tocar» significa que la clave aparece en el cuerpo de la petición, no que
@@ -59,7 +59,7 @@
   campos, que es lo que R7.2 promete y lo que R13.12 exige. Es el mismo D6
   que cerró #97 para el sinterizado con `check_algorithm_scope`, y hay que reutilizar ese
   precedente en vez de inventar otro.
-- [ ] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
+- [x] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
   **revientan el worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
   Exception`. La simulación se queda en `RUNNING` para siempre.
 - [ ] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
@@ -69,7 +69,7 @@
 - [ ] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
   descartan: las dos claves de paridad en `base_parameters` y las dos barridas por
   `theoretical_extremes` (R13.10).
-- [ ] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
+- [x] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
   estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
 - [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
@@ -88,9 +88,9 @@
 - [ ] T3.8 **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
   `DistributionSelector` ya soporta, así que el borde rojo y el mensaje no se pintan. O se
   implementa la validación por campo, o se acota R8.4 a lo que el componente hace.
-- [ ] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
+- [x] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
   carve-out de distribuciones), hoy sin tarea propia.
-- [ ] T2.4b **Re-apuntar las seis sondas que hoy fijan el estado anterior** y que se pondrán en
+- [x] T2.4b **Re-apuntar las seis sondas que hoy fijan el estado anterior** y que se pondrán en
   rojo el día que se implemente lo aprobado. Se re-apuntan a conciencia o se marcan
   `xfail(strict=True)` como hace #115; nunca se borran:
   `test_d1_kf_distribution_selector_shape` (400 → 201),
@@ -114,7 +114,7 @@
 
 ## T4 — Verificación y cierre
 
-- [ ] T4.1 Los cinco gates, con cada deriva explicada contra la base.
+- [x] T4.1 Los cinco gates, con cada deriva explicada contra la base.
 - [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
   produce `target_kf_used` distinto del 1.3 por defecto.
 - [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
@@ -122,7 +122,7 @@
   `<!-- Last sync: ... -->`, que `openspec archive` NO reescribe** y hoy sigue nombrando al
   contrato de sinterizado; entrega en Jira y cierre
   manual de la issue.
-- [ ] T4.5 **Cada PR de la cadena dice en su cuerpo qué parte de la delta todavía NO es cierta**,
+- [x] T4.5 **Cada PR de la cadena dice en su cuerpo qué parte de la delta todavía NO es cierta**,
   y el Log lo registra. Entre merges, `develop` sostiene un contrato que describe el estado
   final: `openspec validate --strict` seguirá pasando, porque comprueba la forma, no la verdad.
 
