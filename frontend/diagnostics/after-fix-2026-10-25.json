@@ -1,0 +1,650 @@
+{
+  "config": {
+    "runs": 8,
+    "app": "http://localhost:3000"
+  },
+  "screens": {
+    "dashboard": {
+      "runs": [
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        }
+      ],
+      "refreshesMax": 1,
+      "overlapMax": 1,
+      "expulsions": 0,
+      "byCollision": 0,
+      "byCascade": 0
+    },
+    "projects": {
+      "runs": [
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        }
+      ],
+      "refreshesMax": 1,
+      "overlapMax": 1,
+      "expulsions": 0,
+      "byCollision": 0,
+      "byCascade": 0
+    },
+    "project-detail": {
+      "runs": [
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        }
+      ],
+      "refreshesMax": 1,
+      "overlapMax": 1,
+      "expulsions": 0,
+      "byCollision": 0,
+      "byCascade": 0
+    },
+    "compare": {
+      "runs": [
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        }
+      ],
+      "refreshesMax": 1,
+      "overlapMax": 1,
+      "expulsions": 0,
+      "byCollision": 0,
+      "byCascade": 0
+    },
+    "batch": {
+      "runs": [
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        },
+        {
+          "refreshes": 1,
+          "overlap": 1,
+          "rejected": 0,
+          "dead": false,
+          "cause": "alive"
+        }
+      ],
+      "refreshesMax": 1,
+      "overlapMax": 1,
+      "expulsions": 0,
+      "byCollision": 0,
+      "byCascade": 0
+    }
+  },
+  "twoTabs": [
+    {
+      "summary": {
+        "label": "heavy+light",
+        "runs": 8,
+        "anyExpulsion": 0,
+        "byCollision": 0,
+        "byCascade": 0,
+        "crossOverlapMax": 1,
+        "deadTabs": []
+      },
+      "runs": [
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        }
+      ]
+    },
+    {
+      "summary": {
+        "label": "light+light",
+        "runs": 8,
+        "anyExpulsion": 1,
+        "byCollision": 1,
+        "byCascade": 0,
+        "crossOverlapMax": 1,
+        "deadTabs": [
+          {
+            "tab": 1,
+            "refreshes": 2,
+            "rejected": 1
+          }
+        ]
+      },
+      "runs": [
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 0,
+          "groupedPeak": 1
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": true,
+            "cause": "collision"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        },
+        {
+          "tab1": {
+            "refreshes": 2,
+            "rejected": 1,
+            "dead": false,
+            "cause": "alive"
+          },
+          "tab2": {
+            "refreshes": 1,
+            "rejected": 0,
+            "dead": false,
+            "cause": "alive"
+          },
+          "crossOverlap": 1,
+          "groupedPeak": 2
+        }
+      ]
+    }
+  ],
+  "twoTabsSummary": [
+    {
+      "label": "heavy+light",
+      "runs": 8,
+      "anyExpulsion": 0,
+      "byCollision": 0,
+      "byCascade": 0,
+      "crossOverlapMax": 1,
+      "deadTabs": []
+    },
+    {
+      "label": "light+light",
+      "runs": 8,
+      "anyExpulsion": 1,
+      "byCollision": 1,
+      "byCascade": 0,
+      "crossOverlapMax": 1,
+      "deadTabs": [
+        {
+          "tab": 1,
+          "refreshes": 2,
+          "rejected": 1
+        }
+      ]
+    }
+  ],
+  "totalExpulsions": 1
+}

@@ -51,6 +51,12 @@ function getAuthHeaders(): Record<string, string> {
 
 /**
  * Try to refresh the access token.
+ *
+ * Returns whether the caller may retry its request. It deliberately says
+ * nothing about whether the session is over: that verdict belongs to
+ * `auth-api`, which can tell a credential the server rejected from a
+ * collision, an outage or a network blip. Collapsing every error into "log
+ * the user out" here is what turned our own concurrency into lost sessions.
  */
 async function tryRefreshToken(): Promise<boolean> {
   try {
@@ -84,10 +90,8 @@ async function request<T>(
       // Retry the request with new token
       return request<T>(endpoint, options, false)
     }
-    // Refresh failed - redirect to login
-    if (typeof window !== 'undefined') {
-      window.location.href = '/auth/login'
-    }
+    // Whether the session is over was already decided, and signalled, by
+    // `auth-api`. Ending it again here would expel the user on an outage.
   }
 
   if (!res.ok) {
@@ -129,9 +133,9 @@ async function authFetch(
     if (refreshed) {
       return authFetch(url, options, false)
     }
-    if (typeof window !== 'undefined') {
-      window.location.href = '/auth/login'
-    }
+    // Same as above: the session verdict is not this layer's to make. This
+    // second handler is easy to miss, and missing it leaves the defect
+    // reachable by every request that goes through `authFetch`.
   }
 
   return res
