@@ -389,6 +389,15 @@ export interface ParametricStudy {
   base_parameters: Record<string, unknown>
   parameter_grid: Record<string, unknown[]>
   seeds_per_combination: number
+  /**
+   * Declared sintering for the study. The backend has always serialised this
+   * (`ParametricStudySerializer`), but the client type never declared it, so
+   * a list could not tell which studies declared sintering at all.
+   *
+   * `unknown` on purpose: it is stored JSON, and the shape of old rows is not
+   * guaranteed by anything.
+   */
+  sintering_config?: unknown
   status: SimulationStatus
   total_simulations: number
   completed_simulations: number
