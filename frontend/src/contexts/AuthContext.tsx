@@ -60,8 +60,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const userData = await authApi.getMe()
         setUser(userData)
       } catch (err) {
-        // Token refresh failed, clear tokens
-        tokenStorage.clearTokens()
+        // Deliberately does NOT discard the credentials. This runs on every
+        // page load, so a 5xx or a dropped connection here used to log the
+        // user out for a reason that says nothing about their credential.
+        //
+        // When the server really does reject the token, `auth-api` has
+        // already cleared it and signalled the end of the session; there is
+        // nothing left for this handler to decide.
       } finally {
         setIsLoading(false)
       }

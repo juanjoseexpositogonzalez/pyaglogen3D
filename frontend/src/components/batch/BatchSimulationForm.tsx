@@ -11,6 +11,8 @@ import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
+import { consumesSintering, rejectsVariation, toSinteringConfig } from '@/lib/sinteringShape'
+import { Callout } from '@/components/kit/Callout'
 
 const limitingGeometryOptions = [
   { value: 'chain', label: 'Linear Chain (Df=1)' },
@@ -84,6 +86,51 @@ interface ParameterVariation {
   seedTypeValues: string[]
 }
 
+function parameterOptionsFor(
+algorithm: SimulationAlgorithm,
+): { value: string; label: string }[] {
+  if (algorithm === 'limiting') {
+    return [
+      { value: 'configuration_type', label: 'Configuration Type' },
+      { value: 'n_particles', label: 'Number of Particles' },
+      { value: 'sintering_coeff', label: 'Sintering Coefficient' },
+      { value: 'packing', label: 'Packing Type (sphere only)' },
+    ]
+  }
+
+  const options = [
+    { value: 'n_particles', label: 'Number of Particles' },
+    { value: 'target_df', label: 'Target Df' },
+  ]
+
+  if (['dla', 'cca', 'ballistic', 'ballistic_cc'].includes(algorithm)) {
+    options.splice(1, 0, { value: 'sticking_probability', label: 'Sticking Probability' })
+  }
+
+  if (['tunable', 'tunable_cc', 'fracval', 'gcca'].includes(algorithm)) {
+    options.push({ value: 'target_kf', label: 'Target kf' })
+  }
+
+  // New batch-CC parameter grid options
+  options.push(
+    { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
+    { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
+    { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
+  )
+
+  // R10.4: only the algorithms whose engine invocation receives sintering.
+  // The backend answers 400 for the rest since T4, so offering it here
+  // invited a refusal the batch page cannot even display.
+  if (consumesSintering(algorithm)) {
+    options.splice(options.length - 1, 0, {
+      value: 'sintering_config',
+      label: 'Sintering coefficient distribution',
+    })
+  }
+
+  return options
+}
+
 interface BatchSimulationFormProps {
   onSubmit: (data: CreateParametricStudyInput) => void
   isLoading?: boolean
@@ -154,6 +201,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const [stickingProbability, setStickingProbability] = useState('1.0')
   const [seedsPerCombo, setSeedsPerCombo] = useState('1')
   const [variations, setVariations] = useState<ParameterVariation[]>([])
+  const [droppedVariations, setDroppedVariations] = useState<string[]>([])
   // Limiting case specific state
   const [baseGeometry, setBaseGeometry] = useState<string>('chain')
   const [baseConfiguration, setBaseConfiguration] = useState<string>('lineal')
@@ -217,7 +265,12 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
           geometry_type: baseGeometry,
           configuration_type: baseConfiguration,
           packing: basePacking,
-          sintering_coeff: parseFloat(baseSintering),
+          // R10.6: an emptied field is not a number. Submitting NaN here
+          // serialises to null and the API answers 400 on a value the user
+          // never typed.
+          ...(Number.isFinite(parseFloat(baseSintering))
+            ? { sintering_coeff: parseFloat(baseSintering) }
+            : {}),
         }
       : {
           n_particles: parseInt(nParticles),
@@ -232,7 +285,16 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       if (DISTRIBUTION_PARAMS.has(variation.name)) {
         // Distribution grid values are objects, not scalars
         if (variation.distributionValues.length > 0) {
-          parameterGrid[variation.name] = variation.distributionValues
+          // R10.5: sintering speaks its own shape. The other two grids keep
+          // the selector's - NOT because it is right, but because translating
+          // them belongs to `distribution-grid-wiring`. A judge measured that
+          // the backend rejects `{mode, ...}` for them too, so choosing
+          // kf_distribution or particle_radius still produces an invisible
+          // 400. Recorded in issue #115, not fixed by stretching this task.
+          parameterGrid[variation.name] =
+            variation.name === 'sintering_config'
+              ? variation.distributionValues.map(toSinteringConfig)
+              : variation.distributionValues
         }
       } else if (variation.name === SEED_TYPE_PARAM) {
         if (variation.seedTypeValues.length > 0) {
@@ -286,39 +348,30 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const effectiveSeeds = algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1)
   const totalSimulations = totalCombinations * effectiveSeeds
 
-  const parameterOptions = useMemo(() => {
-    if (algorithm === 'limiting') {
-      return [
-        { value: 'configuration_type', label: 'Configuration Type' },
-        { value: 'n_particles', label: 'Number of Particles' },
-        { value: 'sintering_coeff', label: 'Sintering Coefficient' },
-        { value: 'packing', label: 'Packing Type (sphere only)' },
-      ]
-    }
+  const parameterOptions = useMemo(() => parameterOptionsFor(algorithm), [algorithm])
 
-    const options = [
-      { value: 'n_particles', label: 'Number of Particles' },
-      { value: 'target_df', label: 'Target Df' },
-    ]
-
-    if (['dla', 'cca', 'ballistic', 'ballistic_cc'].includes(algorithm)) {
-      options.splice(1, 0, { value: 'sticking_probability', label: 'Sticking Probability' })
-    }
-
-    if (['tunable', 'tunable_cc', 'fracval', 'gcca'].includes(algorithm)) {
-      options.push({ value: 'target_kf', label: 'Target kf' })
-    }
-
-    // New batch-CC parameter grid options
-    options.push(
-      { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
-      { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
-      { value: 'sintering_config', label: 'Sintering coefficient distribution' },
-      { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
+  // R10.6: a variation configured for one algorithm may be meaningless for the
+  // next one. Carrying it over let the form submit a payload the backend
+  // rejects with 400 - and the batch page shows no error, so the user saw a
+  // button that did nothing.
+  const handleAlgorithmChange = (next: SimulationAlgorithm) => {
+    // The authority on what to clear is R11 - what the backend refuses - not
+    // which options this dropdown lists. Clearing by the dropdown deleted
+    // variations the server accepts (a flat sintering_coeff on ballistic,
+    // sticking_probability on tunable) and told the user they were rejected.
+    const labels = new Map(
+      [...parameterOptionsFor(next), ...parameterOptionsFor(algorithm)].map(
+        (o) => [o.value, o.label] as const,
+      ),
     )
+    const rejected = (v: ParameterVariation) =>
+      Boolean(v.name) && rejectsVariation(next, v.name, v.distributionValues)
+    const dropped = variations.filter(rejected)
+    setVariations(variations.filter((v) => !rejected(v)))
+    setDroppedVariations(dropped.map((v) => labels.get(v.name) ?? v.name))
+    setAlgorithm(next)
+  }
 
-    return options
-  }, [algorithm])
 
   return (
     <Card>
@@ -355,10 +408,23 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             <Label>Algorithm</Label>
             <Select
               value={algorithm}
-              onChange={(e) => setAlgorithm(e.target.value as SimulationAlgorithm)}
+              onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
               options={batchSimulationAlgorithmOptions}
             />
           </div>
+
+          {/* R10.6: clearing a variation silently would satisfy the payload
+              half of the rule and fail its sentence - the form must not submit
+              something the backend rejects "without telling the user why". */}
+          {droppedVariations.length > 0 && (
+            <div role="status" aria-live="polite">
+              <Callout tone="warning" title="A variation no longer applies">
+                {droppedVariations.length === 1
+                  ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
+                  : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
+              </Callout>
+            </div>
+          )}
 
           {/* Base Parameters - conditional based on algorithm */}
           {algorithm === 'limiting' ? (

@@ -4,11 +4,14 @@ import csv
 import io
 import logging
 import re
+from collections.abc import Mapping
 from datetime import datetime
 from typing import Any
 
 import numpy as np
 from django.utils import timezone
+
+from .sintering_shape import validate_dict_shape
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +35,7 @@ FRAKTAL_MODEL_DISPLAY_NAMES = {
 }
 
 # Theoretical extreme values by algorithm
-THEORETICAL_EXTREMES: dict[str, dict[str, list[float]]] = {
+THEORETICAL_EXTREMES: dict[str, dict[str, list[Any]]] = {
     "dla": {
         "sticking_probability": [0.1, 1.0],
     },
@@ -177,7 +180,21 @@ def generate_limiting_cases(
     if config.get("include_boundaries", True):
         for param_name, values in parameter_grid.items():
             if len(values) >= 2:
-                sorted_values = sorted(values)
+                if any(isinstance(value, Mapping) for value in values):
+                    # Distribution grids hold objects, which have no order. A
+                    # range boundary is meaningless for them, so this key
+                    # contributes no boundary case instead of breaking the
+                    # expansion after the study row already exists.
+                    continue
+                try:
+                    sorted_values = sorted(values)
+                except TypeError:
+                    # Any other unorderable list loses its range boundaries and
+                    # keeps its children, which run. Turning that into a 400
+                    # refused studies that work, over keys R3 does not govern,
+                    # and the refusal could be switched off with
+                    # `include_boundaries`. The gap is pinned by a test instead.
+                    continue
                 min_val = sorted_values[0]
                 max_val = sorted_values[-1]
 
@@ -226,6 +243,12 @@ def generate_sintering_extreme_cases(
 
     for coeff in SINTERING_EXTREMES["coefficients"]:
         params = dict(base_parameters)
+        # R11.7: this path copies base_parameters whole and the
+        # `sintering_config` pop lives only in `create_simulation`
+        # (`views.py:1804`), so without this the child stores a dict that
+        # contradicts the coefficient it actually runs at. Only the dict
+        # goes: inherited flat keys are inside the set the worker reads.
+        params.pop("sintering_config", None)
         params["sintering_type"] = "fixed"
         params["sintering_coeff"] = coeff
         cases.append(("sintering_extreme", f"coeff={coeff}", params))
@@ -255,18 +278,28 @@ def apply_sintering_config(
     if not sintering_config:
         return parameters
 
+    # R3.10: no defaults. The serializer rejects a malformed setting before
+    # anything is written, so reaching here with one is a programming error,
+    # not user input - and inventing `fixed`/1.0 would mean no sintering at
+    # all while the stored parameters claim otherwise.
+    validate_dict_shape(sintering_config, allow_empty=True)
+
     params = dict(parameters)
-    dist_type = sintering_config.get("distribution_type", "fixed")
+    dist_type = sintering_config["distribution_type"]
     params["sintering_type"] = dist_type
 
     if dist_type == "fixed":
-        params["sintering_coeff"] = sintering_config.get("coefficient", 1.0)
+        params["sintering_coeff"] = sintering_config["coefficient"]
     elif dist_type == "uniform":
-        params["sintering_min"] = sintering_config.get("min", 0.85)
-        params["sintering_max"] = sintering_config.get("max", 0.95)
+        params["sintering_min"] = sintering_config["min"]
+        params["sintering_max"] = sintering_config["max"]
     elif dist_type == "normal":
-        params["sintering_mean"] = sintering_config.get("mean", 0.9)
-        params["sintering_std"] = sintering_config.get("std", 0.05)
+        # D5: the engine reads `sintering_coeff` as the mean (`lib.rs:602`).
+        # Writing `sintering_mean` left the declared mean unread and the
+        # study running at whatever sintering_coeff held - by default 1.0,
+        # which is no sintering at all.
+        params["sintering_coeff"] = sintering_config["mean"]
+        params["sintering_std"] = sintering_config["std"]
 
     return params
 
