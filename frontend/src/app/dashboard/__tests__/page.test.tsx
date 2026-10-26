@@ -87,10 +87,12 @@ describe('Dashboard', () => {
       return card?.textContent ?? ''
     }
 
-    // 2 projects; 6 + 5 simulations; 2 + 0 analyses.
-    expect(totalFor('Total Projects')).toContain('2')
-    expect(totalFor('Total Simulations')).toContain('11')
-    expect(totalFor('Total Analyses')).toContain('2')
+    // Exact, not `toContain`: a substring match accepts '2.000', which is
+    // what the card rendered until it was told these are counts. The loose
+    // assertion is why that shipped green.
+    expect(totalFor('Total Projects')).toBe('Total Projects2')
+    expect(totalFor('Total Simulations')).toBe('Total Simulations11')
+    expect(totalFor('Total Analyses')).toBe('Total Analyses2')
   })
 
   it('renders every figure tabular, in the cards as well as the totals', () => {
@@ -105,6 +107,49 @@ describe('Dashboard', () => {
 
     const firstCard = screen.getByRole('link', { name: /soot aggregates/i })
     expect(firstCard.querySelectorAll('.num')).toHaveLength(2)
+  })
+
+  it('announces loading before any total exists', () => {
+    mockUseProjects.mockReturnValue({ data: undefined, isLoading: true, error: null })
+    const { container } = render(<DashboardPage />)
+
+    expect(screen.getByText(/loading projects/i)).toBeTruthy()
+    // Totals computed from absent data would read as zero, which is a claim
+    // about the user's projects rather than about the request.
+    expect(container.querySelectorAll('.num')).toHaveLength(0)
+  })
+
+  it('says so when the projects cannot be loaded', () => {
+    mockUseProjects.mockReturnValue({ data: undefined, isLoading: false, error: new Error('nope') })
+    const { container } = render(<DashboardPage />)
+
+    expect(screen.getByText(/projects could not be loaded/i)).toBeTruthy()
+    expect(container.querySelectorAll('.num')).toHaveLength(0)
+  })
+
+  it('shows at most six recent projects', () => {
+    mockUseProjects.mockReturnValue({
+      data: {
+        results: Array.from({ length: 9 }, (_, i) => project(`p${i}`, `Project ${i}`, i, i)),
+      },
+      isLoading: false,
+      error: null,
+    })
+    render(<DashboardPage />)
+
+    // "Recent" is the whole point: an unbounded list turns this section into
+    // a second, worse projects page.
+    const cards = screen.getAllByRole('link', { name: /^Project \d/ })
+    expect(cards).toHaveLength(6)
+  })
+
+  it('keeps the page heading and its primary action', () => {
+    render(<DashboardPage />)
+
+    expect(screen.getByRole('heading', { level: 1, name: 'Dashboard' })).toBeTruthy()
+    expect(screen.getByRole('link', { name: /new project/i }).getAttribute('href')).toBe(
+      '/projects/new',
+    )
   })
 
   it('offers the empty state when there are no projects', () => {

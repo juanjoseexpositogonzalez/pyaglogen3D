@@ -58,21 +58,36 @@ export default function DashboardPage() {
 
       {!isLoading && error && (
         <Callout tone="danger" title="Projects could not be loaded">
-          The backend did not answer. Check that it is running and try again.
+          Try again. If it keeps failing, check that the backend is running.
         </Callout>
       )}
 
       {!isLoading && !error && (
         <>
           <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
-            <MetricCard kind="exact" label="Total Projects" value={projects.length} tone="teal" />
+            {/* `digits={0}`: these are counts. MetricCard formats with three
+                decimals by default, which turns 2 projects into "2.000". */}
+            <MetricCard
+              kind="exact"
+              label="Total Projects"
+              value={projects.length}
+              digits={0}
+              tone="teal"
+            />
             <MetricCard
               kind="exact"
               label="Total Simulations"
               value={totalSimulations}
+              digits={0}
               tone="violet"
             />
-            <MetricCard kind="exact" label="Total Analyses" value={totalAnalyses} tone="gold" />
+            <MetricCard
+              kind="exact"
+              label="Total Analyses"
+              value={totalAnalyses}
+              digits={0}
+              tone="gold"
+            />
           </div>
 
           <section className="space-y-4">
@@ -98,13 +113,18 @@ export default function DashboardPage() {
                   <Link key={project.id} href={`/projects/${project.id}`} className="group">
                     <Panel
                       title={project.name}
-                      hint={project.description || undefined}
-                      className="h-full transition-colors group-hover:border-brand"
+                      className="h-full cursor-pointer transition-colors group-hover:border-brand"
                     >
+                      {/* Kept in the body rather than in `hint`: descriptions
+                          are unbounded text, and `hint` renders one unclamped
+                          line, so a long one stretches the whole grid row. */}
+                      {project.description && (
+                        <p className="hint mb-3 line-clamp-2">{project.description}</p>
+                      )}
                       {/* Counts sit beside their icon and their word, never
                           fused into one string: the figure has to stay
                           comparable down a column of cards. */}
-                      <div className="flex gap-4 text-ink-muted">
+                      <div className="flex flex-wrap items-start gap-x-4 gap-y-1 text-ink-muted">
                         <span className="flex items-center gap-1.5">
                           <Atom className="h-4 w-4" aria-hidden="true" />
                           <Num value={project.simulation_count} digits={0} size="sm" />
