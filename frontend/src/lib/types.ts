@@ -389,6 +389,25 @@ export interface ParametricStudy {
   base_parameters: Record<string, unknown>
   parameter_grid: Record<string, unknown[]>
   seeds_per_combination: number
+  /**
+   * Declared sintering for the study. The backend has always serialised this
+   * (`ParametricStudySerializer`), but the client type never declared it, so
+   * a list could not tell which studies declared sintering at all.
+   *
+   * `unknown` on purpose: it is stored JSON, and the shape of old rows is not
+   * guaranteed by anything.
+   */
+  sintering_config?: unknown
+  /**
+   * Settings that decide what a study measures. The backend has always
+   * stored them; the client type did not declare them, so a relaunch that
+   * copied the study silently dropped them, producing something that is
+   * not comparable with the original it replaces.
+   */
+  include_box_counting?: boolean
+  box_counting_params?: BatchBoxCountingParams
+  include_limiting_cases?: boolean
+  limiting_cases_config?: Record<string, unknown>
   status: SimulationStatus
   total_simulations: number
   completed_simulations: number
@@ -412,6 +431,9 @@ export interface CreateParametricStudyInput {
   seeds_per_combination?: number
   include_box_counting?: boolean
   box_counting_params?: BatchBoxCountingParams
+  include_limiting_cases?: boolean
+  limiting_cases_config?: Record<string, unknown>
+  sintering_config?: unknown
 }
 
 export interface BoxCountingResult {
