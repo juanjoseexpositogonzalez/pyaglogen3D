@@ -21,6 +21,7 @@ import {
   SINTERING_FIX_DEPLOYED_AT,
   classifySintering,
   relaunchConfigFor,
+  relaunchPayloadFor,
   studyChildrenRanWithoutSintering,
   studyMayHaveRunWithoutSintering,
 } from '../sinteringWarning'
@@ -193,5 +194,136 @@ describe('what a relaunch may send', () => {
         base_algorithm: 'gcca',
       }),
     ).toBeNull()
+  })
+})
+
+describe('the shape the form actually sends', () => {
+  const before = '2026-10-20T10:00:00Z'
+
+  // The form never wrote `sintering_config` on the study: it puts the
+  // distribution into `parameter_grid.sintering_config`
+  // (BatchSimulationForm:295). Reading only the study field meant no study
+  // created through the interface was ever flagged — and an unmarked study
+  // asserts that it is fine.
+  it('flags a study whose sintering lives in the parameter grid', () => {
+    expect(
+      studyMayHaveRunWithoutSintering({
+        created_at: before,
+        parameter_grid: {
+          sintering_config: [{ distribution_type: 'normal', mean: 0.8, std: 0.05 }],
+        },
+      }),
+    ).toBe(true)
+  })
+
+  it('flags a study whose sintering lives in base parameters', () => {
+    expect(
+      studyMayHaveRunWithoutSintering({
+        created_at: before,
+        base_parameters: { sintering_config: { distribution_type: 'normal', mean: 0.8, std: 0.05 } },
+      }),
+    ).toBe(true)
+  })
+})
+
+describe('the spellings that could never reach the engine', () => {
+  const before = '2026-10-20T10:00:00Z'
+
+  // Until 2026-10-24 the form sent the selector's own vocabulary. The backend
+  // read `distribution_type`, defaulted to the fixed branch, found no
+  // `coefficient`, and ran at 1.0 — no sintering, and no `sintering_mean`
+  // written either, so even the exact criterion cannot see that era.
+  it.each([
+    { mode: 'normal', mean: 0.9, std: 0.05 },
+    { mode: 'fixed', value: 0.85 },
+    { mode: 'uniform', min: 0.5, max: 0.9 },
+  ])('flags %o whatever kind it claims', (config) => {
+    expect(
+      studyMayHaveRunWithoutSintering({ created_at: before, sintering_config: config }),
+    ).toBe(true)
+  })
+
+  it('still clears fixed and uniform when they are spelled the way the API reads', () => {
+    expect(
+      studyMayHaveRunWithoutSintering({
+        created_at: before,
+        sintering_config: { distribution_type: 'uniform', min: 0.5, max: 0.9 },
+      }),
+    ).toBe(false)
+  })
+})
+
+describe('limiting reads sintering, in its own shape', () => {
+  const before = '2026-10-20T10:00:00Z'
+  const normal = { distribution_type: 'normal', mean: 0.8, std: 0.05 }
+
+  it('is affected, not never-consumed', () => {
+    // `limiting` reads `sintering_coeff`. Telling its owner that sintering
+    // never applies, and that relaunching changes nothing, is the worst kind
+    // of warning: one that instructs inaction.
+    expect(
+      classifySintering({ created_at: before, sintering_config: normal, base_algorithm: 'limiting' }),
+    ).toBe('affected')
+  })
+
+  it('relaunches with the flat shape it accepts', () => {
+    expect(
+      relaunchConfigFor({ created_at: before, sintering_config: normal, base_algorithm: 'limiting' }),
+    ).toEqual({ distribution_type: 'fixed', coefficient: 0.8 })
+  })
+})
+
+describe('the payload a relaunch sends', () => {
+  const study = {
+    name: 'Soot sweep',
+    description: 'a description',
+    base_algorithm: 'tunable_cc' as const,
+    base_parameters: { n_particles: 100 },
+    parameter_grid: { kf: [1.2, 1.3], sintering_config: [{ mode: 'normal', mean: 0.8, std: 0.05 }] },
+    seeds_per_combination: 3,
+    include_box_counting: true,
+    box_counting_params: { precision: 4 },
+    include_limiting_cases: true,
+    limiting_cases_config: { foo: 1 },
+    created_at: '2026-10-20T10:00:00Z',
+  }
+
+  it('carries the settings that decide what the study measures', () => {
+    const payload = relaunchPayloadFor(study, { distribution_type: 'normal', mean: 0.8, std: 0.05 })
+
+    // Dropping these produces a study that is not comparable with the one it
+    // replaces, which defeats the point of relaunching at all.
+    expect(payload).toMatchObject({
+      base_algorithm: 'tunable_cc',
+      base_parameters: { n_particles: 100 },
+      seeds_per_combination: 3,
+      include_box_counting: true,
+      box_counting_params: { precision: 4 },
+      include_limiting_cases: true,
+      limiting_cases_config: { foo: 1 },
+    })
+  })
+
+  it('normalises the sintering entries inside the grid', () => {
+    const payload = relaunchPayloadFor(study, { distribution_type: 'normal', mean: 0.8, std: 0.05 })
+
+    // Old grids carry the selector's spelling, which the API rejects with
+    // 400 — invisible on a page with no error handling.
+    expect(payload?.parameter_grid.sintering_config).toEqual([
+      { distribution_type: 'normal', mean: 0.8, std: 0.05 },
+    ])
+  })
+
+  it('keeps the rest of the grid untouched', () => {
+    const payload = relaunchPayloadFor(study, { distribution_type: 'normal', mean: 0.8, std: 0.05 })
+    expect(payload?.parameter_grid.kf).toEqual([1.2, 1.3])
+  })
+
+  it('refuses when a grid entry cannot be normalised', () => {
+    const payload = relaunchPayloadFor(
+      { ...study, parameter_grid: { sintering_config: [{ mode: 'normal', mean: 0.8 }] } },
+      { distribution_type: 'normal', mean: 0.8, std: 0.05 },
+    )
+    expect(payload).toBeNull()
   })
 })

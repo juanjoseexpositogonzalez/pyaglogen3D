@@ -12,17 +12,25 @@
  * they describe a different population from the one their configuration
  * claims.
  */
-import { consumesSintering, type SinteringConfig } from './sinteringShape'
-import type { SimulationAlgorithm } from './types'
+import { consumesSintering, toSinteringConfig, type SinteringConfig } from './sinteringShape'
+import type {
+  CreateParametricStudyInput,
+  DistributionValue,
+  SimulationAlgorithm,
+} from './types'
 
 /**
  * When the fix reached the deployed application.
  *
- * Deliberately the release to `main`, not the merge to `develop` on
- * 2026-10-25: users ran against what was deployed. A cutoff taken from the
- * development branch would leave every study from that week unflagged.
+ * Deliberately the release to `main` (commit f2c8af4), not the merge to
+ * `develop` on 2026-10-25: users ran against what was deployed, so a cutoff
+ * taken from the development branch would leave a week of studies unflagged.
+ *
+ * And the instant of that merge rather than the start of its day: midnight
+ * would clear everything run that morning against the old backend, which is
+ * under-reporting — the one direction this must never fail in.
  */
-export const SINTERING_FIX_DEPLOYED_AT = '2026-10-26T00:00:00Z'
+export const SINTERING_FIX_DEPLOYED_AT = '2026-10-26T15:03:00Z'
 
 /** Sintering kinds whose value did reach the engine, so they are unaffected. */
 const KINDS_THAT_APPLIED = new Set(['fixed', 'uniform'])
@@ -52,7 +60,49 @@ interface ChildLike {
 interface StudyLike {
   created_at?: string | null
   sintering_config?: unknown
+  base_parameters?: Record<string, unknown> | null
+  parameter_grid?: Record<string, unknown> | null
   base_algorithm?: SimulationAlgorithm
+}
+
+/**
+ * Every place a study can declare sintering.
+ *
+ * The study's own `sintering_config` is nearly vestigial: the form has always
+ * put the distribution into `parameter_grid.sintering_config`, so reading
+ * only the study field flagged nothing created through the interface — and an
+ * unmarked study asserts that it is fine.
+ */
+function declaredConfigs(study: StudyLike): unknown[] {
+  const fromGrid = study.parameter_grid?.sintering_config
+  return [
+    study.sintering_config,
+    study.base_parameters?.sintering_config,
+    ...(Array.isArray(fromGrid) ? fromGrid : [fromGrid]),
+  ].filter((config) => config != null)
+}
+
+/**
+ * Spellings that belong to the selector, never to the API.
+ *
+ * Until 2026-10-24 the form sent these untranslated. The backend looked for
+ * `distribution_type`, defaulted to its fixed branch, found no `coefficient`
+ * and ran at 1.0 — no sintering, whatever kind the config claimed, and
+ * without writing `sintering_mean` either. So this era is invisible to the
+ * exact criterion and has to be caught here.
+ */
+function usesSelectorSpelling(config: Record<string, unknown>): boolean {
+  return 'mode' in config || 'value' in config
+}
+
+/** Did this one declaration fail to reach the engine? */
+function neverApplied(config: unknown): boolean {
+  if (config == null || typeof config !== 'object') return false
+  const record = config as Record<string, unknown>
+  if (usesSelectorSpelling(record)) return true
+
+  const kind = kindOf(record)
+  return kind !== null && !KINDS_THAT_APPLIED.has(kind)
 }
 
 function kindOf(config: unknown): string | null {
@@ -93,8 +143,7 @@ export function studyChildrenRanWithoutSintering(children: readonly ChildLike[])
  * leaves them comparing populations that are not comparable.
  */
 export function studyMayHaveRunWithoutSintering(study: StudyLike): boolean {
-  const kind = kindOf(study.sintering_config)
-  if (kind === null || KINDS_THAT_APPLIED.has(kind)) return false
+  if (!declaredConfigs(study).some(neverApplied)) return false
   return createdBeforeFix(study.created_at)
 }
 
@@ -106,9 +155,22 @@ export function studyMayHaveRunWithoutSintering(study: StudyLike): boolean {
  * Showing them the same warning would merge a bug that was fixed with a
  * misunderstanding that still stands, and only one of those can be acted on.
  */
+/**
+ * Whether the engine reads sintering for this algorithm at all.
+ *
+ * Deliberately not `consumesSintering`, which answers the form's question —
+ * "does it take the whole distribution?" — and therefore excludes `limiting`.
+ * `limiting` does read `sintering_coeff`, so its studies were affected by the
+ * defect like any other, and telling their owner that sintering never applies
+ * would instruct them not to act on a result that is wrong.
+ */
+function engineReadsSintering(algorithm: SimulationAlgorithm): boolean {
+  return consumesSintering(algorithm) || algorithm === 'limiting'
+}
+
 export function classifySintering(study: StudyLike): SinteringClassification {
   if (!studyMayHaveRunWithoutSintering(study)) return 'unaffected'
-  if (study.base_algorithm && !consumesSintering(study.base_algorithm)) return 'never-consumed'
+  if (study.base_algorithm && !engineReadsSintering(study.base_algorithm)) return 'never-consumed'
   return 'affected'
 }
 
@@ -124,18 +186,132 @@ export function classifySintering(study: StudyLike): SinteringClassification {
 export function relaunchConfigFor(study: StudyLike): SinteringConfig | null {
   if (classifySintering(study) !== 'affected') return null
 
-  const config = study.sintering_config as Record<string, unknown>
+  const config = declaredConfigs(study).find(
+    (candidate) => candidate != null && typeof candidate === 'object',
+  ) as Record<string, unknown> | undefined
+  if (!config) return null
   const kind = kindOf(config)
   const numberAt = (key: string): number | null => {
     const value = config[key]
     return typeof value === 'number' && Number.isFinite(value) ? value : null
   }
 
-  if (kind === 'normal') {
-    const mean = numberAt('mean')
-    const std = numberAt('std')
-    return mean !== null && std !== null ? { distribution_type: 'normal', mean, std } : null
+  if (kind !== 'normal') return null
+
+  const mean = numberAt('mean')
+  if (mean === null) return null
+
+  // `limiting` reads a flat coefficient and ignores type, min, max and std,
+  // so the distribution shape is rejected for it. Its relaunch carries the
+  // declared mean as that coefficient.
+  if (study.base_algorithm === 'limiting') {
+    return { distribution_type: 'fixed', coefficient: mean }
   }
 
-  return null
+  const std = numberAt('std')
+  return std !== null ? { distribution_type: 'normal', mean, std } : null
+}
+
+/**
+ * Translate one stored grid entry into the shape the API accepts, or `null`
+ * when it cannot be translated.
+ *
+ * Old grids carry the selector's own vocabulary, which the API rejects with
+ * 400 — invisible on a page with no error handling.
+ */
+function normaliseGridEntry(entry: unknown): SinteringConfig | null {
+  if (entry == null || typeof entry !== 'object') return null
+  const record = entry as Record<string, unknown>
+  const kind = kindOf(record)
+  if (kind === null) return null
+
+  const num = (key: string): number | null => {
+    const value = record[key]
+    return typeof value === 'number' && Number.isFinite(value) ? value : null
+  }
+
+  if ('distribution_type' in record) {
+    // Already the API's shape; trust it only if it carries what it needs.
+    if (kind === 'normal') {
+      const mean = num('mean')
+      const std = num('std')
+      return mean !== null && std !== null ? { distribution_type: 'normal', mean, std } : null
+    }
+    if (kind === 'fixed') {
+      const coefficient = num('coefficient')
+      return coefficient !== null ? { distribution_type: 'fixed', coefficient } : null
+    }
+    const min = num('min')
+    const max = num('max')
+    return min !== null && max !== null ? { distribution_type: 'uniform', min, max } : null
+  }
+
+  // The selector's spelling. `toSinteringConfig` is the one translation, and
+  // reusing it keeps this from becoming a second, divergent copy.
+  if (kind === 'normal') {
+    const mean = num('mean')
+    const std = num('std')
+    if (mean === null || std === null) return null
+    return toSinteringConfig({ mode: 'normal', mean, std } as DistributionValue)
+  }
+  if (kind === 'fixed') {
+    const value = num('value') ?? num('coefficient')
+    if (value === null) return null
+    return toSinteringConfig({ mode: 'fixed', value } as DistributionValue)
+  }
+  const min = num('min')
+  const max = num('max')
+  if (min === null || max === null) return null
+  return toSinteringConfig({ mode: 'uniform', min, max } as DistributionValue)
+}
+
+type RelaunchableStudy = StudyLike & {
+  name?: string
+  description?: string
+  base_parameters?: Record<string, unknown> | null
+  parameter_grid?: Record<string, unknown> | null
+  seeds_per_combination?: number
+  include_box_counting?: boolean
+  box_counting_params?: unknown
+  include_limiting_cases?: boolean
+  limiting_cases_config?: Record<string, unknown>
+}
+
+/**
+ * Everything a relaunch has to send, or `null` when it cannot be built.
+ *
+ * Copying only the obvious fields produces a study that is not comparable
+ * with the one it replaces — which is the entire point of relaunching. The
+ * grid is normalised here too: refusing in the client beats a 400 the page
+ * cannot show.
+ */
+export function relaunchPayloadFor(
+  study: RelaunchableStudy,
+  sintering_config: SinteringConfig,
+): CreateParametricStudyInput | null {
+  const grid: Record<string, unknown[]> = {}
+  for (const [key, value] of Object.entries(study.parameter_grid ?? {})) {
+    const entries = Array.isArray(value) ? value : [value]
+    if (key !== 'sintering_config') {
+      grid[key] = entries
+      continue
+    }
+    const normalised = entries.map(normaliseGridEntry)
+    if (normalised.some((entry) => entry === null)) return null
+    grid[key] = normalised as SinteringConfig[]
+  }
+
+  return {
+    name: `${study.name ?? 'Study'} (relaunched with sintering)`,
+    description: study.description,
+    base_algorithm: study.base_algorithm as SimulationAlgorithm,
+    base_parameters: study.base_parameters ?? {},
+    parameter_grid: grid,
+    seeds_per_combination: study.seeds_per_combination,
+    include_box_counting: study.include_box_counting,
+    box_counting_params: study.box_counting_params as CreateParametricStudyInput['box_counting_params'],
+    include_limiting_cases: study.include_limiting_cases,
+    limiting_cases_config: study.limiting_cases_config,
+    sintering_config,
+  }
 }

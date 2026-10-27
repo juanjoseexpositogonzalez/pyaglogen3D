@@ -398,6 +398,16 @@ export interface ParametricStudy {
    * guaranteed by anything.
    */
   sintering_config?: unknown
+  /**
+   * Settings that decide what a study measures. The backend has always
+   * stored them; the client type did not declare them, so a relaunch that
+   * copied the study silently dropped them, producing something that is
+   * not comparable with the original it replaces.
+   */
+  include_box_counting?: boolean
+  box_counting_params?: BatchBoxCountingParams
+  include_limiting_cases?: boolean
+  limiting_cases_config?: Record<string, unknown>
   status: SimulationStatus
   total_simulations: number
   completed_simulations: number
@@ -421,6 +431,9 @@ export interface CreateParametricStudyInput {
   seeds_per_combination?: number
   include_box_counting?: boolean
   box_counting_params?: BatchBoxCountingParams
+  include_limiting_cases?: boolean
+  limiting_cases_config?: Record<string, unknown>
+  sintering_config?: unknown
 }
 
 export interface BoxCountingResult {

@@ -8,7 +8,7 @@ import { studiesApi, pollBoxCountingJobStatus } from '@/lib/api'
 import { Header } from '@/components/layout/Header'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
 import { SinteringWarning } from '@/components/batch/SinteringWarning'
-import { studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
+import { relaunchPayloadFor, studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
 import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
@@ -161,15 +161,12 @@ export default function BatchSimulationsPage({
    */
   const handleRelaunch = (sintering_config: SinteringConfig) => {
     if (!selectedStudy) return
-    createStudy.mutate({
-      name: `${selectedStudy.name} (relaunched with sintering)`,
-      description: selectedStudy.description,
-      base_algorithm: selectedStudy.base_algorithm,
-      base_parameters: selectedStudy.base_parameters,
-      parameter_grid: selectedStudy.parameter_grid,
-      seeds_per_combination: selectedStudy.seeds_per_combination,
-      sintering_config,
-    } as CreateParametricStudyInput)
+    const payload = relaunchPayloadFor(selectedStudy, sintering_config)
+    // Built and validated in one place: copying the study by hand dropped
+    // the settings that decide what it measures, and resending an old grid
+    // is rejected with a 400 this page cannot show.
+    if (!payload) return
+    createStudy.mutate(payload)
   }
 
   return (

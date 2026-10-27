@@ -49,13 +49,11 @@ export function SinteringWarning({
 
   if (classification === 'never-consumed') {
     return (
-      <div role="status" aria-live="polite">
         <Callout tone="warning" title="This algorithm never applies sintering">
           The study declares a sintering configuration, but{' '}
           <strong>{study.base_algorithm}</strong> does not read it — it never did. The results
           below are what this algorithm always produces; relaunching would not change them.
-        </Callout>
-      </div>
+      </Callout>
     )
   }
 
@@ -63,8 +61,7 @@ export function SinteringWarning({
   const simulations = study.total_simulations ?? 0
 
   return (
-    <div role="status" aria-live="polite">
-      <Callout tone="warning" title="These results ran without sintering">
+    <Callout tone="warning" title="These results ran without sintering">
         This study declared sintering, but the value never reached the engine: it was stored
         under a key nothing read, and the calculation used its default of 1.0, which means no
         sintering at all. The run finished without an error, so nothing said otherwise.
@@ -79,15 +76,15 @@ export function SinteringWarning({
               type="button"
               size="sm"
               disabled={isRelaunching}
+              className="h-auto min-h-9 whitespace-normal py-2 text-left"
               onClick={() => onRelaunch(relaunchConfig)}
             >
-              {isRelaunching
-                ? 'Starting…'
-                : `Relaunch ${simulations} simulations with the declared configuration`}
+              {isRelaunching ? 'Starting…' : 'Relaunch with the declared configuration'}
             </Button>
             <p className="hint mt-1.5">
               Creates a new study and leaves this one untouched, so the evidence of what
-              happened survives.
+              happened survives. The original ran {simulations} simulations; the new one
+              follows the same grid.
             </p>
           </div>
         ) : (
@@ -97,7 +94,6 @@ export function SinteringWarning({
             them. Recreating it by hand with the same configuration produces the intended result.
           </p>
         )}
-      </Callout>
-    </div>
+    </Callout>
   )
 }

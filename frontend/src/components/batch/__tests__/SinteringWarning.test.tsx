@@ -38,7 +38,7 @@ describe('SinteringWarning', () => {
   it('warns that the saved results measured something else', () => {
     render(<SinteringWarning study={affected} onRelaunch={vi.fn()} />)
 
-    expect(screen.getByRole('status')).toBeTruthy()
+    expect(screen.getByRole('note')).toBeTruthy()
     expect(screen.getByText(/ran without sintering/i)).toBeTruthy()
   })
 
@@ -48,7 +48,11 @@ describe('SinteringWarning', () => {
 
     // Compute costs real time, so the count belongs on the control rather
     // than in a surprise afterwards.
-    const button = screen.getByRole('button', { name: /relaunch 12 simulations/i })
+    // The label no longer carries a count: `total_simulations` includes
+    // limiting cases and sintering extremes, so it was promising a number the
+    // new study would not match. The figure moved to the explanation, where
+    // it can say what it actually refers to.
+    const button = screen.getByRole('button', { name: /relaunch with the declared/i })
     fireEvent.click(button)
 
     expect(onRelaunch).toHaveBeenCalledWith({
@@ -68,7 +72,7 @@ describe('SinteringWarning', () => {
       />,
     )
 
-    expect(screen.getByRole('status')).toBeTruthy()
+    expect(screen.getByRole('note')).toBeTruthy()
     expect(screen.queryByRole('button', { name: /relaunch/i })).toBeNull()
     expect(screen.getByText(/cannot be relaunched automatically/i)).toBeTruthy()
   })
@@ -98,6 +102,6 @@ describe('SinteringWarning', () => {
       />,
     )
 
-    expect(screen.getByRole('status')).toBeTruthy()
+    expect(screen.getByRole('note')).toBeTruthy()
   })
 })
