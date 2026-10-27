@@ -697,7 +697,10 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     algorithm,
                     dicts=(
                         eff_grid.get("sintering_config"),
-                        _effective("sintering_config", data.get("sintering_config")),
+                        _as_mapping(
+                        _effective("sintering_config", data.get("sintering_config"))
+                    )
+                    or None,
                         eff_base.get("sintering_config"),
                         eff_extremes.get("sintering_config"),
                     ),

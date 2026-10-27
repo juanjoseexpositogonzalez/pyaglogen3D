@@ -348,8 +348,11 @@ that consumes it. Echoing the algorithm counts as touching it, so a `PUT`, which
 settings", and the allow-list decides. When the combination is allowed the update succeeds; when
 it is not, it is refused — the judging is unconditional, the refusal is not.
 
-This is the same gate R13.12 states for the four distribution keys, written here so the two
-requirements say it rather than one of them implying it (approved by the person on 2026-10-26 while
+This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
+the allow-list runs, written here so the two requirements say it rather than one of them implying
+it. The parity stops there: R13 checks scope before shape, so a key declared for the wrong
+algorithm is told so, while R11's shape checks still answer first, so an out-of-range
+`sintering_coeff` on `fracval` is told about its range and not about its algorithm (approved by the person on 2026-10-26 while
 implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
 the measurement and the decision are recorded in issue #115, point 17).
 
@@ -409,7 +412,7 @@ the measurement and the decision are recorded in issue #115, point 17).
 - **THEN** 200, and the stored setting is left exactly as it was
 - **AND** a `PUT`, or any request that carries `base_algorithm` even unchanged, is judged, and refused with 400 when the combination it asserts is one the allow-list forbids — a full update of a study whose settings are allowed still succeeds
 - **AND** adding a sintering setting by update, or moving the algorithm out of the allow-list, is still rejected
-- **AND** any stored container that is not an object — `base_parameters`, `parameter_grid`, `limiting_cases_config` or its `theoretical_extremes` — is ignored rather than judged, because such a row cannot be expanded either; only writers that skip the serializer can produce one, since a payload holding one is refused
+- **AND** any stored container that is not an object — `base_parameters`, `parameter_grid`, `sintering_config`, `limiting_cases_config` or its `theoretical_extremes` — is ignored rather than judged, because such a row cannot be expanded either; only writers that skip the serializer can produce one, since a payload holding one is refused
 
 ## ADDED Requirements
 ### Requirement: R13 — A declared distribution reaches the engine, or the study is refused
