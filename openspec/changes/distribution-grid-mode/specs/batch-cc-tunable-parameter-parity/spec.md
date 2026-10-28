@@ -350,15 +350,20 @@ it is not, it is refused — the judging is unconditional, the refusal is not.
 
 This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
 the allow-list runs, written here so the two requirements say it rather than one of them implying
-it. The parity stops at *when*. **Neither requirement specifies which message wins** when a request
-carries more than one problem, and this delta does not invent one. Six drafts of this paragraph
+it. The parity stops at *when*. **Neither requirement specifies which error message wins** when a
+request carries more than one problem, and this delta does not invent one. This is only about
+which refusal is reported first; the precedence of *values* is a different question and it is
+fixed normatively — R3 and R13.9 state that among dicts the grid entry wins over
+`base_parameters`, which is a promise about what a child runs with, not about error ordering. Six drafts of this paragraph
 tried to describe that order and six were false, because the order is a property of the
 implementation — which validator happens to run first — and not of the contract: the older grid
 loop covers only two of the four distribution keys, container checks and the expansion preview
 answer before either gate, and the parity keys behave differently from the engine keys in the
 same carrier. What each requirement does promise is its own message for its own case, and the
 measured order is pinned where it can fail if it changes: the table in
-`test_the_measured_precedence_between_scope_and_shape`. A requirement that described it here
+`test_the_measured_precedence_between_scope_and_shape`, including the expansion preview, which
+a judge measured could be moved behind both gates with the whole suite still green. A requirement
+that described it here
 would have to be rewritten by anyone who reorders two validators, with nothing failing to tell
 them. (approved by the person on 2026-10-26 while
 implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
