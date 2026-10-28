@@ -585,7 +585,8 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
 @pytest.mark.parametrize(
     ("label", "payload", "expected"),
     [
-        # Scope answers first - everywhere except the last three rows.
+        # Scope answers first in the first four rows and in the two key
+        # rows below; the last five break the tidy rule.
         (
             "mode spelling in the grid",
             {
@@ -617,6 +618,20 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
                     },
                 }
             },
+            "only consumed by",
+        ),
+        # The key dimension, which the first version of this table missed:
+        # the legacy grid loop iterates _DISTRIBUTION_GRID_KEYS, which holds
+        # only the two parity keys, so an engine key answers scope first in
+        # the very carrier and spelling where kf_distribution does not.
+        (
+            "legacy spelling, engine key in the grid",
+            {"parameter_grid": {"target_kf_distribution": [{"distribution_type": "uniform", "min": 1.5, "max": 1.0}]}},
+            "only consumed by",
+        ),
+        (
+            "legacy spelling, dpo key in the grid",
+            {"parameter_grid": {"dpo_distribution": [{"distribution_type": "uniform", "min": 1.5, "max": 1.0}]}},
             "only consumed by",
         ),
         (
@@ -683,14 +698,18 @@ def test_the_measured_precedence_between_scope_and_shape(
     payload: dict[str, Any],
     expected: str,
 ) -> None:
-    """The precedence R11's prose states, measured rather than assumed.
+    """The measured order, pinned here because the contract does not state it.
 
-    Four versions of that sentence were false. The third witness was worse
-    than useless: every case it carried used the `mode` spelling, which is
-    exactly the shape the legacy grid loop skips, so it could not fail for
-    the class that falsifies the sentence a judge then falsified by hand.
-    This table is the measured matrix, carrier by spelling, and the last
-    two rows are the ones that break the tidy rule.
+    Every committed draft of R11's precedence paragraph was false, and each
+    survived a round. The spec no longer describes the order at all: it is
+    a property of which validator happens to run first, and this table is
+    where it belongs, because a table fails when the order changes and a
+    paragraph does not.
+
+    Carrier x spelling x key. The key dimension is what falsified the last
+    draft: `_DISTRIBUTION_GRID_KEYS` holds only the two parity keys, so in
+    the same carrier and the same spelling, `kf_distribution` is answered
+    by the legacy loop and `target_kf_distribution` by the allow-list.
     """
     resp = _post(api_client, project, base_algorithm="fracval", **payload)
 

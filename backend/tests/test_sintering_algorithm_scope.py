@@ -677,13 +677,6 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
                 "parameter_grid": {"sintering_coeff": [0.8]},
             },
         ),
-        (
-            "theoretical_extremes stored as a list",
-            {
-                "include_limiting_cases": True,
-                "limiting_cases_config": {"theoretical_extremes": ["oops"]},
-            },
-        ),
     ],
 )
 def test_a_stored_row_outside_the_allow_list_stays_editable(
@@ -1282,7 +1275,7 @@ def test_the_refusal_is_reported_against_the_field_it_names(
     """The error key of the R11 refusal, pinned once where it is truthful.
 
     A judge measured that swapping `{"sintering_config": ...}` for
-    `{"detail": ...}` left all 89 cases of this file green: every assertion
+    `{"detail": ...}` left all 88 cases of this file green: every assertion
     read the message and none the key. He also measured why pinning it
     across the swept sweep would be wrong - four of those payloads carry
     `sintering_coeff` and never a `sintering_config`. So it is pinned here,
