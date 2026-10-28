@@ -27,3 +27,18 @@ Revisando a ojo: la tarjeta *"Scratch — quick checks"* no tiene descripción, 
 - frontend construido con `NEXT_PUBLIC_API_URL=http://localhost:8001/api/v1`, servido en `:3001`
 - puertos 3000 y 8000 ocupados por otro proyecto de la máquina
 - usuario `demo@pyaglogen3d.dev`, 3 proyectos, 13 simulaciones
+
+## Lista de proyectos (issue #172, PR #179)
+
+Ocho capturas: dos temas × cuatro anchos (320, 900, 1280, 1440). **0 desbordes, 0 expulsiones.**
+
+### Lo que estas capturas comprueban y los tests no
+
+- **El hover del borde**, que estaba invertido: usaba `accent`, un token de superficie, así que el contorno se *aclaraba* al pasar el ratón hasta desaparecer. Ningún test lo veía, porque el mock de `next/link` descarta `className`. Ahora usa el token de marca, igual que el Dashboard.
+- **La alineación de las tarjetas**: "Scratch — quick checks" no tiene descripción y aun así sus métricas quedan a la misma altura que las de sus vecinas. Era el hallazgo anotado al revisar las capturas del Dashboard.
+
+### Un error de método, por si vuelve a pasar
+
+La primera corrida produjo **2 capturas en vez de 8** y aun así informó de *"0 hallazgos"*. El script solo barre los cuatro anchos para una lista fija de pantallas, y esta no estaba en ella: a 320 px **no se miró nada**.
+
+Un "0 hallazgos" solo significa algo si se sabe sobre qué se midió.

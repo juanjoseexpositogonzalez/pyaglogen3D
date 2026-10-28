@@ -1,0 +1,66 @@
+{
+  "flash": {
+    "early": "dark",
+    "afterDom": "dark"
+  },
+  "findings": [],
+  "summary": [
+    {
+      "screen": "07-projects",
+      "theme": "light",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "light",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "light",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "light",
+      "viewport": "320",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "dark",
+      "viewport": "1440",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "dark",
+      "viewport": "1280",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "dark",
+      "viewport": "900",
+      "status": 200,
+      "labels": 0
+    },
+    {
+      "screen": "07-projects",
+      "theme": "dark",
+      "viewport": "320",
+      "status": 200,
+      "labels": 0
+    }
+  ],
+  "sessionDeaths": []
+}
