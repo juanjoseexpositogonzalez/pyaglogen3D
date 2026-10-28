@@ -835,6 +835,9 @@ def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
     # "unknown algorithm" - which is also wrong in front of a user, since the
     # model accepts every one of these names. R11.4 promises a 400 stating
     # that *this algorithm* does not consume sintering.
+    assert "sintering_config" in resp.data, (
+        f"the refusal is not reported against sintering_config: {list(resp.data)}"
+    )
     mensaje = str(resp.data)
     assert algorithm in mensaje and "does not consume" in mensaje, (
         f"the error does not say that {algorithm} ignores sintering: {resp.data}"
@@ -1146,7 +1149,8 @@ def test_the_stored_dict_surfaces_are_judged_when_only_the_algorithm_moves(
 
     Each has its own position in the allow-list call, and each was unwitnessed
     in that dimension: swapping any of them for a payload read left the whole
-    1701-test suite at its baseline while a PATCH moved the study to an
+    suite at its baseline (1685 collected, counted; the 1701 first written
+    here was copied from a judge's report instead of measured) while a PATCH moved the study to an
     algorithm that ignores sintering and kept the setting stored. Surface 1
     was closed first and judges found 3 and 7 open in the same breath, which
     is what parametrising instead of adding one case prevents.
@@ -1251,4 +1255,10 @@ def test_a_mistyped_stored_sintering_config_is_ignored_not_judged(
     assert resp.status_code == 200, (
         f"a stored {type(stored).__name__} in sintering_config was judged "
         f"instead of ignored: {resp.status_code} {resp.data}"
+    )
+    # Ignored means left alone: a "repair" that healed the row by clearing
+    # the stored non-mapping would keep this 200 and pass otherwise.
+    row.refresh_from_db()
+    assert row.sintering_config == stored, (
+        f"the stored value was rewritten instead of ignored: {row.sintering_config!r}"
     )

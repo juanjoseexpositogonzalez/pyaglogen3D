@@ -96,9 +96,7 @@ def _on_surface(key: str, carrier: str, config: Any) -> dict[str, Any]:
     if carrier == "parameter_grid":
         return {"parameter_grid": {key: [config]}}
     if carrier == "base_parameters":
-        return {
-            "base_parameters": {"n_particles": 60, "target_df": 2.0, key: config}
-        }
+        return {"base_parameters": {"n_particles": 60, "target_df": 2.0, key: config}}
     return {
         "include_limiting_cases": True,
         "limiting_cases_config": {"theoretical_extremes": {key: [config]}},
@@ -118,7 +116,9 @@ def test_unknown_mode_is_refused_on_every_surface(
 ) -> None:
     """Twelve surfaces, one rule. Today ten of them answer 201."""
     resp = _post(
-        api_client, project, **_on_surface(key, carrier, {"mode": "lognormal", "value": 1.8})
+        api_client,
+        project,
+        **_on_surface(key, carrier, {"mode": "lognormal", "value": 1.8}),
     )
 
     assert resp.status_code == 400, (
@@ -147,7 +147,11 @@ def test_unknown_mode_is_refused_on_every_surface(
 )
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_out_of_range_is_refused(
-    api_client: APIClient, project: Project, key: str, label: str, config: dict[str, Any]
+    api_client: APIClient,
+    project: Project,
+    key: str,
+    label: str,
+    config: dict[str, Any],
 ) -> None:
     """R13.8. Three of these panic the worker with a non-Exception."""
     resp = _post(api_client, project, **_on_surface(key, "parameter_grid", config))
@@ -213,7 +217,9 @@ def test_the_key_cannot_be_added_by_update(
         format="json",
     )
 
-    assert resp.status_code == 400, f"PATCH slipped {key} past the allow-list: {resp.data}"
+    assert resp.status_code == 400, (
+        f"PATCH slipped {key} past the allow-list: {resp.data}"
+    )
 
 
 @pytest.mark.parametrize("key", ALL_KEYS)
@@ -235,9 +241,13 @@ def test_the_algorithm_cannot_be_moved_out_of_the_allow_list(
     )
 
 
-def test_an_unrelated_update_still_works(api_client: APIClient, project: Project) -> None:
+def test_an_unrelated_update_still_works(
+    api_client: APIClient, project: Project
+) -> None:
     """R13.12's last clause: a stored row stays editable in its other fields."""
-    created = _post(api_client, project, **_on_surface("kf_distribution", "parameter_grid", GOOD))
+    created = _post(
+        api_client, project, **_on_surface("kf_distribution", "parameter_grid", GOOD)
+    )
     assert created.status_code == 201, created.data
 
     resp = api_client.patch(
@@ -366,14 +376,46 @@ def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
 @pytest.mark.parametrize(
     ("label", "grid", "limiting"),
     [
-        ("legacy spelling on a parity key", {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
+        (
+            "legacy spelling on a parity key",
+            {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+            None,
+        ),
         ("unknown mode", {"target_kf_distribution": [{"mode": "lognormal"}]}, None),
-        ("legacy spelling on an engine key", {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
-        ("over the std/mean cap", {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]}, None),
-        ("a bare object swept", {}, {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}),
-        ("a non-numeric bound", {"target_kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]}, None),
-        ("a negative value", {"kf_distribution": [{"mode": "fixed", "value": -1.0}]}, None),
-        ("a non-object entry swept", {}, {"theoretical_extremes": {"dpo_distribution": ["1.8"]}}),
+        (
+            "legacy spelling on an engine key",
+            {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+            None,
+        ),
+        (
+            "over the std/mean cap",
+            {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]},
+            None,
+        ),
+        (
+            "a bare object swept",
+            {},
+            {
+                "theoretical_extremes": {
+                    "kf_distribution": {"mode": "fixed", "value": 1.8}
+                }
+            },
+        ),
+        (
+            "a non-numeric bound",
+            {"target_kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]},
+            None,
+        ),
+        (
+            "a negative value",
+            {"kf_distribution": [{"mode": "fixed", "value": -1.0}]},
+            None,
+        ),
+        (
+            "a non-object entry swept",
+            {},
+            {"theoretical_extremes": {"dpo_distribution": ["1.8"]}},
+        ),
     ],
 )
 @pytest.mark.parametrize("algorithm", (CONSUMES, "fracval"))
@@ -499,7 +541,9 @@ def test_a_row_stored_before_this_change_stays_editable(
         name="historical",
         base_algorithm="tunable",
         base_parameters={"n_particles": 60},
-        parameter_grid={"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+        parameter_grid={
+            "kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]
+        },
         seeds_per_combination=1,
     )
 
@@ -541,13 +585,45 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
 @pytest.mark.parametrize(
     ("label", "payload", "expected"),
     [
-        ("malformed entry in base_parameters", {"base_parameters": {"n_particles": 60, "kf_distribution": {"mode": "nonsense", "value": 1.8}}}, "only consumed by"),
-        ("malformed entry in the grid", {"parameter_grid": {"kf_distribution": [{"mode": "nonsense", "value": 1.8}]}}, "only consumed by"),
-        ("swept container that is not a list", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}}, "must be a list"),
+        (
+            "malformed entry in base_parameters",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "kf_distribution": {"mode": "nonsense", "value": 1.8},
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "malformed entry in the grid",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "swept container that is not a list",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "kf_distribution": {"mode": "fixed", "value": 1.8}
+                    }
+                },
+            },
+            "must be a list",
+        ),
     ],
 )
 def test_scope_answers_before_the_entry_shape_but_not_before_the_container(
-    api_client: APIClient, project: Project, label: str, payload: dict[str, Any], expected: str
+    api_client: APIClient,
+    project: Project,
+    label: str,
+    payload: dict[str, Any],
+    expected: str,
 ) -> None:
     """The precedence R11's prose states, measured rather than assumed.
 
