@@ -585,10 +585,13 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
 @pytest.mark.parametrize(
     ("label", "payload", "expected"),
     [
-        # Rows 1-6 are answered by the allow-list. Rows 7-11 are not, and
-        # not for one reason: row 7 is refused inside the R13 gate by
-        # collect_surfaces for its container shape, rows 8-9 by the legacy
-        # grid loop, rows 10-11 by the container guard before any of it.
+        # Counted by what answers them, not by position, because every
+        # positional count written here so far has been wrong. Six rows are
+        # answered by the allow-list; the rest are not, and not for one
+        # reason: the swept non-list is refused inside the R13 gate by
+        # collect_surfaces, the two legacy grid entries by the older grid
+        # loop, the two non-object carriers by the container guard before
+        # any of it, and the oversized sweep by the expansion preview.
         (
             "mode spelling in the grid",
             {

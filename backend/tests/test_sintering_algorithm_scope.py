@@ -980,6 +980,15 @@ def test_a_mistyped_stored_container_answers_a_status_not_a_crash(
         f"{label} was judged on its stored garbage instead of ignored: "
         f"{resp.status_code} {resp.data}"
     )
+    # Ignored means left alone, which the status alone does not show. The
+    # only witness of that half was a row removed this round for never
+    # reaching the guard, so without this a repair that healed the stored
+    # container would ship green.
+    row.refresh_from_db()
+    for field, value in stored.items():
+        assert getattr(row, field) == value, (
+            f"{label} rewrote {field} instead of ignoring it: {getattr(row, field)!r}"
+        )
 
 
 @pytest.mark.parametrize(
@@ -1014,6 +1023,7 @@ def test_a_mistyped_stored_container_answers_a_status_not_a_crash(
         ("5 grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
     ],
 )
+
 def test_no_surface_persists_sintering_on_an_algorithm_that_ignores_it(
     api_client: APIClient, project: Project, surface: str, payload: dict[str, Any]
 ) -> None:
