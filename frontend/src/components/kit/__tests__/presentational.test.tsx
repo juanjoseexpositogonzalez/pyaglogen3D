@@ -11,7 +11,9 @@ import { EmptyState } from '../EmptyState'
 import { FilterBar, FilterField } from '../FilterBar'
 import { MetricCard } from '../MetricCard'
 import { PageHeader } from '../PageHeader'
+import { DisclosurePanel } from '../DisclosurePanel'
 import { Panel } from '../Panel'
+import { VisualPanel } from '../VisualPanel'
 
 describe('DetailList', () => {
   it('renders a null value as an em dash through Num', () => {
@@ -103,6 +105,28 @@ describe('MetricCard', () => {
   })
 })
 
+// The page outline is a contract between primitives, not a property of any
+// one of them: PageHeader opens at 1, panels sit at 2, and a disclosure
+// nested inside a panel sits at 3. Pinned together because the levels only
+// mean something relative to each other, and nothing else here would notice
+// one of them drifting.
+describe('the heading levels the kit emits', () => {
+  // Rendered through factories rather than inline elements: passing a React
+  // element to `it.each` makes the name formatter walk the tree and blow the
+  // stack, which reports as "no tests" instead of as a failure.
+  const cases: Array<[string, number, string, () => void]> = [
+    ['PageHeader', 1, 'Soot aggregate 12', () => render(<PageHeader title="Soot aggregate 12" />)],
+    ['Panel', 2, 'Coordination number', () => render(<Panel title="Coordination number">body</Panel>)],
+    ['VisualPanel', 2, 'Projection', () => render(<VisualPanel title="Projection">body</VisualPanel>)],
+    ['DisclosurePanel', 3, 'Raw values', () => render(<DisclosurePanel title="Raw values">body</DisclosurePanel>)],
+  ]
+
+  it.each(cases)('%s opens at level %i', (_name, level, title, mount) => {
+    mount()
+    expect(screen.getByRole('heading', { level, name: title })).toBeTruthy()
+  })
+})
+
 describe('Panel', () => {
   it('renders its title as a heading so the page outlines correctly', () => {
     render(
@@ -110,7 +134,7 @@ describe('Panel', () => {
         <p>body</p>
       </Panel>,
     )
-    expect(screen.getByRole('heading', { name: 'Coordination number' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Coordination number' })).toBeTruthy()
     expect(screen.getByText('Contacts per primary particle')).toBeTruthy()
   })
 
