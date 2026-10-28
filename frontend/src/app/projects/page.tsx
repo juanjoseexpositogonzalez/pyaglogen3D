@@ -65,6 +65,7 @@ export default function ProjectsPage() {
           icon={FolderOpen}
           title="No projects yet"
           description="Create your first project to start running simulations"
+          headingLevel={2}
           action={
             <Link href="/projects/new">
               <Button>
@@ -78,7 +79,7 @@ export default function ProjectsPage() {
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
             <Link key={project.id} href={`/projects/${project.id}`} className="group block">
-              <article className="flex h-full flex-col rounded-lg border border-line bg-surface p-4 transition-colors hover:border-accent/50">
+              <article className="flex h-full flex-col rounded-lg border border-line bg-surface p-4 transition-colors group-hover:border-brand">
                 <div className="flex items-start justify-between gap-2">
                   <h2 className="m-0 text-[15px] font-semibold tracking-[-0.015em] text-ink">
                     {project.name}
@@ -87,6 +88,7 @@ export default function ProjectsPage() {
                     variant="ghost"
                     size="icon"
                     className="-mr-2 -mt-1 opacity-0 transition-opacity group-hover:opacity-100"
+                    aria-label={`Delete ${project.name}`}
                     onClick={(e) => handleDelete(project.id, e)}
                   >
                     <Trash2 className="h-4 w-4 text-danger" />
@@ -107,12 +109,12 @@ export default function ProjectsPage() {
                     <span className="inline-flex items-center gap-1.5">
                       <Atom className="h-4 w-4" aria-hidden="true" />
                       <Num value={project.simulation_count} digits={0} size="sm" />
-                      simulations
+                      <span>simulations</span>
                     </span>
                     <span className="inline-flex items-center gap-1.5">
                       <ImageIcon className="h-4 w-4" aria-hidden="true" />
                       <Num value={project.analysis_count} digits={0} size="sm" />
-                      analyses
+                      <span>analyses</span>
                     </span>
                   </div>
                   <p className="mt-1.5 text-[11px] text-ink-faint">

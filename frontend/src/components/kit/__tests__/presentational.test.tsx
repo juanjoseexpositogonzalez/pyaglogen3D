@@ -160,11 +160,16 @@ describe('EmptyState', () => {
   it('explains what the surface is for, not merely that it is empty', () => {
     render(
       <EmptyState
+        headingLevel={2}
         title="No simulations yet"
         description="A simulation generates a 3D agglomerate from an algorithm and a seed."
       />,
     )
     expect(screen.getByText(/generates a 3D agglomerate/)).toBeTruthy()
+    // The level is the caller's call because an empty state sits wherever its
+    // page puts it — but it must still be a heading, which is what the screen
+    // it replaced had and what navigating by headings depends on.
+    expect(screen.getByRole('heading', { level: 2, name: 'No simulations yet' })).toBeTruthy()
   })
 })
 

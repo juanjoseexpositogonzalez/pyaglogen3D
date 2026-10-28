@@ -95,6 +95,7 @@ export default function DashboardPage() {
 
             {projects.length === 0 ? (
               <EmptyState
+                headingLevel={3}
                 icon={FolderOpen}
                 title="No projects yet"
                 description="Create your first project to start running simulations"

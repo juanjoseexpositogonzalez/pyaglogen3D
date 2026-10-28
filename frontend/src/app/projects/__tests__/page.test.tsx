@@ -12,7 +12,7 @@
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -71,10 +71,15 @@ describe('the projects list', () => {
 
     // Not "renders no <header>": the kit's own PageHeader is a <header>, so
     // that assertion failed for the wrong reason and satisfying it would have
-    // undone the migration. What the retired header brought was navigation,
-    // and the shell in app/layout.tsx owns that now.
+    // undone the migration.
+    //
+    // Worth knowing what this does and does not prove: rendered here, outside
+    // AppShellProvider, the retired Header draws its navigation. Inside the
+    // real shell it returns null, so remounting it would be invisible to a
+    // user and still turn this red. It guards the import, not the experience
+    // — kept because a page growing its own navigation is still worth
+    // catching, not because it measures what someone sees.
     expect(container.querySelector('nav')).toBeNull()
-    expect(screen.queryByRole('button', { name: /sign out|log out/i })).toBeNull()
   })
 
   it('says it is loading while the request is in flight', () => {
@@ -113,7 +118,7 @@ describe('the projects list', () => {
     expect(screen.getByRole('link', { name: /scratch/i }).getAttribute('href')).toBe('/projects/b')
   })
 
-  it('shows counts as whole numbers, not as 6.000', () => {
+  it('shows counts as whole numbers, with no decimal point at all', () => {
     mockUseProjects.mockReturnValue({
       data: { results: [project('a', 'Soot aggregates', 6, 2)] },
       isLoading: false,
@@ -121,17 +126,22 @@ describe('the projects list', () => {
     })
     const { container } = render(<ProjectsPage />)
 
-    // `Num` defaults to three decimals. A count of simulations with decimals
-    // is the defect the Dashboard migration shipped and a judge caught.
-    expect(container.textContent).toContain('6')
-    expect(container.textContent).not.toContain('6.000')
-    expect(container.textContent).not.toContain('2.000')
+    // `Num` defaults to two decimals, so dropping `digits={0}` renders
+    // "6.00 simulations". The first version of this test asserted against
+    // '6.000' — a value that could never appear — so the guard passed with
+    // the mutation in place. Assert the shape, not one spelling of it.
+    // Bound to its unit: swapping the two counts used to leave every test
+    // green while the card claimed "2 simulations" for a project with six.
+    expect(screen.getByText('simulations').previousSibling?.textContent).toContain('6')
+    expect(screen.getByText('analyses').previousSibling?.textContent).toContain('2')
+    expect(container.textContent).not.toMatch(/\d\.\d/)
   })
 
-  // The seven assertions above describe behaviour a user can perceive, and
-  // most of them already held before the migration: that is the point, they
-  // are regression guards. The two below are what actually changes, so they
-  // are the ones that start red.
+  // Measured, not assumed: run this file against the page as it stood on
+  // develop and three fail — the deprecated header, the tabular numerals and
+  // the kit's empty-state surface. The other seven already held, which is the
+  // point: they are regression guards for behaviour the port must not lose,
+  // not evidence that the port happened.
   it('renders counts with the tabular numerals of the kit', () => {
     mockUseProjects.mockReturnValue({
       data: { results: [project('a', 'Soot aggregates', 6, 2)] },
@@ -151,15 +161,93 @@ describe('the projects list', () => {
     expect(container.querySelector('.border-dashed')).not.toBeNull()
   })
 
-  it('keeps the card readable when a project has no description', () => {
+  it('shows the description when there is one and omits it when there is not', () => {
     mockUseProjects.mockReturnValue({
-      data: { results: [project('a', 'Scratch', 2, 0, null)] },
+      data: {
+        results: [
+          project('a', 'Soot aggregates', 6, 2, 'Tunable Df from 1.6 to 2.4'),
+          project('b', 'Scratch', 2, 0, null),
+        ],
+      },
       isLoading: false,
       error: null,
     })
     render(<ProjectsPage />)
 
+    // The earlier version of this test rendered only the project without a
+    // description, so it isolated nothing, and matched /2/ against the whole
+    // document — a regex that passes on "12" just as happily.
+    expect(screen.getByText('Tunable Df from 1.6 to 2.4')).toBeTruthy()
     expect(screen.getByRole('link', { name: /scratch/i })).toBeTruthy()
-    expect(screen.getByText(/2/)).toBeTruthy()
+  })
+
+  it('keeps saying when each project was last touched', () => {
+    mockUseProjects.mockReturnValue({
+      data: { results: [project('a', 'Soot aggregates', 6, 2)] },
+      isLoading: false,
+      error: null,
+    })
+    render(<ProjectsPage />)
+
+    // The line a port loses most easily, because nothing else refers to it.
+    expect(screen.getByText(/updated/i)).toBeTruthy()
+  })
+
+  it('names each project with a second-level heading under the page title', () => {
+    mockUseProjects.mockReturnValue({
+      data: { results: [project('a', 'Soot aggregates', 6, 2)] },
+      isLoading: false,
+      error: null,
+    })
+    render(<ProjectsPage />)
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Soot aggregates' })).toBeTruthy()
+  })
+
+  it('announces the empty state as a heading, not as loose text', () => {
+    render(<ProjectsPage />)
+
+    // The screen this replaced used an <h3>. Someone navigating by headings
+    // would otherwise stop finding the empty state at all.
+    expect(screen.getByRole('heading', { name: /no projects yet/i })).toBeTruthy()
+  })
+})
+
+describe('deleting a project', () => {
+  const confirmSpy = vi.fn(() => true)
+
+  beforeEach(() => {
+    mockUseProjects.mockReturnValue({
+      data: { results: [project('a', 'Soot aggregates', 6, 2)] },
+      isLoading: false,
+      error: null,
+    })
+    vi.stubGlobal('confirm', confirmSpy)
+  })
+
+  // This PR promises it does not change the delete behaviour. Nothing proved
+  // it: removing the button entirely left all ten tests green.
+  it('offers a delete control that says what it deletes', () => {
+    render(<ProjectsPage />)
+
+    expect(screen.getByRole('button', { name: /delete soot aggregates/i })).toBeTruthy()
+  })
+
+  it('asks before deleting and then deletes that project', () => {
+    render(<ProjectsPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /delete soot aggregates/i }))
+
+    expect(confirmSpy).toHaveBeenCalled()
+    expect(mockMutate).toHaveBeenCalledWith('a')
+  })
+
+  it('does not delete when the confirmation is declined', () => {
+    confirmSpy.mockReturnValueOnce(false)
+    render(<ProjectsPage />)
+
+    fireEvent.click(screen.getByRole('button', { name: /delete soot aggregates/i }))
+
+    expect(mockMutate).not.toHaveBeenCalled()
   })
 })
