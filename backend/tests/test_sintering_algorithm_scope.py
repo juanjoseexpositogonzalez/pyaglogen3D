@@ -606,16 +606,77 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
 @pytest.mark.parametrize(
     ("label", "stored"),
     [
-        ("grid dict", {"parameter_grid": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}),
-        ("study field", {"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}),
-        ("base_parameters dict", {"base_parameters": {"n_particles": 100, "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}}),
-        ("base_parameters flat", {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
+        (
+            "grid dict",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "study field",
+            {"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        ),
+        (
+            "base_parameters dict",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "base_parameters flat",
+            {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}},
+        ),
         ("grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
-        ("extremes flat sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_coeff": [0.8]}}}),
-        ("extremes dict sweep", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
-        ("grid stored as a list", {"parameter_grid": [1, 2, 3], "base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
-        ("base_parameters stored as a string", {"base_parameters": "oops", "parameter_grid": {"sintering_coeff": [0.8]}}),
-        ("limiting stored as a list", {"limiting_cases_config": [1, 2], "parameter_grid": {"sintering_coeff": [0.8]}}),
+        (
+            "extremes flat sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": [0.8]}
+                },
+            },
+        ),
+        (
+            "extremes dict sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                },
+            },
+        ),
+        (
+            "grid stored as a list",
+            {
+                "parameter_grid": [1, 2, 3],
+                "base_parameters": {"n_particles": 100, "sintering_coeff": 0.8},
+            },
+        ),
+        (
+            "base_parameters stored as a string",
+            {"base_parameters": "oops", "parameter_grid": {"sintering_coeff": [0.8]}},
+        ),
+        (
+            "limiting stored as a list",
+            {
+                "limiting_cases_config": [1, 2],
+                "parameter_grid": {"sintering_coeff": [0.8]},
+            },
+        ),
     ],
 )
 def test_a_stored_row_outside_the_allow_list_stays_editable(
@@ -683,7 +744,9 @@ def test_the_bypass_that_was_critical_in_97_stays_closed(
         data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
         format="json",
     )
-    assert added.status_code == 400, f"PATCH slipped sintering past the allow-list: {added.data}"
+    assert added.status_code == 400, (
+        f"PATCH slipped sintering past the allow-list: {added.data}"
+    )
     created.refresh_from_db()
     assert not created.sintering_config, (
         f"refused with 400 and persisted it anyway: {created.sintering_config!r}"
@@ -710,13 +773,35 @@ def test_the_bypass_that_was_critical_in_97_stays_closed(
 @pytest.mark.parametrize(
     ("label", "payload"),
     [
-        ("extremes flat sweep", {"limiting_cases_config": {"theoretical_extremes": {"sintering_coeff": [0.8]}}}),
-        ("extremes dict sweep", {"limiting_cases_config": {"theoretical_extremes": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}}),
+        (
+            "extremes flat sweep",
+            {
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": [0.8]}
+                }
+            },
+        ),
+        (
+            "extremes dict sweep",
+            {
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                }
+            },
+        ),
     ],
 )
 @pytest.mark.parametrize("algorithm", NO_SINTERING)
 def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
-    api_client: APIClient, project: Project, label: str, payload: dict[str, Any], algorithm: str
+    api_client: APIClient,
+    project: Project,
+    label: str,
+    payload: dict[str, Any],
+    algorithm: str,
 ) -> None:
     """Surfaces 6 and 7 of R3, which the first version of this guard missed.
 
@@ -846,7 +931,10 @@ def test_a_full_representation_is_judged_even_when_the_algorithm_is_unchanged(
         ("grid stored as a list", {"parameter_grid": [1, 2, 3]}),
         ("base_parameters stored as a string", {"base_parameters": "oops"}),
         ("limiting stored as a list", {"limiting_cases_config": [1, 2]}),
-        ("extremes stored as a list", {"limiting_cases_config": {"theoretical_extremes": [1, 2]}}),
+        (
+            "extremes stored as a list",
+            {"limiting_cases_config": {"theoretical_extremes": [1, 2]}},
+        ),
     ],
 )
 def test_a_mistyped_stored_container_answers_a_status_not_a_crash(
@@ -888,9 +976,32 @@ def test_a_mistyped_stored_container_answers_a_status_not_a_crash(
 @pytest.mark.parametrize(
     ("surface", "payload"),
     [
-        ("1 grid dict", {"parameter_grid": {"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]}}),
-        ("3 base_parameters dict", {"base_parameters": {"n_particles": 100, "sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}}}),
-        ("4 base_parameters flat", {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}}),
+        (
+            "1 grid dict",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "3 base_parameters dict",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "4 base_parameters flat",
+            {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}},
+        ),
         ("5 grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
     ],
 )
@@ -914,10 +1025,15 @@ def test_no_surface_persists_sintering_on_an_algorithm_that_ignores_it(
         parameter_grid={},
         seeds_per_combination=1,
     )
-    # A snapshot by value: holding the dicts themselves compares equal against
-    # the row even after a write in place, which is the shape of witness this
-    # file has spent three rounds removing.
-    before = json.loads(json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config]))
+    # A snapshot by value rather than by reference. Said as what it is:
+    # hardening, not a measured hole. A judge tried and could not build a
+    # mutation that the reference form survives and this one catches, because
+    # DRF re-fetches the instance, so the serializer never mutates this
+    # object. It future-proofs a refactor that calls the serializer in
+    # process; it does not close anything measured today.
+    before = json.loads(
+        json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config])
+    )
 
     resp = api_client.patch(
         f"/api/v1/projects/{project.id}/studies/{row.id}/", data=payload, format="json"
@@ -925,7 +1041,9 @@ def test_no_surface_persists_sintering_on_an_algorithm_that_ignores_it(
 
     assert resp.status_code == 400, f"surface {surface} was accepted: {resp.data}"
     row.refresh_from_db()
-    after = json.loads(json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config]))
+    after = json.loads(
+        json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config])
+    )
     assert after == before, (
         f"surface {surface} answered 400 and wrote anyway: "
         f"{row.base_parameters} {row.parameter_grid} {row.sintering_config}"
@@ -981,6 +1099,84 @@ def test_a_full_update_of_an_allowed_study_still_succeeds(
     )
 
 
+@pytest.mark.parametrize(
+    ("surface", "stored"),
+    [
+        (
+            "1 parameter_grid",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "3 base_parameters",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "7 theoretical_extremes",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                },
+            },
+        ),
+    ],
+)
+def test_the_stored_dict_surfaces_are_judged_when_only_the_algorithm_moves(
+    api_client: APIClient, project: Project, surface: str, stored: dict[str, Any]
+) -> None:
+    """The three dict surfaces read from the row, not from the payload.
+
+    Each has its own position in the allow-list call, and each was unwitnessed
+    in that dimension: swapping any of them for a payload read left the whole
+    1701-test suite at its baseline while a PATCH moved the study to an
+    algorithm that ignores sintering and kept the setting stored. Surface 1
+    was closed first and judges found 3 and 7 open in the same breath, which
+    is what parametrising instead of adding one case prevents.
+    """
+    campos: dict[str, Any] = {
+        "project": project,
+        "name": f"stored {surface}",
+        "base_algorithm": "tunable_cc",
+        "base_parameters": {"n_particles": 100},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    campos.update(stored)
+    row = ParametricStudy.objects.create(**campos)
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        f"stored surface {surface} was not judged when the algorithm moved: {resp.data}"
+    )
+    row.refresh_from_db()
+    assert row.base_algorithm == "tunable_cc", (
+        f"the algorithm moved to {row.base_algorithm} leaving surface {surface} unread"
+    )
+
+
 def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
     api_client: APIClient, project: Project
 ) -> None:
@@ -998,7 +1194,9 @@ def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
         name="stored grid dict",
         base_algorithm="tunable_cc",
         base_parameters={"n_particles": 100},
-        parameter_grid={"sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]},
+        parameter_grid={
+            "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]
+        },
         seeds_per_combination=1,
     )
 
@@ -1014,4 +1212,42 @@ def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
     row.refresh_from_db()
     assert row.base_algorithm == "tunable_cc", (
         f"the algorithm moved anyway, leaving sintering unread: {row.base_algorithm}"
+    )
+
+
+@pytest.mark.parametrize(
+    "stored",
+    [[{"distribution_type": "fixed", "coefficient": 0.8}], "oops", 42],
+)
+def test_a_mistyped_stored_sintering_config_is_ignored_not_judged(
+    api_client: APIClient, project: Project, stored: Any
+) -> None:
+    """The fifth container, whose guard had no witness at all.
+
+    The discriminating move is towards an algorithm that does **not** consume
+    sintering: towards one that does there is nothing to judge, which is why
+    the first version of this witness passed with the guard reverted. With
+    the guard, the stored garbage is ignored and the request is answered on
+    what it carries; without it, `check_algorithm_scope` reads the non-mapping
+    as a setting and refuses a row the contract says to leave alone.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="stored sintering garbage",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+        sintering_config=stored,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a stored {type(stored).__name__} in sintering_config was judged "
+        f"instead of ignored: {resp.status_code} {resp.data}"
     )

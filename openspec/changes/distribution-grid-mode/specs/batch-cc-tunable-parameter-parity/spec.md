@@ -350,9 +350,11 @@ it is not, it is refused — the judging is unconditional, the refusal is not.
 
 This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
 the allow-list runs, written here so the two requirements say it rather than one of them implying
-it. The parity stops there: R13 checks scope before shape, so a key declared for the wrong
-algorithm is told so, while R11's shape checks still answer first, so an out-of-range
-`sintering_coeff` on `fracval` is told about its range and not about its algorithm (approved by the person on 2026-10-26 while
+it. The parity stops at *when*. Neither requirement promises which message wins: in R11 the shape
+checks answer first, so an out-of-range `sintering_coeff` on `fracval` is told about its range
+and not about its algorithm, and R13 behaves the same way for a malformed config — only a
+**well-formed** one declared for an algorithm that cannot consume it is told about the algorithm.
+Message precedence is not specified by either, and this sentence does not invent it (approved by the person on 2026-10-26 while
 implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
 the measurement and the decision are recorded in issue #115, point 17).
 
