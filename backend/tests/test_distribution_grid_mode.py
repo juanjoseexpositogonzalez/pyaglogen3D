@@ -585,8 +585,18 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
 @pytest.mark.parametrize(
     ("label", "payload", "expected"),
     [
+        # Scope answers first - everywhere except the last three rows.
         (
-            "malformed entry in base_parameters",
+            "mode spelling in the grid",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "mode spelling in base_parameters",
             {
                 "base_parameters": {
                     "n_particles": 60,
@@ -596,14 +606,37 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
             "only consumed by",
         ),
         (
-            "malformed entry in the grid",
+            "legacy spelling in base_parameters",
             {
-                "parameter_grid": {
-                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                "base_parameters": {
+                    "n_particles": 60,
+                    "kf_distribution": {
+                        "distribution_type": "uniform",
+                        "min": 1.5,
+                        "max": 1.0,
+                    },
                 }
             },
             "only consumed by",
         ),
+        (
+            "legacy spelling in a swept carrier",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "kf_distribution": [
+                            {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                        ]
+                    }
+                },
+            },
+            "only consumed by",
+        ),
+        # The exceptions. The first is the carrier's own shape. The other
+        # two are the legacy grid loop, which runs before the allow-list and
+        # skips only entries carrying `mode`, so in parameter_grid alone the
+        # precedence depends on the spelling.
         (
             "swept container that is not a list",
             {
@@ -616,9 +649,34 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
             },
             "must be a list",
         ),
+        (
+            "legacy spelling in the grid",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
+            "must be <=",
+        ),
+        (
+            "legacy non-dict entry in the grid",
+            {"parameter_grid": {"kf_distribution": [1.3]}},
+            "must be a dict",
+        ),
+        # And the carrier's own container shape, which a judge measured
+        # after the fifth version of the sentence still called the swept
+        # carrier the only container that answers first. It is not.
+        ("grid that is not an object", {"parameter_grid": []}, "must be an object"),
+        (
+            "base_parameters that is not an object",
+            {"base_parameters": []},
+            "must be an object",
+        ),
     ],
 )
-def test_scope_answers_before_the_entry_shape_but_not_before_the_container(
+def test_the_measured_precedence_between_scope_and_shape(
     api_client: APIClient,
     project: Project,
     label: str,
@@ -627,16 +685,16 @@ def test_scope_answers_before_the_entry_shape_but_not_before_the_container(
 ) -> None:
     """The precedence R11's prose states, measured rather than assumed.
 
-    Three rounds of judges caught three versions of that sentence asserting
-    something the code does not do. It says now that R13 answers the
-    allow-list before the entry's own shape - so a malformed config on an
-    algorithm that cannot consume it is told about the algorithm - while a
-    swept container that is not a list is still refused for its container
-    shape. This is the witness that keeps the fourth version honest.
+    Four versions of that sentence were false. The third witness was worse
+    than useless: every case it carried used the `mode` spelling, which is
+    exactly the shape the legacy grid loop skips, so it could not fail for
+    the class that falsifies the sentence a judge then falsified by hand.
+    This table is the measured matrix, carrier by spelling, and the last
+    two rows are the ones that break the tidy rule.
     """
     resp = _post(api_client, project, base_algorithm="fracval", **payload)
 
     assert resp.status_code == 400, f"{label} was accepted: {resp.data}"
     assert expected in str(resp.data), (
-        f"{label} answered with another precedence than the one R11 states: {resp.data}"
+        f"{label} answered with another precedence than R11 states: {resp.data}"
     )

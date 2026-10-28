@@ -677,6 +677,13 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
                 "parameter_grid": {"sintering_coeff": [0.8]},
             },
         ),
+        (
+            "theoretical_extremes stored as a list",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {"theoretical_extremes": ["oops"]},
+            },
+        ),
     ],
 )
 def test_a_stored_row_outside_the_allow_list_stays_editable(
@@ -835,9 +842,15 @@ def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
     # "unknown algorithm" - which is also wrong in front of a user, since the
     # model accepts every one of these names. R11.4 promises a 400 stating
     # that *this algorithm* does not consume sintering.
-    assert "sintering_config" in resp.data, (
-        f"the refusal is not reported against sintering_config: {list(resp.data)}"
-    )
+    # No assertion on the error key here. It is `sintering_config` for every
+    # sintering surface, including the four of these cases whose payload
+    # carries `sintering_coeff` and no `sintering_config` at all - a field
+    # label naming a field the request never sent. R13 reports the real
+    # surface instead ("parameter_grid.kf_distribution[0]"), so the two
+    # halves of the API disagree, and pinning the key across these eight
+    # cases would forbid the fix rather than witness the requirement. R11.4
+    # promises the message, which the next assertion pins; the key has its
+    # own witness in test_the_refusal_is_reported_against_the_field_it_names.
     mensaje = str(resp.data)
     assert algorithm in mensaje and "does not consume" in mensaje, (
         f"the error does not say that {algorithm} ignores sintering: {resp.data}"
@@ -1149,8 +1162,7 @@ def test_the_stored_dict_surfaces_are_judged_when_only_the_algorithm_moves(
 
     Each has its own position in the allow-list call, and each was unwitnessed
     in that dimension: swapping any of them for a payload read left the whole
-    suite at its baseline (1685 collected, counted; the 1701 first written
-    here was copied from a judge's report instead of measured) while a PATCH moved the study to an
+    suite at its baseline while a PATCH moved the study to an
     algorithm that ignores sintering and kept the setting stored. Surface 1
     was closed first and judges found 3 and 7 open in the same breath, which
     is what parametrising instead of adding one case prevents.
@@ -1261,4 +1273,37 @@ def test_a_mistyped_stored_sintering_config_is_ignored_not_judged(
     row.refresh_from_db()
     assert row.sintering_config == stored, (
         f"the stored value was rewritten instead of ignored: {row.sintering_config!r}"
+    )
+
+
+def test_the_refusal_is_reported_against_the_field_it_names(
+    api_client: APIClient, project: Project
+) -> None:
+    """The error key of the R11 refusal, pinned once where it is truthful.
+
+    A judge measured that swapping `{"sintering_config": ...}` for
+    `{"detail": ...}` left all 89 cases of this file green: every assertion
+    read the message and none the key. He also measured why pinning it
+    across the swept sweep would be wrong - four of those payloads carry
+    `sintering_coeff` and never a `sintering_config`. So it is pinned here,
+    on the one surface that really does send that field.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        format="json",
+    )
+
+    assert resp.status_code == 400, f"sintering slipped onto fracval: {resp.data}"
+    assert "sintering_config" in resp.data, (
+        f"the refusal does not name the field the request sent: {list(resp.data)}"
     )

@@ -353,10 +353,17 @@ the allow-list runs, written here so the two requirements say it rather than one
 it. The parity stops at *when*: the two requirements **do not agree** on which message wins, and
 this is measured rather than assumed. In R11 the shape checks answer first, so an out-of-range
 `sintering_coeff` on `fracval` is told about its range and not about its algorithm. In R13 the
-allow-list answers before the entry's own shape, so a malformed config declared for an algorithm
-that cannot consume it is told about the algorithm; the one thing that still answers before the
-allow-list there is a swept container that is not a list, which is refused for its container
-shape. Neither requirement promises a precedence beyond that (approved by the person on 2026-10-26 while
+allow-list usually answers before the entry's own shape, so a malformed config declared for an
+algorithm that cannot consume it is told about the algorithm — but **two** classes still answer
+first, and neither is a tidy rule. The first is the carrier's own container shape: a
+`parameter_grid` or `base_parameters` that is not an object, or a swept carrier that is not a
+list, is refused for that before anything looks inside it. The second depends on the spelling
+rather than the carrier: in `parameter_grid` alone, entries in the legacy spelling are validated
+by the older grid loop, which runs before the allow-list and skips only entries carrying `mode`,
+so `[{"distribution_type": "uniform", "min": 1.5, "max": 1.0}]` on `fracval` is told about its
+range while the same malformation in `base_parameters` or in a swept carrier is told about the
+algorithm. That second class disappears when R1 narrows the accepted spelling; the first does
+not. Neither requirement promises a precedence beyond this measured table (approved by the person on 2026-10-26 while
 implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
 the measurement and the decision are recorded in issue #115, point 17).
 
