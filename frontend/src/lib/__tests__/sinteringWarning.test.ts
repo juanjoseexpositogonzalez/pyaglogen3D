@@ -319,6 +319,23 @@ describe('the payload a relaunch sends', () => {
     expect(payload?.parameter_grid.kf).toEqual([1.2, 1.3])
   })
 
+  // A witness for a dependency, not for this module: the translation lives in
+  // `toSinteringConfig`, and another branch is about to narrow it to the
+  // selector's spelling only. That half is what this needs, so it is pinned
+  // here — all three kinds, because covering one leaves two open in the same
+  // place, which is how the earlier gap got through.
+  it.each([
+    [{ mode: 'normal', mean: 0.9, std: 0.05 }, { distribution_type: 'normal', mean: 0.9, std: 0.05 }],
+    [{ mode: 'fixed', value: 0.85 }, { distribution_type: 'fixed', coefficient: 0.85 }],
+    [{ mode: 'uniform', min: 0.5, max: 0.9 }, { distribution_type: 'uniform', min: 0.5, max: 0.9 }],
+  ])('translates the stored %o into what the API accepts', (stored, expected) => {
+    const payload = relaunchPayloadFor(
+      { ...study, parameter_grid: { sintering_config: [stored] } },
+      { distribution_type: 'fixed', coefficient: 1 },
+    )
+    expect(payload?.parameter_grid.sintering_config).toEqual([expected])
+  })
+
   it('refuses when a grid entry cannot be normalised', () => {
     const payload = relaunchPayloadFor(
       { ...study, parameter_grid: { sintering_config: [{ mode: 'normal', mean: 0.8 }] } },
