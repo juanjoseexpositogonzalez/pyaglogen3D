@@ -94,9 +94,9 @@ The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened.
 follows the **magnitude**, not the spelling: it applies to `particle_radius_config` and to
 `dpo_distribution` alike, on every surface R13 enumerates. Guarding one name and leaving the
 other open would let the same value reach the same engine input by renaming the key, which is
-weakening it by another route. Approved by the person on 2026-10-26, after the first
-judgment-day measured `particle_radius_config` answering 400 and `dpo_distribution` answering
-201 for the same `std/mean = 0.5`.
+weakening it by another route. Approved by the person on 2026-10-26, after measuring
+that `particle_radius_config` answered 400 and `dpo_distribution` 201 for the same
+`std/mean = 0.5`.
 
 This key varies the primary particle size **per run**, not within a run: the engine samples the
 distribution once at run start and every particle of that run shares the sampled value (measured:
@@ -351,14 +351,11 @@ it is not, it is refused — the judging is unconditional, the refusal is not.
 This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
 the allow-list runs, written here so the two requirements say it rather than one of them implying
 it. The parity stops at *when*. **This contract says nothing about which refusal is reported first**
-when one request carries several problems at once, and no requirement here should: the order is a
-property of which validator runs first, and seven drafts of this paragraph tried to describe it
-and were each false in a dimension their author had not probed — the carrier, the spelling, the
-key family, the kind of malformation. What the order actually is, today, is recorded where a
-change to it shows up as a failing test rather than as stale prose:
+when one request carries several problems at once, and no requirement here should: that order is
+a property of which validator runs first, not of what the API promises. What it is today is
+recorded where a change to it fails a test instead of going quietly stale, in
 `test_the_measured_precedence_between_scope_and_shape`. (approved by the person on 2026-10-26 while
-implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
-the measurement and the decision are recorded in issue #115, point 17).
+implementing issue #141; the measurement behind it is recorded in issue #115, point 17).
 
 #### Scenario R11.1 — Normal sintering arrives with its mean
 
