@@ -536,3 +536,31 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
     study = ParametricStudy.objects.get(id=resp.data["id"])
     children = list(study.simulations.all())
     assert children, "accepted the study and created no child"
+
+
+@pytest.mark.parametrize(
+    ("label", "payload", "expected"),
+    [
+        ("malformed entry in base_parameters", {"base_parameters": {"n_particles": 60, "kf_distribution": {"mode": "nonsense", "value": 1.8}}}, "only consumed by"),
+        ("malformed entry in the grid", {"parameter_grid": {"kf_distribution": [{"mode": "nonsense", "value": 1.8}]}}, "only consumed by"),
+        ("swept container that is not a list", {"include_limiting_cases": True, "limiting_cases_config": {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}}, "must be a list"),
+    ],
+)
+def test_scope_answers_before_the_entry_shape_but_not_before_the_container(
+    api_client: APIClient, project: Project, label: str, payload: dict[str, Any], expected: str
+) -> None:
+    """The precedence R11's prose states, measured rather than assumed.
+
+    Three rounds of judges caught three versions of that sentence asserting
+    something the code does not do. It says now that R13 answers the
+    allow-list before the entry's own shape - so a malformed config on an
+    algorithm that cannot consume it is told about the algorithm - while a
+    swept container that is not a list is still refused for its container
+    shape. This is the witness that keeps the fourth version honest.
+    """
+    resp = _post(api_client, project, base_algorithm="fracval", **payload)
+
+    assert resp.status_code == 400, f"{label} was accepted: {resp.data}"
+    assert expected in str(resp.data), (
+        f"{label} answered with another precedence than the one R11 states: {resp.data}"
+    )

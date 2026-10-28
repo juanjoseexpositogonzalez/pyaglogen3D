@@ -1171,10 +1171,9 @@ def test_the_stored_dict_surfaces_are_judged_when_only_the_algorithm_moves(
     assert resp.status_code == 400, (
         f"stored surface {surface} was not judged when the algorithm moved: {resp.data}"
     )
-    row.refresh_from_db()
-    assert row.base_algorithm == "tunable_cc", (
-        f"the algorithm moved to {row.base_algorithm} leaving surface {surface} unread"
-    )
+    # No `assert row.base_algorithm == ...` here: a 400 means DRF never
+    # called save(), so it cannot fail while the assertion above passes. It
+    # is the class of assertion this file removed in round four.
 
 
 def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
@@ -1217,7 +1216,9 @@ def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
 
 @pytest.mark.parametrize(
     "stored",
-    [[{"distribution_type": "fixed", "coefficient": 0.8}], "oops", 42],
+    # A list and a truthy scalar are the two behaviours; "oops" and 42 are
+    # the same case, so one of them is enough.
+    [[{"distribution_type": "fixed", "coefficient": 0.8}], "oops"],
 )
 def test_a_mistyped_stored_sintering_config_is_ignored_not_judged(
     api_client: APIClient, project: Project, stored: Any
