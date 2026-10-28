@@ -350,19 +350,13 @@ it is not, it is refused — the judging is unconditional, the refusal is not.
 
 This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
 the allow-list runs, written here so the two requirements say it rather than one of them implying
-it. The parity stops at *when*. Each requirement names the message for **its own case** — a
-well-formed declaration the algorithm cannot consume — and neither says which refusal wins when
-one request carries several problems at once: a `sintering_coeff` of `42.0` on `fracval` is told
-its range, not its algorithm. This change does not invent that order, because the order belongs
-to the implementation and not to the contract. In `parameter_grid`, the older loop covers only
-the two parity keys, so an engine key is answered by the allow-list where a parity key is
-answered by its own shape; in `base_parameters` and in a swept carrier both families answer
-alike. Container checks and the expansion preview answer before either gate. The measured order
-is pinned where a reorder turns it red — the table in
-`test_the_measured_precedence_between_scope_and_shape` — and not here, where nothing would fail.
-The precedence of *values* is a different question and is fixed normatively: R3 and R13.9 state
-that among dicts the grid entry wins over `base_parameters`, which is a promise about what a
-child runs with, not about error ordering. (approved by the person on 2026-10-26 while
+it. The parity stops at *when*. **This contract says nothing about which refusal is reported first**
+when one request carries several problems at once, and no requirement here should: the order is a
+property of which validator runs first, and seven drafts of this paragraph tried to describe it
+and were each false in a dimension their author had not probed — the carrier, the spelling, the
+key family, the kind of malformation. What the order actually is, today, is recorded where a
+change to it shows up as a failing test rather than as stale prose:
+`test_the_measured_precedence_between_scope_and_shape`. (approved by the person on 2026-10-26 while
 implementing issue #141, after a judgment-day round measured the freeze on seven stored shapes;
 the measurement and the decision are recorded in issue #115, point 17).
 

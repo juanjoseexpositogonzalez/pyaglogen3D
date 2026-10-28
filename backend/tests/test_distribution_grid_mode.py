@@ -631,12 +631,24 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
         # the very carrier and spelling where kf_distribution does not.
         (
             "legacy spelling, engine key in the grid",
-            {"parameter_grid": {"target_kf_distribution": [{"distribution_type": "uniform", "min": 1.5, "max": 1.0}]}},
+            {
+                "parameter_grid": {
+                    "target_kf_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
             "only consumed by",
         ),
         (
             "legacy spelling, dpo key in the grid",
-            {"parameter_grid": {"dpo_distribution": [{"distribution_type": "uniform", "min": 1.5, "max": 1.0}]}},
+            {
+                "parameter_grid": {
+                    "dpo_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
             "only consumed by",
         ),
         (
@@ -718,16 +730,17 @@ def test_the_measured_precedence_between_scope_and_shape(
 ) -> None:
     """The measured order, pinned here because the contract does not state it.
 
-    Every committed draft of R11's precedence paragraph was false, and each
-    survived a round. The spec no longer describes the order at all: it is
-    a property of which validator happens to run first, and this table is
-    where it belongs, because a table fails when the order changes and a
-    paragraph does not.
+    Seven drafts of R11's precedence paragraph were false, each in a
+    dimension its author had not probed. The spec describes the order no
+    longer - it names this table instead, because a table fails when the
+    order changes and a paragraph goes quietly stale.
 
-    Carrier x spelling x key. The key dimension is what falsified the last
-    draft: `_DISTRIBUTION_GRID_KEYS` holds only the two parity keys, so in
-    the same carrier and the same spelling, `kf_distribution` is answered
-    by the legacy loop and `target_kf_distribution` by the allow-list.
+    The dimensions that falsified a draft, all of them live here: the
+    carrier, the spelling, the key family (`_DISTRIBUTION_GRID_KEYS` holds
+    only the two parity keys), and the kind of malformation. In the grid,
+    `kf_distribution` in the legacy spelling is answered by the older loop
+    while the same key in the `mode` spelling, and any engine key, is
+    answered by the allow-list.
     """
     resp = _post(api_client, project, base_algorithm="fracval", **payload)
 
