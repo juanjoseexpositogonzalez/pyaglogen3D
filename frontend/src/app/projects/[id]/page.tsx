@@ -9,14 +9,16 @@ import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktal
 import { useFraktalBatches } from '@/hooks/useFraktalBatches'
 import { FraktalBatchesSection } from '@/components/fraktal/FraktalBatchesSection'
 import { simulationsApi, fraktalApi } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
 import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers, Upload, GitCompare } from 'lucide-react'
+import { ArrowLeft, Plus, Atom, StopCircle, Trash2, Microscope, Layers, Upload, GitCompare } from 'lucide-react'
 import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { MAX_COMPARE_SIMS } from '@/lib/compare-utils'
@@ -141,31 +143,26 @@ export default function ProjectDetailPage({
   }
 
   if (projectLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading project..." />
-      </div>
-    )
+    return <LoadingScreen message="Loading project..." />
   }
 
   if (projectError || !project) {
     return (
-      <div className="min-h-screen">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">
-                Failed to load project. It may not exist or the backend is unavailable.
-              </p>
-              <Link href="/projects" className="mt-4 inline-block">
-                <Button variant="outline">Back to Projects</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <>
+        <PageHeader eyebrow="PROJECT" title="Project unavailable" />
+        <Callout
+          tone="danger"
+          title="Failed to load project"
+          action={
+            <Link href="/projects">
+              <Button variant="outline">Back to Projects</Button>
+            </Link>
+          }
+        >
+          It may not exist, or the backend is unavailable. This is not an empty project: nothing
+          has been deleted by visiting this page.
+        </Callout>
+      </>
     )
   }
 
@@ -182,49 +179,30 @@ export default function ProjectDetailPage({
   )
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <>
+      {/* Unit convention banner — shown once if any legacy simulation is in the list */}
+      {hasLegacySim && (
+        <UnitConventionBanner
+          simulationId={id}
+          schemaVersion={'v1'}
+          userId={user?.id ?? 'anonymous'}
+        />
+      )}
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Breadcrumb */}
-        <Link
-          href="/projects"
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Projects
-        </Link>
+      <Link
+        href="/projects"
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to Projects
+      </Link>
 
-        {/* Unit convention banner — shown once if any legacy simulation is in the list */}
-        {hasLegacySim && (
-          <UnitConventionBanner
-            simulationId={id}
-            schemaVersion={'v1'}
-            userId={user?.id ?? 'anonymous'}
-          />
-        )}
-
-        {/* Project Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">{project.name}</h1>
-            {project.description && (
-              <p className="text-muted-foreground mt-2 max-w-2xl">
-                {project.description}
-              </p>
-            )}
-            <div className="flex gap-4 mt-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Atom className="h-4 w-4" />
-                {project.simulation_count} simulations
-              </span>
-              <span className="flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" />
-                {project.analysis_count} analyses
-              </span>
-            </div>
-          </div>
-          <div className="flex gap-2">
+      <PageHeader
+        eyebrow="PROJECT"
+        title={project.name}
+        description={project.description ?? undefined}
+        actions={
+          <>
             <Link href={`/projects/${id}/batch`}>
               <Button variant="outline">
                 <Layers className="h-4 w-4 mr-2" />
@@ -250,8 +228,37 @@ export default function ProjectDetailPage({
                 New Simulation
               </Button>
             </Link>
-          </div>
-        </div>
+          </>
+        }
+      />
+
+      {/*
+        Counts, not readings. `simulation_count` and `analysis_count` are
+        exact by construction, so they demand no sigma and no estimator — the
+        `exact` variant of MetricCard is the one that does not ask for them.
+
+        The label is "Analyses", not "FRAKTAL analyses" as the reference
+        design has it: `Project.analysis_count` adds ImageAnalysis *and*
+        FraktalAnalysis, so the narrower word would promise less than the field
+        returns. The detail line says what the number covers.
+      */}
+      <div className="mb-[18px] grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <MetricCard
+          kind="exact"
+          tone="teal"
+          label="Simulations"
+          value={project.simulation_count}
+          digits={0}
+        />
+        <MetricCard
+          kind="exact"
+          tone="violet"
+          label="Analyses"
+          value={project.analysis_count}
+          digits={0}
+          detail="Image and FRAKTAL"
+        />
+      </div>
 
         {/* Simulations List */}
         <div className="space-y-4">
@@ -609,7 +616,6 @@ export default function ProjectDetailPage({
           batches={fraktalBatches?.results}
           isLoading={batchesLoading}
         />
-      </main>
 
       {/* Sticky Compare bar — only when ≥2 sims selected (R1/S1.3). */}
       {selectedIds.size >= 2 && (
@@ -645,6 +651,6 @@ export default function ProjectDetailPage({
           router.push(`/projects/${id}/simulations/${simulationId}`)
         }}
       />
-    </div>
+    </>
   )
 }
