@@ -1,6 +1,6 @@
 """R13.9 and R13.10 - a declared distribution reaches the engine under its name.
 
-Contract: openspec/changes/distribution-grid-mode, T2.2/T2.3 (PR 2).
+Contract: openspec/changes/archive/2026-10-29-distribution-grid-mode, T2.2/T2.3 (PR 2).
 
 Measured before writing this module, on the commit that merged PR #170:
 

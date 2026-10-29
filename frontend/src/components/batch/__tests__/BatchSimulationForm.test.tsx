@@ -51,8 +51,11 @@ describe('BatchSimulationForm — new parameter grid options', () => {
     expect(screen.getByRole('button', { name: /add distribution/i })).toBeDefined()
   })
 
-  // T6.3 — particle_radius_config limits allowedTypes to fixed+normal
-  it('selecting particle_radius_config shows DistributionGridInput with fixed+normal only', () => {
+  // T6.3 movido al contrato: R2 says aligning the form is part of this change, and
+  // a judge measured that it was not - the key was pinned to fixed+normal while the
+  // API accepts a `uniform` primary size that R13.6 depends on. The three modes are
+  // now offered, so the test asserts that instead of the restriction.
+  it('selecting particle_radius_config offers the three shapes', () => {
     render(<BatchSimulationForm onSubmit={vi.fn()} />)
 
     const algorithmSelect = screen.getAllByRole('combobox')[0]
@@ -64,13 +67,14 @@ describe('BatchSimulationForm — new parameter grid options', () => {
     const paramSelect = variationSelects[variationSelects.length - 1]
     fireEvent.change(paramSelect, { target: { value: 'particle_radius_config' } })
 
-    // The DistributionSelector inside should have only 2 mode options (fixed, normal)
-    // Find the distribution mode selector (innermost combobox after the param select)
+    // The innermost selector is the distribution mode. R2's table accepts all
+    // three shapes for this key and the engine implements `dpo_mode="uniform"`,
+    // so the form must offer them: hiding one made a uniform primary size
+    // configurable only through the API.
     const allSelects = screen.getAllByRole('combobox')
     const distModeSelect = allSelects[allSelects.length - 1] as HTMLSelectElement
     const options = Array.from(distModeSelect.options)
-    expect(options).toHaveLength(2)
-    expect(options.map(o => o.value)).toEqual(['fixed', 'normal'])
+    expect(options.map((o) => o.value)).toEqual(['fixed', 'normal', 'uniform'])
   })
 
   // T6.4 — sintering_config renders DistributionGridInput

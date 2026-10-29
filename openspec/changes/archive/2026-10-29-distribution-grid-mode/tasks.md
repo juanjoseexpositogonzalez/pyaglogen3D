@@ -38,7 +38,7 @@
   R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
 - [x] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
   escenario: un MODIFIED reemplaza el requisito completo (ver L9).
-- [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
+- [x] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
   `normal`, y la API acepta `uniform`.
 - [x] T1.4 **Hecho**: R7 declara ya los tres grupos, incluido el de la allow-list, que era el mayor y el único sin declarar. Original: R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
   hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
@@ -62,21 +62,21 @@
 - [x] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
   **revientan el worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
   Exception`. La simulación se queda en `RUNNING` para siempre.
-- [ ] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
+- [x] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
   magnitud, gana la rejilla (R13.9), y lo mismo para el par `particle_radius_config` /
   `base_parameters.dpo_distribution`. Hoy **no** es así: `create_simulation` parte de
   `dict(base_parameters)` y el worker acaba leyendo el valor de base.
-- [ ] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
+- [x] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
   descartan: las dos claves de paridad en `base_parameters` y las dos barridas por
   `theoretical_extremes` (R13.10).
 - [x] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
   estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
-- [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
+- [x] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
   `dpo_distribution`. Ojo: **dos sitios expanden**, `create_simulation` y
   `expansion_preview._as_child`; si divergen, la validación previa valida una forma que la ruta
   real nunca escribe.
-- [ ] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
+- [x] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
   `test_particle_radius_config_passes_through`, `test_all_four_keys_expand_correctly`) **se
   extienden, no se invierten**: lo que afirman —que el hijo conserva la clave de rejilla— es
   justo lo que R5.2 y R13.3 exigen que siga siendo verdad. Lo que cambia es la grafía (`mode`) y
@@ -85,7 +85,7 @@
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
-- [ ] T3.8 **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
+- [ ] T3.8 **(abierta, ya con issue: #196)** **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
   `DistributionSelector` ya soporta, así que el borde rojo y el mensaje no se pintan. O se
   implementa la validación por campo, o se acota R8.4 a lo que el componente hace.
 - [x] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
@@ -117,8 +117,8 @@
 - [x] T4.1 Los cinco gates, con cada deriva explicada contra la base.
 - [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
   produce `target_kf_used` distinto del 1.3 por defecto.
-- [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
-- [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
+- [x] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
+- [x] T4.4 PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
   `<!-- Last sync: ... -->`, que `openspec archive` NO reescribe** y hoy sigue nombrando al
   contrato de sinterizado; entrega en Jira y cierre
   manual de la issue.
