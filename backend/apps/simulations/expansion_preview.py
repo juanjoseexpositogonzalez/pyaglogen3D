@@ -8,7 +8,7 @@ generator somewhere else - the range-boundary children, the server-side default
 extremes, the precedence of a dict over the flat keys.
 
 So this module does not model anything. It runs the **same functions**
-`perform_create` runs (`views.py:1750-1906`), in the same order, over the same
+`perform_create` runs, in the same order, over the same
 inputs, and hands back the parameter dicts the children would carry. Nothing is
 written: `generate_limiting_cases`, `generate_sintering_extreme_cases` and
 `apply_sintering_config` are pure, and the preview never touches the database or
@@ -55,15 +55,15 @@ class GridShapeError(ExpansionPreviewError):
     """A `parameter_grid` value that is not a list of values."""
 
 
-#: `create_simulation` casts these before storing them (`views.py:1810-1815`).
+#: `create_simulation` casts these before storing them.
 INTEGER_PARAMS = ("n_particles",)
 
 
 def _cast_integers(sim_params: dict[str, Any], *, guarded: bool) -> None:
     """Mirror the int() cast of the real path, including its asymmetry.
 
-    `create_simulation` skips dicts (`views.py:1812-1814`); the inline
-    sintering-extremes block does not (`views.py:1878-1880`). Both are
+    `create_simulation` skips dicts; the inline sintering-extremes block in
+    `perform_create` does not. Both are
     reproduced, because a cast that raises here costs nothing, while the same
     cast raising during expansion costs a study row and its queued tasks.
     """
@@ -76,7 +76,7 @@ def _cast_integers(sim_params: dict[str, Any], *, guarded: bool) -> None:
 
 
 def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[str, Any]:
-    """Apply what `create_simulation` applies (`views.py:1784-1815`)."""
+    """Apply what `create_simulation` applies."""
     sim_params = dict(params)
     sim_params.pop("seed_type", None)
 
@@ -141,7 +141,7 @@ def preview_children(
         for combo in itertools.product(*param_values):
             params = dict(base_parameters)
             for index, name in enumerate(param_names):
-                set_distribution_parameter(params, name, combo[index])
+                set_distribution_parameter(params, name, combo[index], declared=param_names)
             children.append(_as_child(params, study_sintering_config))
 
         if include_limiting_cases:
@@ -158,7 +158,7 @@ def preview_children(
                 extreme_cases = generate_sintering_extreme_cases(dict(base_parameters))
                 # This path deliberately does not apply the study's dict: each
                 # child keeps the flat coefficient of its own extreme
-                # (`views.py:1875-1880`).
+                # (the sintering-extremes block in `perform_create`).
                 for _t, _d, params in extreme_cases:
                     _cast_integers(params, guarded=False)
                     # Mirror `views.py`: the real extremal children get the same

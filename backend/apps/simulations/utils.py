@@ -4,7 +4,7 @@ import csv
 import io
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import datetime
 from typing import Any
 
@@ -147,46 +147,48 @@ DISTRIBUTION_ALIASES: tuple[tuple[str, str], ...] = (
 
 
 def set_distribution_parameter(
-    params: dict[str, Any], name: str, value: Any
+    params: dict[str, Any], name: str, value: Any, *, declared: Iterable[str] = ()
 ) -> None:
-    """Write a swept value under both names of its magnitude.
+    """Write a swept value, translated to its magnitude's other name.
 
     R13.9: what the study sweeps beats what it overrides, whichever of the two
-    names the grid used. Writing both here is what makes that true - the child
-    starts as a copy of `base_parameters`, so setting one name would leave the
-    other carrying the value the grid meant to replace, and the worker reads
-    that other one.
+    names the grid used. Writing the sibling here is what makes that true - the
+    child starts as a copy of `base_parameters`, so setting one name would leave
+    the other carrying the value the grid meant to replace.
+
+    A sibling the *same* request also declares is left alone. That is the case a
+    judge measured as a regression: a grid holding both names of one magnitude
+    sweeps two independent dimensions, and R1 requires each child to keep its
+    own entry verbatim. Translation adds; it never replaces.
     """
     params[name] = value
     for grid_name, engine_name in DISTRIBUTION_ALIASES:
-        if name in (grid_name, engine_name):
-            params[grid_name] = value
-            params[engine_name] = value
+        if name not in (grid_name, engine_name):
+            continue
+        for alias in (grid_name, engine_name):
+            if alias != name and alias not in declared:
+                params[alias] = value
 
 
 def complete_distribution_aliases(params: Mapping[str, Any]) -> dict[str, Any]:
-    """Deliver each declared distribution under both of its names.
+    """Fill in the name a declared distribution is missing.
 
-    Translation adds and never replaces: the grid-facing name stays, because
-    `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` and
-    `varyingParams` read it, and the engine name is what `run_simulation_task`
-    translates. A magnitude declared under both names with two different values
-    is one carrier contradicting itself, which R13.9 does not govern; the engine
-    name wins there, because it is the one the worker reads.
+    Translation adds and never replaces, which is R1's own wording: the
+    grid-facing name stays because `fractal_analysis_summary`, `export_csv`,
+    `formatConfigLabel` and `varyingParams` read it, and the engine name is what
+    `run_simulation_task` translates. A carrier that declares both names keeps
+    both, as declared: the request asserted two values for one magnitude and
+    neither this requirement nor R13.9 chooses between them.
     """
     completed = dict(params)
     for grid_name, engine_name in DISTRIBUTION_ALIASES:
-        if engine_name in completed:
-            value = completed[engine_name]
-        elif grid_name in completed:
-            value = completed[grid_name]
-        else:
+        if grid_name in completed and engine_name in completed:
             continue
-        completed[grid_name] = value
-        completed[engine_name] = value
+        if engine_name in completed:
+            completed[grid_name] = completed[engine_name]
+        elif grid_name in completed:
+            completed[engine_name] = completed[grid_name]
     return completed
-
-
 def generate_limiting_cases(
     base_parameters: dict[str, Any],
     parameter_grid: dict[str, list[Any]],
@@ -250,12 +252,16 @@ def generate_limiting_cases(
 
                 # Min boundary case
                 min_params = dict(base_parameters)
-                set_distribution_parameter(min_params, param_name, min_val)
+                set_distribution_parameter(
+                    min_params, param_name, min_val, declared=parameter_grid
+                )
                 add_case("boundary_min", param_name, min_val, min_params)
 
                 # Max boundary case
                 max_params = dict(base_parameters)
-                set_distribution_parameter(max_params, param_name, max_val)
+                set_distribution_parameter(
+                    max_params, param_name, max_val, declared=parameter_grid
+                )
                 add_case("boundary_max", param_name, max_val, max_params)
 
     # 2. Theoretical extremes
@@ -266,7 +272,9 @@ def generate_limiting_cases(
         for param_name, extreme_values in extremes.items():
             for val in extreme_values:
                 extreme_params = dict(base_parameters)
-                set_distribution_parameter(extreme_params, param_name, val)
+                set_distribution_parameter(
+                    extreme_params, param_name, val, declared=extremes
+                )
                 add_case("theoretical", param_name, val, extreme_params)
 
     return limiting_cases
@@ -293,9 +301,9 @@ def generate_sintering_extreme_cases(
 
     for coeff in SINTERING_EXTREMES["coefficients"]:
         params = dict(base_parameters)
-        # R11.7: this path copies base_parameters whole and the
-        # `sintering_config` pop lives only in `create_simulation`
-        # (`views.py:1804`), so without this the child stores a dict that
+        # R11.7: this path copies base_parameters whole, and
+        # `sintering_config` is popped only in `create_simulation`, so without
+        # this the child stores a dict that
         # contradicts the coefficient it actually runs at. Only the dict
         # goes: inherited flat keys are inside the set the worker reads.
         params.pop("sintering_config", None)

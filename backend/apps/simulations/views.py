@@ -1854,7 +1854,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         for combo in combinations:
             params = dict(study.base_parameters)
             for i, name in enumerate(param_names):
-                set_distribution_parameter(params, name, combo[i])
+                set_distribution_parameter(
+                    params, name, combo[i], declared=param_names
+                )
             combo_str = ", ".join(
                 f"{name}={combo[i]}" for i, name in enumerate(param_names)
             )
