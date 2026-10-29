@@ -227,6 +227,33 @@ def test_a_grid_parity_key_reaches_the_engine(
     assert expand_distribution_kwargs(prefix, params[engine_name]) != {}
 
 
+def test_a_sintering_extreme_child_carries_the_engine_name(api_client: APIClient, user: User) -> None:
+    """GIVEN sintering extremes are generated alongside a parity key.
+
+    The extremes are the one path that builds children without going through
+    `create_simulation`'s sintering branch, so it is the one where the preview
+    and the real expansion can drift apart. Found by reading, not by a judge:
+    the real path translated there and the preview did not.
+    """
+    project = Project.objects.create(name="sintering extremes", owner=user)
+    response = _post(
+        api_client,
+        project,
+        base_parameters={**BASE, "kf_distribution": GRID_KF},
+        include_limiting_cases=True,
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.8},
+    )
+
+    assert response.status_code == 201, response.data
+    children = Simulation.objects.filter(project=project, is_batch=True)
+    assert children.exists()
+    for child in children:
+        params = child.parameters or {}
+        assert params.get("target_kf_distribution") == GRID_KF, (
+            f"a child of this study carries no engine name: {params}"
+        )
+
+
 # --- R1 - the discriminator the engine pipeline speaks is `mode` ---
 
 

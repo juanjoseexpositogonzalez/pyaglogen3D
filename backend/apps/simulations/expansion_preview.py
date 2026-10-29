@@ -160,9 +160,11 @@ def preview_children(
                 # child keeps the flat coefficient of its own extreme
                 # (`views.py:1875-1880`).
                 for _t, _d, params in extreme_cases:
-                    extreme_child = dict(params)
-                    _cast_integers(extreme_child, guarded=False)
-                    children.append(extreme_child)
+                    _cast_integers(params, guarded=False)
+                    # Mirror `views.py`: the real extremal children get the same
+                    # translation, so a parity key declared in base_parameters
+                    # reaches the engine from this path too (R13.10).
+                    children.append(complete_distribution_aliases(params))
         if not children:
             # An empty sweep produces no child at all, so nothing above was
             # checked. The base projection is then the only shape the study
