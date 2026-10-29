@@ -202,6 +202,16 @@ ese comando**:
 GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh issue close 141 --reason completed
 ```
 
+**Y ojo con el push**, que aquí muerde igual: `git push` directo por SSH falla en este entorno (el
+agente no tiene identidades), así que el que se usa es el *credential helper* de `gh` —
+`git -c credential.helper='!gh auth git-credential' push …`—, y **ese sí obedece a la cuenta
+activa**: con `jjeg1979` activa devuelve `Permission … denied` y `403`. El mismo prefijo lo arregla:
+
+```bash
+GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) \
+  git -c credential.helper='!gh auth git-credential' push origin <rama>
+```
+
 **Si de verdad hace falta cambiar la activa** (`gh auth switch --user juanjoseexpositogonzalez`),
 avisar primero por intercom: la configuración de `gh` no es por repositorio.
 
