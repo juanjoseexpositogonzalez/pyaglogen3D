@@ -255,7 +255,7 @@ def generate_limiting_cases(
 
                 # Max boundary case
                 max_params = dict(base_parameters)
-                max_params[param_name] = max_val
+                set_distribution_parameter(max_params, param_name, max_val)
                 add_case("boundary_max", param_name, max_val, max_params)
 
     # 2. Theoretical extremes

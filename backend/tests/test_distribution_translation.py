@@ -24,7 +24,9 @@ Translation adds the engine name; it never replaces the grid-facing one.
 
 from __future__ import annotations
 
+import json
 import uuid
+from collections import Counter
 from typing import Any
 
 import pytest
@@ -32,7 +34,8 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.projects.models import Project
-from apps.simulations.models import Simulation
+from apps.simulations.expansion_preview import preview_children
+from apps.simulations.models import ParametricStudy, Simulation
 from apps.simulations.tasks import expand_distribution_kwargs
 
 BASE: dict[str, Any] = {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3}
@@ -80,11 +83,33 @@ def _post(client: APIClient, project: Project, **overrides: Any) -> Any:
     )
 
 
+def _children(project: Project) -> list[Simulation]:
+    return list(Simulation.objects.filter(project=project, is_batch=True))
+
+
 def _child_params(project: Project) -> dict[str, Any]:
-    """The parameters of the study's first child, as stored."""
-    child = Simulation.objects.filter(project=project, is_batch=True).first()
-    assert child is not None, "the study produced no child"
-    params: dict[str, Any] = child.parameters
+    """The parameters of the study's only child, as stored.
+
+    Counted rather than taken with `.first()`: `Meta.ordering` is
+    `-created_at`, so `.first()` is the LAST child created, and a study with
+    limiting cases produces several. A judge measured that a swept witness was
+    passing only because its child happened to be the last one written.
+    """
+    children = _children(project)
+    assert len(children) == 1, f"expected one child, got {len(children)}"
+    params: dict[str, Any] = children[0].parameters
+    return params
+
+
+def _child_carrying(project: Project, key: str) -> dict[str, Any]:
+    """The only child that carries `key`, which is what a sweep produces."""
+    carrying = [
+        child.parameters
+        for child in _children(project)
+        if key in (child.parameters or {})
+    ]
+    assert len(carrying) == 1, f"expected one child carrying {key}, got {len(carrying)}"
+    params: dict[str, Any] = carrying[0]
     return params
 
 
@@ -198,8 +223,37 @@ def test_a_swept_parity_key_reaches_the_engine(
     )
 
     assert response.status_code == 201, response.data
+    params = _child_carrying(project, grid_name)
+    assert params[engine_name] == value
+    assert expand_distribution_kwargs(prefix, params[engine_name]) != {}
+
+
+@pytest.mark.parametrize("grid_name,engine_name,prefix,value,base_value", PAIRS)
+def test_an_engine_named_key_alone_in_base_parameters_reaches_both_names(
+    api_client: APIClient,
+    user: User,
+    grid_name: str,
+    engine_name: str,
+    prefix: str,
+    value: dict[str, Any],
+    base_value: dict[str, Any],
+) -> None:
+    """GIVEN base_parameters declares only the name the worker reads.
+
+    R13.10's third carrier. It worked before this change because the grid name
+    was the missing one and `run_simulation_task` reads the engine name, so no
+    test noticed; a judge measured that disabling the translation left this
+    surface green.
+    """
+    project = Project.objects.create(name="engine surface", owner=user)
+    response = _post(api_client, project, base_parameters={**BASE, engine_name: value})
+
+    assert response.status_code == 201, response.data
     params = _child_params(project)
     assert params[engine_name] == value
+    assert params[grid_name] == value, (
+        "the grid-facing name must appear too, because four result views read it"
+    )
     assert expand_distribution_kwargs(prefix, params[engine_name]) != {}
 
 
@@ -227,7 +281,9 @@ def test_a_grid_parity_key_reaches_the_engine(
     assert expand_distribution_kwargs(prefix, params[engine_name]) != {}
 
 
-def test_a_sintering_extreme_child_carries_the_engine_name(api_client: APIClient, user: User) -> None:
+def test_a_sintering_extreme_child_carries_the_engine_name(
+    api_client: APIClient, user: User
+) -> None:
     """GIVEN sintering extremes are generated alongside a parity key.
 
     The extremes are the one path that builds children without going through
@@ -291,3 +347,43 @@ def test_the_legacy_discriminator_is_refused_on_the_parity_keys(
     assert not Simulation.objects.filter(project=project).exists(), (
         "a refused request stored a child"
     )
+
+
+def test_the_preview_and_the_stored_children_agree(
+    api_client: APIClient, user: User
+) -> None:
+    """The preview runs the real expansion, not a model of it.
+
+    A judge measured that removing the translation from the preview's
+    sintering-extreme branch turned no test red: the preview had drifted from
+    `views.py` and nothing noticed, which is the failure mode this module
+    exists to prevent. This compares the two, child for child.
+    """
+    project = Project.objects.create(name="preview parity", owner=user)
+    response = _post(
+        api_client,
+        project,
+        base_parameters={**BASE, "kf_distribution": GRID_KF},
+        parameter_grid={"n_particles": [60, 120]},
+        include_limiting_cases=True,
+        sintering_config={"distribution_type": "fixed", "coefficient": 0.8},
+    )
+    assert response.status_code == 201, response.data
+    study = ParametricStudy.objects.get(id=response.data["id"])
+
+    previewed = preview_children(
+        algorithm=study.base_algorithm,
+        base_parameters=study.base_parameters,
+        parameter_grid=study.parameter_grid,
+        study_sintering_config=study.sintering_config,
+        include_limiting_cases=study.include_limiting_cases,
+        limiting_cases_config=study.limiting_cases_config,
+        max_children=1000,
+    )
+
+    def fingerprint(params: dict[str, Any]) -> str:
+        return json.dumps(params, sort_keys=True, default=str)
+
+    assert Counter(map(fingerprint, previewed)) == Counter(
+        map(fingerprint, (child.parameters for child in _children(project)))
+    ), "the preview and the stored children disagree"

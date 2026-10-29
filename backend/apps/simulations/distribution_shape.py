@@ -69,10 +69,10 @@ def validate_shape(
             f"must be an object with a 'mode' field, got {type(config).__name__}"
         )
 
-    # `distribution_type` is tolerated only on the two parity keys, until the
-    # next chained PR translates them. On the engine-named keys it would be
-    # stored and handed to `expand_distribution_kwargs`, which reads `mode`
-    # and returns {} for anything else: the silent default this closes.
+    # The translation landed, so the legacy `distribution_type` spelling is
+    # refused here like any other discriminator: `expand_distribution_kwargs`
+    # reads `mode` and returns {} for anything else, which is the silent
+    # default this closes.
     mode = config.get("mode")
     if mode not in MODES:
         raise ValueError(f"mode must be one of {list(MODES)}, got {mode!r}")
