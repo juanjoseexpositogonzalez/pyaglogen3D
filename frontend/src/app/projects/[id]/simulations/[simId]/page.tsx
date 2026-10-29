@@ -25,10 +25,14 @@ import {
 } from '@/lib/projection-grid'
 import { NeighborGraph } from '@/components/topology'
 import { Callout } from '@/components/kit/Callout'
+import { type Column } from '@/components/kit/DataTable'
+import { EmptyState } from '@/components/kit/EmptyState'
 import { MetricCard } from '@/components/kit/MetricCard'
 import { Num } from '@/components/kit/Num'
 import { PageHeader } from '@/components/kit/PageHeader'
+import { ShowValues } from '@/components/kit/ShowValues'
 import { StatusChip } from '@/components/kit/StatusChip'
+import { VisualPanel, type Readout } from '@/components/kit/VisualPanel'
 import { FractalPlot } from '@/components/charts'
 import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES, OpticalPropertiesSection } from '@/components/analysis'
 import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
@@ -42,6 +46,36 @@ import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { simulationAlgorithmLabels } from '@/lib/simulation-algorithms'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
 import { useAuth } from '@/contexts/AuthContext'
+
+/**
+ * One particle exactly as the stage draws it: the deposition index, the
+ * position and the radius. All three lengths are already in nanometres by the
+ * time a row is built, so the table and the canvas cannot disagree about units.
+ */
+interface ParticleRow {
+  n: number
+  x: number
+  y: number
+  z: number
+  radius: number | null
+}
+
+/**
+ * The values behind the 3D visualisation, in the same order the viewer draws
+ * them. Positions get one decimal in nm, which is the precision the scaled
+ * geometry carries; more would be invented digits.
+ */
+const PARTICLE_COLUMNS: Column<ParticleRow>[] = [
+  { key: 'n', header: '#', numeric: true, digits: 0, value: (row) => row.n },
+  { key: 'x', header: 'x', numeric: true, unit: 'nm', digits: 1, value: (row) => row.x },
+  { key: 'y', header: 'y', numeric: true, unit: 'nm', digits: 1, value: (row) => row.y },
+  { key: 'z', header: 'z', numeric: true, unit: 'nm', digits: 1, value: (row) => row.z },
+  { key: 'radius', header: 'radius', numeric: true, unit: 'nm', digits: 1, value: (row) => row.radius },
+]
+
+/** What the table is, said once: the caption is all a reader has once the canvas is gone. */
+const PARTICLE_CAPTION =
+  "Particles behind this view: position and radius in nm, scaled with the record's particle diameter."
 
 export default function SimulationDetailPage({
   params,
@@ -296,6 +330,55 @@ export default function SimulationDetailPage({
     z * scaleFactor,
   ])
   const radii = (geometry?.radii ?? []).map((r) => r * scaleFactor)
+
+  // A run with no geometry has nothing to draw and nothing to tabulate. Saying
+  // that once here keeps the stage and the toggle from disagreeing.
+  const hasParticles = coordinates.length > 0
+
+  /**
+   * The same particles the canvas is drawing, one row each. The radius is read
+   * from the same scaled array the viewer gets, so a geometry payload that
+   * ships fewer radii than positions reads as missing, not as zero.
+   */
+  const particleRows: ParticleRow[] = coordinates.map(([x, y, z], index) => ({
+    n: index + 1,
+    x,
+    y,
+    z,
+    radius: radii[index] ?? null,
+  }))
+
+  // The stage's body is rendered from a callback, and TypeScript stops
+  // narrowing a property access once a function boundary is crossed. Reading
+  // the axes here keeps that proof in one place instead of optional-chaining
+  // the same value at the call site.
+  const principalAxes = simulation.metrics?.principal_axes
+
+  /**
+   * The caption bar repeats two numbers the page already has — how many
+   * particles the canvas holds and the record's Rg in nm — so the readings sit
+   * on the surface they describe. Nothing is recomputed for them.
+   */
+  const visualReadouts: Readout[] | undefined =
+    hasParticles && simulation.metrics
+      ? [
+          {
+            label: 'particles',
+            value: <Num value={coordinates.length} digits={0} size="sm" />,
+          },
+          {
+            label: 'Rg',
+            value: (
+              <Num
+                value={simulation.metrics.radius_of_gyration * scaleFactor}
+                unit="nm"
+                digits={1}
+                size="sm"
+              />
+            ),
+          },
+        ]
+      : undefined
 
   return (
     <>
@@ -642,19 +725,51 @@ export default function SimulationDetailPage({
             {/* 3D Viewer */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
               <div className="lg:col-span-3">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>3D Visualization</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-2">
-                    <AgglomerateViewer
-                      coordinates={coordinates}
-                      radii={radii}
-                      principalAxes={simulation.metrics.principal_axes}
-                      className="h-[600px]"
-                    />
-                  </CardContent>
-                </Card>
+                {/*
+                  `ShowValues` hands over the toggle and the table so this page
+                  can place them inside its own frame: the toggle goes in the
+                  panel header and the table takes the canvas's place, which
+                  leaves the title, the caption bar and the border where a
+                  reader left them. The page configures the table and never
+                  assembles one.
+                */}
+                <ShowValues
+                  columns={PARTICLE_COLUMNS}
+                  rows={particleRows}
+                  caption={PARTICLE_CAPTION}
+                  maxHeight={600}
+                >
+                  {({ toggle, table }) => (
+                    <VisualPanel
+                      title="3D Visualization"
+                      readouts={visualReadouts}
+                      action={hasParticles ? toggle : undefined}
+                      height={600}
+                    >
+                      {!hasParticles ? (
+                        // An empty canvas reads as a broken renderer. The stage
+                        // says what it is waiting for instead.
+                        <div className="flex h-full items-center justify-center bg-surface px-6">
+                          <EmptyState
+                            headingLevel={3}
+                            title="Nothing to draw yet"
+                            description="The 3D view appears once the engine returns the particle positions for this run."
+                            className="max-w-[46ch]"
+                          />
+                        </div>
+                      ) : (
+                        table ?? (
+                          <AgglomerateViewer
+                            coordinates={coordinates}
+                            radii={radii}
+                            principalAxes={principalAxes}
+                            className="h-[600px]"
+                          />
+                        )
+                      )}
+                    </VisualPanel>
+                  )}
+                </ShowValues>
               </div>
               <div className="lg:col-span-1">
                 <ViewerControls
