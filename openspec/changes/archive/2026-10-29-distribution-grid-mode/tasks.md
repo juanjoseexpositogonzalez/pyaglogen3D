@@ -319,9 +319,10 @@ la misma magnitud la segunda entrada pisaba a la primera: dos barridos no llegab
 consumidor y el hijo incumplía el *verbatim* de R1. Lo midió el juez A de la ronda 1 y era una
 regresión introducida aquí. Ahora el hermano que la petición declara se respeta.
 
-**Declarado, no arreglado**: R13.9 dice «para cada hijo» y los diez hijos de casos límite conservan
-el valor de `base_parameters` bajo ambos nombres — el mismo comportamiento que ya tienen los
-escalares. La frase del contrato es más ancha que el diseño; registrado en #115, decide la persona.
+**R13.9 se acotó por decisión de la persona** (2026-10-29, PR #184): decía «para cada hijo» y los
+diez hijos de casos límite conservan el valor de `base_parameters` bajo ambos nombres — el mismo
+comportamiento que ya tienen los escalares. Ahora dice «para cada hijo **que produce la rejilla**»
+y afirma explícitamente la otra mitad, con testigo propio.
 Y el panel de exportación del frontend compone la etiqueta con `Object.entries`, así que cada
 distribución aparece dos veces: cosmético, y el consumidor es del frontend.
 
