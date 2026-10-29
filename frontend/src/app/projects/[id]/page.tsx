@@ -10,8 +10,12 @@ import { useFraktalBatches } from '@/hooks/useFraktalBatches'
 import { FraktalBatchesSection } from '@/components/fraktal/FraktalBatchesSection'
 import { simulationsApi, fraktalApi } from '@/lib/api'
 import { Callout } from '@/components/kit/Callout'
+import { EmptyState } from '@/components/kit/EmptyState'
 import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
 import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { StatusChip } from '@/components/kit/StatusChip'
 import { Card, CardContent } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -35,7 +39,7 @@ export default function ProjectDetailPage({
   const { user } = useAuth()
   const router = useRouter()
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
-  const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
+  const { data: simulations, isLoading: simulationsLoading, error: simulationsError, refetch } = useSimulations(id)
   const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
   const { data: fraktalBatches, isLoading: batchesLoading } = useFraktalBatches(id)
   const deleteFraktal = useDeleteFraktalAnalysis(id)
@@ -261,61 +265,67 @@ export default function ProjectDetailPage({
       </div>
 
         {/* Simulations List */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Simulations</h2>
-            {simulationList.length > 0 && (
-              deleteAllSimsConfirm ? (
-                <div className="flex gap-2 items-center">
-                  <span className="text-sm text-muted-foreground">Delete all {simulationList.length} simulations?</span>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDeleteAllSimulations}
-                    disabled={bulkDeleteLoading}
-                  >
-                    {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDeleteAllSimsConfirm(false)}
-                    disabled={bulkDeleteLoading}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
+        <Panel
+          title="Simulations"
+          hint="Every run in this project, with the readings it produced. Tick two or more to compare them."
+          action={
+            simulationList.length > 0 &&
+            (deleteAllSimsConfirm ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-ink-muted">
+                  Delete all {simulationList.length} simulations?
+                </span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteAllSimulations}
+                  disabled={bulkDeleteLoading}
+                >
+                  {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setDeleteAllSimsConfirm(true)}
+                  onClick={() => setDeleteAllSimsConfirm(false)}
+                  disabled={bulkDeleteLoading}
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete All
+                  Cancel
                 </Button>
-              )
-            )}
-          </div>
-
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteAllSimsConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
+            ))
+          }
+        >
           {simulationsLoading ? (
             <LoadingScreen message="Loading simulations..." />
+          ) : simulationsError ? (
+            <Callout tone="danger" title="Failed to load simulations">
+              The request did not come back. This is not an empty project: the runs are still
+              there, this page could not read them.
+            </Callout>
           ) : simulationList.length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <Atom className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No simulations yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Run your first simulation to generate 3D agglomerate structures
-                </p>
+            <EmptyState
+              icon={Atom}
+              headingLevel={3}
+              title="No simulations yet"
+              description="Run your first simulation to generate 3D agglomerate structures"
+              action={
                 <Link href={`/projects/${id}/simulations/new`}>
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
                     Run Simulation
                   </Button>
                 </Link>
-              </CardContent>
-            </Card>
+              }
+            />
           ) : (
             <div className="grid gap-4">
               {simulationList.map((sim) => {
@@ -325,11 +335,11 @@ export default function ProjectDetailPage({
                 <Link
                   key={sim.id}
                   href={`/projects/${id}/simulations/${sim.id}`}
+                  className="block"
                 >
-                  <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
+                  <article className="rounded-lg border border-line bg-surface p-4 transition-colors hover:border-brand">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3">
                           {/*
                             Compare selection checkbox — does NOT navigate (R1/S1.6).
                             Wrap in a stopPropagation-only span so the Link's default
@@ -352,9 +362,9 @@ export default function ProjectDetailPage({
                               onCheckedChange={() => toggleSelection(sim.id)}
                             />
                           </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[13px] font-semibold text-ink">
                                 {/*
                                   Prefer the user-assigned / backend-generated `name`;
                                   fall back to the algorithm code only for legacy
@@ -365,13 +375,20 @@ export default function ProjectDetailPage({
                               <Badge variant="outline" className="text-xs">
                                 {sim.algorithm.toUpperCase()}
                               </Badge>
-                              <StatusBadge status={sim.status} />
+                              <StatusChip status={sim.status} />
                             </div>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {'n_particles' in sim.parameters &&
-                                `${(sim.parameters as { n_particles: number }).n_particles.toLocaleString()} particles`}
-                              {' • '}
-                              {formatDistanceToNow(sim.created_at)}
+                            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+                              {'n_particles' in sim.parameters && (
+                                <span className="inline-flex items-baseline gap-1">
+                                  <Num
+                                    value={(sim.parameters as { n_particles: number }).n_particles}
+                                    digits={0}
+                                    size="sm"
+                                  />
+                                  <span>particles</span>
+                                </span>
+                              )}
+                              <span>{formatDistanceToNow(sim.created_at)}</span>
                             </p>
                           </div>
                         </div>
@@ -382,19 +399,19 @@ export default function ProjectDetailPage({
                               (sim.parameters ?? {}) as unknown as Record<string, unknown>,
                             )
                             return (
-                              <div className="text-right">
-                                <p className="text-sm">
-                                  <span className="text-muted-foreground">Df = </span>
-                                  <span className="font-mono font-medium">
-                                    {formatNumber(sim.metrics.fractal_dimension, 3)}
-                                  </span>
+                              <div className="text-right text-[11px] leading-relaxed">
+                                <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                  <span className="text-ink-muted">Df</span>
+                                  <Num value={sim.metrics.fractal_dimension} digits={3} size="sm" />
                                 </p>
-                                <p className="text-sm">
-                                  <span className="text-muted-foreground">Rg = </span>
-                                  <span className="font-mono">
-                                    {formatNumber(sim.metrics.radius_of_gyration * scale, 1)}
-                                  </span>
-                                  <span className="text-muted-foreground text-xs"> nm</span>
+                                <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                  <span className="text-ink-muted">Rg</span>
+                                  <Num
+                                    value={sim.metrics.radius_of_gyration * scale}
+                                    digits={1}
+                                    unit="nm"
+                                    size="sm"
+                                  />
                                 </p>
                               </div>
                             )
@@ -450,14 +467,13 @@ export default function ProjectDetailPage({
                           </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                  </article>
                 </Link>
                 )
               })}
             </div>
           )}
-        </div>
+        </Panel>
 
         {/* FRAKTAL Analyses List */}
         <div className="space-y-4 mt-8">

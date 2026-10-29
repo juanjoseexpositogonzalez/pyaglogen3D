@@ -1,10 +1,9 @@
 /**
  * Project detail migrated onto the design-system kit (wave 2, issue #174).
  *
- * This file guards **slice 1** of the partition published in the issue: the
- * header, the counts, and the removal of the deprecated layout header. The
- * simulations and FRAKTAL sections are slices 2 and 3 and get their own
- * guards; a failure here means the top of the screen moved, not the lists.
+ * Guarded slice by slice, following the partition published in the issue. The
+ * frame and the counts are slice 1; the simulations list is slice 2. FRAKTAL
+ * and its dialogs are slice 3 and get their own guards.
  *
  * Asserted through what a user can perceive — headings, roles, accessible
  * names, hrefs — rather than through which components were imported. A test
@@ -13,7 +12,7 @@
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -21,15 +20,34 @@ const mockUseProject = vi.fn()
 const mockUseSimulations = vi.fn()
 const mockUseFraktalAnalyses = vi.fn()
 const mockUseFraktalBatches = vi.fn()
+const mockPush = vi.fn()
+const mockDeleteAll = vi.fn()
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
+  useRouter: () => ({ push: mockPush, replace: vi.fn() }),
   usePathname: () => '/projects/p1',
 }))
 
 vi.mock('next/link', () => ({
-  default: ({ children, href }: { children: React.ReactNode; href: string }) =>
-    React.createElement('a', { href }, children),
+  // A click that the page has not stopped or prevented lands here as a push:
+  // otherwise "ticking the checkbox does not navigate" could not fail.
+  default: ({
+    children,
+    href,
+  }: {
+    children: React.ReactNode
+    href: string
+  }) =>
+    React.createElement(
+      'a',
+      {
+        href,
+        onClick: (event: React.MouseEvent) => {
+          if (!event.defaultPrevented) mockPush(href)
+        },
+      },
+      children,
+    ),
 }))
 
 vi.mock('@/hooks/useProjects', () => ({
@@ -47,6 +65,15 @@ vi.mock('@/hooks/useFraktalAnalyses', () => ({
 
 vi.mock('@/hooks/useFraktalBatches', () => ({
   useFraktalBatches: () => mockUseFraktalBatches(),
+}))
+
+vi.mock('@/lib/api', () => ({
+  simulationsApi: {
+    deleteAll: (...args: unknown[]) => mockDeleteAll(...args),
+    delete: vi.fn(),
+    cancel: vi.fn(),
+  },
+  fraktalApi: { deleteAll: vi.fn() },
 }))
 
 vi.mock('@/contexts/AuthContext', () => ({
@@ -218,5 +245,152 @@ describe('the project counts', () => {
       screen.getByRole('link', { name: 'New Simulation' }).getAttribute('href'),
     ).toBe('/projects/p1/simulations/new')
     expect(screen.getByRole('button', { name: 'Import Aggregate' })).toBeTruthy()
+  })
+})
+
+const sim = (overrides: Record<string, unknown> = {}) => ({
+  id: 's1',
+  project: 'p1',
+  name: 'Baseline run',
+  algorithm: 'tunable_cc',
+  status: 'completed',
+  // 50 nm diameter makes the Rg scale an exact 25, so the expected reading is
+  // arithmetic rather than whatever the fixture happens to produce.
+  parameters: { primary_particle_diameter_nm: 50, n_particles: 1200 },
+  seed: 42,
+  metrics: { fractal_dimension: 1.8234, radius_of_gyration: 12 },
+  execution_time_ms: 1200,
+  created_at: '2026-10-20T10:00:00Z',
+  completed_at: '2026-10-20T10:01:00Z',
+  ...overrides,
+})
+
+const withSimulations = (...sims: unknown[]) =>
+  mockUseSimulations.mockReturnValue({ data: { results: sims }, isLoading: false, refetch: vi.fn() })
+
+describe('the simulations section', () => {
+  it('names the section, so the list is reachable by heading', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { level: 2, name: 'Simulations' })).toBeTruthy()
+  })
+
+  it('lists one entry per simulation, each linking to it', () => {
+    withSimulations(sim(), sim({ id: 's2', name: 'High Df' }))
+    renderPage()
+
+    expect(screen.getByRole('link', { name: /baseline run/i }).getAttribute('href')).toBe(
+      '/projects/p1/simulations/s1',
+    )
+    expect(screen.getByRole('link', { name: /high df/i }).getAttribute('href')).toBe(
+      '/projects/p1/simulations/s2',
+    )
+  })
+
+  it('says what state a run is in, in words', () => {
+    withSimulations(sim(), sim({ id: 's2', name: 'Broke', status: 'failed', metrics: null }))
+    renderPage()
+
+    // Status is never colour alone: the chip carries the word.
+    expect(screen.getByText('Completed')).toBeTruthy()
+    expect(screen.getByText('Failed')).toBeTruthy()
+  })
+
+  it('shows the readings a completed run produced, with their units', () => {
+    withSimulations(sim())
+    const { container } = renderPage()
+
+    const readings = container.querySelectorAll('.num')
+    const texts = Array.from(readings).map((node) => node.textContent)
+    // Df at three decimals and Rg scaled to nm at one: 12 × 25 = 300.
+    expect(texts).toContain('1.823')
+    expect(texts).toContain('300.0')
+    expect(screen.getByText('nm')).toBeTruthy()
+  })
+
+  it('counts particles as whole numbers, not as a rounded decimal', () => {
+    withSimulations(sim())
+    const { container } = renderPage()
+
+    const texts = Array.from(container.querySelectorAll('.num')).map((node) => node.textContent)
+    expect(texts).toContain('1200')
+  })
+
+  it('does not invent readings for a run that has none', () => {
+    withSimulations(sim({ status: 'running', metrics: null }))
+    renderPage()
+
+    // A queued run has no Df. Rendering "Df 0.000" would be a claim the engine
+    // has not made.
+    expect(screen.queryByText('Df')).toBeNull()
+  })
+
+  it('offers an empty state that says what the surface is for', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { name: /no simulations yet/i })).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: /run simulation/i }).getAttribute('href'),
+    ).toBe('/projects/p1/simulations/new')
+  })
+
+  it('reports a failed list instead of pretending there are no runs', () => {
+    mockUseSimulations.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      refetch: vi.fn(),
+    })
+    renderPage()
+
+    expect(screen.getByRole('alert').textContent).toMatch(/failed to load simulations/i)
+    expect(screen.queryByText(/no simulations yet/i)).toBeNull()
+  })
+
+  it('keeps the compare checkbox, and ticking it does not navigate', () => {
+    withSimulations(sim())
+    renderPage()
+
+    const box = screen.getByRole('checkbox', { name: /select tunable_cc simulation/i }) as HTMLInputElement
+    fireEvent.click(box)
+
+    // The click that selects is the click that must not open the run: the
+    // checkbox lives inside the card's link.
+    expect(box.checked).toBe(true)
+    expect(mockPush).not.toHaveBeenCalled()
+  })
+
+  it('offers to compare only once two runs are selected', () => {
+    withSimulations(sim(), sim({ id: 's2', name: 'High Df', algorithm: 'gcca' }))
+    renderPage()
+
+    expect(screen.queryByRole('region', { name: /compare simulations/i })).toBeNull()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /select tunable_cc simulation/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /select gcca simulation/i }))
+
+    expect(screen.getByRole('region', { name: /compare simulations/i })).toBeTruthy()
+    fireEvent.click(screen.getByRole('button', { name: /compare \(2\)/i }))
+    expect(mockPush).toHaveBeenCalledWith('/projects/p1/compare?sims=s1,s2')
+  })
+
+  it('asks before deleting every run and deletes them only when confirmed', async () => {
+    mockDeleteAll.mockResolvedValue(undefined)
+    withSimulations(sim(), sim({ id: 's2', name: 'High Df' }))
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete all/i }))
+    expect(screen.getByText(/delete all 2 simulations\?/i)).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }))
+    expect(mockDeleteAll).not.toHaveBeenCalled()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete all/i }))
+    fireEvent.click(screen.getByRole('button', { name: /yes, delete all/i }))
+
+    // Confirmation stays in line rather than in a native confirm(): the
+    // pattern this screen already had and #178 shows the list lacks.
+    await screen.findByRole('button', { name: /delete all/i })
+    expect(mockDeleteAll).toHaveBeenCalledWith('p1')
   })
 })
