@@ -1225,10 +1225,8 @@ def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
     assert resp.status_code == 400, (
         f"the stored grid dict was not judged when the algorithm moved: {resp.data}"
     )
-    row.refresh_from_db()
-    assert row.base_algorithm == "tunable_cc", (
-        f"the algorithm moved anyway, leaving sintering unread: {row.base_algorithm}"
-    )
+    # No `assert row.base_algorithm == ...` here either: a 400 means DRF never
+    # called save(), so it cannot fail while the assertion above passes.
 
 
 @pytest.mark.parametrize(

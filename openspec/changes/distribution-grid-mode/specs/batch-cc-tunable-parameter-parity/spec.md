@@ -29,6 +29,8 @@ shorthand normalized to fixed` now requires a 400, because a bare scalar has nev
 normalised (measured: `Distribution config must be a dict.`). The title survives because a
 MODIFIED block may not drop a scenario, and renaming it needs its own change.
 
+The refusal scenarios in this requirement are read under the convention R13 states.
+
 #### Scenario R1.1 — Happy path: two normal distributions expand correctly
 
 - GIVEN `parameter_grid = {kf_distribution: [{mode:"normal",mean:1.2,std:0.05},{mode:"normal",mean:1.3,std:0.05}]}` and `seeds_per_combination = 2`
@@ -46,7 +48,8 @@ MODIFIED block may not drop a scenario, and renaming it needs its own change.
 
 - GIVEN `parameter_grid = {kf_distribution: [1.3]}`
 - WHEN the serializer validates
-- THEN a 400 response: a bare scalar is not a distribution config, and the error names `mode`
+- THEN a 400 response: a bare scalar is not a distribution config, and the message says exactly that
+  (`Distribution config must be a dict.`), naming no discriminator
 
 #### Scenario R1.3 — Invalid config rejected with 400
 
@@ -105,6 +108,8 @@ requirements to drift apart.
 Children carry the configuration under **both** `particle_radius_config` and `dpo_distribution`,
 on the same terms as R1.
 
+The refusal scenarios in this requirement are read under the convention R13 states.
+
 #### Scenario R2.1 — Normal polydispersity within ratio limit
 
 - GIVEN `parameter_grid = {particle_radius_config: [{mode:"normal", mean:1.0, std:0.2}]}`
@@ -132,9 +137,9 @@ IDENTICAL to before that change.
 
 **Carve-out.** That guarantee does not extend to sintering settings this contract now validates:
 flat `sintering_*` keys, a `sintering_config` in `base_parameters` or in
-`limiting_cases_config`, and the `fixed` payload the canonical documents with a `value` key —
-which used to run with no sintering at all, because nothing read `value`, and is now rejected
-(R7.3). Nor does it extend to the `normal` mean, which used to travel in `sintering_mean` and
+`limiting_cases_config`, and the `fixed` payload carrying `value` where canonical R3 requires
+`coefficient` — which used to run with no sintering at all, because nothing read `value`, and is
+now rejected (R7.3). Nor does it extend to the `normal` mean, which used to travel in `sintering_mean` and
 reach the engine as `1.0`.
 
 One more narrowing belongs in this list: a **study-level**
@@ -172,6 +177,8 @@ A well-formed config in `base_parameters.kf_distribution` or
 `base_parameters.particle_radius_config` is not refused **for its shape or its range** when the
 algorithm does consume it: R13 requires it to be delivered to the engine instead.
 
+The refusal scenarios in this requirement are read under the convention R13 states.
+
 #### Scenario R7.1 — Old grid with only scalar keys
 
 - **GIVEN** `parameter_grid = {n_particles: [100, 200], target_df: [1.8]}`
@@ -189,7 +196,7 @@ algorithm does consume it: R13 requires it to be delivered to the engine instead
 - **GIVEN** `parameter_grid = {n_particles: [100], "sintering_coeff": [42.0]}`
 - **WHEN** the serializer validates
 - **THEN** 400, even though the grid contains none of the four added keys
-- **AND** `sintering_config = {distribution_type:"fixed", value:0.9}` also yields 400, although that is the payload canonical R3 documents
+- **AND** `sintering_config = {distribution_type:"fixed", value:0.9}` also yields 400, because canonical R3 documents `coefficient`, not `value`, for the fixed shape
 
 #### Scenario R7.4 — The distribution carve-out is explicit
 
@@ -329,8 +336,9 @@ algorithm not listed is rejected with 400):
 | Sintering with `fixed` only | `limiting`, which reads `sintering_coeff` (the `limiting` branch of `run_simulation_task`) but ignores type, min, max and std |
 | None | `fracval`, `gcca`, `box_rfa`, `imported` |
 
-The allow-list MUST apply to every input surface of R3. On a partial update that omits
-`base_algorithm`, it MUST be evaluated against the instance's stored `base_algorithm`.
+The allow-list MUST apply to every input surface of R3. On a partial update that touches a
+sintering setting or the algorithm and omits `base_algorithm`, it MUST be evaluated against the
+instance's stored `base_algorithm`.
 
 This requirement governs study expansion. The single-simulation endpoints, the Django admin and
 the AI assistant tool (the AI assistant's study-creation tool) are outside it; the chained
@@ -423,10 +431,11 @@ already fixes for sintering, and the allow-list MUST be written as the set that 
 never as a list of the excluded: the model declares eleven algorithms and an enumeration of the
 excluded silently omitted two of them.
 
-**How a refusal scenario is read.** A scenario in this file that ends in a 400 describes a request
-whose only defect is the one its GIVEN states, every other rule the request touches holding. Its
-THEN promises the message such a request receives, and says nothing about a request that breaks a
-second rule as well.
+**How a refusal scenario is read.** In R1, R2, R7, R11 and R13, a scenario that expects a refusal
+describes a request whose only defect is the one its GIVEN names: every field the GIVEN leaves
+unstated takes a value that satisfies the rules the request touches. Its THEN promises the message
+every such request receives, and says nothing about a request that breaks a second rule as well.
+The scenarios of R5 and R6 are outside this convention.
 
 | Algorithm | These four keys |
 |---|---|

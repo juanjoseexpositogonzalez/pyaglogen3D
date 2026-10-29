@@ -780,10 +780,10 @@ def test_the_measured_precedence_between_scope_and_shape(
 ) -> None:
     """The measured order, pinned here because the contract does not state it.
 
-    Seven drafts of R11's precedence paragraph were false, each in a
+    Earlier drafts of R11's precedence paragraph were false, each in a
     dimension its author had not probed. The spec describes the order no
-    longer - it names this table instead, because a table fails when the
-    order changes and a paragraph goes quietly stale.
+    longer; this table is where it is measured, because a table fails when
+    the order changes and a paragraph goes quietly stale.
 
     The dimensions that falsified a draft, all of them live here: the
     carrier, the spelling, the key family (`_DISTRIBUTION_GRID_KEYS` holds
