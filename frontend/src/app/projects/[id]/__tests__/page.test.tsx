@@ -394,3 +394,103 @@ describe('the simulations section', () => {
     expect(mockDeleteAll).toHaveBeenCalledWith('p1')
   })
 })
+
+const analysis = (overrides: Record<string, unknown> = {}) => ({
+  id: 'a1',
+  project: 'p1',
+  model: 'granulated_2012',
+  source_type: 'uploaded_image',
+  status: 'completed',
+  results: { df: 1.7456, npo: 1234 },
+  created_at: '2026-10-20T10:00:00Z',
+  ...overrides,
+})
+
+const withAnalyses = (...analyses: unknown[]) =>
+  mockUseFraktalAnalyses.mockReturnValue({
+    data: { results: analyses },
+    isLoading: false,
+    refetch: vi.fn(),
+  })
+
+describe('the FRAKTAL analyses section', () => {
+  it('names the section, so it is reachable by heading', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { level: 2, name: 'FRAKTAL analyses' })).toBeTruthy()
+  })
+
+  it('lists one entry per analysis, naming its model and its source', () => {
+    withAnalyses(analysis(), analysis({ id: 'a2', model: 'voxel_2018', source_type: 'projection' }))
+    renderPage()
+
+    expect(screen.getByRole('link', { name: /granulated 2012/i }).getAttribute('href')).toBe(
+      '/projects/p1/fraktal/a1',
+    )
+    expect(screen.getByRole('link', { name: /voxel 2018/i }).getAttribute('href')).toBe(
+      '/projects/p1/fraktal/a2',
+    )
+    expect(screen.getByText('Image')).toBeTruthy()
+    expect(screen.getByText('Projection')).toBeTruthy()
+  })
+
+  it('says what state an analysis is in, in words', () => {
+    withAnalyses(analysis(), analysis({ id: 'a2', status: 'failed', results: null }))
+    renderPage()
+
+    expect(screen.getByText('Completed')).toBeTruthy()
+    expect(screen.getByText('Failed')).toBeTruthy()
+  })
+
+  it('shows the readings a finished analysis produced', () => {
+    withAnalyses(analysis())
+    const { container } = renderPage()
+
+    const texts = Array.from(container.querySelectorAll('.num')).map((node) => node.textContent)
+    expect(texts).toContain('1.746')
+    // Number of primary particles: a count, so no decimals at all.
+    expect(texts).toContain('1234')
+  })
+
+  it('does not invent readings for an analysis that has none', () => {
+    withAnalyses(analysis({ status: 'running', results: null }))
+    renderPage()
+
+    expect(screen.queryByText('Df')).toBeNull()
+    expect(screen.queryByText('Npo')).toBeNull()
+  })
+
+  it('offers an empty state that says what an analysis is for', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { name: /no fraktal analyses yet/i })).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: /run fraktal analysis/i }).getAttribute('href'),
+    ).toBe('/projects/p1/fraktal/new')
+  })
+
+  it('reports a failed analyses list instead of pretending there are none', () => {
+    mockUseFraktalAnalyses.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      refetch: vi.fn(),
+    })
+    renderPage()
+
+    const alerts = screen.getAllByRole('alert').map((node) => node.textContent ?? '')
+    expect(alerts.some((text) => /failed to load fraktal analyses/i.test(text))).toBe(true)
+    expect(screen.queryByText(/no fraktal analyses yet/i)).toBeNull()
+  })
+
+  it('confirms in line before deleting an analysis, and cancelling keeps it', () => {
+    withAnalyses(analysis())
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete fraktal analysis/i }))
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'No' }))
+    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
+  })
+})
