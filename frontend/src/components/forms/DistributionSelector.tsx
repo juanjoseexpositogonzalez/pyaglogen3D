@@ -54,7 +54,11 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
         value.mode === 'fixed' ? value.value
         : value.mode === 'normal' ? value.mean
         : 1.0
-      onChange({ mode: 'uniform', min: base, max: base })
+      // R13.11: `min == base == max` was refused by the backend (`max must be
+      // > min`), so switching an entry to uniform left a form that could not be
+      // submitted until the user edited a bound by hand. A range around the
+      // value already chosen is both submittable and the obvious starting point.
+      onChange({ mode: 'uniform', min: base * 0.9, max: base * 1.1 })
     }
   }
 

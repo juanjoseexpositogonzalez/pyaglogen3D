@@ -1,3 +1,4 @@
+import { formatParameterValue } from '@/lib/formatParameterValue'
 /**
  * FractalAnalysisTab — dedicated "Fractal Analysis" study tab (spec R7 of
  * change batch-windowed-box-counting; design D7, persona-locked P3).
@@ -107,7 +108,7 @@ function formatConfigLabel(
   const entries: Array<[string, unknown]> = paramKeys.length
     ? paramKeys.map((k) => [k, result.parameters[k]])
     : Object.entries(result.parameters)
-  return entries.map(([k, v]) => `${k}=${v}`).join(', ')
+  return entries.map(([k, v]) => `${k}=${formatParameterValue(v)}`).join(', ')
 }
 
 export interface HistogramBin {

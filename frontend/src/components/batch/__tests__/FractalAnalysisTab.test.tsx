@@ -514,3 +514,22 @@ describe('bucketValues', () => {
     expect(bins.reduce((acc, b) => acc + b.count, 0)).toBe(values.length)
   })
 })
+
+// ---------------------------------------------------------------------------
+// R13.3 — the config label shows the configured VALUE, not "[object Object]"
+// ---------------------------------------------------------------------------
+
+describe('FractalAnalysisTab — the config label carries the distribution value', () => {
+  it('renders the declared value of a distribution key', () => {
+    const kf = { mode: 'fixed', value: 1.9 }
+    const results = makeResults([makeRow('sim-1', { parameters: { kf_distribution: kf } })], {
+      parameter_grid: { kf_distribution: [kf] },
+    })
+
+    renderTab(results)
+
+    const label = screen.getByText(/kf_distribution=/)
+    expect(label.textContent).not.toContain('[object Object]')
+    expect(label.textContent).toContain('1.9')
+  })
+})

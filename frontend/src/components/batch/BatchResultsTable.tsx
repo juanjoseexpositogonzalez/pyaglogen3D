@@ -4,6 +4,7 @@ import { useMemo, useState } from 'react'
 import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { formatParameterValue } from '@/lib/formatParameterValue'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
 import { Label } from '@/components/ui/label'
@@ -236,7 +237,7 @@ export function BatchResultsTable({
                     </td>
                     {varyingParams.map((param) => (
                       <td key={param} className="px-3 py-2 font-mono">
-                        {String(result.parameters[param] ?? '-')}
+                        {formatParameterValue(result.parameters[param])}
                       </td>
                     ))}
                     <td className="px-3 py-2 text-right font-mono">

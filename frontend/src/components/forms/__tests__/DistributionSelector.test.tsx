@@ -137,8 +137,13 @@ describe('DistributionSelector', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
     const newVal = onChange.mock.calls[0][0] as DistributionValue
     expect(newVal.mode).toBe('uniform')
-    expect((newVal as { min: number }).min).toBe(2.0)
-    expect((newVal as { max: number }).max).toBe(2.0)
+    // R13.11: this used to assert `min === max === 2.0`, which is the payload
+    // the backend refuses with `max must be > min` - the test was pinning the
+    // defect it should have caught. Switching to uniform now brackets the value
+    // the user already chose, so the form can be submitted without editing a
+    // bound first.
+    expect((newVal as { min: number }).min).toBeCloseTo(1.8)
+    expect((newVal as { max: number }).max).toBeCloseTo(2.2)
   })
 
   it('switching from normal to fixed preserves mean as value', () => {

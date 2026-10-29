@@ -51,6 +51,22 @@ export function consumesSintering(algorithm: SimulationAlgorithm): boolean {
   return SINTERING_ALGORITHMS.includes(algorithm)
 }
 
+/**
+ * The algorithms whose worker branch expands the distribution keys (R13.12).
+ *
+ * One, and written as the set that is permitted rather than as the list of the
+ * excluded: an enumeration of the excluded is how `limiting` and `imported`
+ * were silently lost while this contract was being written.
+ */
+export const DISTRIBUTION_ALGORITHMS: readonly SimulationAlgorithm[] = ['tunable_cc'] as const
+
+export function consumesDistribution(algorithm: SimulationAlgorithm): boolean {
+  return DISTRIBUTION_ALGORITHMS.includes(algorithm)
+}
+
+/** The variation names that carry a distribution config into the payload. */
+const DISTRIBUTION_VARIATIONS = new Set(['kf_distribution', 'particle_radius_config'])
+
 /** The variation names that carry a sintering setting into the payload. */
 const SINTERING_VARIATIONS = new Set(['sintering_config', 'sintering_coeff'])
 
@@ -69,6 +85,10 @@ export function rejectsVariation(
   name: string,
   values: DistributionValue[] = [],
 ): boolean {
+  // R10.8: the two distribution keys are refused by every algorithm whose
+  // worker never reads them, on the same terms R11 fixes for sintering.
+  if (DISTRIBUTION_VARIATIONS.has(name)) return !consumesDistribution(algorithm)
+
   if (!SINTERING_VARIATIONS.has(name)) return false
 
   // `limiting` reads the coefficient and ignores type, min, max and std, so it
