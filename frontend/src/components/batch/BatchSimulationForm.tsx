@@ -124,7 +124,7 @@ algorithm: SimulationAlgorithm,
   if (consumesDistribution(algorithm)) {
     options.push(
       { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
-      { value: 'particle_radius_config', label: 'Particle radius (varies per run)' },
+      { value: 'particle_radius_config', label: 'Particle radius (per-run variation)' },
     )
   }
   options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
@@ -296,12 +296,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       if (DISTRIBUTION_PARAMS.has(variation.name)) {
         // Distribution grid values are objects, not scalars
         if (variation.distributionValues.length > 0) {
-          // R10.5: sintering speaks its own shape. The other two grids keep
-          // the selector's - NOT because it is right, but because translating
-          // them belongs to `distribution-grid-wiring`. A judge measured that
-          // the backend rejects `{mode, ...}` for them too, so choosing
-          // kf_distribution or particle_radius still produces an invisible
-          // 400. Recorded in issue #115, not fixed by stretching this task.
+          // R10.5: sintering speaks its own shape; the two distribution keys
+          // send the `mode` shape the engine pipeline reads, which the backend
+          // accepts for the algorithm that consumes them. Measured: a `mode`
+          // config on `kf_distribution` and a `uniform` on
+          // `particle_radius_config` both answer 201 on `tunable_cc`.
           parameterGrid[variation.name] =
             variation.name === 'sintering_config'
               ? variation.distributionValues.map(toSinteringConfig)
@@ -595,11 +594,6 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                       value={variation.distributionValues}
                       onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
                       label={`${variation.name.replace(/_/g, ' ')} configurations`}
-                      allowedTypes={
-                        variation.name === 'particle_radius_config'
-                          ? ['fixed', 'normal']
-                          : undefined
-                      }
                     />
                   ) : variation.name === SEED_TYPE_PARAM ? (
                     /* Seed type multi-select chips */

@@ -1,6 +1,6 @@
 """R13 — a declared distribution reaches the engine, or the study is refused.
 
-Contract: openspec/changes/distribution-grid-mode, T2.1 and T2.1e (PR 1).
+Contract: openspec/changes/archive/2026-10-29-distribution-grid-mode, T2.1 and T2.1e (PR 1).
 
 The harm this closes was measured before the contract was written
 (`tests/diagnostics/test_fase0_distribution_engine.py`): a grid declaring
