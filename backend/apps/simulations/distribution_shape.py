@@ -56,14 +56,13 @@ def validate_shape(
     config: Any,
     *,
     max_std_over_mean: float | None = None,
-    allow_legacy_spelling: bool = False,
 ) -> None:
     """Raise `ValueError` unless `config` is a distribution the engine can run.
 
-    Accepts the `mode` shape the engine pipeline speaks. The parity keys also
-    accept the legacy `distribution_type` spelling until the translation lands
-    (that is the next chained PR); both are checked for range here, because a
-    panicking worker is the worse failure of the two.
+    Accepts the `mode` shape the engine pipeline speaks. The legacy
+    `distribution_type` spelling was tolerated only until the translation
+    landed; it has, so a config that carries it is refused like any other
+    discriminator the translator does not recognise.
     """
     if not isinstance(config, Mapping):
         raise ValueError(
@@ -75,8 +74,6 @@ def validate_shape(
     # stored and handed to `expand_distribution_kwargs`, which reads `mode`
     # and returns {} for anything else: the silent default this closes.
     mode = config.get("mode")
-    if mode is None and allow_legacy_spelling:
-        mode = config.get("distribution_type")
     if mode not in MODES:
         raise ValueError(f"mode must be one of {list(MODES)}, got {mode!r}")
 

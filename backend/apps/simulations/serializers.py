@@ -11,7 +11,7 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .distribution_shape import CAPPED_MAGNITUDE, PARITY_KEYS, SweptShapeError
+from .distribution_shape import CAPPED_MAGNITUDE, SweptShapeError
 from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
 from .distribution_shape import check_algorithm_scope as check_distribution_scope
 from .distribution_shape import collect_surfaces as collect_distribution_surfaces
@@ -756,7 +756,6 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     validate_distribution_shape(
                         config,
                         max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
-                        allow_legacy_spelling=key in PARITY_KEYS,
                     )
                 except ValueError as exc:
                     raise serializers.ValidationError({label: str(exc)}) from exc

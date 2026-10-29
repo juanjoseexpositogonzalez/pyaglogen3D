@@ -40,8 +40,10 @@ from typing import Any
 from .sintering_shape import check_flat_keys, check_flat_required
 from .utils import (
     apply_sintering_config,
+    complete_distribution_aliases,
     generate_limiting_cases,
     generate_sintering_extreme_cases,
+    set_distribution_parameter,
 )
 
 
@@ -85,7 +87,10 @@ def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[st
         sim_params = apply_sintering_config(sim_params, study_sintering_config)
 
     _cast_integers(sim_params, guarded=True)
-    return sim_params
+    # Mirror `create_simulation`: a parity key declared anywhere on the request
+    # reaches the engine under the name the worker reads (R13.10), and the grid
+    # key stays for the four result views.
+    return complete_distribution_aliases(sim_params)
 
 
 def preview_children(
@@ -136,7 +141,7 @@ def preview_children(
         for combo in itertools.product(*param_values):
             params = dict(base_parameters)
             for index, name in enumerate(param_names):
-                params[name] = combo[index]
+                set_distribution_parameter(params, name, combo[index])
             children.append(_as_child(params, study_sintering_config))
 
         if include_limiting_cases:

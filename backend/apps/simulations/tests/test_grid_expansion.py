@@ -270,7 +270,7 @@ class TestDistributionPassthrough:
         self, api_client, project
     ) -> None:
         """R1.5: kf_distribution config stored in child sim params as-is."""
-        kf_config = {"distribution_type": "normal", "mean": 1.3, "std": 0.1}
+        kf_config = {"mode": "normal", "mean": 1.3, "std": 0.1}
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -293,7 +293,7 @@ class TestDistributionPassthrough:
         self, api_client, project
     ) -> None:
         """Particle radius config stored in child sim params."""
-        radius_config = {"distribution_type": "normal", "mean": 50.0, "std": 10.0}
+        radius_config = {"mode": "normal", "mean": 50.0, "std": 10.0}
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -325,10 +325,10 @@ class TestFullIntegration:
         self, api_client, project
     ) -> None:
         """R5.4-R5.5: all 4 new grid keys in one study."""
-        kf1 = {"distribution_type": "fixed", "value": 1.3}
-        kf2 = {"distribution_type": "normal", "mean": 1.5, "std": 0.1}
+        kf1 = {"mode": "fixed", "value": 1.3}
+        kf2 = {"mode": "normal", "mean": 1.5, "std": 0.1}
         sint1 = {"distribution_type": "fixed", "coefficient": 0.9}
-        rad1 = {"distribution_type": "normal", "mean": 50.0, "std": 5.0}
+        rad1 = {"mode": "normal", "mean": 50.0, "std": 5.0}
 
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",

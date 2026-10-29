@@ -56,8 +56,8 @@ class TestKfDistributionValidation:
             parameter_grid={
                 "n_particles": [100],
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "normal", "mean": 1.3, "std": 0.1},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "normal", "mean": 1.3, "std": 0.1},
                 ],
             }
         )
@@ -95,7 +95,7 @@ class TestParticleRadiusConfigValidation:
             parameter_grid={
                 "n_particles": [100],
                 "particle_radius_config": [
-                    {"distribution_type": "normal", "mean": 50.0, "std": 10.0},
+                    {"mode": "normal", "mean": 50.0, "std": 10.0},
                 ],
             }
         )

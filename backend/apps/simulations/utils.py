@@ -137,6 +137,56 @@ def generate_fraktal_name(
     return name
 
 
+#: Each magnitude a batch study can distribute, named twice: the grid-facing
+#: name R5.2 and four result views read, and the name `run_simulation_task`
+#: translates for the engine.
+DISTRIBUTION_ALIASES: tuple[tuple[str, str], ...] = (
+    ("kf_distribution", "target_kf_distribution"),
+    ("particle_radius_config", "dpo_distribution"),
+)
+
+
+def set_distribution_parameter(
+    params: dict[str, Any], name: str, value: Any
+) -> None:
+    """Write a swept value under both names of its magnitude.
+
+    R13.9: what the study sweeps beats what it overrides, whichever of the two
+    names the grid used. Writing both here is what makes that true - the child
+    starts as a copy of `base_parameters`, so setting one name would leave the
+    other carrying the value the grid meant to replace, and the worker reads
+    that other one.
+    """
+    params[name] = value
+    for grid_name, engine_name in DISTRIBUTION_ALIASES:
+        if name in (grid_name, engine_name):
+            params[grid_name] = value
+            params[engine_name] = value
+
+
+def complete_distribution_aliases(params: Mapping[str, Any]) -> dict[str, Any]:
+    """Deliver each declared distribution under both of its names.
+
+    Translation adds and never replaces: the grid-facing name stays, because
+    `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` and
+    `varyingParams` read it, and the engine name is what `run_simulation_task`
+    translates. A magnitude declared under both names with two different values
+    is one carrier contradicting itself, which R13.9 does not govern; the engine
+    name wins there, because it is the one the worker reads.
+    """
+    completed = dict(params)
+    for grid_name, engine_name in DISTRIBUTION_ALIASES:
+        if engine_name in completed:
+            value = completed[engine_name]
+        elif grid_name in completed:
+            value = completed[grid_name]
+        else:
+            continue
+        completed[grid_name] = value
+        completed[engine_name] = value
+    return completed
+
+
 def generate_limiting_cases(
     base_parameters: dict[str, Any],
     parameter_grid: dict[str, list[Any]],
@@ -200,7 +250,7 @@ def generate_limiting_cases(
 
                 # Min boundary case
                 min_params = dict(base_parameters)
-                min_params[param_name] = min_val
+                set_distribution_parameter(min_params, param_name, min_val)
                 add_case("boundary_min", param_name, min_val, min_params)
 
                 # Max boundary case
@@ -216,7 +266,7 @@ def generate_limiting_cases(
         for param_name, extreme_values in extremes.items():
             for val in extreme_values:
                 extreme_params = dict(base_parameters)
-                extreme_params[param_name] = val
+                set_distribution_parameter(extreme_params, param_name, val)
                 add_case("theoretical", param_name, val, extreme_params)
 
     return limiting_cases
