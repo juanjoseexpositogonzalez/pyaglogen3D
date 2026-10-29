@@ -172,6 +172,61 @@ Cada comentario nombra su issue de GitHub y su rama. El
 issue de Cycle 3 es **AGLO-2** (proyecto AGLO en `isilduria.atlassian.net`).
 El acceso a Jira es vía MCP Atlassian (session-shared o sesión peer con OAuth).
 
+## Cuentas de GitHub: `gh` — dos cuentas, y sólo una tiene permisos
+
+Esta máquina tiene **dos cuentas** de `github.com` y la activa **cambia entre sesiones**:
+
+| Cuenta | Permisos sobre este repo |
+| --- | --- |
+| `juanjoseexpositogonzalez` | **sí** — es el dueño |
+| `jjeg1979` | **no** |
+
+### Qué depende de la cuenta activa y qué no
+
+Medido en este clon, porque la intuición engaña:
+
+| Operación | ¿Le afecta la cuenta activa de `gh`? |
+| --- | --- |
+| `git push` por `origin` (**SSH**) | **No.** Usa la clave SSH, no `gh`. `ssh -T git@github.com` autentica como el dueño |
+| `git push` por una rama que sigue un remoto **HTTPS** | **Sí**: va por el *credential helper* de `gh` |
+| **Escrituras por API**: `gh issue close/edit/comment`, `gh pr edit/merge`, `gh api -X …`, etiquetas | **Sí** |
+
+**El síntoma engaña por eso**: con `jjeg1979` activa, una escritura por API falla con mensajes que
+no nombran la cuenta — `does not have the correct permissions`, `403 Must have admin rights`, o
+`gh api repos/<owner>/<repo> --jq .permissions.push` devolviendo **`false`** — mientras el push por
+SSH sigue funcionando. Depurar el comando es perder el tiempo: es la cuenta.
+
+Y hay una segunda trampa, que mordió al escribir esta nota: **`git push -u https://github.com/…`
+deja esa rama siguiendo un remoto HTTPS**, y desde entonces esa rama sí pasa por `gh`. Se ve con
+`git config --get branch.<rama>.remote`. Para empujar por SSH aunque la rama tenga remoto HTTPS:
+`git push origin <rama>`.
+
+### Comprobar y arreglar
+
+```bash
+gh auth status --active          # nombra la cuenta activa (no usar `grep Active`: imprime "true")
+gh api user --jq .login          # alternativa
+```
+
+Arreglo **sin tocar la cuenta activa** — el clon es compartido con otras sesiones y cambiarla les
+cambia el contexto a ellas. Se pone el token de la cuenta correcta **sólo para ese comando**:
+
+```bash
+TOKEN=$(gh auth token --user juanjoseexpositogonzalez) || { echo "sin token para esa cuenta"; exit 1; }
+GH_TOKEN=$TOKEN gh api user --jq .login      # debe imprimir la cuenta dueña, no la activa
+GH_TOKEN=$TOKEN gh issue close <n> --reason completed
+GH_TOKEN=$TOKEN gh pr merge <n> --merge --delete-branch
+```
+
+**La comprobación de identidad no es ceremonia.** Si `gh auth token --user …` no encuentra token
+—cuenta mal escrita, llavero caído—, la sustitución devuelve **vacío**, y `gh` trata un `GH_TOKEN`
+vacío como no puesto: **cae en la cuenta activa y la escritura se ejecuta igual**, con la identidad
+equivocada y sin avisar. Medido: con una cuenta inexistente, `gh api user` respondió `jjeg1979`. Por
+eso el `|| exit 1` y el `gh api user` antes de escribir.
+
+Y si de verdad hace falta cambiar la activa (`gh auth switch --user juanjoseexpositogonzalez`),
+**avisar antes por intercom**: la configuración de `gh` no es por repositorio.
+
 ## Flujo de trabajo Git — OBLIGATORIO
 
 **`main ← develop ← rama de trabajo`**:
