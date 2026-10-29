@@ -11,7 +11,12 @@ import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
-import { consumesSintering, rejectsVariation, toSinteringConfig } from '@/lib/sinteringShape'
+import {
+  consumesDistribution,
+  consumesSintering,
+  rejectsVariation,
+  toSinteringConfig,
+} from '@/lib/sinteringShape'
 import { Callout } from '@/components/kit/Callout'
 
 const limitingGeometryOptions = [
@@ -111,12 +116,18 @@ algorithm: SimulationAlgorithm,
     options.push({ value: 'target_kf', label: 'Target kf' })
   }
 
-  // New batch-CC parameter grid options
-  options.push(
-    { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
-    { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
-    { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
-  )
+  // New batch-CC parameter grid options.
+  // R10.8: the two distribution keys are offered only where the worker reads
+  // them - `tunable_cc` alone. The other ten accepted them and read nothing,
+  // which the backend now refuses, so offering them here invited a 400 the
+  // batch page could not display.
+  if (consumesDistribution(algorithm)) {
+    options.push(
+      { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
+      { value: 'particle_radius_config', label: 'Particle radius (per-run variation)' },
+    )
+  }
+  options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
 
   // R10.4: only the algorithms whose engine invocation receives sintering.
   // The backend answers 400 for the rest since T4, so offering it here
@@ -285,12 +296,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       if (DISTRIBUTION_PARAMS.has(variation.name)) {
         // Distribution grid values are objects, not scalars
         if (variation.distributionValues.length > 0) {
-          // R10.5: sintering speaks its own shape. The other two grids keep
-          // the selector's - NOT because it is right, but because translating
-          // them belongs to `distribution-grid-wiring`. A judge measured that
-          // the backend rejects `{mode, ...}` for them too, so choosing
-          // kf_distribution or particle_radius still produces an invisible
-          // 400. Recorded in issue #115, not fixed by stretching this task.
+          // R10.5: sintering speaks its own shape; the two distribution keys
+          // send the `mode` shape the engine pipeline reads, which the backend
+          // accepts for the algorithm that consumes them. Measured: a `mode`
+          // config on `kf_distribution` and a `uniform` on
+          // `particle_radius_config` both answer 201 on `tunable_cc`.
           parameterGrid[variation.name] =
             variation.name === 'sintering_config'
               ? variation.distributionValues.map(toSinteringConfig)
@@ -584,11 +594,6 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                       value={variation.distributionValues}
                       onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
                       label={`${variation.name.replace(/_/g, ' ')} configurations`}
-                      allowedTypes={
-                        variation.name === 'particle_radius_config'
-                          ? ['fixed', 'normal']
-                          : undefined
-                      }
                     />
                   ) : variation.name === SEED_TYPE_PARAM ? (
                     /* Seed type multi-select chips */
