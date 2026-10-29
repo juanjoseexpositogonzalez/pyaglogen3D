@@ -350,12 +350,7 @@ it is not, it is refused — the judging is unconditional, the refusal is not.
 
 This is the same gate R13.12 states for the four distribution keys — the same rule about **when**
 the allow-list runs, written here so the two requirements say it rather than one of them implying
-it. The parity stops at *when*. **This contract says nothing about which refusal is reported first**
-when one request carries several problems at once, and no requirement here should: that order is
-a property of which validator runs first, not of what the API promises. What it is today is
-recorded where a change to it fails a test instead of going quietly stale, in
-`test_the_measured_precedence_between_scope_and_shape`. (approved by the person on 2026-10-26 while
-implementing issue #141; the measurement behind it is recorded in issue #115, point 17).
+it. The parity stops at *when*: this clause fixes when the allow-list runs, and says nothing more.
 
 #### Scenario R11.1 — Normal sintering arrives with its mean
 

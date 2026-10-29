@@ -714,6 +714,23 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
             },
             "exceeds the maximum",
         ),
+        # A judge measured that the two rows above pin only that the guard
+        # exists: their payloads carry no second problem, so `data.get(f)
+        # or {}` leaves the gates nothing to answer and the guard is the
+        # only refusal available at any position. This one carries both.
+        (
+            "non-object carrier beats a scope violation",
+            {
+                "parameter_grid": [],
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "kf_distribution": {"mode": "fixed", "value": 1.8},
+                },
+            },
+            "must be an object",
+        ),
         (
             "base_parameters that is not an object",
             {"base_parameters": []},
