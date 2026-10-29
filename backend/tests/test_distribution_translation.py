@@ -483,3 +483,80 @@ def test_a_swept_extreme_beats_the_base_engine_value(api_client: APIClient, user
     assert swept[0]["target_kf_distribution"] == GRID_KF, (
         "the value the request swept did not reach the engine"
     )
+
+
+def test_the_preview_keeps_each_entry_when_a_grid_names_both(
+    api_client: APIClient, user: User
+) -> None:
+    """GIVEN one grid holds both spellings, the preview must not pick a winner.
+
+    The `declared` guard has three call sites and only one had a witness. A
+    judge measured this one: dropping it from the preview's grid loop left the
+    suite green, and the preview then returned the engine value for both
+    children while the stored ones kept their own entries - the exact drift
+    between preview and reality this change claims to have closed.
+    """
+    project = Project.objects.create(name="preview both", owner=user)
+    first, second = {"mode": "fixed", "value": 1.5}, {"mode": "fixed", "value": 1.6}
+    engine = {"mode": "fixed", "value": 1.8}
+
+    response = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "kf_distribution": [first, second],
+            "target_kf_distribution": [engine],
+        },
+    )
+    assert response.status_code == 201, response.data
+    study = ParametricStudy.objects.get(id=response.data["id"])
+
+    previewed = preview_children(
+        algorithm=study.base_algorithm,
+        base_parameters=study.base_parameters,
+        parameter_grid=study.parameter_grid,
+        study_sintering_config=study.sintering_config,
+        include_limiting_cases=study.include_limiting_cases,
+        limiting_cases_config=study.limiting_cases_config,
+        max_children=1000,
+    )
+
+    kept = sorted(json.dumps(child["kf_distribution"], sort_keys=True) for child in previewed)
+    assert kept == sorted(json.dumps(entry, sort_keys=True) for entry in (first, second)), (
+        "the preview chose a winner between two swept spellings"
+    )
+
+
+def test_a_swept_extreme_of_two_spellings_keeps_the_base_engine_value(
+    api_client: APIClient, user: User
+) -> None:
+    """GIVEN theoretical_extremes names both spellings of one magnitude.
+
+    The third `declared` call site. Dropping it left the suite green and the
+    behaviour moves: the extreme child for `kf_distribution` kept the base
+    engine value with the guard and silently overwrote it without.
+    """
+    project = Project.objects.create(name="extremes both", owner=user)
+    response = _post(
+        api_client,
+        project,
+        base_parameters={**BASE, "target_kf_distribution": BASE_KF},
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {
+                "kf_distribution": [GRID_KF],
+                "target_kf_distribution": [{"mode": "fixed", "value": 1.9}],
+            }
+        },
+    )
+
+    assert response.status_code == 201, response.data
+    swept = [
+        child.parameters
+        for child in _children(project)
+        if (child.parameters or {}).get("kf_distribution") == GRID_KF
+    ]
+    assert len(swept) == 1, f"expected one swept child, got {len(swept)}"
+    assert swept[0]["target_kf_distribution"] == BASE_KF, (
+        "the sweep overwrote a spelling the same request declares"
+    )
