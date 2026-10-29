@@ -99,14 +99,14 @@
   `test_p115_1_bare_dict_in_theoretical_extremes` (201 → 400, R13.7) y
   `test_d7_limiting_cases_with_dict_grid` (201 → 400, R1) y la parametrización
   `{mode:"lognormal"}` de `test_undocumented_doors`, que hoy mide 201 y pasará a 400.
-- [ ] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
+- [x] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
   `particle_radius_config` fuera de la allow-list, y cambiar de algoritmo limpia o marca la
   variación ya configurada.
-- [ ] T3.7 Testigo de **R13.11**: el selector no emite `min == max` al pasar a `uniform`.
-- [ ] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
+- [x] T3.7 Testigo de **R13.11**: el selector no emite `min == max` al pasar a `uniform`.
+- [x] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
   `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`. La cuarta se
   me había caído al reescribir el contrato, y el §5 del mapa sí la listaba.
-- [ ] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
+- [x] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
   ejecución (T0.5).
 - [ ] ~~T3.3 `radius_max` deja de ofrecerse~~ **RETIRADA**: el formulario batch no lo ofrece, así
   que el testigo habría pasado antes del cambio. La medición (el engine lo ignora) vale para el

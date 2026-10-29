@@ -58,7 +58,12 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
       // > min`), so switching an entry to uniform left a form that could not be
       // submitted until the user edited a bound by hand. A range around the
       // value already chosen is both submittable and the obvious starting point.
-      onChange({ mode: 'uniform', min: base * 0.9, max: base * 1.1 })
+      // A base of 0 comes from clearing the `fixed` input (`parseFloat('') || 0`),
+      // and bracketing it multiplicatively gives `{min: 0, max: 0}` - refused by
+      // the API for both `min > 0` and `min < max`. The range is built on a
+      // usable value instead, so the form stays submittable.
+      const anchor = base > 0 ? base : 1.0
+      onChange({ mode: 'uniform', min: anchor * 0.9, max: anchor * 1.1 })
     }
   }
 

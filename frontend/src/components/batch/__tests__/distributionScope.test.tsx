@@ -82,3 +82,27 @@ describe('R13.11 — the uniform option is submittable without a prior edit', ()
     expect(emitted.max).toBeGreaterThan(emitted.min)
   })
 })
+
+describe('R10.6 — clearing follows the backend, not the dropdown', () => {
+  it('keeps a variation the server accepts even when the dropdown stops offering it', () => {
+    // `sticking_probability` is offered for `ballistic` and not for `tunable`,
+    // and the server accepts it on `tunable`. Clearing by what the dropdown
+    // lists deleted it and told the user it was rejected - data loss plus a
+    // false message. A judge measured that nothing pinned this: reverting the
+    // authority to "what the dropdown offers" left the batch suite green.
+    const { algorithmSelect } = openVariation('ballistic')
+    const selects = screen.getAllByRole('combobox')
+    const paramSelect = selects[selects.length - 1] as HTMLSelectElement
+    fireEvent.change(paramSelect, { target: { value: 'sticking_probability' } })
+
+    const before = screen.getAllByRole('combobox').length
+    fireEvent.change(algorithmSelect, { target: { value: 'tunable' } })
+
+    // The select falls back to its first listed option when the current one is
+    // not offered, so the control's value says nothing about survival. What
+    // says it: the variation is still mounted (same number of controls) and no
+    // removal notice appeared - the component only shows one when it drops.
+    expect(screen.getAllByRole('combobox')).toHaveLength(before)
+    expect(screen.queryByText(/removed because/i)).toBeNull()
+  })
+})

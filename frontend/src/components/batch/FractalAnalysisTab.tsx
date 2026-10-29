@@ -1,4 +1,3 @@
-import { formatParameterValue } from '@/lib/formatParameterValue'
 /**
  * FractalAnalysisTab — dedicated "Fractal Analysis" study tab (spec R7 of
  * change batch-windowed-box-counting; design D7, persona-locked P3).
@@ -26,6 +25,7 @@ import { Download } from 'lucide-react'
 
 import { pollBoxCountingJobStatus, studiesApi } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
+import { formatParameterValue } from '@/lib/formatParameterValue'
 import { sturgesBuckets } from '@/components/fraktal/FraktalBatchDistributions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -301,7 +301,7 @@ export function FractalAnalysisTab({
             <div key={configIndex} className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground">
                 {Object.entries(cfg.config)
-                  .map(([k, v]) => `${k}=${v}`)
+                  .map(([k, v]) => `${k}=${formatParameterValue(v)}`)
                   .join(', ')}
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
