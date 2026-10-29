@@ -423,6 +423,11 @@ already fixes for sintering, and the allow-list MUST be written as the set that 
 never as a list of the excluded: the model declares eleven algorithms and an enumeration of the
 excluded silently omitted two of them.
 
+**How a refusal scenario is read.** A scenario in this file that ends in a 400 describes a request
+whose only defect is the one its GIVEN states, every other rule the request touches holding. Its
+THEN promises the message such a request receives, and says nothing about a request that breaks a
+second rule as well.
+
 | Algorithm | These four keys |
 |---|---|
 | `tunable_cc` | **accepted** — its worker branch expands them and `run_tunable_cc` is the only binding declaring `kf_mode`/`dpo_mode` |
