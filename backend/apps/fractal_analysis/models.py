@@ -1,0 +1,433 @@
+"""Fractal Analysis models."""
+
+import uuid
+
+from django.conf import settings
+from django.db import models
+
+
+class FractalMethod(models.TextChoices):
+    """Available fractal analysis methods."""
+
+    BOX_COUNTING = "box_counting", "Box-Counting"
+    SANDBOX = "sandbox", "Sandbox Method"
+    CORRELATION = "correlation", "Correlation Dimension"
+    LACUNARITY = "lacunarity", "Lacunarity"
+    MULTIFRACTAL = "multifractal", "Multifractal Dq"
+    FRAKTAL_GRANULATED_2012 = "fraktal_granulated_2012", "FRAKTAL Granulated 2012"
+    FRAKTAL_VOXEL_2018 = "fraktal_voxel_2018", "FRAKTAL Voxel 2018"
+
+
+class SourceType(models.TextChoices):
+    """Source of the image for analysis."""
+
+    UPLOADED_IMAGE = "uploaded_image", "Uploaded Image"
+    SIMULATION_PROJECTION = "simulation_projection", "Simulation Projection"
+
+
+class AnalysisStatus(models.TextChoices):
+    """Analysis execution status."""
+
+    QUEUED = "queued", "Queued"
+    RUNNING = "running", "Running"
+    COMPLETED = "completed", "Completed"
+    FAILED = "failed", "Failed"
+    CANCELLED = "cancelled", "Cancelled"
+
+
+class ImageAnalysis(models.Model):
+    """2D image fractal analysis."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="analyses",
+    )
+    # Images stored as binary data
+    original_image = models.BinaryField(help_text="Original uploaded image")
+    original_filename = models.CharField(max_length=255)
+    original_content_type = models.CharField(max_length=50)
+    processed_image = models.BinaryField(
+        null=True,
+        blank=True,
+        help_text="Binarized/preprocessed image",
+    )
+    preprocessing_params = models.JSONField(
+        help_text="Threshold method, invert, clean params"
+    )
+    method = models.CharField(
+        max_length=30,
+        choices=FractalMethod.choices,
+    )
+    method_params = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Method-specific parameters",
+    )
+    results = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Fractal dimension, R2, log data, etc.",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=AnalysisStatus.choices,
+        default=AnalysisStatus.QUEUED,
+    )
+    execution_time_ms = models.PositiveIntegerField(null=True, blank=True)
+    engine_version = models.CharField(max_length=20, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "image_analyses"
+        ordering = ["-created_at"]
+        verbose_name_plural = "Image analyses"
+        indexes = [
+            models.Index(fields=["project", "-created_at"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["method"]),
+        ]
+
+    def __str__(self) -> str:
+        return f"{self.method} - {self.status} ({self.id})"
+
+
+class FraktalAnalysis(models.Model):
+    """FRAKTAL fractal analysis for agglomerate images.
+
+    Supports both 2012 Granulated and 2018 Voxel models from the FRAKTAL program.
+    Can analyze uploaded images or projections from 3D simulations.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="fraktal_analyses",
+    )
+    name = models.CharField(
+        max_length=255,
+        blank=True,
+        help_text="Optional display name. Auto-generated if not provided.",
+    )
+
+    # Source configuration
+    source_type = models.CharField(
+        max_length=30,
+        choices=SourceType.choices,
+        default=SourceType.UPLOADED_IMAGE,
+    )
+    # For uploaded images
+    original_image = models.BinaryField(
+        null=True,
+        blank=True,
+        help_text="Original uploaded image",
+    )
+    original_filename = models.CharField(max_length=255, blank=True)
+    original_content_type = models.CharField(max_length=50, blank=True)
+    # For simulation projections
+    simulation = models.ForeignKey(
+        "simulations.Simulation",
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fraktal_analyses",
+        help_text="Source simulation for projection-based analysis",
+    )
+    projection_params = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="Projection parameters: azimuth, elevation, resolution",
+    )
+
+    # Analysis model and parameters
+    model = models.CharField(
+        max_length=30,
+        choices=[
+            ("granulated_2012", "Granulated 2012"),
+            ("voxel_2018", "Voxel 2018"),
+        ],
+        help_text="FRAKTAL analysis model to use",
+    )
+    # Granulated 2012 parameters
+    npix = models.FloatField(
+        help_text="Pixels per 100nm in the scale bar",
+    )
+    dpo = models.FloatField(
+        null=True,
+        blank=True,
+        help_text="Mean primary particle diameter (nm) - required for granulated model",
+    )
+    delta = models.FloatField(
+        default=1.1,
+        help_text="Filling factor (1.0-1.5)",
+    )
+    correction_3d = models.BooleanField(
+        default=False,
+        help_text="Apply 3D correction to Rg",
+    )
+    pixel_min = models.PositiveSmallIntegerField(
+        default=10,
+        help_text="Min pixel value for segmentation",
+    )
+    pixel_max = models.PositiveSmallIntegerField(
+        default=240,
+        help_text="Max pixel value for segmentation",
+    )
+    npo_limit = models.PositiveIntegerField(
+        default=5,
+        help_text="Minimum particle count (granulated model)",
+    )
+    escala = models.FloatField(
+        default=100.0,
+        help_text="Scale reference in nm",
+    )
+    m_exponent = models.FloatField(
+        default=1.0,
+        help_text="m exponent for zp calculation (voxel model)",
+    )
+    auto_calibrate = models.BooleanField(
+        default=False,
+        help_text="Automatically find optimal dpo by testing multiple values",
+    )
+
+    # Results
+    results = models.JSONField(
+        null=True,
+        blank=True,
+        help_text="FRAKTAL results: rg, ap, df, npo, kf, zf, jf, volume, mass, surface_area",
+    )
+    status = models.CharField(
+        max_length=20,
+        choices=AnalysisStatus.choices,
+        default=AnalysisStatus.QUEUED,
+    )
+    execution_time_ms = models.PositiveIntegerField(null=True, blank=True)
+    engine_version = models.CharField(max_length=20, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "fraktal_analyses"
+        ordering = ["-created_at"]
+        verbose_name_plural = "FRAKTAL analyses"
+        indexes = [
+            models.Index(fields=["project", "-created_at"]),
+            models.Index(fields=["status"]),
+            models.Index(fields=["model"]),
+            models.Index(fields=["source_type"]),
+        ]
+
+    def __str__(self) -> str:
+        if self.name:
+            return self.name
+        return f"FRAKTAL {self.model} - {self.status} ({self.id})"
+
+
+class ComparisonSet(models.Model):
+    """Set of simulations and analyses for comparison."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="comparison_sets",
+    )
+    name = models.CharField(max_length=255)
+    description = models.TextField(blank=True)
+    simulations = models.ManyToManyField(
+        "simulations.Simulation",
+        related_name="comparison_sets",
+        blank=True,
+    )
+    analyses = models.ManyToManyField(
+        ImageAnalysis,
+        related_name="comparison_sets",
+        blank=True,
+    )
+    fraktal_analyses = models.ManyToManyField(
+        FraktalAnalysis,
+        related_name="comparison_sets",
+        blank=True,
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "comparison_sets"
+        ordering = ["-created_at"]
+
+    def __str__(self) -> str:
+        return self.name
+
+
+class FraktalBatch(models.Model):
+    """Batch fractal analysis — groups N images analyzed together.
+
+    Stores aggregate statistics and links to the individual per-image results.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    project = models.ForeignKey(
+        "projects.Project",
+        on_delete=models.CASCADE,
+        related_name="fraktal_batches",
+    )
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="fraktal_batches",
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Analysis parameters
+    algorithm = models.CharField(max_length=32)
+    calibration_source = models.CharField(max_length=16)
+    pixels_per_100nm = models.FloatField()
+    dpo_used = models.FloatField()
+    autocalibrate_source = models.CharField(max_length=16, null=True, blank=True)
+    autocalibrate_image_index = models.IntegerField(null=True, blank=True)
+
+    # Batch origin: "simulation" or "external" (default for backward compat)
+    origin = models.CharField(
+        max_length=16,
+        default="external",
+        choices=[("simulation", "Simulation"), ("external", "External")],
+        verbose_name="Batch origin",
+    )
+
+    # Optional link to simulation that generated the projections
+    sim_id = models.UUIDField(null=True, blank=True)
+
+    # Summary statistics
+    n_images = models.IntegerField(default=0)
+    n_successful = models.IntegerField(default=0)
+    mean_df = models.FloatField(null=True, blank=True)
+    std_df = models.FloatField(null=True, blank=True)
+    median_df = models.FloatField(null=True, blank=True)
+    min_df = models.FloatField(null=True, blank=True)
+    max_df = models.FloatField(null=True, blank=True)
+
+    original_zip_filename = models.CharField(max_length=255, blank=True)
+
+    class Meta:
+        db_table = "fraktal_batches"
+        ordering = ["-created_at"]
+        indexes = [models.Index(fields=["project", "-created_at"])]
+
+    def __str__(self) -> str:
+        return f"FraktalBatch({self.algorithm}, n={self.n_images}, {self.id})"
+
+
+class FraktalBatchImage(models.Model):
+    """Individual image result within a FraktalBatch.
+
+    Stores the rasterized PNG and per-image fractal metrics.
+    """
+
+    # PYA-13 T3.2: Quality classification choices.
+    QUALITY_CHOICES = [
+        ("converged", "Converged"),
+        ("approximate", "Approximate"),
+        ("excluded", "Excluded"),
+        ("failed", "Failed"),
+    ]
+
+    FAILURE_REASON_CHOICES = [
+        ("no_sign_change", "No sign change"),
+        ("kf_negative", "kf negative"),
+        ("iteration_limit", "Iteration limit"),
+    ]
+
+    batch = models.ForeignKey(
+        FraktalBatch,
+        on_delete=models.CASCADE,
+        related_name="images",
+    )
+    index = models.IntegerField()
+    filename = models.CharField(max_length=255)
+
+    # Projection orientation (from metadata)
+    azimuth = models.FloatField(null=True, blank=True)
+    elevation = models.FloatField(null=True, blank=True)
+
+    # Fractal metrics
+    fractal_dimension = models.FloatField(null=True, blank=True)
+    prefactor = models.FloatField(null=True, blank=True)
+    r_squared = models.FloatField(null=True, blank=True)
+    n_particles_counted = models.IntegerField(null=True, blank=True)
+    dpo_used = models.FloatField()
+    error = models.TextField(blank=True)
+
+    # PNG raster bytes (~50-100KB typical)
+    image_png = models.BinaryField()
+
+    # Scientific PNG: binary black/white (post-threshold), nullable for legacy rows
+    png_scientific_bytes = models.BinaryField(
+        null=True,
+        blank=True,
+        verbose_name="Scientific PNG bytes",
+    )
+
+    # Radius of gyration (nm) — populated from engine result
+    rg_nm = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Radius of gyration (nm)",
+    )
+
+    # Which PNG variant was fed to the FRAKTAL engine for this image
+    analysis_input_variant = models.CharField(
+        max_length=16,
+        default="presentation",
+        verbose_name="Analysis input variant",
+    )
+
+    # PYA-13 T3.2: Bisection diagnostic fields.
+    bisection_iterations = models.IntegerField(
+        null=True, blank=True, verbose_name="Bisection iterations"
+    )
+    bisection_residual = models.FloatField(
+        null=True, blank=True, verbose_name="Bisection residual"
+    )
+    failure_reason = models.CharField(
+        max_length=20,
+        null=True,
+        blank=True,
+        choices=FAILURE_REASON_CHOICES,
+    )
+    df_estimate = models.FloatField(
+        null=True, blank=True, verbose_name="Df best estimate"
+    )
+    quality = models.CharField(
+        max_length=12,
+        default="converged",
+        choices=QUALITY_CHOICES,
+        verbose_name="Analysis quality",
+    )
+
+    # Per-image calibration scale (pixels per 100 nm) — populated at FIRST
+    # analysis from directions[i].pixels_per_100nm when the ZIP direction
+    # carries it, else from the batch-level broadcast value. Nullable with
+    # no backfill: pre-migration rows keep NULL and fall back to the batch
+    # scale on re-analysis (R13, change fraktal-batch-extensions).
+    pixels_per_100nm = models.FloatField(
+        null=True,
+        blank=True,
+        verbose_name="Pixels per 100 nm",
+    )
+
+    class Meta:
+        db_table = "fraktal_batch_images"
+        unique_together = [("batch", "index")]
+        ordering = ["index"]
+
+    def __str__(self) -> str:
+        return f"BatchImage({self.filename}, idx={self.index})"

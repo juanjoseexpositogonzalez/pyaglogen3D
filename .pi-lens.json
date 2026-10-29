@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/earendil-works/pi-lens/main/config/schema.json",
+  "ignore": [
+    "backend/apps/**/views.py",
+    "backend/apps/**/tasks.py",
+    "backend/apps/**/urls.py",
+    "backend/apps/**/serializers.py"
+  ]
+}

@@ -1,0 +1,244 @@
+'use client'
+
+import { useViewerStore, type BackgroundPreset } from '@/stores/viewerStore'
+import { Button } from '@/components/ui/button'
+import { Select } from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
+import { Label } from '@/components/ui/label'
+import {
+  Grid3X3,
+  Axis3D,
+  RotateCcw,
+  Play,
+  Pause,
+  Compass,
+  Circle,
+  Move3D,
+  Download,
+  Box,
+  Maximize,
+} from 'lucide-react'
+import type { ColorMode } from '@/lib/types'
+import { FileSpreadsheet } from 'lucide-react'
+
+interface ViewerControlsProps {
+  onExportCsv?: () => void
+  isExportingCsv?: boolean
+}
+
+const colorModeOptions: { value: ColorMode; label: string }[] = [
+  { value: 'uniform', label: 'Uniform' },
+  { value: 'order', label: 'Deposition Order' },
+  { value: 'distance', label: 'Distance from Center' },
+  { value: 'depth', label: 'Depth (Z)' },
+  { value: 'coordination', label: 'Coordination Number' },
+]
+
+const backgroundOptions: { value: BackgroundPreset; label: string }[] = [
+  { value: 'white', label: 'White' },
+  { value: 'light', label: 'Light Gray' },
+  { value: 'dark', label: 'Dark Blue' },
+  { value: 'black', label: 'Black' },
+]
+
+export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsProps = {}) {
+  const {
+    colorMode,
+    setColorMode,
+    showAxes,
+    toggleAxes,
+    showGrid,
+    toggleGrid,
+    showBoundingSphere,
+    toggleBoundingSphere,
+    showPrincipalAxes,
+    togglePrincipalAxes,
+    useOrthographic,
+    toggleOrthographic,
+    autoRotate,
+    toggleAutoRotate,
+    rotateSpeed,
+    setRotateSpeed,
+    particleOpacity,
+    setParticleOpacity,
+    background,
+    setBackground,
+    cameraAzimuth,
+    cameraElevation,
+    requestExport,
+    reset,
+  } = useViewerStore()
+
+  return (
+    <div className="space-y-4 p-4 bg-card rounded-lg border">
+      <h3 className="font-semibold text-sm">Viewer Controls</h3>
+
+      {/* Camera Position (Az/El) */}
+      <div className="flex items-center gap-2 p-2 bg-muted/50 rounded-md">
+        <Compass className="h-4 w-4 text-muted-foreground" />
+        <div className="flex gap-3 text-sm">
+          <span>Az: <span className="font-mono font-medium">{cameraAzimuth}°</span></span>
+          <span>El: <span className="font-mono font-medium">{cameraElevation}°</span></span>
+        </div>
+      </div>
+
+      {/* Color Mode */}
+      <div className="space-y-2">
+        <Label>Color Mode</Label>
+        <Select
+          value={colorMode}
+          onChange={(e) => setColorMode(e.target.value as ColorMode)}
+          options={colorModeOptions}
+        />
+      </div>
+
+      {/* Background */}
+      <div className="space-y-2">
+        <Label>Background</Label>
+        <Select
+          value={background}
+          onChange={(e) => setBackground(e.target.value as BackgroundPreset)}
+          options={backgroundOptions}
+        />
+      </div>
+
+      {/* Opacity */}
+      <div className="space-y-2">
+        <Label>Opacity: {(particleOpacity * 100).toFixed(0)}%</Label>
+        <Slider
+          min={0.1}
+          max={1}
+          step={0.1}
+          value={[particleOpacity]}
+          onValueChange={([v]) => setParticleOpacity(v)}
+        />
+      </div>
+
+      {/* Rotation Speed */}
+      <div className="space-y-2">
+        <Label>Rotation Speed: {rotateSpeed.toFixed(1)}x</Label>
+        <Slider
+          min={0.5}
+          max={5}
+          step={0.5}
+          value={[rotateSpeed]}
+          onValueChange={([v]) => setRotateSpeed(v)}
+        />
+      </div>
+
+      {/* Toggle Buttons */}
+      <div className="flex flex-wrap gap-2">
+        <Button
+          variant={showAxes ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleAxes}
+        >
+          <Axis3D className="h-4 w-4 mr-1" />
+          Axes
+        </Button>
+
+        <Button
+          variant={showGrid ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleGrid}
+        >
+          <Grid3X3 className="h-4 w-4 mr-1" />
+          Grid
+        </Button>
+
+        <Button
+          variant={showBoundingSphere ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleBoundingSphere}
+        >
+          <Circle className="h-4 w-4 mr-1" />
+          Sphere
+        </Button>
+
+        <Button
+          variant={showPrincipalAxes ? 'default' : 'outline'}
+          size="sm"
+          onClick={togglePrincipalAxes}
+          title="Show principal axes of inertia"
+        >
+          <Move3D className="h-4 w-4 mr-1" />
+          Inertia
+        </Button>
+
+        <Button
+          variant={useOrthographic ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleOrthographic}
+          title={useOrthographic ? 'Switch to perspective view' : 'Switch to orthographic view (no perspective distortion)'}
+        >
+          {useOrthographic ? (
+            <Box className="h-4 w-4 mr-1" />
+          ) : (
+            <Maximize className="h-4 w-4 mr-1" />
+          )}
+          {useOrthographic ? 'Ortho' : 'Persp'}
+        </Button>
+
+        <Button
+          variant={autoRotate ? 'default' : 'outline'}
+          size="sm"
+          onClick={toggleAutoRotate}
+        >
+          {autoRotate ? (
+            <Pause className="h-4 w-4 mr-1" />
+          ) : (
+            <Play className="h-4 w-4 mr-1" />
+          )}
+          Rotate
+        </Button>
+
+        <Button variant="outline" size="sm" onClick={reset}>
+          <RotateCcw className="h-4 w-4 mr-1" />
+          Reset
+        </Button>
+      </div>
+
+      {/* Export Buttons */}
+      <div className="pt-2 border-t">
+        <Label className="text-xs text-muted-foreground mb-2 block">Export</Label>
+        <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => requestExport('png', `agglomerate_3d_az${cameraAzimuth}_el${cameraElevation}`)}
+            className="flex-1"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            PNG
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => requestExport('svg', `agglomerate_3d_az${cameraAzimuth}_el${cameraElevation}`)}
+            className="flex-1"
+            title="Note: WebGL exports as high-resolution PNG"
+          >
+            <Download className="h-4 w-4 mr-1" />
+            SVG*
+          </Button>
+        </div>
+        {onExportCsv && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onExportCsv}
+            disabled={isExportingCsv}
+            className="w-full mt-2"
+            title="Export particle coordinates and fractal parameters as CSV"
+          >
+            <FileSpreadsheet className="h-4 w-4 mr-1" />
+            {isExportingCsv ? 'Exporting...' : 'CSV (Coordinates + Metrics)'}
+          </Button>
+        )}
+        <p className="text-xs text-muted-foreground mt-1">
+          *SVG exports as PNG (WebGL limitation)
+        </p>
+      </div>
+    </div>
+  )
+}

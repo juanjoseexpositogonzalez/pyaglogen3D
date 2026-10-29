@@ -1,0 +1,2665 @@
+"""Simulation Celery tasks."""
+
+import io
+import logging
+import math
+from uuid import UUID
+
+import numpy as np
+from celery import shared_task
+from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+#: Work-set size above which the study box-counting run is dispatched to
+#: Celery instead of running inline (design D5, R3).
+BC_ASYNC_THRESHOLD = 30
+
+
+def expand_distribution_kwargs(prefix: str, dist_config: dict | None) -> dict:
+    """Expand a distribution config dict into engine keyword arguments.
+
+    Args:
+        prefix: Parameter prefix — "dpo" or "kf"
+        dist_config: Distribution config dict from parameters JSONField,
+            or None for legacy scalar fallback.
+
+    Returns:
+        Dict of engine kwargs, e.g. {"dpo_mode": "fixed", "dpo_value": 12.5}.
+        Empty dict when dist_config is None or has unknown mode.
+    """
+    if dist_config is None:
+        return {}
+    mode = dist_config.get("mode")
+    if mode == "fixed":
+        return {f"{prefix}_mode": "fixed", f"{prefix}_value": dist_config["value"]}
+    if mode == "normal":
+        return {
+            f"{prefix}_mode": "normal",
+            f"{prefix}_mean": dist_config["mean"],
+            f"{prefix}_std": dist_config["std"],
+        }
+    if mode == "uniform":
+        return {
+            f"{prefix}_mode": "uniform",
+            f"{prefix}_min": dist_config["min"],
+            f"{prefix}_max": dist_config["max"],
+        }
+    return {}
+
+
+def create_simulation_notification(simulation, success: bool = True) -> None:
+    """Create a notification for simulation completion.
+
+    Args:
+        simulation: The Simulation instance
+        success: Whether the simulation completed successfully
+    """
+    try:
+        from apps.ai_assistant.models import Notification
+
+        Notification.create_simulation_notification(
+            user=simulation.project.owner,
+            simulation=simulation,
+            success=success,
+        )
+        logger.info(f"Created notification for simulation {simulation.id}")
+    except Exception as e:
+        # Don't fail the task if notification creation fails
+        logger.warning(
+            f"Failed to create notification for simulation {simulation.id}: {e}"
+        )
+
+
+# ============================================================================
+# Limiting Case Geometry Generators
+# ============================================================================
+
+# ============================================================================
+# Configuration Types and Packing Types
+# ============================================================================
+
+# Df=1 configuration types
+DF1_CONFIGS = ["lineal", "cruz2d", "asterisco", "cruz3d"]
+
+# Df=2 configuration types
+DF2_CONFIGS = ["plano", "dobleplano", "tripleplano"]
+
+# Df=3 configuration types
+DF3_CONFIGS = ["cuboctaedro"]
+
+# Packing types for 2D (plane) and 3D (sphere) configurations
+PACKING_2D = ["HC", "CS"]  # Hexagonal Compact, Cubic Simple
+PACKING_3D = ["HC", "CS", "CCC"]  # + Face-Centered Cubic
+
+
+def infer_geometry_from_config(configuration_type: str) -> tuple[str, float]:
+    """Infer geometry_type and expected Df from configuration_type.
+
+    Args:
+        configuration_type: The configuration type string
+
+    Returns:
+        Tuple of (geometry_type, df)
+    """
+    if configuration_type in DF1_CONFIGS:
+        return ("chain", 1.0)
+    elif configuration_type in DF2_CONFIGS:
+        return ("plane", 2.0)
+    elif configuration_type in DF3_CONFIGS:
+        return ("sphere", 3.0)
+    else:
+        # Default to chain/lineal
+        return ("chain", 1.0)
+
+
+def generate_linear_chain(
+    n_particles: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate a linear chain of particles (Df=1, config='lineal').
+
+    Particles are arranged in a straight line along the x-axis, centered at origin.
+
+    Args:
+        n_particles: Number of particles
+        radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
+
+    Examples:
+        N=1: [(0, 0, 0)]
+        N=2: [(-r, 0, 0), (r, 0, 0)]
+        N=3: [(-2r, 0, 0), (0, 0, 0), (2r, 0, 0)]
+    """
+    if n_particles <= 0:
+        return np.zeros((0, 3))
+
+    coords = np.zeros((n_particles, 3))
+    d = sintering_coeff * 2.0 * radius  # Center-to-center distance (sintered contact)
+
+    # Position particles along x-axis
+    for i in range(n_particles):
+        coords[i, 0] = d * i
+
+    # Center at origin
+    coords -= coords.mean(axis=0)
+    return coords
+
+
+def generate_cruz2d(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate a 2D cross structure (Df=1, config='cruz2d').
+
+    Based on MATLAB casosLimiteEsferas.m 'cruz2d' case.
+    Two perpendicular branches of particles in the xy-plane.
+
+    Args:
+        n_branches: Number of particles per branch arm
+        radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    if n_branches <= 0:
+        return np.zeros((0, 3))
+
+    d = sintering_coeff * 2.0 * radius
+    coords = []
+
+    if n_branches % 2 != 0:  # Odd
+        # Main horizontal branch (along x)
+        for i in range(n_branches):
+            coords.append([d * i, 0.0, 0.0])
+
+        # Center of the cross is at x = (n-1)*d/2
+        center_x = (n_branches - 1) * d / 2.0
+
+        # Vertical branch (positive y)
+        for j in range(1, n_branches // 2 + 1):
+            coords.append([center_x, d * j, 0.0])
+
+        # Vertical branch (negative y)
+        for k in range(1, n_branches // 2 + 1):
+            coords.append([center_x, -d * k, 0.0])
+    else:  # Even
+        half = n_branches // 2
+        gap = 2 * (math.sqrt(2) - 1)  # Gap at junction
+
+        # Left horizontal half
+        for i in range(half):
+            coords.append([d * i, 0.0, 0.0])
+
+        # Right horizontal half (with gap)
+        for j in range(half):
+            coords.append([half * d + gap + d * j, 0.0, 0.0])
+
+        # Vertical center x
+        center_x = half * d + gap / 2.0 - radius
+
+        # Upper vertical half
+        for k in range(half):
+            coords.append([center_x, math.sqrt(2) + d * k, 0.0])
+
+        # Lower vertical half
+        for s in range(half):
+            coords.append([center_x, -math.sqrt(2) - d * s, 0.0])
+
+    coords = np.array(coords)
+    coords -= coords.mean(axis=0)
+    return coords
+
+
+def generate_asterisco(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate an asterisk structure with 6 branches at 60° (Df=1, config='asterisco').
+
+    Based on MATLAB casosLimiteEsferas.m 'asterisco' case.
+    Six branches radiating from center at 60° intervals in xy-plane.
+
+    Args:
+        n_branches: Number of particles per branch arm (must be odd, will be adjusted)
+        radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    if n_branches <= 0:
+        return np.zeros((0, 3))
+
+    # Ensure odd number for proper geometry
+    if n_branches % 2 == 0:
+        n_branches += 1
+
+    d = sintering_coeff * 2.0 * radius
+    half = n_branches // 2
+    coords = []
+
+    # Branch 1: Vertical (along y)
+    for i in range(n_branches):
+        x = half * d
+        y = half * d - d * i
+        coords.append([x, y, 0.0])
+
+    # Branch 2: 60° (positive slope)
+    for j in range(n_branches):
+        x = (half * d + radius - half * math.sqrt(3)) + j * math.sqrt(3)
+        y = -half * radius + j * radius
+        coords.append([x, y, 0.0])
+
+    # Branch 3: -60° (negative slope)
+    for k in range(n_branches):
+        x = (half * d + radius - half * math.sqrt(3)) + k * math.sqrt(3)
+        y = half * radius - k * radius
+        coords.append([x, y, 0.0])
+
+    coords = np.array(coords)
+    coords -= coords.mean(axis=0)
+    return np.unique(coords, axis=0)  # Remove duplicates at center
+
+
+def generate_cruz3d(
+    n_branches: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate a 3D cross structure (Df=1, config='cruz3d').
+
+    Based on MATLAB casosLimiteEsferas.m 'cruz3d' case.
+    Three orthogonal branches: along x, y, and z axes.
+
+    Args:
+        n_branches: Number of particles per branch arm (must be odd, will be adjusted)
+        radius: Particle radius
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    if n_branches <= 0:
+        return np.zeros((0, 3))
+
+    # Ensure odd number for proper geometry
+    if n_branches % 2 == 0:
+        n_branches += 1
+
+    d = sintering_coeff * 2.0 * radius
+    half = n_branches // 2
+    coords = []
+
+    # Vertical branch (along z)
+    center_x = half * d
+    for i in range(n_branches):
+        z = radius + half * d - d * i
+        coords.append([center_x, 0.0, z])
+
+    # Branch in xy-plane at +60° from x-axis
+    for j in range(n_branches):
+        x = (half * d + radius - half * math.sqrt(3)) + j * math.sqrt(3)
+        y = -half * radius + j * radius
+        coords.append([x, y, 0.0])
+
+    # Branch in xy-plane at -60° from x-axis
+    for k in range(n_branches):
+        x = (half * d + radius - half * math.sqrt(3)) + k * math.sqrt(3)
+        y = half * radius - k * radius
+        coords.append([x, y, 0.0])
+
+    coords = np.array(coords)
+    coords -= coords.mean(axis=0)
+    return np.unique(coords, axis=0)  # Remove duplicates at center
+
+
+def get_complete_hexagonal_counts() -> list[int]:
+    """Return particle counts for complete hexagonal arrangements.
+
+    Formula: N(k) = 1 + 3k(k+1) for k complete rings.
+    k=0: 1, k=1: 7, k=2: 19, k=3: 37, k=4: 61, k=5: 91, ...
+    """
+    counts = []
+    for k in range(20):  # Up to 20 rings
+        n = 1 + 3 * k * (k + 1)
+        counts.append(n)
+    return counts
+
+
+def generate_hexagonal_plane(
+    n_particles: int = None,
+    layers: int = None,
+    radius: float = 1.0,
+    packing: str = "HC",
+    complete_rings: bool = True,
+    sintering_coeff: float = 1.0,
+) -> np.ndarray:
+    """Generate a single-layer plane (Df=2, config='plano').
+
+    Based on MATLAB casosLimiteEsferas.m 'plano' case.
+
+    Args:
+        n_particles: Target number of particles (ignored if layers is set)
+        layers: Number of layers/rings (k for HC, produces specific N)
+        radius: Particle radius
+        packing: 'HC' (Hexagonal Compact) or 'CS' (Cubic Simple)
+        complete_rings: If True, adjusts n_particles to nearest complete number
+        sintering_coeff: Contact coefficient (1.0 = touching, <1.0 = overlapping)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    d = sintering_coeff * 2.0 * radius
+
+    if packing.upper() == "CS":
+        # Cubic Simple: square grid
+        if layers is not None:
+            n_side = layers + 1
+            n_particles = n_side * n_side
+        elif n_particles is None:
+            n_particles = 1
+
+        n_side = int(math.ceil(math.sqrt(n_particles)))
+        coords = []
+        for j in range(n_side):
+            for i in range(n_side):
+                if len(coords) >= n_particles:
+                    break
+                coords.append([d * i, d * j, 0.0])
+
+        coords = np.array(coords) if coords else np.zeros((0, 3))
+        if len(coords) > 0:
+            coords -= coords.mean(axis=0)
+        return coords
+
+    # Hexagonal Compact (HC) packing
+    if layers is not None:
+        # Direct formula: N = 1 + 3*k*(k+1) for k rings
+        n_particles = 1 + 3 * layers * (layers + 1)
+    elif n_particles is None:
+        n_particles = 1
+
+    # For complete hexagonal geometry, adjust to nearest hexagonal number
+    if complete_rings and n_particles > 6:
+        hex_counts = get_complete_hexagonal_counts()
+        actual_n = 1
+        for hc in hex_counts:
+            if hc <= n_particles:
+                actual_n = hc
+            else:
+                break
+        n_particles = actual_n
+
+    coords = []
+    max_ring = int(math.ceil(math.sqrt(n_particles))) + 2
+
+    # Generate hexagonal grid positions
+    all_positions = []
+    for ring in range(max_ring + 1):
+        if ring == 0:
+            all_positions.append((0.0, 0.0, 0.0))
+        else:
+            for side in range(6):
+                angle = side * math.pi / 3.0
+                next_angle = (side + 1) * math.pi / 3.0
+                corner_x = ring * d * math.cos(angle)
+                corner_y = ring * d * math.sin(angle)
+                next_corner_x = ring * d * math.cos(next_angle)
+                next_corner_y = ring * d * math.sin(next_angle)
+                for j in range(ring):
+                    t = j / ring
+                    px = corner_x + t * (next_corner_x - corner_x)
+                    py = corner_y + t * (next_corner_y - corner_y)
+                    all_positions.append((px, py, 0.0))
+
+    all_positions.sort(key=lambda p: p[0] ** 2 + p[1] ** 2)
+    coords = np.array(all_positions[:n_particles])
+
+    if len(coords) > 0:
+        coords -= coords.mean(axis=0)
+
+    return coords
+
+
+def generate_doble_plano(
+    layers: int, radius: float = 1.0, packing: str = "HC", sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate two perpendicular planes (Df=2, config='dobleplano').
+
+    Based on MATLAB casosLimiteEsferas.m 'dobleplano' case.
+    Two planes intersecting at 90° along a shared axis.
+
+    Args:
+        layers: Number of layers (k for HC packing, n for CS)
+        radius: Particle radius
+        packing: 'HC' (Hexagonal Compact) or 'CS' (Cubic Simple)
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    d = sintering_coeff * 2.0 * radius
+    coords = []
+
+    if packing.upper() == "HC":
+        esferas2 = layers * 2 + 1
+
+        # First plane (xy-plane, horizontal)
+        for i in range(1, esferas2 // 2 + 2):
+            for j in range(i, esferas2 + 1):
+                xx = d * (j - 1) - (i - 1)
+                yy = math.sqrt(3) * (i - 1)
+                coords.append([xx, yy, 0.0])
+                if i > 1:
+                    coords.append([xx, -yy, 0.0])
+
+        # Second plane (xz-plane, vertical)
+        for i in range(1, esferas2 // 2 + 2):
+            for j in range(i, esferas2 + 1):
+                xx = d * (j - 1) - (i - 1)
+                zz = math.sqrt(3) * (i - 1)
+                coords.append([xx, 0.0, zz])
+                coords.append([xx, 0.0, -zz])
+
+    else:  # CS packing
+        n_side = layers + 1
+
+        # First plane (xy-plane)
+        for j in range(n_side):
+            for i in range(n_side):
+                coords.append([d * i, d * j, 0.0])
+
+        # Second plane (xz-plane, offset to share central axis)
+        center_y = layers * d / 2.0
+        for j in range(n_side):
+            for i in range(n_side):
+                z = (j - layers / 2.0) * d
+                if abs(z) > 0.01:  # Skip overlap with first plane
+                    coords.append([d * i, center_y, z])
+
+    coords = np.array(coords)
+    coords = np.unique(np.round(coords, 10), axis=0)  # Remove duplicates
+    coords -= coords.mean(axis=0)
+    return coords
+
+
+def generate_triple_plano(
+    layers: int, radius: float = 1.0, sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate three planes at 60° angles (Df=2, config='tripleplano').
+
+    Based on MATLAB casosLimiteEsferas.m 'tripleplano' case.
+    Three planes sharing a common axis, separated by 60° rotations.
+    Only available with HC (Hexagonal Compact) packing.
+
+    Args:
+        layers: Number of layers (k value)
+        radius: Particle radius
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    d = sintering_coeff * 2.0 * radius
+    coords = []
+    esferas2 = layers * 2 + 1
+
+    # Plane 1: xy-plane
+    for i in range(1, esferas2 // 2 + 2):
+        for j in range(i, esferas2 + 1):
+            xx = d * (j - 1) - (i - 1)
+            yy = math.sqrt(3) * (i - 1)
+            coords.append([xx, yy, 0.0])
+            coords.append([xx, -yy, 0.0])
+
+    # Plane 2: rotated 60° around x-axis
+    for i in range(1, esferas2 // 2 + 2):
+        for j in range(i, esferas2 + 1):
+            xx = d * (j - 1) - (i - 1)
+            yy = math.sqrt(3) / 2 * (i - 1)
+            zz = 1.5 * (i - 1)  # 3/2
+            coords.append([xx, yy, zz])
+            coords.append([xx, -yy, -zz])
+
+    # Plane 3: rotated -60° around x-axis
+    for i in range(1, esferas2 // 2 + 2):
+        for j in range(i, esferas2 + 1):
+            xx = d * (j - 1) - (i - 1)
+            yy = -math.sqrt(3) / 2 * (i - 1)
+            zz = 1.5 * (i - 1)
+            coords.append([xx, yy, zz])
+            coords.append([xx, -yy, -zz])
+
+    coords = np.array(coords)
+    coords = np.unique(np.round(coords, 10), axis=0)
+    coords -= coords.mean(axis=0)
+    return coords
+
+
+def get_complete_shell_counts() -> list[tuple[int, str]]:
+    """Return particle counts for notable 3D close-packed arrangements.
+
+    These are "magic numbers" for compact clusters.
+    """
+    return [
+        (1, "single"),
+        (4, "tetrahedron"),
+        (6, "octahedron"),
+        (13, "icosahedron / cuboctahedron"),  # First shell
+        (55, "second Mackay icosahedron"),
+        (147, "third Mackay icosahedron"),
+    ]
+
+
+def generate_cuboctaedro(
+    layers: int, radius: float = 1.0, packing: str = "HC", sintering_coeff: float = 1.0
+) -> np.ndarray:
+    """Generate a 3D compact structure (Df=3, config='cuboctaedro').
+
+    Based on MATLAB casosLimiteEsferas.m 'cuboctaedro' case.
+
+    Args:
+        layers: Number of layers/shells
+        radius: Particle radius
+        packing: 'HC' (Hexagonal Compact), 'CS' (Cubic Simple), or 'CCC' (Face-Centered Cubic)
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    d = sintering_coeff * 2.0 * radius
+    coords = []
+
+    if packing.upper() == "HC":
+        esferas2 = layers * 2 + 1
+
+        # Base hexagonal layer
+        for i in range(1, esferas2 // 2 + 2):
+            for j in range(i, esferas2 + 1):
+                xx = d * (j - 1) - (i - 1)
+                yy = math.sqrt(3) * (i - 1)
+                coords.append([xx, yy, 0.0])
+                coords.append([xx, -yy, 0.0])
+
+        # Upper layers (triangular regions above hexagon)
+        for j in range(1, layers):
+            for k in range(1, layers - j + 1):
+                for i in range(1, esferas2 - k - j + 1):
+                    xx = d + d * (i - 1) + radius * (j - 1) + radius * (k - 1)
+                    yy = math.sqrt(3) * j + math.sqrt(3) / 3 * k
+                    zz = 1.6345 * k  # sqrt(8/3) ≈ 1.6345
+                    coords.append([xx, yy, zz])
+
+        # Triangular regions on sides
+        for k in range(1, esferas2 // 2):
+            for j in range(1, esferas2 // 2 + 1):
+                for i in range(1, esferas2 - j - (k - 1) + 1):
+                    xx = (k - 1) * radius + radius * j + d * (i - 1)
+                    yy = (
+                        math.sqrt(3) / 3
+                        - math.sqrt(3) * (j - 1)
+                        + (k - 1) * math.sqrt(3) / 3
+                    )
+                    zz = 1.6345 * k
+                    coords.append([xx, yy, zz])
+
+        # Lower layers (mirror of upper)
+        for j in range(1, layers):
+            for k in range(1, layers - j + 1):
+                for i in range(1, esferas2 - k - j + 1):
+                    xx = d + d * (i - 1) + radius * (j - 1) + radius * (k - 1)
+                    yy = -math.sqrt(3) * j - math.sqrt(3) / 3 * k
+                    zz = -1.6345 * k
+                    coords.append([xx, yy, zz])
+
+        for k in range(1, esferas2 // 2):
+            for j in range(1, esferas2 // 2 + 1):
+                for i in range(1, esferas2 - j - (k - 1) + 1):
+                    xx = (k - 1) * radius + radius * j + d * (i - 1)
+                    yy = (
+                        -math.sqrt(3) / 3
+                        + math.sqrt(3) * (j - 1)
+                        - (k - 1) * math.sqrt(3) / 3
+                    )
+                    zz = -1.6345 * k
+                    coords.append([xx, yy, zz])
+
+    elif packing.upper() == "CS":
+        # Cubic Simple packing
+        n_side = layers + 1
+        for j in range(n_side):
+            for i in range(n_side):
+                for k in range(n_side):
+                    coords.append([d * i, d * j, d * k])
+
+    elif packing.upper() == "CCC":
+        # Face-Centered Cubic packing
+        n_side = layers + 1
+        spacing = 4 / math.sqrt(3)
+
+        # Corner positions
+        for j in range(n_side):
+            for i in range(n_side):
+                for k in range(n_side):
+                    coords.append(
+                        [
+                            spacing * radius * i,
+                            spacing * radius * j,
+                            spacing * radius * k,
+                        ]
+                    )
+
+        # Face-center positions (offset)
+        offset = 2 / math.sqrt(3)
+        for j in range(layers):
+            for i in range(layers):
+                for k in range(layers):
+                    coords.append(
+                        [
+                            offset + spacing * radius * i,
+                            offset + spacing * radius * j,
+                            offset + spacing * radius * k,
+                        ]
+                    )
+
+    coords = np.array(coords) if coords else np.zeros((0, 3))
+    coords = np.unique(np.round(coords, 10), axis=0)
+    if len(coords) > 0:
+        coords -= coords.mean(axis=0)
+    return coords
+
+
+def generate_hcp_sphere(
+    n_particles: int = None,
+    layers: int = None,
+    radius: float = 1.0,
+    packing: str = "HC",
+    sintering_coeff: float = 1.0,
+) -> np.ndarray:
+    """Generate a 3D compact structure (Df=3).
+
+    Wrapper that handles both direct n_particles input and layer-based input.
+    For small N (1-6), uses special compact configurations.
+
+    Args:
+        n_particles: Target number of particles (used for small N)
+        layers: Number of layers (used for larger structures via cuboctaedro)
+        radius: Particle radius
+        packing: 'HC', 'CS', or 'CCC'
+        sintering_coeff: Sintering coefficient (1.0 = touching, <1 = overlap)
+
+    Returns:
+        Coordinates array centered at origin
+    """
+    d = sintering_coeff * 2.0 * radius
+
+    # Handle layer-based input for larger structures
+    if layers is not None and layers > 0:
+        return generate_cuboctaedro(layers, radius, packing, sintering_coeff)
+
+    # Handle small N special cases
+    if n_particles is None or n_particles <= 0:
+        return np.zeros((0, 3))
+
+    if n_particles == 1:
+        return np.array([[0.0, 0.0, 0.0]])
+
+    if n_particles == 2:
+        return np.array([[-radius, 0.0, 0.0], [radius, 0.0, 0.0]])
+
+    if n_particles == 3:
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+            ]
+        )
+        coords -= coords.mean(axis=0)
+        return coords
+
+    if n_particles == 4:
+        h = d * math.sqrt(2.0 / 3.0)
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
+            ]
+        )
+        coords -= coords.mean(axis=0)
+        return coords
+
+    if n_particles == 5:
+        h = d * math.sqrt(2.0 / 3.0)
+        coords = np.array(
+            [
+                [0.0, 0.0, 0.0],
+                [d, 0.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 2.0, 0.0],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, h],
+                [d / 2.0, d * math.sqrt(3.0) / 6.0, -h],
+            ]
+        )
+        coords -= coords.mean(axis=0)
+        return coords
+
+    if n_particles == 6:
+        a = d / math.sqrt(2.0)
+        return np.array(
+            [
+                [a, 0.0, 0.0],
+                [-a, 0.0, 0.0],
+                [0.0, a, 0.0],
+                [0.0, -a, 0.0],
+                [0.0, 0.0, a],
+                [0.0, 0.0, -a],
+            ]
+        )
+
+    # For larger N, use cuboctaedro with appropriate layers
+    # Estimate layers needed (rough approximation)
+    estimated_layers = int(math.ceil((n_particles / 13) ** (1 / 3)))
+    return generate_cuboctaedro(max(1, estimated_layers), radius, packing)
+
+
+def compute_limiting_metrics(
+    coords: np.ndarray, n_particles: int, radius: float = 1.0
+) -> dict:
+    """Compute metrics for a limiting case geometry.
+
+    These are deterministic geometries, so no random seed or simulation time.
+
+    Args:
+        coords: Particle coordinates (N x 3)
+        n_particles: Number of particles
+        radius: Primary particle radius
+
+    Returns:
+        Dictionary with all computed metrics
+    """
+    if len(coords) == 0:
+        return {
+            "fractal_dimension": 0.0,
+            "fractal_dimension_std": 0.0,
+            "prefactor": 0.0,
+            "radius_of_gyration": 0.0,
+            "porosity": 0.0,
+            "coordination": {"mean": 0.0, "std": 0.0},
+            "rg_evolution": [],
+            "anisotropy": 1.0,
+            "asphericity": 0.0,
+            "acylindricity": 0.0,
+            "principal_moments": [0.0, 0.0, 0.0],
+            "principal_axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        }
+
+    # Center of mass
+    cdg = coords.mean(axis=0)
+    centered = coords - cdg
+
+    # Radius of gyration
+    rg = math.sqrt(np.sum(centered**2) / n_particles)
+
+    # Porosity calculation
+    # Porosity = 1 - (total particle volume) / (effective aggregate volume)
+    # Effective volume is based on a sphere with radius = Rg + radius (to enclose particles)
+    particle_volume = (4.0 / 3.0) * math.pi * (radius**3)
+    total_particle_volume = n_particles * particle_volume
+    effective_radius = rg + radius  # Rg plus one particle radius to enclose
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius**3)
+    porosity = (
+        max(0.0, 1.0 - total_particle_volume / aggregate_volume)
+        if aggregate_volume > 0
+        else 0.0
+    )
+
+    # Compute coordination numbers via unified service (per-particle + distribution).
+    # Historical note: old threshold was 2.1 * radius (~5% tolerance for
+    # monodisperse r=1.0). New unified threshold: (r_i + r_j) * 1.01 (~1%).
+    # Drift is ~1-4% at boundary distances; see CHANGELOG.
+    from apps.simulations.services.coordination import compute_coordination_data
+
+    _radii = np.full(n_particles, radius)
+    coord_data = compute_coordination_data(coords, _radii)
+
+    # Inertia tensor
+    inertia = np.zeros((3, 3))
+    for coord in centered:
+        r2 = np.dot(coord, coord)
+        inertia += r2 * np.eye(3) - np.outer(coord, coord)
+    inertia /= n_particles
+
+    # Principal moments and axes
+    eigenvalues, eigenvectors = np.linalg.eigh(inertia)
+    idx = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Shape descriptors
+    I1, I2, I3 = eigenvalues
+    I_mean = (I1 + I2 + I3) / 3.0
+    anisotropy = I3 / I1 if I1 > 1e-10 else 1.0
+    asphericity = I3 - 0.5 * (I1 + I2)
+    acylindricity = I2 - I1
+
+    # Rg evolution (for limiting cases, Rg grows predictably)
+    rg_evolution = []
+    for n in range(1, n_particles + 1, max(1, n_particles // 100)):
+        subset = centered[:n]
+        rg_n = math.sqrt(np.sum(subset**2) / n)
+        rg_evolution.append(float(rg_n))
+
+    return {
+        "fractal_dimension": 0.0,  # Will be computed from geometry type
+        "fractal_dimension_std": 0.0,
+        "prefactor": 0.0,  # Will be computed from geometry type
+        "radius_of_gyration": float(rg),
+        "porosity": float(porosity),
+        "coordination": {
+            "mean": coord_data.mean,
+            "std": coord_data.std,
+            "per_particle": [
+                {
+                    "particle_id": p.particle_id,
+                    "n_contacts": p.n_contacts,
+                    "contact_neighbors": p.contact_neighbors,
+                }
+                for p in coord_data.per_particle
+            ],
+            "distribution": coord_data.distribution,
+            "threshold_strategy": coord_data.threshold_strategy,
+            "tolerance": coord_data.tolerance,
+        },
+        "rg_evolution": rg_evolution,
+        "anisotropy": float(anisotropy),
+        "asphericity": float(asphericity),
+        "acylindricity": float(acylindricity),
+        "principal_moments": eigenvalues.tolist(),
+        "principal_axes": eigenvectors.T.tolist(),
+    }
+
+
+def compute_kf_chain(n: int) -> float:
+    """Prefactor for linear chain (Df=1)."""
+    if n <= 1:
+        return 1.0
+    return n / math.sqrt(3.0 / 5.0 + (n**2 - 1) / 3.0)
+
+
+def compute_kf_plane(n: int) -> float:
+    """Prefactor for hexagonal plane (Df=2)."""
+    if n <= 1:
+        return 1.0
+    denominator = 3.0 / 5.0 + (5.0 * n**2 - 4.0 * n - 1.0) / (9.0 * n)
+    return n / denominator
+
+
+def compute_kf_sphere(n: int) -> float:
+    """Prefactor for compact sphere (Df=3)."""
+    # For ideal HCP packing, kf ≈ 1.0
+    return 1.0
+
+
+def run_box_counting_if_configured(simulation_id: str) -> dict | None:
+    """Run box-counting on completed simulation if study requires it.
+
+    Checks if the simulation belongs to a ParametricStudy with
+    include_box_counting=True and runs box-counting analysis if so.
+
+    Args:
+        simulation_id: UUID string of the simulation
+
+    Returns:
+        Box-counting results dict if performed, None otherwise
+    """
+    from .models import Simulation
+
+    try:
+        simulation = Simulation.objects.get(id=simulation_id)
+    except Simulation.DoesNotExist:
+        logger.warning(f"Simulation not found for box-counting: {simulation_id}")
+        return None
+
+    # Check if simulation belongs to a study with box-counting enabled
+    studies = simulation.studies.filter(include_box_counting=True)
+    if not studies.exists():
+        return None
+
+    if simulation.geometry is None:
+        logger.warning(f"No geometry available for box-counting: {simulation_id}")
+        return None
+
+    # Get box-counting params from first study (they should all be the same)
+    study = studies.first()
+    bc_params = study.box_counting_params or {}
+    points_per_sphere = bc_params.get("points_per_sphere", 100)
+    precision = bc_params.get("precision", 18)
+
+    logger.info(f"Running box-counting for simulation {simulation_id}")
+
+    # Load geometry
+    buf = io.BytesIO(simulation.geometry)
+    geometry_array = np.load(buf)
+    coords = np.ascontiguousarray(geometry_array[:, :3])
+    radii = np.ascontiguousarray(geometry_array[:, 3])
+
+    # Run box-counting
+    import aglogen_core
+
+    result = aglogen_core.box_counting_agglomerate(
+        coords,
+        radii,
+        points_per_sphere=points_per_sphere,
+        precision=precision,
+    )
+
+    # Prepare results
+    box_counting_results = {
+        "dimension": float(result.dimension),
+        "r_squared": float(result.r_squared),
+        "std_error": float(result.std_error),
+        "confidence_interval": list(result.confidence_interval),
+        "log_scales": result.log_scales.tolist(),
+        "log_values": result.log_values.tolist(),
+        "execution_time_ms": int(result.execution_time_ms),
+        "parameters": {
+            "points_per_sphere": points_per_sphere,
+            "precision": precision,
+        },
+    }
+
+    # Update simulation metrics
+    metrics = simulation.metrics or {}
+    metrics["box_counting"] = box_counting_results
+    # Windowed passthrough (design D6/D8): the auto-run path honors the
+    # study's persisted windowed flag; the fit window is derived from the
+    # legacy result's effective_levels (D1/D2) — zero extra legacy calls.
+    if bc_params.get("windowed"):
+        metrics["box_counting_windowed"] = run_windowed_bc(
+            coords,
+            radii,
+            points_per_sphere,
+            precision,
+            result.effective_levels,
+            {"points_per_sphere": points_per_sphere, "precision": precision},
+        )
+    simulation.metrics = metrics
+    simulation.save(update_fields=["metrics"])
+
+    logger.info(
+        f"Box-counting for simulation {simulation_id}: "
+        f"Df_bc={result.dimension:.3f}, R2={result.r_squared:.4f}"
+    )
+
+    return box_counting_results
+
+
+def derive_fit_window(effective_levels: int) -> tuple[int, int] | None:
+    """Derive the locked windowed fit window from the effective level count.
+
+    Design D2 (Cycle 3.2 diagnostic): ``s = max(0, min(1, eff-3))``,
+    ``e = eff-1``. With ``eff == 3`` the window is ``(0, 2)`` (≡ legacy fit,
+    archive Log L4); with ``eff < 3`` NO window is derived — the caller writes
+    ``status: "insufficient_levels"`` without calling the windowed estimator
+    (R2.2/R9: avoids the ``eff-1`` underflow and the pyo3 ``(usize, usize)``
+    constraint).
+    """
+    if effective_levels < 3:
+        return None
+    s = max(0, min(1, effective_levels - 3))
+    return (s, effective_levels - 1)
+
+
+def build_bc_block(
+    result, params: dict, status: str, fit_window_used, error_message=None
+) -> dict:
+    """Build the windowed box-counting storage block (R2, design D3).
+
+    ONE schema for all three statuses (``ok | insufficient_levels | error``):
+    always the 11 keys ``dimension, r_squared, std_error, confidence_interval,
+    log_scales, log_values, execution_time_ms, parameters, status,
+    fit_window_used, error_message``. Key parity is enforced by code, not by
+    prose (spec-review r2):
+
+    - value fields are ``None`` when ``status != "ok"``;
+    - ``error_message`` is a string only when ``status == "error"``;
+    - ``fit_window_used`` is ``[s, e]`` only when ``status == "ok"``.
+    """
+    ok = status == "ok" and result is not None
+    return {
+        "dimension": float(result.dimension) if ok else None,
+        "r_squared": float(result.r_squared) if ok else None,
+        "std_error": float(result.std_error) if ok else None,
+        "confidence_interval": list(result.confidence_interval) if ok else None,
+        "log_scales": result.log_scales.tolist() if ok else None,
+        "log_values": result.log_values.tolist() if ok else None,
+        "execution_time_ms": int(result.execution_time_ms) if ok else 0,
+        "parameters": dict(params),
+        "status": status,
+        "fit_window_used": list(fit_window_used) if ok else None,
+        "error_message": str(error_message) if status == "error" else None,
+    }
+
+
+def run_windowed_bc(
+    coords: np.ndarray,
+    radii: np.ndarray,
+    points_per_sphere: int,
+    precision: int,
+    effective_levels: int,
+    params: dict,
+) -> dict:
+    """Run the windowed estimator for one simulation (R2, design D2/D4).
+
+    Refusals (``effective_levels < 3``) NEVER call the windowed estimator and
+    yield ``status: "insufficient_levels"``; any other windowed-side failure
+    yields ``status: "error"`` with the message — never aborts the run and
+    never touches the legacy block.
+    """
+    import aglogen_core
+
+    window = derive_fit_window(effective_levels)
+    if window is None:
+        return build_bc_block(None, params, "insufficient_levels", None)
+    try:
+        result = aglogen_core.box_counting_agglomerate(
+            coords,
+            radii,
+            points_per_sphere=points_per_sphere,
+            precision=precision,
+            fit_window=window,
+        )
+    except Exception as e:  # noqa: BLE001 — error status never aborts the run (D4)
+        return build_bc_block(None, params, "error", None, error_message=str(e))
+    return build_bc_block(result, params, "ok", window)
+
+
+def run_box_counting_for_study(
+    study_id: str,
+    points_per_sphere: int,
+    precision: int,
+    windowed: bool,
+    force: bool,
+    progress_cb=None,
+) -> dict:
+    """Run box-counting over a study's work set (R3, design D5/D6).
+
+    The work set is completed simulations WITH geometry (``geometry__isnull=False``)
+    — the same filter as the pre-change processing loop (spec-review M8).
+    Sims already holding a legacy block are skipped unless ``force`` (R2.3).
+    When ``windowed`` is set, every processed simulation additionally stores
+    the windowed block at ``metrics["box_counting_windowed"]``; the legacy
+    block construction is byte-identical to the pre-change loop (R2.1).
+
+    ``progress_cb(current, total)`` is invoked after each simulation (used by
+    the async Celery task to publish job state; design D5).
+    """
+    import aglogen_core
+
+    from .models import ParametricStudy
+
+    study = ParametricStudy.objects.get(id=study_id)
+    simulations = study.simulations.filter(
+        status="completed",
+        geometry__isnull=False,
+    ).order_by("created_at")
+
+    total = simulations.count()
+    results = {
+        "total": total,
+        "processed": 0,
+        "skipped": 0,
+        "failed": 0,
+        "errors": [],
+        "windowed": bool(windowed),
+        "windowed_insufficient_levels": 0,
+        "windowed_errors": 0,
+    }
+    bc_params = {"points_per_sphere": points_per_sphere, "precision": precision}
+
+    for current, sim in enumerate(simulations, start=1):
+        # Check if already has box-counting (R2.3: skipped exactly as today
+        # unless force re-runs it)
+        if sim.metrics and sim.metrics.get("box_counting") and not force:
+            results["skipped"] += 1
+        else:
+            try:
+                # Load geometry
+                buf = io.BytesIO(sim.geometry)
+                geometry_array = np.load(buf)
+                coords = np.ascontiguousarray(geometry_array[:, :3])
+                radii = np.ascontiguousarray(geometry_array[:, 3])
+
+                # Run box-counting (legacy estimator first — D1: the window
+                # is derived from ITS effective_levels, zero extra calls)
+                bc_result = aglogen_core.box_counting_agglomerate(
+                    coords,
+                    radii,
+                    points_per_sphere=points_per_sphere,
+                    precision=precision,
+                )
+
+                # Update metrics (legacy block byte-identical to pre-change)
+                metrics = sim.metrics or {}
+                metrics["box_counting"] = {
+                    "dimension": float(bc_result.dimension),
+                    "r_squared": float(bc_result.r_squared),
+                    "std_error": float(bc_result.std_error),
+                    "confidence_interval": list(bc_result.confidence_interval),
+                    "log_scales": bc_result.log_scales.tolist(),
+                    "log_values": bc_result.log_values.tolist(),
+                    "execution_time_ms": int(bc_result.execution_time_ms),
+                    "parameters": {
+                        "points_per_sphere": points_per_sphere,
+                        "precision": precision,
+                    },
+                }
+                if windowed:
+                    block = run_windowed_bc(
+                        coords,
+                        radii,
+                        points_per_sphere,
+                        precision,
+                        bc_result.effective_levels,
+                        bc_params,
+                    )
+                    metrics["box_counting_windowed"] = block
+                    if block["status"] == "insufficient_levels":
+                        results["windowed_insufficient_levels"] += 1
+                    elif block["status"] == "error":
+                        results["windowed_errors"] += 1
+                elif force:
+                    # JD-A-004: a forced legacy-only re-run must not leave a
+                    # stale windowed block computed under earlier parameters
+                    # or an earlier windowed flag.
+                    metrics.pop("box_counting_windowed", None)
+                sim.metrics = metrics
+                sim.save(update_fields=["metrics"])
+                results["processed"] += 1
+
+            except Exception as e:
+                results["failed"] += 1
+                results["errors"].append(
+                    {
+                        "simulation_id": str(sim.id),
+                        "error": str(e),
+                    }
+                )
+
+        if progress_cb is not None:
+            progress_cb(current, total)
+
+    return results
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.run_box_counting_async")
+def run_box_counting_async(
+    self,
+    study_id: str,
+    points_per_sphere: int,
+    precision: int,
+    windowed: bool,
+    force: bool,
+) -> dict:
+    """Async box-counting run for work sets above BC_ASYNC_THRESHOLD (R3, D5).
+
+    Job state lives in Celery ``AsyncResult`` via ``update_state`` (NOT Django
+    cache: LocMemCache is per-process and invisible across the Gunicorn
+    workers). Payload: ``{current, total, progress 0..1}`` under state
+    PROGRESS; the final return value lands under SUCCESS.
+    """
+
+    def _report(current: int, total: int) -> None:
+        self.update_state(
+            state="PROGRESS",
+            meta={
+                "current": current,
+                "total": total,
+                "progress": (current / total) if total else 1.0,
+            },
+        )
+
+    # JD-B-006: release the per-study in-flight marker stamped at dispatch
+    # (views.py _stamp_bc_inflight_marker). Runs in a finally so a raising
+    # run can never wedge the marker into a permanent 409; only cleared
+    # while it still references THIS task id — a newer dispatch may already
+    # own the marker. Best-effort: the marker also self-expires via the
+    # result backend's RESULT_EXPIRES, and the view treats a marker whose
+    # referenced task is terminal as stale.
+    marker_id = f"bc-inflight-{study_id}"
+    try:
+        return run_box_counting_for_study(
+            study_id,
+            points_per_sphere,
+            precision,
+            windowed,
+            force,
+            progress_cb=_report,
+        )
+    finally:
+        try:
+            marker = self.AsyncResult(marker_id)
+            meta = marker.info if isinstance(marker.info, dict) else {}
+            if meta.get("task_id") == self.request.id:
+                self.backend.store_result(marker_id, None, state="SUCCESS")
+        except Exception:  # noqa: BLE001 — cleanup must never mask the result
+            logger.debug("box-counting in-flight marker cleanup skipped", exc_info=True)
+
+
+def fit_power_law_rg(
+    n_values: list[int], rg_values: list[float], rp: float = 1.0
+) -> tuple[float, float, float]:
+    """Fit power-law relationship N = kf * (Rg/rp)^Df to get Df and kf.
+
+    Args:
+        n_values: List of particle counts
+        rg_values: List of corresponding Rg values
+        rp: Primary particle radius
+
+    Returns:
+        Tuple of (Df, kf, R²)
+    """
+    if len(n_values) < 3 or len(rg_values) < 3:
+        return 0.0, 0.0, 0.0
+
+    # Filter out invalid values
+    valid = [(n, rg) for n, rg in zip(n_values, rg_values) if n > 0 and rg > 0]
+    if len(valid) < 3:
+        return 0.0, 0.0, 0.0
+
+    n_arr = np.array([v[0] for v in valid], dtype=np.float64)
+    rg_arr = np.array([v[1] for v in valid], dtype=np.float64)
+
+    # Take log: log(N) = log(kf) + Df * log(Rg/rp)
+    log_n = np.log(n_arr)
+    log_rg_rp = np.log(rg_arr / rp)
+
+    # Linear fit: y = a + b*x where y=log(N), x=log(Rg/rp), b=Df, a=log(kf)
+    # Using least squares
+    A = np.vstack([log_rg_rp, np.ones(len(log_rg_rp))]).T
+    try:
+        result = np.linalg.lstsq(A, log_n, rcond=None)
+        df, log_kf = result[0]
+        kf = math.exp(log_kf)
+
+        # R² calculation
+        residuals = log_n - (df * log_rg_rp + log_kf)
+        ss_res = np.sum(residuals**2)
+        ss_tot = np.sum((log_n - np.mean(log_n)) ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        return float(df), float(kf), float(r_squared)
+    except Exception:
+        return 0.0, 0.0, 0.0
+
+
+def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
+    """Compute all metrics for imported geometry.
+
+    Similar to compute_limiting_metrics but also estimates Df/kf from Rg evolution.
+
+    Args:
+        coords: Particle coordinates (N x 3)
+        radii: Particle radii (N,)
+
+    Returns:
+        Dictionary with all computed metrics
+    """
+    n_particles = len(coords)
+    if n_particles == 0:
+        return {
+            # Df removed from imports: the Rg-law fit (compute_import_metrics
+            # before T4) was misleading because per-particle add order is not
+            # preserved across formats. T6 will wire
+            # aglogen_core.box_counting_agglomerate as the primary Df source.
+            "fractal_dimension": None,
+            "fractal_dimension_std": None,
+            "prefactor": 0.0,
+            "radius_of_gyration": 0.0,
+            "porosity": 0.0,
+            "coordination": {"mean": 0.0, "std": 0.0},
+            "anisotropy": 1.0,
+            "asphericity": 0.0,
+            "acylindricity": 0.0,
+            "principal_moments": [0.0, 0.0, 0.0],
+            "principal_axes": [[1, 0, 0], [0, 1, 0], [0, 0, 1]],
+        }
+
+    # Use mean radius for calculations
+    mean_radius = float(np.mean(radii))
+
+    # Center of mass (mass-weighted for polydisperse)
+    masses = radii**3  # Mass proportional to volume
+    total_mass = masses.sum()
+    cdg = (coords.T @ masses / total_mass) if total_mass > 0 else coords.mean(axis=0)
+    centered = coords - cdg
+
+    # Radius of gyration (mass-weighted)
+    r_sq = np.sum(centered**2, axis=1)
+    rg = math.sqrt(np.sum(masses * r_sq) / total_mass) if total_mass > 0 else 0.0
+
+    # Porosity calculation
+    particle_volumes = (4.0 / 3.0) * math.pi * radii**3
+    total_particle_volume = particle_volumes.sum()
+    effective_radius = rg + mean_radius
+    aggregate_volume = (4.0 / 3.0) * math.pi * (effective_radius**3)
+    porosity = (
+        max(0.0, 1.0 - total_particle_volume / aggregate_volume)
+        if aggregate_volume > 0
+        else 0.0
+    )
+
+    # Coordination numbers via unified service (per-particle + distribution).
+    # Historical note: old tolerance was 5% → now 1% (unified with neighbor_graph).
+    # Drift documented in CHANGELOG.
+    from apps.simulations.services.coordination import compute_coordination_data
+
+    coord_data = compute_coordination_data(coords, radii)
+
+    # Inertia tensor (mass-weighted)
+    inertia = np.zeros((3, 3))
+    for k, coord in enumerate(centered):
+        m = masses[k]
+        r2 = np.dot(coord, coord)
+        inertia += m * (r2 * np.eye(3) - np.outer(coord, coord))
+    inertia /= total_mass if total_mass > 0 else 1.0
+
+    # Principal moments and axes
+    eigenvalues, eigenvectors = np.linalg.eigh(inertia)
+    idx = np.argsort(eigenvalues)
+    eigenvalues = eigenvalues[idx]
+    eigenvectors = eigenvectors[:, idx]
+
+    # Shape descriptors
+    I1, I2, I3 = eigenvalues
+    anisotropy = float(I3 / I1) if I1 > 1e-10 else 1.0
+    asphericity = float(I3 - 0.5 * (I1 + I2))
+    acylindricity = float(I2 - I1)
+
+    # Fractal dimension via box-counting (T6).
+    #
+    # Why box-counting instead of an Rg-law fit: the Rg-law approach depended
+    # on the particle add-order which is not preserved (or even meaningful)
+    # for CSV / .mat imports and produced misleading values (see explore.md
+    # §4.3). Box-counting is order-independent — it measures how the sphere-
+    # coverage scales with box size — so it's the correct primary Df source
+    # for imported geometries.
+    #
+    # Threshold: we require N >= 50 before trusting the fit. Below ~50
+    # particles there aren't enough points to resolve the power-law region
+    # at multiple scales and any Df < 3.0 is noise-dominated.
+    #
+    # Failure policy: if aglogen_core raises (ffi, degenerate geometry,
+    # installation issue) we log a warning, set Df to None with a note, and
+    # keep the rest of the metrics — a metrics failure must NEVER crash an
+    # import task.
+    fractal_dimension: float | None = None
+    fractal_dimension_std: float | None = None
+    notes: dict[str, str] = {}
+
+    if n_particles < 50:
+        notes["fractal_dimension"] = (
+            "Insufficient particles for stable box-counting (N < 50)"
+        )
+    else:
+        try:
+            import aglogen_core
+
+            bc_result = aglogen_core.box_counting_agglomerate(
+                np.ascontiguousarray(coords, dtype=np.float64),
+                np.ascontiguousarray(radii, dtype=np.float64),
+                precision=18,
+            )
+            fractal_dimension = float(bc_result.dimension)
+            # aglogen_core returns the intrinsic std-error of the log-log
+            # fit slope; prefer it over a crude R²-derived approximation.
+            std_err = float(bc_result.std_error)
+            fractal_dimension_std = std_err if math.isfinite(std_err) else None
+            if not math.isfinite(fractal_dimension):
+                fractal_dimension = None
+                fractal_dimension_std = None
+                notes["fractal_dimension"] = (
+                    "Box-counting returned non-finite dimension"
+                )
+        except Exception as exc:  # noqa: BLE001 — metrics must never crash import
+            logger.warning(
+                "Box-counting failed for imported geometry: %s", exc, exc_info=True
+            )
+            fractal_dimension = None
+            fractal_dimension_std = None
+            notes["fractal_dimension"] = f"Box-counting failed: {exc}"
+
+    result = {
+        "fractal_dimension": fractal_dimension,
+        "fractal_dimension_std": fractal_dimension_std,
+        "radius_of_gyration": float(rg),
+        "porosity": float(porosity),
+        "coordination": {
+            "mean": coord_data.mean,
+            "std": coord_data.std,
+            "per_particle": [
+                {
+                    "particle_id": p.particle_id,
+                    "n_contacts": p.n_contacts,
+                    "contact_neighbors": p.contact_neighbors,
+                }
+                for p in coord_data.per_particle
+            ],
+            "distribution": coord_data.distribution,
+            "threshold_strategy": coord_data.threshold_strategy,
+            "tolerance": coord_data.tolerance,
+        },
+        "anisotropy": anisotropy,
+        "asphericity": asphericity,
+        "acylindricity": acylindricity,
+        "principal_moments": eigenvalues.tolist(),
+        "principal_axes": eigenvectors.T.tolist(),
+    }
+    if notes:
+        result["notes"] = notes
+    return result
+
+
+@shared_task(bind=True, max_retries=1)
+def compute_import_metrics_task(self, simulation_id: str) -> dict:
+    """Compute metrics for imported geometry.
+
+    This task is used when importing agglomerate geometry from CSV files.
+    The geometry is already stored, we just need to compute the metrics.
+
+    Args:
+        simulation_id: UUID string of the simulation
+
+    Returns:
+        Dictionary with task result status and metrics
+    """
+    import time
+
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    # Update status to running
+    simulation.status = SimulationStatus.RUNNING
+    simulation.started_at = timezone.now()
+    simulation.save(update_fields=["status", "started_at"])
+
+    try:
+        start_time = time.perf_counter()
+
+        # Load geometry
+        if simulation.geometry is None:
+            raise ValueError("No geometry data found for imported simulation")
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = np.ascontiguousarray(geometry_array[:, :3])
+        radii = np.ascontiguousarray(geometry_array[:, 3])
+
+        # Compute metrics
+        metrics = compute_import_metrics(coords, radii)
+
+        execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+
+        # Update simulation
+        simulation.metrics = metrics
+        simulation.execution_time_ms = execution_time_ms
+        simulation.engine_version = "python-import"
+        simulation.status = SimulationStatus.COMPLETED
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        df = metrics.get("fractal_dimension")
+        df_str = f"{df:.3f}" if isinstance(df, (int, float)) else "N/A"
+        logger.info(
+            f"Import metrics computed for simulation {simulation_id}: "
+            f"Df={df_str}, "
+            f"Rg={metrics['radius_of_gyration']:.2f}, "
+            f"time={execution_time_ms}ms"
+        )
+
+        # Create notification
+        create_simulation_notification(simulation, success=True)
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "fractal_dimension": metrics["fractal_dimension"],
+            "radius_of_gyration": metrics["radius_of_gyration"],
+            "execution_time_ms": execution_time_ms,
+        }
+
+    except Exception as e:
+        logger.exception(f"Import metrics computation failed: {e}")
+        simulation.status = SimulationStatus.FAILED
+        simulation.error_message = str(e)
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        create_simulation_notification(simulation, success=False)
+
+        return {
+            "status": "failed",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_simulation_task(self, simulation_id: str) -> dict:
+    """Execute simulation using Rust engine."""
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    # Update status to running
+    simulation.status = SimulationStatus.RUNNING
+    simulation.started_at = timezone.now()
+    simulation.save(update_fields=["status", "started_at"])
+
+    try:
+        import aglogen_core
+
+        algorithm = simulation.algorithm
+        params = simulation.parameters
+        seed = simulation.seed
+
+        logger.info(
+            f"Running {algorithm} simulation {simulation_id} "
+            f"with {params.get('n_particles', 1000)} particles"
+        )
+
+        # NOTE on units: the Rust engine is dimensionless. The primary-particle
+        # diameter (`primary_particle_diameter_nm`, v2) / radius
+        # (`primary_particle_radius_nm`, v1) is NOT an engine input — it is a
+        # display/export scale applied at every read boundary via
+        # apps.simulations.services.params.get_scale_factor_nm. Below, the
+        # engine receives the per-particle distribution sizes (`radius_min` /
+        # `radius_max`) directly from the stored parameters in engine units,
+        # unchanged across schema versions.
+
+        # Get radius parameters (support both old and new parameter names)
+        radius_min = (
+            params.get("radius_min")
+            or params.get("seed_radius")
+            or params.get("particle_radius")
+            or 1.0
+        )
+        radius_max = params.get(
+            "radius_max"
+        )  # None means monodisperse (same as radius_min)
+
+        # Get sintering parameters
+        sintering_coeff = params.get("sintering_coeff", 1.0)  # 1.0 = no sintering
+        sintering_type = params.get(
+            "sintering_type", "fixed"
+        )  # "fixed", "uniform", or "normal"
+        sintering_min = params.get("sintering_min", 0.85)  # For uniform distribution
+        sintering_max = params.get("sintering_max", 0.95)  # For uniform distribution
+        sintering_std = params.get("sintering_std", 0.05)  # For normal distribution
+
+        # Run the appropriate algorithm
+        if algorithm == "dla":
+            result = aglogen_core.run_dla(
+                n_particles=params.get("n_particles", 1000),
+                sticking_probability=params.get("sticking_probability", 1.0),
+                lattice_size=params.get("lattice_size", 200),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+            )
+        elif algorithm == "cca":
+            result = aglogen_core.run_cca(
+                n_particles=params.get("n_particles", 1000),
+                sticking_probability=params.get("sticking_probability", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                box_size=params.get("box_size", 100.0),
+                single_agglomerate=params.get("single_agglomerate", True),
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+            )
+        elif algorithm == "ballistic":
+            result = aglogen_core.run_ballistic(
+                n_particles=params.get("n_particles", 1000),
+                sticking_probability=params.get("sticking_probability", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+            )
+        elif algorithm == "ballistic_cc":
+            # Ballistic Cluster-Cluster aggregation (thesis section 6.2)
+            result = aglogen_core.run_ballistic_cc(
+                n_particles=params.get("n_particles", 1000),
+                sticking_probability=params.get("sticking_probability", 1.0),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+            )
+        elif algorithm == "tunable":
+            # Tunable PC with controllable fractal dimension
+            result = aglogen_core.run_tunable(
+                n_particles=params.get("n_particles", 1000),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+            )
+        elif algorithm == "tunable_cc":
+            # Tunable CC with controllable fractal dimension (cluster-cluster)
+            # seed_type: read from the model field (set via API/serializer).
+            # The binding accepts None (→ monomers default) for backward compat.
+            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
+
+            # PYA-15: expand distribution configs into engine kwargs.
+            # When absent, empty dict → engine uses legacy scalars.
+            dpo_kwargs = expand_distribution_kwargs(
+                "dpo", params.get("dpo_distribution")
+            )
+            kf_kwargs = expand_distribution_kwargs(
+                "kf", params.get("target_kf_distribution")
+            )
+
+            result = aglogen_core.run_tunable_cc(
+                n_particles=params.get("n_particles", 1000),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                radius_min=radius_min,
+                radius_max=radius_max,
+                seed_cluster_size=params.get("seed_cluster_size"),
+                max_rotation_attempts=params.get("max_rotation_attempts", 50),
+                sintering_coeff=sintering_coeff,
+                sintering_type=sintering_type,
+                sintering_min=sintering_min,
+                sintering_max=sintering_max,
+                sintering_std=sintering_std,
+                seed=seed,
+                seed_type=sim_seed_type,
+                **dpo_kwargs,
+                **kf_kwargs,
+            )
+        elif algorithm == "fracval":
+            # FracVAL algorithm (Morán et al. 2019) - polydisperse cluster-cluster
+            # Server-side parameter validation to prevent DoS and invalid inputs
+            n_particles = params.get("n_particles", 100)
+            target_df = params.get("target_df", 1.8)
+            target_kf = params.get("target_kf", 1.3)
+            geometric_mean = params.get("geometric_mean", 1.0)
+            geometric_std = params.get("geometric_std", 1.0)
+            max_placement_attempts = params.get("max_placement_attempts", 1000)
+
+            # Validation with safe limits
+            if not (2 <= n_particles <= 10000):
+                raise ValueError("n_particles must be between 2 and 10000")
+            if not (1.0 <= target_df <= 3.0):
+                raise ValueError("target_df must be between 1.0 and 3.0")
+            if not (0.1 <= target_kf <= 2.7):
+                raise ValueError("target_kf must be between 0.1 and 2.7")
+            if not (0.1 <= geometric_mean <= 100.0):
+                raise ValueError("geometric_mean must be between 0.1 and 100.0")
+            if not (1.0 <= geometric_std <= 5.0):
+                raise ValueError("geometric_std must be between 1.0 and 5.0")
+            # Cap max_placement_attempts to prevent DoS
+            max_placement_attempts = min(max(10, max_placement_attempts), 10000)
+
+            result = aglogen_core.run_fracval(
+                n_particles=n_particles,
+                target_df=target_df,
+                target_kf=target_kf,
+                geometric_mean=geometric_mean,
+                geometric_std=geometric_std,
+                max_placement_attempts=max_placement_attempts,
+                seed=seed,
+            )
+        elif algorithm == "gcca":
+            # Generalized CCA (Tomchuk & Avdeev 2020)
+            result = aglogen_core.run_gcca(
+                n_particles=params.get("n_particles", 100),
+                target_df=params.get("target_df", 1.8),
+                target_kf=params.get("target_kf", 1.3),
+                radius_min=radius_min,
+                radius_max=radius_max if radius_max else radius_min,
+                split_strategy=params.get("split_strategy", "symmetric"),
+                stochastic_mean_ratio=params.get("stochastic_mean_ratio", 0.5),
+                stochastic_std_ratio=params.get("stochastic_std_ratio", 0.1),
+                max_placement_attempts=params.get("max_placement_attempts", 1000),
+                seed=seed,
+            )
+        elif algorithm == "box_rfa":
+            # Box-Counting RFA (Brown et al. 2010) - grid-based fractal construction
+            # Server-side validation to prevent DoS and invalid inputs
+            target_df = params.get("target_df", 1.8)
+            n_levels = params.get("n_levels", 6)
+            connectivity_method = params.get("connectivity_method", "random_walk")
+            target_n_particles = params.get("n_particles")
+            # single_aggregate: if True, ensures a single connected component (may have higher Df)
+            # if False, allows multiple clusters but achieves more accurate target Df
+            single_aggregate = params.get(
+                "single_aggregate", False
+            )  # Default to accurate Df
+
+            # Validation with safe limits to prevent OOM/DoS
+            if not (1.0 <= target_df <= 3.0):
+                raise ValueError("target_df must be between 1.0 and 3.0")
+            if not (3 <= n_levels <= 8):
+                raise ValueError(
+                    "n_levels must be between 3 and 8 (higher values cause excessive memory usage)"
+                )
+            if connectivity_method not in ("random_walk", "nearest_neighbor"):
+                raise ValueError(
+                    "connectivity_method must be 'random_walk' or 'nearest_neighbor'"
+                )
+            if target_n_particles is not None and not (
+                10 <= target_n_particles <= 10000
+            ):
+                raise ValueError("target_n_particles must be between 10 and 10000")
+
+            result = aglogen_core.run_box_rfa(
+                target_df=target_df,
+                n_levels=n_levels,
+                particle_radius=radius_min,
+                connectivity_method=connectivity_method,
+                target_n_particles=target_n_particles,
+                single_aggregate=single_aggregate,
+                seed=seed,
+            )
+        elif algorithm == "limiting":
+            # Limiting case geometry (deterministic, no simulation)
+            import time
+
+            start_time = time.perf_counter()
+
+            n_particles = params.get("n_particles", 100)
+            configuration_type = params.get("configuration_type", None)
+            packing = params.get("packing", "HC")
+            layers = params.get("layers")  # Optional: layer-based input
+            sintering_coeff = params.get("sintering_coeff", 1.0)
+            radius = radius_min
+
+            # If configuration_type is provided, infer geometry_type from it
+            # This allows varying configuration_type in batch studies
+            if configuration_type:
+                geometry_type, _ = infer_geometry_from_config(configuration_type)
+            else:
+                geometry_type = params.get("geometry_type", "chain")
+
+            # Generate coordinates based on geometry type and configuration
+            if geometry_type == "chain":
+                df = 1.0
+                config = configuration_type or "lineal"
+
+                if config == "lineal":
+                    coordinates = generate_linear_chain(
+                        n_particles, radius, sintering_coeff
+                    )
+                elif config == "cruz2d":
+                    coordinates = generate_cruz2d(n_particles, radius, sintering_coeff)
+                elif config == "asterisco":
+                    coordinates = generate_asterisco(
+                        n_particles, radius, sintering_coeff
+                    )
+                elif config == "cruz3d":
+                    coordinates = generate_cruz3d(n_particles, radius, sintering_coeff)
+                else:
+                    coordinates = generate_linear_chain(
+                        n_particles, radius, sintering_coeff
+                    )
+
+            elif geometry_type == "plane":
+                df = 2.0
+                config = configuration_type or "plano"
+
+                if config == "plano":
+                    coordinates = generate_hexagonal_plane(
+                        n_particles=n_particles if layers is None else None,
+                        layers=layers,
+                        radius=radius,
+                        packing=packing,
+                        complete_rings=True,
+                        sintering_coeff=sintering_coeff,
+                    )
+                elif config == "dobleplano":
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int(math.sqrt(n_particles / 4)))
+                    )
+                    coordinates = generate_doble_plano(
+                        use_layers, radius, packing, sintering_coeff
+                    )
+                elif config == "tripleplano":
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int(math.sqrt(n_particles / 6)))
+                    )
+                    coordinates = generate_triple_plano(
+                        use_layers, radius, sintering_coeff
+                    )
+                else:
+                    coordinates = generate_hexagonal_plane(
+                        n_particles=n_particles,
+                        radius=radius,
+                        packing=packing,
+                        complete_rings=True,
+                        sintering_coeff=sintering_coeff,
+                    )
+
+            elif geometry_type == "sphere":
+                df = 3.0
+                config = configuration_type or "cuboctaedro"
+
+                # For small N (1-6), use special configurations
+                if n_particles <= 6 and layers is None:
+                    coordinates = generate_hcp_sphere(
+                        n_particles=n_particles,
+                        radius=radius,
+                        packing=packing,
+                        sintering_coeff=sintering_coeff,
+                    )
+                else:
+                    # Use layer-based or estimate layers from n_particles
+                    use_layers = (
+                        layers
+                        if layers is not None
+                        else max(1, int((n_particles / 13) ** (1 / 3)))
+                    )
+                    coordinates = generate_cuboctaedro(
+                        use_layers, radius, packing, sintering_coeff
+                    )
+            else:
+                raise ValueError(f"Unknown geometry type: {geometry_type}")
+
+            # Update n_particles to actual count (may differ for complete geometries)
+            actual_n = len(coordinates)
+            if actual_n != n_particles:
+                logger.info(
+                    f"Limiting geometry: adjusted particle count from {n_particles} to {actual_n} "
+                    f"for {configuration_type or geometry_type} geometry"
+                )
+                n_particles = actual_n
+
+            # Compute prefactor with actual particle count
+            if geometry_type == "chain":
+                kf = compute_kf_chain(n_particles)
+            elif geometry_type == "plane":
+                kf = compute_kf_plane(n_particles)
+            else:
+                kf = compute_kf_sphere(n_particles)
+
+            radii = np.full(n_particles, radius)
+            execution_time_ms = int((time.perf_counter() - start_time) * 1000)
+
+            # Compute metrics (pass radius for porosity calculation)
+            metrics = compute_limiting_metrics(coordinates, n_particles, radius)
+            metrics["fractal_dimension"] = df
+            metrics["prefactor"] = kf
+
+            # Convert coordinates to bytes (N x 4: x, y, z, radius)
+            geometry_array = np.column_stack([coordinates, radii.reshape(-1, 1)])
+            buffer = io.BytesIO()
+            np.save(buffer, geometry_array)
+            simulation.geometry = buffer.getvalue()
+            simulation.metrics = metrics
+            simulation.execution_time_ms = execution_time_ms
+            simulation.engine_version = "python"
+
+            # Update parameters to reflect actual N and configuration
+            updated_params = dict(simulation.parameters)
+            updated_params["n_particles"] = n_particles
+            updated_params["geometry_type"] = geometry_type
+            updated_params["configuration_type"] = configuration_type or config
+            updated_params["packing"] = packing
+            updated_params["fractal_dimension"] = df
+            simulation.parameters = updated_params
+
+            simulation.status = SimulationStatus.COMPLETED
+            simulation.completed_at = timezone.now()
+            simulation.save()
+
+            logger.info(
+                f"Limiting geometry {simulation_id} ({config}, packing={packing}) completed: "
+                f"Df={df:.1f}, kf={kf:.3f}, N={n_particles}, Rg={metrics['radius_of_gyration']:.2f}, "
+                f"porosity={metrics['porosity']:.3f}, time={execution_time_ms}ms"
+            )
+
+            # Run box-counting if configured in parent study
+            bc_result = None
+            try:
+                bc_result = run_box_counting_if_configured(simulation_id)
+            except Exception as e:
+                logger.warning(
+                    f"Box-counting failed for limiting case {simulation_id}: {e}"
+                )
+                # Don't fail the whole simulation for box-counting error
+
+            # Create notification for user
+            create_simulation_notification(simulation, success=True)
+
+            return {
+                "status": "completed",
+                "simulation_id": simulation_id,
+                "fractal_dimension": df,
+                "box_counting": bc_result,
+                "execution_time_ms": execution_time_ms,
+            }
+        else:
+            raise ValueError(f"Unknown algorithm: {algorithm}")
+
+        # Convert coordinates to bytes (N x 4: x, y, z, radius)
+        geometry_array = np.column_stack(
+            [result.coordinates, result.radii.reshape(-1, 1)]
+        )
+        buffer = io.BytesIO()
+        np.save(buffer, geometry_array)
+        simulation.geometry = buffer.getvalue()
+
+        # Compute per-particle coordination data via unified service.
+        # The Rust engine already computes mean/std, but we need the full
+        # per-particle contact list + distribution histogram for exports.
+        from apps.simulations.services.coordination import compute_coordination_data
+
+        coord_data = compute_coordination_data(result.coordinates, result.radii)
+
+        # Store metrics
+        simulation.metrics = {
+            "fractal_dimension": float(result.fractal_dimension),
+            "fractal_dimension_std": float(result.fractal_dimension_std),
+            "prefactor": float(result.prefactor),
+            "radius_of_gyration": float(result.radius_of_gyration),
+            "porosity": float(result.porosity),
+            "coordination": {
+                "mean": coord_data.mean,
+                "std": coord_data.std,
+                "per_particle": [
+                    {
+                        "particle_id": p.particle_id,
+                        "n_contacts": p.n_contacts,
+                        "contact_neighbors": p.contact_neighbors,
+                    }
+                    for p in coord_data.per_particle
+                ],
+                "distribution": coord_data.distribution,
+                "threshold_strategy": coord_data.threshold_strategy,
+                "tolerance": coord_data.tolerance,
+            },
+            "rg_evolution": result.rg_evolution.tolist(),
+            # Inertia tensor analysis
+            "anisotropy": float(result.anisotropy),
+            "asphericity": float(result.asphericity),
+            "acylindricity": float(result.acylindricity),
+            "principal_moments": result.principal_moments.tolist(),
+            "principal_axes": result.principal_axes.tolist(),
+        }
+        # Persist per-merge diagnostic trace (R16.7). The attribute is
+        # always present on the binding (Vec<MergeTraceEntry> → PyList);
+        # non-CC algorithms return an empty list so the key is safe to
+        # include unconditionally. Legacy rows without the key are
+        # handled by the consumer (R16.8).
+        merge_trace = getattr(result, "merge_trace", None)
+        if merge_trace is not None:
+            simulation.metrics["merge_trace"] = list(merge_trace)
+
+        simulation.execution_time_ms = result.execution_time_ms
+        simulation.engine_version = aglogen_core.version()
+
+        simulation.status = SimulationStatus.COMPLETED
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        logger.info(
+            f"Simulation {simulation_id} completed: "
+            f"Df={result.fractal_dimension:.3f}, Rg={result.radius_of_gyration:.2f}, "
+            f"time={result.execution_time_ms}ms"
+        )
+
+        # Run box-counting if configured in parent study
+        bc_result = None
+        try:
+            bc_result = run_box_counting_if_configured(simulation_id)
+        except Exception as e:
+            logger.warning(f"Box-counting failed for {simulation_id}: {e}")
+            # Don't fail the whole simulation for box-counting error
+
+        # Create notification for user
+        create_simulation_notification(simulation, success=True)
+
+        # TODO: Enable RAG indexing when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
+        # try:
+        #     from apps.rag.tasks import index_simulation_task
+        #     index_simulation_task.delay(str(simulation.id))
+        # except Exception as e:
+        #     logger.warning(f"Failed to queue RAG indexing for simulation {simulation_id}: {e}")
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "fractal_dimension": simulation.metrics["fractal_dimension"],
+            "execution_time_ms": simulation.execution_time_ms,
+            "box_counting": bc_result,
+        }
+
+    except ImportError as e:
+        logger.error(f"aglogen_core not installed: {e}")
+        simulation.status = SimulationStatus.FAILED
+        simulation.error_message = "Rust engine not installed. Run: cd aglogen_core && maturin develop --release"
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        # Create notification for user
+        create_simulation_notification(simulation, success=False)
+
+        return {
+            "status": "failed",
+            "simulation_id": simulation_id,
+            "error": str(simulation.error_message),
+        }
+
+    except Exception as e:
+        logger.exception(f"Simulation {simulation_id} failed: {e}")
+        simulation.status = SimulationStatus.FAILED
+        simulation.error_message = str(e)
+        simulation.completed_at = timezone.now()
+        simulation.save()
+
+        # Create notification for user
+        create_simulation_notification(simulation, success=False)
+
+        return {
+            "status": "failed",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_optical_task(
+    self,
+    simulation_id: str,
+    wavelength: float = 550.0,
+    refractive_index_n: float = 1.95,
+    refractive_index_k: float = 0.79,
+    medium_index: float = 1.0,
+) -> dict:
+    """Compute optical properties of a simulation using T-Matrix method.
+
+    Args:
+        simulation_id: UUID of the completed simulation
+        wavelength: Wavelength in vacuum (nm)
+        refractive_index_n: Real part of particle refractive index
+        refractive_index_k: Imaginary part of particle refractive index
+        medium_index: Refractive index of surrounding medium
+
+    Returns:
+        Dictionary with optical properties results
+    """
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    # Check simulation is completed
+    if simulation.status != SimulationStatus.COMPLETED:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": f"Simulation must be completed. Current status: {simulation.status}",
+        }
+
+    if simulation.geometry is None:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Simulation has no geometry data",
+        }
+
+    try:
+        import aglogen_core
+
+        # Load geometry
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = geometry_array[:, :3].flatten()  # Flatten for T-Matrix function
+        radii = geometry_array[:, 3]
+
+        logger.info(
+            f"Running T-Matrix optical calculation for simulation {simulation_id} "
+            f"with {len(radii)} particles at λ={wavelength}nm"
+        )
+
+        # Run T-Matrix calculation
+        result = aglogen_core.run_tmatrix(
+            coordinates=coords,
+            radii=radii,
+            wavelength=wavelength,
+            refractive_index_n=refractive_index_n,
+            refractive_index_k=refractive_index_k,
+            medium_index=medium_index,
+            orientation_averaging=False,
+            n_angles=181,
+        )
+
+        # Build optical results dictionary
+        optical_results = {
+            "wavelength": wavelength,
+            "refractive_index": {"n": refractive_index_n, "k": refractive_index_k},
+            "medium_index": medium_index,
+            "c_ext": float(result.c_ext),
+            "c_sca": float(result.c_sca),
+            "c_abs": float(result.c_abs),
+            "q_ext": float(result.q_ext),
+            "q_sca": float(result.q_sca),
+            "q_abs": float(result.q_abs),
+            "asymmetry_g": float(result.asymmetry_g),
+            "single_scatter_albedo": float(result.single_scatter_albedo),
+            "geometric_cross_section": float(result.geometric_cross_section),
+            "execution_time_ms": int(result.execution_time_ms),
+        }
+
+        # Store in simulation metrics
+        metrics = simulation.metrics or {}
+        metrics["optical"] = optical_results
+        simulation.metrics = metrics
+        simulation.save(update_fields=["metrics"])
+
+        logger.info(
+            f"Optical calculation for {simulation_id} completed: "
+            f"Cext={result.c_ext:.4e}, Csca={result.c_sca:.4e}, g={result.asymmetry_g:.4f}"
+        )
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "optical": optical_results,
+        }
+
+    except ImportError as e:
+        logger.error(f"aglogen_core not installed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Rust engine not installed",
+        }
+
+    except Exception as e:
+        logger.exception(f"Optical calculation for {simulation_id} failed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
+
+
+@shared_task(bind=True, max_retries=1)
+def run_dda_task(
+    self,
+    simulation_id: str,
+    wavelength: float = 550.0,
+    refractive_index_n: float = 1.95,
+    refractive_index_k: float = 0.79,
+    medium_index: float = 1.0,
+    dipoles_per_wavelength: float = 10.0,
+    polarizability: str = "ldr",
+    solver_tolerance: float = 1e-5,
+    max_iterations: int = 1000,
+) -> dict:
+    """Compute optical properties using Discrete Dipole Approximation (DDA).
+
+    Args:
+        simulation_id: UUID of the completed simulation
+        wavelength: Wavelength in vacuum (nm)
+        refractive_index_n: Real part of particle refractive index
+        refractive_index_k: Imaginary part of particle refractive index
+        medium_index: Refractive index of surrounding medium
+        dipoles_per_wavelength: Dipole spacing control (10-20 typical)
+        polarizability: 'cm' (Clausius-Mossotti), 'ldr' (Lattice Dispersion), 'dgf'
+        solver_tolerance: BiCGSTAB solver tolerance
+        max_iterations: Maximum solver iterations
+
+    Returns:
+        Dictionary with optical properties results
+    """
+    from .models import Simulation, SimulationStatus
+
+    simulation = Simulation.objects.get(id=UUID(simulation_id))
+
+    if simulation.status != SimulationStatus.COMPLETED:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": f"Simulation must be completed. Current status: {simulation.status}",
+        }
+
+    if simulation.geometry is None:
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Simulation has no geometry data",
+        }
+
+    try:
+        import aglogen_core
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = geometry_array[:, :3].flatten()
+        radii = geometry_array[:, 3]
+
+        logger.info(
+            f"Running DDA optical calculation for simulation {simulation_id} "
+            f"with {len(radii)} particles at λ={wavelength}nm"
+        )
+
+        result = aglogen_core.run_dda(
+            coordinates=coords,
+            radii=radii,
+            wavelength=wavelength,
+            refractive_index_n=refractive_index_n,
+            refractive_index_k=refractive_index_k,
+            medium_index=medium_index,
+            dipoles_per_wavelength=dipoles_per_wavelength,
+            polarizability=polarizability,
+            solver_tolerance=solver_tolerance,
+            max_iterations=max_iterations,
+        )
+
+        optical_results = {
+            "method": "dda",
+            "wavelength": wavelength,
+            "refractive_index": {"n": refractive_index_n, "k": refractive_index_k},
+            "medium_index": medium_index,
+            "c_ext": float(result.c_ext),
+            "c_sca": float(result.c_sca),
+            "c_abs": float(result.c_abs),
+            "q_ext": float(result.q_ext),
+            "q_sca": float(result.q_sca),
+            "q_abs": float(result.q_abs),
+            "asymmetry_g": float(result.asymmetry_g),
+            "single_scatter_albedo": float(result.single_scatter_albedo),
+            "geometric_cross_section": float(result.geometric_cross_section),
+            "execution_time_ms": int(result.execution_time_ms),
+            "dda_params": {
+                "dipoles_per_wavelength": dipoles_per_wavelength,
+                "polarizability": polarizability,
+            },
+        }
+
+        metrics = simulation.metrics or {}
+        metrics["optical_dda"] = optical_results
+        simulation.metrics = metrics
+        simulation.save(update_fields=["metrics"])
+
+        logger.info(
+            f"DDA calculation for {simulation_id} completed: "
+            f"Cext={result.c_ext:.4e}, Csca={result.c_sca:.4e}"
+        )
+
+        return {
+            "status": "completed",
+            "simulation_id": simulation_id,
+            "optical_dda": optical_results,
+        }
+
+    except ImportError as e:
+        logger.error(f"aglogen_core not installed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": "Rust engine not installed",
+        }
+
+    except Exception as e:
+        logger.exception(f"DDA calculation for {simulation_id} failed: {e}")
+        return {
+            "status": "error",
+            "simulation_id": simulation_id,
+            "error": str(e),
+        }
+
+
+# ============================================================================
+# Batch projection export
+# ============================================================================
+
+
+def _batch_storage_dir() -> str:
+    """Return (and lazily create) the directory for batch projection ZIPs."""
+    import os as _os
+
+    from django.conf import settings
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    base = str(media_root) if media_root else str(settings.BASE_DIR)
+    storage_dir = _os.path.join(base, "projections")
+    _os.makedirs(storage_dir, exist_ok=True)
+    return storage_dir
+
+
+def _build_batch_projections_zip_impl(
+    task_self,
+    study_id: str,
+    simulation_ids: list[str],
+    mode: str,
+    config: dict,
+) -> dict:
+    """Core logic for batch projection ZIP (callable from tests with a fake self).
+
+    Args:
+        task_self: Celery task instance or test fake with ``update_state``.
+        study_id: UUID string of the ParametricStudy.
+        simulation_ids: List of simulation UUID strings.
+        mode: ``"grid"`` | ``"fibonacci"`` | ``"legacy"``.
+        config: Mode-specific config dict.
+
+    Returns:
+        Dict with ``zip_path``, ``download_filename``, ``total_sims_processed``,
+        ``successful_sims``, ``failed_sims``, ``duration_sec``.
+    """
+    import json
+    import os
+    import tempfile
+    import time
+    import zipfile
+    from datetime import date
+    from pathlib import Path
+
+    from apps.simulations.models import Simulation
+    from apps.simulations.services.projection import render_or_reuse_projections
+
+    start = time.monotonic()
+    total = len(simulation_ids)
+    successful = 0
+    failed_sims: list[dict] = []
+    manifest_sims: list[dict] = []
+    study_name = ""
+
+    storage_dir = _batch_storage_dir()
+    zip_filename = f"study_{study_id}_projections_{date.today().isoformat()}.zip"
+    zip_path = os.path.join(
+        storage_dir, f"batch_{study_id}_{date.today().isoformat()}.zip"
+    )
+
+    zip_buffer = io.BytesIO()
+
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        for idx, sim_id in enumerate(simulation_ids):
+            task_self.update_state(
+                state="PROGRESS",
+                meta={
+                    "current": idx + 1,
+                    "total": total,
+                    "current_sim_id": sim_id,
+                },
+            )
+
+            try:
+                sim = Simulation.objects.get(id=sim_id)
+                if not study_name and hasattr(sim, "name"):
+                    study_name = str(sim.name)
+
+                # Create temp dir for this sim's renders
+                with tempfile.TemporaryDirectory() as tmpdir:
+                    output_dir = Path(tmpdir)
+                    paths = render_or_reuse_projections(
+                        simulation=sim,
+                        mode=mode,
+                        config=config,
+                        output_dir=output_dir,
+                    )
+
+                    sim_folder = f"sim_{sim_id}"
+                    for p in paths:
+                        arcname = f"{sim_folder}/{p.name}"
+                        zf.write(str(p), arcname)
+
+                successful += 1
+                manifest_sims.append(
+                    {
+                        "sim_id": sim_id,
+                        "sim_name": getattr(sim, "name", ""),
+                        "projection_count": len(paths),
+                        "status": "success",
+                        "error": None,
+                    }
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Batch export: sim %s failed: %s",
+                    sim_id,
+                    exc,
+                    exc_info=True,
+                )
+                failed_sims.append({"sim_id": sim_id, "error": str(exc)})
+                manifest_sims.append(
+                    {
+                        "sim_id": sim_id,
+                        "sim_name": "",
+                        "projection_count": 0,
+                        "status": "failed",
+                        "error": str(exc),
+                    }
+                )
+
+        # Write manifest.json at root
+        manifest = {
+            "study_id": study_id,
+            "study_name": study_name,
+            "exported_at": date.today().isoformat(),
+            "mode": mode,
+            "config": config,
+            "simulations": manifest_sims,
+        }
+        zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+
+    # Write ZIP to disk
+    with open(zip_path, "wb") as fp:
+        fp.write(zip_buffer.getvalue())
+
+    duration = time.monotonic() - start
+
+    return {
+        "zip_path": zip_path,
+        "download_filename": zip_filename,
+        "total_sims_processed": total,
+        "successful_sims": successful,
+        "failed_sims": failed_sims,
+        "duration_sec": round(duration, 2),
+    }
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.build_batch_projections_zip")
+def build_batch_projections_zip(
+    self,
+    study_id: str,
+    simulation_ids: list[str],
+    mode: str,
+    config: dict,
+) -> dict:
+    """Celery task wrapper for batch projection ZIP build."""
+    return _build_batch_projections_zip_impl(
+        self,
+        study_id,
+        simulation_ids,
+        mode,
+        config,
+    )
+
+
+# ============================================================================
+# Projection ZIP async builder (R6)
+# ============================================================================
+
+
+def _projections_storage_dir() -> str:
+    """Return (and lazily create) the directory where async projection ZIPs live.
+
+    No ``MEDIA_ROOT`` is configured in ``config/settings/base.py``, so we fall
+    back to a dedicated ``projections/`` directory under ``BASE_DIR``. Using a
+    separate subdirectory (not next to ``simulation.geometry`` — which lives
+    inside Postgres as a ``BinaryField``) avoids polluting any
+    future media storage with large ephemeral archives.
+    """
+    import os
+
+    from django.conf import settings
+
+    media_root = getattr(settings, "MEDIA_ROOT", None)
+    base = str(media_root) if media_root else str(settings.BASE_DIR)
+    storage_dir = os.path.join(base, "projections")
+    os.makedirs(storage_dir, exist_ok=True)
+    return storage_dir
+
+
+@shared_task(bind=True, name="apps.simulations.tasks.build_projections_zip")
+def build_projections_zip_task(
+    self,
+    simulation_id: str,
+    mode: str,
+    n_requested: int,
+    directions: list,
+    parameters: dict,
+) -> dict:
+    """Build a projections ZIP asynchronously when N > 200 (R6).
+
+    **Ordering contract (T3.7)**:
+      1. Render ALL directions first (dual: presentation + scientific)
+      2. Measure per-image scale AFTER the render loop
+      3. Write metadata.json ONCE before ZIP close
+
+    Per-direction inline stamping is FORBIDDEN — the scale computation
+    depends on ALL rendered bboxes being available.
+
+    Progress reporting: every 10 rendered projections we call
+    ``self.update_state(state="PROGRESS", meta={...})`` with a
+    ``{progress: float in [0,1], current: int, total: int}`` meta.
+
+    On completion, the ZIP is written to :func:`_projections_storage_dir`
+    as ``{task_id}.zip`` and the returned payload includes both
+    ``download_url`` (used by the frontend) and ``zip_path`` (used by the
+    download view to locate the file on disk).
+    """
+    import io
+    import os
+
+    from apps.simulations.services.projection import render_projection_dual_png
+    from apps.simulations.services.projections import build_projection_zip
+
+    from .models import Simulation
+
+    try:
+        simulation = Simulation.objects.get(id=UUID(simulation_id))
+        if simulation.geometry is None:
+            raise ValueError("Simulation has no geometry data")
+
+        buf = io.BytesIO(simulation.geometry)
+        geometry_array = np.load(buf)
+        coords = np.ascontiguousarray(geometry_array[:, :3])
+        radii = np.ascontiguousarray(geometry_array[:, 3])
+
+        # Normalize directions — Celery serializes as list-of-lists.
+        directions_py = [(float(a), float(e)) for (a, e) in directions]
+
+        total = len(directions_py)
+        img_size = parameters.get("img_size", 512) if parameters else 512
+
+        # ── Phase 1: Render ALL directions (dual) ──────────────────────
+        pres_list: list[bytes] = []
+        sci_list: list[bytes] = []
+        bbox_dims: list[tuple[float, float]] = []
+
+        for i, (az, el) in enumerate(directions_py):
+            pres, sci, bw, bh = render_projection_dual_png(
+                positions=coords,
+                radii=radii,
+                azimuth=az,
+                elevation=el,
+                img_size=img_size,
+            )
+            pres_list.append(pres)
+            sci_list.append(sci)
+            bbox_dims.append((bw, bh))
+
+            # Progress every 10 projections (and always on the last one).
+            if (i + 1) % 10 == 0 or (i + 1) == total:
+                self.update_state(
+                    state="PROGRESS",
+                    meta={
+                        "progress": float(i + 1) / float(total) if total else 1.0,
+                        "current": i + 1,
+                        "total": total,
+                    },
+                )
+
+        # ── Phase 2: Measure per-image scale ───────────────────────────
+        # pixels_per_100nm = (100 * img_size) / (max(bbox_w, bbox_h) * 1.04)
+        # The 1.04 factor accounts for the 2% padding on each side.
+        from apps.simulations.services.params import get_scale_factor_nm
+
+        scale_factor_nm = get_scale_factor_nm(simulation.parameters)
+        per_direction_scale: list[float] = []
+        for bw, bh in bbox_dims:
+            span_engine = max(bw, bh) * 1.04
+            span_nm = span_engine * scale_factor_nm
+            if span_nm > 0:
+                pix = 100.0 * float(img_size) / span_nm
+            else:
+                pix = 0.0
+            per_direction_scale.append(pix)
+
+        parameters["scale_factor_nm"] = float(scale_factor_nm)
+
+        # ── Phase 3: Build ZIP with metadata (stamped ONCE) ───────────
+        zip_bytes = build_projection_zip(
+            directions=directions_py,
+            image_bytes_list=pres_list,
+            mode=mode,
+            n_requested=n_requested,
+            parameters=parameters,
+            scientific_bytes_list=sci_list,
+            per_direction_scale=per_direction_scale,
+        )
+
+        storage_dir = _projections_storage_dir()
+        zip_path = os.path.join(storage_dir, f"{self.request.id}.zip")
+        with open(zip_path, "wb") as fp:
+            fp.write(zip_bytes)
+
+        download_url = f"/api/v1/projections-status/{self.request.id}/download/"
+        logger.info(
+            f"Projection ZIP built for simulation {simulation_id}: "
+            f"{total} projections, {len(zip_bytes)} bytes -> {zip_path}"
+        )
+        return {
+            "download_url": download_url,
+            "zip_path": zip_path,
+            "n_generated": total,
+            "mode": mode,
+        }
+    except Exception as exc:
+        logger.exception(
+            f"Projection ZIP build failed for simulation {simulation_id}: {exc}"
+        )
+        raise

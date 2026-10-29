@@ -1,0 +1,45 @@
+# Prevent stale build artifacts and local caches from polluting the Docker
+# build context. Without this, a local `.next/` directory from `next dev` or
+# a previous `next build` leaks into the container, and Next.js partially
+# reuses its incremental build cache — producing deploys that mix stale and
+# fresh compilations (some pages updated, others frozen at an old build).
+
+# Next.js build output and cache
+.next
+out
+
+# Node modules — installed in-container via `npm ci`
+node_modules
+
+# Test runner output
+coverage
+.nyc_output
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Environment files (secrets must come from deploy env, not the image)
+.env
+.env.local
+.env.*.local
+
+# OS/editor
+.DS_Store
+Thumbs.db
+*.swp
+.vscode
+.idea
+
+# Git
+.git
+.gitignore
+
+# Docker
+Dockerfile
+.dockerignore
+
+# Misc
+README.md

@@ -1,0 +1,62 @@
+{
+  "name": "pyaglogen3d-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "type-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@hookform/resolvers": "^5.2.2",
+    "@radix-ui/react-dialog": "^1.0.5",
+    "@react-three/drei": "^9.88",
+    "@react-three/fiber": "^8.15",
+    "@tanstack/react-query": "^5.17",
+    "class-variance-authority": "^0.7",
+    "clsx": "^2.1",
+    "jszip": "^3.10.1",
+    "lucide-react": "^0.303",
+    "next": "14.2",
+    "plotly.js": "^2.28",
+    "react": "^18.2",
+    "react-dom": "^18.2",
+    "react-dropzone": "^15.0.0",
+    "react-hook-form": "^7.71.1",
+    "react-plotly.js": "^2.6",
+    "tailwind-merge": "^2.2",
+    "three": "^0.160",
+    "vis-data": "^8.0.4",
+    "vis-network": "^10.0.3",
+    "zod": "^4.3.6",
+    "zustand": "^4.4"
+  },
+  "devDependencies": {
+    "@testing-library/dom": "^9.0.0",
+    "@testing-library/jest-dom": "^6.0.0",
+    "@testing-library/react": "^14.0.0",
+    "@types/node": "^20",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "@types/react-plotly.js": "^2.6.4",
+    "@types/three": "^0.160",
+    "@vitejs/plugin-react": "^4.7.0",
+    "autoprefixer": "^10",
+    "eslint": "^8",
+    "eslint-config-next": "14.1",
+    "jsdom": "^23.0.0",
+    "playwright": "^1.64.1",
+    "postcss": "^8",
+    "tailwindcss": "^3.4",
+    "typescript": "^5",
+    "vitest": "^1.0.0"
+  },
+  "engines": {
+    "node": "18.x",
+    "npm": "10.x"
+  }
+}

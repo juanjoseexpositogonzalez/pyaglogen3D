@@ -1,0 +1,15 @@
+{
+  "venvPath": "backend",
+  "venv": ".venv",
+  "extraPaths": ["backend"],
+  "reportMissingImports": "warning",
+  "reportMissingModuleSource": "warning",
+  "reportMissingTypeStubs": "none",
+  "reportIncompatibleMethodOverride": "warning",
+  "reportAttributeAccessIssue": "warning",
+  "reportCallIssue": "warning",
+  "reportArgumentType": "warning",
+  "reportOperatorIssue": "warning",
+  "reportOptionalOperand": "warning",
+  "reportGeneralTypeIssues": "warning"
+}

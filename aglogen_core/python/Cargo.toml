@@ -1,0 +1,17 @@
+[package]
+name = "aglogen-python"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Python bindings for aglogen-engine via PyO3"
+
+[lib]
+name = "aglogen_core"
+crate-type = ["cdylib"]
+
+[dependencies]
+aglogen-engine = { path = "../engine" }
+pyo3 = { version = "0.23", features = ["extension-module"] }
+numpy = "=0.23.0"
+ndarray = "0.15"
+rand = "0.8"

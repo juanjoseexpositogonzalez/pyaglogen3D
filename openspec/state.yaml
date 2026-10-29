@@ -1,0 +1,75 @@
+project: pyaglogen3d
+artifact_store: openspec
+initialized_at: 2026-04-18
+last_archived: 2026-10-26-resilient-token-refresh
+archived_changes:
+  - verify-rg-2026-04-20
+  - import-aggregate-2026-04-21
+  - projections-export-fix-2026-04-22
+  - visualize-multiple-2026-04-22
+  - fraktal-batch-analysis-2026-04-24
+  - 2026-04-28-fraktal-drilldown-and-csv
+  - 2026-04-30-projection-scale-and-render-modes
+  - 2026-05-02-fraktal-detector-fix
+  - 2026-05-03-fraktal-batch-distributions-and-entry
+  - 2026-05-04-cc-tunable-formula-fix
+  - 2026-05-05-sintering-cc-fix
+  - 2026-05-06-fraktal-bisection-ux
+  - 2026-05-06-parametric-values-dpo-and-kf
+  - 2026-05-07-cc-tunable-merge-trace
+  - 2026-05-09-ai-provider-model-catalog
+  - 2026-05-09-pya-14-phase2-seed-type-fix
+  - 2026-05-10-coordination-export-and-histogram
+  - 2026-05-10-pya-14-phase3-df-convergence
+  - 2026-05-11-batch-projection-export
+  - 2026-05-11-contacts-graph-viz
+  - 2026-05-11-projection-hemisphere-viz
+  - 2026-05-13-batch-cc-tunable-parameter-parity
+  - cc-tunable-low-df-fix-2026-05-29
+  - 2026-06-05-cc-tunable-high-df-fix
+  - 2026-10-18-cc-tunable-bc-alignment
+  - 2026-10-18-cc-tunable-rg-fit-fix
+  - 2026-10-19-batch-windowed-box-counting
+  - 2026-10-19-fraktal-batch-extensions
+  - 2026-10-25-redesign-design-system
+  - 2026-10-25-sintering-reaches-engine
+  - 2026-10-26-resilient-token-refresh
+# Los nombres son los directorios reales de openspec/changes/archive/. Conviven dos
+# convenciones historicas (fecha al principio y fecha al final); no se renombran aqui
+# porque un rename rompe cualquier enlace existente a esas rutas. Issue #130.
+stack:
+  rust:
+    version: "1.94.0"
+    workspace: aglogen_core/
+    members: [engine, python]
+    test_cmd: "cd aglogen_core && cargo test -p aglogen-engine"
+    env: "PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1"
+  python:
+    version: ">=3.11"
+    framework: django
+    test_cmd: "cd backend && pytest"
+    lint_cmd: "cd backend && ruff check"
+    type_check_cmd: "cd backend && mypy ."
+  frontend:
+    framework: nextjs
+    version: "14.2"
+    test_cmd: "cd frontend && npm test"
+    # No ejecutable: `frontend/` declara eslint pero no tiene ninguna
+    # configuración (.eslintrc* ni eslint.config.*), así que `next lint`
+    # no corre. No usar como gate hasta que exista configuración.
+    lint_cmd: null
+    type_check_cmd: "cd frontend && npm run type-check"
+conventions:
+  commits: conventional
+  branches: "main <- develop <- feature/*; fix/*, chore/*, docs/*, style/* carril corto (ver AGENTS.md)"
+  no_ai_attribution: true
+  issue_tracker: "Jira (project AGLO, isilduria.atlassian.net) + labels GitHub type:* en PR"
+  pr_target: develop
+deploy:
+  docker: "Easypanel on VPS"
+  alt: "Fly.io"
+strict_tdd: false  # existing codebase, pragmatic testing not strict TDD
+notes:
+  - "Frontend is Next.js 14 (not SvelteKit as initially assumed)"
+  - "Frontend uses vitest (126 tests as of visualize-multiple-2026-04-22); lint + type-check also required"
+  - "Rust engine has 160+ passing tests"

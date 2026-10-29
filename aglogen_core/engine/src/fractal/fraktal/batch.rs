@@ -1,0 +1,1036 @@
+//! Batch FRAKTAL analysis: one-shot dpo calibration + per-image analyzer loop.
+//!
+//! Wraps the existing single-image analyzers (`analyze_granulated_2012`,
+//! `analyze_voxel_2018`) so the caller can process N images with
+//! **per-image** `pixels_per_100nm` scales (`Vec<f64>`) and a shared
+//! `dpo` value (the dpo is a property of the aggregate, not of
+//! individual projections).
+//!
+//! Use [`analyze_batch_broadcast`] to expand a single scalar to all
+//! images (backward-compatible legacy path).
+//!
+//! Spec: `fraktal-batch-contract` (R3 one-shot dpo, R6 per-image shape)
+//! + `fraktal-batch-contract-delta` R-DELTA-C (per-image scale).
+//!
+//! ## Design note on inputs
+//!
+//! The batch API takes already-decoded grayscale images (`Array2<u8>`),
+//! matching what the existing analyzers consume. PNG decoding is the
+//! caller's responsibility (performed in the backend service layer via
+//! Pillow before calling into the PyO3 binding). This keeps the engine
+//! crate free of image-format dependencies.
+
+use ndarray::Array2;
+
+use super::image_processing::{estimate_particles_and_dpo, smart_segment};
+use super::params::{Granulated2012Params, Voxel2018Params};
+use super::result::{FraktalResult, FraktalStatus};
+use super::{analyze_granulated_2012, analyze_voxel_2018};
+
+/// Whether the input image is a presentation PNG (with AA halo) or a
+/// scientific PNG (binary-thresholded, no halo).
+///
+/// When `Scientific`, the engine skips Otsu segmentation and treats the
+/// image as already binary (pixel ≥ 128 → foreground).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ImageInputVariant {
+    /// Presentation PNG — typical TEM-style image requiring Otsu
+    /// segmentation (the default, backward-compatible path).
+    #[default]
+    Presentation,
+    /// Scientific (binary-thresholded) PNG — skip Otsu, treat as binary.
+    Scientific,
+}
+
+/// Which batch algorithm to run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchAlgorithm {
+    Granulated2012,
+    Voxel2018,
+}
+
+/// Where the dpo value used for the batch came from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AutocalibrateSource {
+    /// dpo was supplied by the caller (no autocalibrate attempted).
+    Manual,
+    /// autocalibrate succeeded on image[0].
+    Image0,
+    /// image[0] autocalibrate failed, succeeded on image[N/2].
+    ImageNHalf,
+}
+
+impl AutocalibrateSource {
+    /// Stable string tag for Python/JSON payloads.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AutocalibrateSource::Manual => "manual",
+            AutocalibrateSource::Image0 => "image0",
+            AutocalibrateSource::ImageNHalf => "image_n_half",
+        }
+    }
+
+    /// Which image index (0-based) was used for autocalibrate, when
+    /// applicable. Returns `None` for `Manual`.
+    pub fn image_index(&self, n: usize) -> Option<usize> {
+        match self {
+            AutocalibrateSource::Manual => None,
+            AutocalibrateSource::Image0 => Some(0),
+            AutocalibrateSource::ImageNHalf => Some(n / 2),
+        }
+    }
+}
+
+/// Input to `analyze_batch`.
+///
+/// `images` are pre-decoded grayscale frames. For `Voxel2018`, `dpo_hint`
+/// and `autocalibrate_dpo` are accepted for API symmetry but the voxel
+/// analyzer does not consume dpo; the value is still tracked in the
+/// output for traceability.
+pub struct BatchInput {
+    pub images: Vec<Array2<u8>>,
+    /// Pixels-per-100nm scale — one value per image. Length must equal
+    /// `images.len()`. Use [`analyze_batch_broadcast`] to expand a
+    /// single scalar to all images.
+    pub pixels_per_100nm: Vec<f64>,
+    /// Per-image input variant. When empty, defaults to `Presentation`
+    /// for all images (backward-compatible). When non-empty, length
+    /// must equal `images.len()`.
+    pub input_variants: Vec<ImageInputVariant>,
+    /// If true, run one-shot autocalibrate per R3; otherwise use
+    /// `dpo_hint` as-is.
+    pub autocalibrate_dpo: bool,
+    /// Manual dpo value (nm) used when `autocalibrate_dpo` is false.
+    pub dpo_hint: f64,
+    pub algorithm: BatchAlgorithm,
+}
+
+/// Per-image result. Fields are `Option` so a failure on image[i] does
+/// not kill the batch — the error message is captured in `error`.
+#[derive(Debug, Clone)]
+pub struct BatchImageResult {
+    pub index: usize,
+    pub fractal_dimension: Option<f64>,
+    pub prefactor: Option<f64>,
+    /// Always `None` for the current FRAKTAL analyzers (they use an
+    /// iterative bisection, not a linear regression, so there is no
+    /// coefficient of determination). Kept in the shape for future
+    /// compatibility and to match the spec's R6 field list.
+    pub r_squared: Option<f64>,
+    pub n_particles_counted: Option<u64>,
+    pub dpo_used: f64,
+    /// The pixels-per-100nm scale actually used for this image.
+    pub pixels_per_100nm_used: f64,
+    /// Radius of gyration in nm, surfaced from `FraktalResult.rg`.
+    /// `None` when the image failed analysis.
+    pub rg_nm: Option<f64>,
+    pub error: Option<String>,
+    // ── Bisection diagnostic fields (PYA-13 fraktal-bisection-ux) ──
+    /// Quality classification of the analysis result. Always populated.
+    pub quality: Option<String>,
+    /// Number of bisection iterations performed.
+    pub bisection_iterations: Option<usize>,
+    /// Final bisection residual |f(Df)|.
+    pub bisection_residual: Option<f64>,
+    /// Categorized failure reason (None when analysis succeeded).
+    pub failure_reason: Option<String>,
+    /// Best Df estimate even when not converged.
+    pub df_estimate: Option<f64>,
+}
+
+/// Full batch output.
+#[derive(Debug, Clone)]
+pub struct BatchOutput {
+    pub results: Vec<BatchImageResult>,
+    pub dpo_used: f64,
+    pub autocalibrate_source: AutocalibrateSource,
+}
+
+/// Scale reference in nm — matches the default in `Granulated2012Params` /
+/// `Voxel2018Params` (the `escala` field).
+const ESCALA_NM: f64 = 100.0;
+
+/// Run a FRAKTAL batch with per-image scale.
+///
+/// `pixels_per_100nm` must have exactly one entry per image. Use
+/// [`analyze_batch_broadcast`] to expand a single scalar.
+///
+/// Returns `Err(msg)` only for batch-level failures:
+///   1. empty input,
+///   2. `images.len() != pixels_per_100nm.len()` (scale vector mismatch),
+///   3. autocalibrate requested but failed on both image\[0\] and
+///      image\[N/2\] (per R3).
+///
+/// Per-image analyzer failures are captured in the corresponding
+/// `BatchImageResult.error` and do NOT short-circuit the batch.
+pub fn analyze_batch(input: BatchInput) -> Result<BatchOutput, String> {
+    if input.images.is_empty() {
+        return Err("batch requires at least one image".to_string());
+    }
+
+    if input.images.len() != input.pixels_per_100nm.len() {
+        return Err(format!(
+            "scale vector length mismatch: got {} scales for {} images",
+            input.pixels_per_100nm.len(),
+            input.images.len(),
+        ));
+    }
+
+    // Resolve input_variants: empty → default all to Presentation.
+    let variants = if input.input_variants.is_empty() {
+        vec![ImageInputVariant::Presentation; input.images.len()]
+    } else if input.input_variants.len() != input.images.len() {
+        return Err(format!(
+            "input_variants length mismatch: got {} input_variants for {} images",
+            input.input_variants.len(),
+            input.images.len(),
+        ));
+    } else {
+        input.input_variants.clone()
+    };
+
+    let (dpo, source) = resolve_dpo(&input, &variants)?;
+
+    let mut results = Vec::with_capacity(input.images.len());
+    for (i, img) in input.images.iter().enumerate() {
+        let scale_i = input.pixels_per_100nm[i];
+        let variant_i = variants[i];
+        let res = run_one_image(i, img, scale_i, dpo, input.algorithm, variant_i);
+        results.push(res);
+    }
+
+    Ok(BatchOutput {
+        results,
+        dpo_used: dpo,
+        autocalibrate_source: source,
+    })
+}
+
+/// Convenience wrapper: broadcast a single `pixels_per_100nm` scalar
+/// to all images, then run `analyze_batch`.
+///
+/// This is the backward-compatible entry point — existing callers
+/// passing a single float use this function, and it internally expands
+/// to `vec![scale; images.len()]`.
+pub fn analyze_batch_broadcast(
+    images: Vec<Array2<u8>>,
+    pixels_per_100nm: f64,
+    autocalibrate_dpo: bool,
+    dpo_hint: f64,
+    algorithm: BatchAlgorithm,
+) -> Result<BatchOutput, String> {
+    let n = images.len();
+    analyze_batch(BatchInput {
+        images,
+        pixels_per_100nm: vec![pixels_per_100nm; n],
+        input_variants: vec![],
+        autocalibrate_dpo,
+        dpo_hint,
+        algorithm,
+    })
+}
+
+/// R3 one-shot dpo policy: try image[0]; on failure retry image[N/2];
+/// on second failure, error the whole batch.
+///
+/// Uses the per-image scale of the calibration candidate (image\[0\] or
+/// image\[N/2\]) for the autocalibrate computation.
+fn resolve_dpo(
+    input: &BatchInput,
+    variants: &[ImageInputVariant],
+) -> Result<(f64, AutocalibrateSource), String> {
+    if !input.autocalibrate_dpo {
+        return Ok((input.dpo_hint, AutocalibrateSource::Manual));
+    }
+
+    let pre_thresh_0 = variants[0] == ImageInputVariant::Scientific;
+    match try_autocalibrate(&input.images[0], input.pixels_per_100nm[0], pre_thresh_0) {
+        Ok(dpo) => Ok((dpo, AutocalibrateSource::Image0)),
+        Err(e0) => {
+            let n = input.images.len();
+            if n <= 1 {
+                return Err(format!("autocalibrate failed on image[0]: {}", e0));
+            }
+            let mid = n / 2;
+            let pre_thresh_mid = variants[mid] == ImageInputVariant::Scientific;
+            match try_autocalibrate(
+                &input.images[mid],
+                input.pixels_per_100nm[mid],
+                pre_thresh_mid,
+            ) {
+                Ok(dpo) => Ok((dpo, AutocalibrateSource::ImageNHalf)),
+                Err(e_mid) => Err(format!(
+                    "autocalibrate failed on image[0] ({}) and image[{}] ({})",
+                    e0, mid, e_mid
+                )),
+            }
+        }
+    }
+}
+
+/// Segment the image and run `estimate_particles_and_dpo`, translating
+/// "no particles detected" into an `Err` so the caller can decide to
+/// retry on a different frame.
+fn try_autocalibrate(
+    image: &Array2<u8>,
+    pixels_per_100nm: f64,
+    pre_thresholded: bool,
+) -> Result<f64, String> {
+    // Use the same segmentation defaults as the single-image analyzers.
+    let (binary, _threshold, _inverted) =
+        smart_segment(image.view(), 10, 240, true, pre_thresholded);
+    let length_per_pixel = ESCALA_NM / pixels_per_100nm;
+    let (count, dpo, _avg_radius) = estimate_particles_and_dpo(binary.view(), length_per_pixel);
+    if count == 0 || !dpo.is_finite() || dpo <= 0.0 {
+        return Err("no primary particles detected".to_string());
+    }
+    Ok(dpo)
+}
+
+/// Build a BatchImageResult from a FraktalResult, populating diagnostic
+/// fields on both success and failure paths (PYA-13).
+fn build_batch_image_result(
+    index: usize,
+    r: &FraktalResult,
+    dpo: f64,
+    pixels_per_100nm: f64,
+) -> BatchImageResult {
+    let is_success = r.status == FraktalStatus::Success;
+    BatchImageResult {
+        index,
+        fractal_dimension: if is_success { Some(r.df) } else { None },
+        prefactor: if is_success { Some(r.kf) } else { None },
+        r_squared: None,
+        n_particles_counted: if is_success { Some(r.npo_visual) } else { None },
+        dpo_used: dpo,
+        pixels_per_100nm_used: pixels_per_100nm,
+        rg_nm: if is_success { Some(r.rg) } else { None },
+        error: if is_success {
+            None
+        } else {
+            Some(r.status.message())
+        },
+        quality: Some(r.quality.as_str().to_string()),
+        bisection_iterations: r.bisection_iterations,
+        bisection_residual: r.bisection_residual,
+        failure_reason: r.failure_reason.map(|fr| fr.as_str().to_string()),
+        df_estimate: r.df_estimate,
+    }
+}
+
+/// Run a single image through the selected analyzer, capturing per-image
+/// errors in the result rather than propagating them.
+fn run_one_image(
+    index: usize,
+    image: &Array2<u8>,
+    pixels_per_100nm: f64,
+    dpo: f64,
+    algorithm: BatchAlgorithm,
+    variant: ImageInputVariant,
+) -> BatchImageResult {
+    // When Scientific, pre-threshold to clean binary (0/255) and widen
+    // pixel_min/pixel_max to 0/255 so the analyzers' Otsu path handles
+    // the bimodal image correctly (no clipping at 240).
+    let (image, pmin, pmax) = match variant {
+        ImageInputVariant::Scientific => {
+            let clean = image.mapv(|v| if v >= 128 { 255u8 } else { 0u8 });
+            (clean, 0u8, 255u8)
+        }
+        ImageInputVariant::Presentation => (image.clone(), 10u8, 240u8),
+    };
+
+    match algorithm {
+        BatchAlgorithm::Granulated2012 => {
+            let params = Granulated2012Params {
+                npix: pixels_per_100nm,
+                dpo,
+                escala: ESCALA_NM,
+                pixel_min: pmin,
+                pixel_max: pmax,
+                ..Granulated2012Params::default()
+            };
+            let r = analyze_granulated_2012(image.view(), &params);
+            build_batch_image_result(index, &r, dpo, pixels_per_100nm)
+        }
+        BatchAlgorithm::Voxel2018 => {
+            let params = Voxel2018Params {
+                npix: pixels_per_100nm,
+                escala: ESCALA_NM,
+                pixel_min: pmin,
+                pixel_max: pmax,
+                ..Voxel2018Params::default()
+            };
+            let r = analyze_voxel_2018(image.view(), &params);
+            build_batch_image_result(index, &r, dpo, pixels_per_100nm)
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::Array2;
+
+    /// Build a synthetic grayscale image with a soft-edged disk cluster
+    /// that the Otsu segmenter and adaptive particle detector can
+    /// reliably locate.
+    fn make_particle_image(size: usize, centers: &[(usize, usize)], radius: f64) -> Array2<u8> {
+        // Light background, dark particles — matches typical TEM layout.
+        let mut img = Array2::<u8>::from_elem((size, size), 220);
+        for (cy, cx) in centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    let d = (dy * dy + dx * dx).sqrt();
+                    if d <= radius {
+                        img[[i, j]] = 30;
+                    }
+                }
+            }
+        }
+        img
+    }
+
+    /// Uniform-noise image that segmentation cannot resolve into
+    /// primary particles — exercises the autocalibrate failure path.
+    fn make_noise_image(size: usize, value: u8) -> Array2<u8> {
+        Array2::<u8>::from_elem((size, size), value)
+    }
+
+    // ── Phase 1: rg_nm field in BatchImageResult ────────────────────
+
+    #[test]
+    fn test_batch_image_result_default_rg_nm_is_none() {
+        // T1.4: default BatchImageResult should have rg_nm = None.
+        let result = BatchImageResult {
+            index: 0,
+            fractal_dimension: None,
+            prefactor: None,
+            r_squared: None,
+            n_particles_counted: None,
+            dpo_used: 0.0,
+            pixels_per_100nm_used: 0.0,
+            error: None,
+            rg_nm: None,
+            quality: None,
+            bisection_iterations: None,
+            bisection_residual: None,
+            failure_reason: None,
+            df_estimate: None,
+        };
+        assert!(result.rg_nm.is_none(), "default rg_nm must be None");
+    }
+
+    #[test]
+    fn test_successful_batch_has_rg_nm_some() {
+        // T1.4: a successful batch run should produce rg_nm = Some(value)
+        // matching the underlying FraktalResult.rg (which is in nm).
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        assert_eq!(out.results.len(), 1);
+        let r = &out.results[0];
+        assert!(
+            r.fractal_dimension.is_some(),
+            "analysis must succeed for rg_nm to be meaningful"
+        );
+        assert!(
+            r.rg_nm.is_some(),
+            "successful analysis must produce rg_nm = Some(_)"
+        );
+        let rg = r.rg_nm.unwrap();
+        assert!(
+            rg > 0.0,
+            "rg_nm must be positive for a valid analysis, got {}",
+            rg
+        );
+    }
+
+    #[test]
+    fn test_failed_image_has_rg_nm_none() {
+        // T1.4: a failed image (e.g. all-white = no object pixels)
+        // should produce rg_nm = None.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+        let input = BatchInput {
+            images: vec![good, blank],
+            pixels_per_100nm: vec![50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        assert_eq!(out.results.len(), 2);
+        // First image succeeds → rg_nm = Some
+        assert!(out.results[0].rg_nm.is_some(), "good image must have rg_nm");
+        // Second image fails → rg_nm = None
+        assert!(
+            out.results[1].rg_nm.is_none(),
+            "failed image must have rg_nm = None"
+        );
+    }
+
+    // ── PYA-13: diagnostic fields in BatchImageResult ──────────────
+
+    #[test]
+    fn test_successful_batch_has_quality_converged() {
+        // A successful analysis should produce quality = "converged"
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        let r = &out.results[0];
+        assert!(r.fractal_dimension.is_some(), "analysis must succeed");
+        assert_eq!(
+            r.quality.as_deref(),
+            Some("converged"),
+            "successful analysis should be converged"
+        );
+        assert!(
+            r.bisection_iterations.is_some(),
+            "iterations must be surfaced"
+        );
+        assert!(r.bisection_residual.is_some(), "residual must be surfaced");
+        assert!(r.df_estimate.is_some(), "df_estimate must be surfaced");
+        assert!(r.failure_reason.is_none(), "no failure_reason on success");
+    }
+
+    #[test]
+    fn test_failed_batch_has_quality_and_diagnostics() {
+        // A blank image (no object) → failure path, but diagnostics populated
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+        let input = BatchInput {
+            images: vec![blank],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed even with failed images");
+        let r = &out.results[0];
+        assert!(r.error.is_some(), "blank image should produce error");
+        // Quality must be populated even on failure
+        assert!(r.quality.is_some(), "quality must be populated on failure");
+    }
+
+    // ── Phase 2 (P2): ImageInputVariant + scientific PNG input ─────
+
+    #[test]
+    fn test_image_input_variant_default_is_presentation() {
+        let variant = ImageInputVariant::default();
+        assert_eq!(variant, ImageInputVariant::Presentation);
+    }
+
+    #[test]
+    fn test_image_input_variant_debug_clone_copy() {
+        let v = ImageInputVariant::Scientific;
+        let v2 = v; // Copy
+        let v3 = v.clone(); // Clone
+        assert_eq!(v, v2);
+        assert_eq!(v2, v3);
+        assert_eq!(format!("{:?}", v), "Scientific");
+    }
+
+    #[test]
+    fn test_input_variants_length_mismatch_rejected() {
+        // T2.2: 3 images, 2 input_variants → error mentioning mismatch.
+        let img = make_noise_image(40, 200);
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Scientific,
+            ],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(
+            err.contains("input_variants"),
+            "error should mention input_variants: {}",
+            err
+        );
+    }
+
+    /// T2.4: Scientific variant + binary image → results identical to
+    /// processing the same binary through Otsu (since a true binary
+    /// image's Otsu threshold coincides with 128).
+    #[test]
+    fn test_scientific_variant_skips_otsu_binary_image() {
+        // Build a binary image: white circles on black background
+        // (pixel values: 0 or 255 only — no anti-aliasing).
+        let size = 64;
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let mut img = Array2::<u8>::from_elem((size, size), 0);
+        for (cy, cx) in &centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    if (dy * dy + dx * dx).sqrt() <= 3.0 {
+                        img[[i, j]] = 255;
+                    }
+                }
+            }
+        }
+
+        // Run with Scientific variant.
+        let input = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![ImageInputVariant::Scientific],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("scientific variant batch must succeed");
+        assert_eq!(out.results.len(), 1);
+        // Must produce a valid Df (not error out) — proof that the engine
+        // processed the binary image without Otsu interfering.
+        assert!(
+            out.results[0].fractal_dimension.is_some(),
+            "scientific variant should produce a valid Df, got error: {:?}",
+            out.results[0].error
+        );
+    }
+
+    /// T2.6: Presentation variant with AA-halo image behaves exactly
+    /// like before P2 — same as empty input_variants (backward compat).
+    #[test]
+    fn test_presentation_variant_unchanged_from_pre_p2() {
+        // Standard TEM-style image (dark particles on light background
+        // with soft edges = AA halo).
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        // Run with explicit Presentation variant.
+        let input_explicit = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![ImageInputVariant::Presentation],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_explicit =
+            analyze_batch(input_explicit).expect("explicit Presentation must succeed");
+
+        // Run with empty input_variants (default path).
+        let input_default = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_default = analyze_batch(input_default).expect("default path must succeed");
+
+        // Both must produce identical results.
+        assert_eq!(
+            out_explicit.results[0].fractal_dimension, out_default.results[0].fractal_dimension,
+            "Presentation variant must produce same Df as default"
+        );
+        assert_eq!(
+            out_explicit.results[0].prefactor, out_default.results[0].prefactor,
+            "Presentation variant must produce same kf as default"
+        );
+    }
+
+    /// T2.6 triangulation: autocalibrate path with Presentation handles
+    /// AA-halo images (P1 changes are not affected by P2).
+    #[test]
+    fn test_presentation_autocalibrate_aa_halo_unchanged() {
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Presentation,
+                ImageInputVariant::Presentation,
+            ],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("presentation autocalibrate must succeed");
+        assert!(
+            out.dpo_used > 0.0,
+            "autocalibrate must produce positive dpo"
+        );
+        assert_eq!(
+            out.autocalibrate_source,
+            AutocalibrateSource::Image0,
+            "autocalibrate should succeed on image[0]"
+        );
+    }
+
+    /// T2.4 triangulation: Scientific variant through autocalibrate path.
+    #[test]
+    fn test_scientific_variant_autocalibrate_path() {
+        let size = 64;
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let mut img = Array2::<u8>::from_elem((size, size), 0);
+        for (cy, cx) in &centers {
+            for i in 0..size {
+                for j in 0..size {
+                    let dy = i as f64 - *cy as f64;
+                    let dx = j as f64 - *cx as f64;
+                    if (dy * dy + dx * dx).sqrt() <= 3.0 {
+                        img[[i, j]] = 255;
+                    }
+                }
+            }
+        }
+
+        // Autocalibrate with Scientific variant.
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![
+                ImageInputVariant::Scientific,
+                ImageInputVariant::Scientific,
+                ImageInputVariant::Scientific,
+            ],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("autocalibrate with scientific variant must succeed");
+        assert!(out.dpo_used > 0.0, "dpo must be positive");
+        assert_eq!(out.autocalibrate_source, AutocalibrateSource::Image0);
+    }
+
+    #[test]
+    fn test_input_variants_default_all_presentation() {
+        // T2.2: when input_variants is empty, defaults to Presentation for all.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![img.clone(), img],
+            pixels_per_100nm: vec![50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out =
+            analyze_batch(input).expect("empty input_variants should default to Presentation");
+        assert_eq!(out.results.len(), 2);
+    }
+
+    #[test]
+    fn test_batch_empty_input_rejected() {
+        let input = BatchInput {
+            images: vec![],
+            pixels_per_100nm: vec![],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(err.contains("at least one image"));
+    }
+
+    #[test]
+    fn test_batch_single_image_edge_case() {
+        // N=1 with manual dpo — no autocalibrate path, no retry.
+        let img = make_particle_image(40, &[(20, 20)], 5.0);
+        let input = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 20.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("batch must succeed");
+        assert_eq!(out.results.len(), 1);
+        assert_eq!(out.results[0].index, 0);
+        assert_eq!(out.dpo_used, 20.0);
+        assert_eq!(out.autocalibrate_source, AutocalibrateSource::Manual);
+    }
+
+    #[test]
+    fn test_batch_oneshot_dpo_image0_happy() {
+        // image[0] autocalibrates cleanly → all images share that dpo.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+        let input = BatchInput {
+            images: vec![good.clone(), good.clone(), good],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("autocalibrate on image[0] should work");
+        assert_eq!(out.autocalibrate_source, AutocalibrateSource::Image0);
+        assert!(out.dpo_used > 0.0);
+        assert_eq!(out.results.len(), 3);
+        // All three images share the same dpo (one-shot reuse, R3).
+        for r in &out.results {
+            assert_eq!(r.dpo_used, out.dpo_used);
+        }
+    }
+
+    #[test]
+    fn test_batch_oneshot_dpo_image0_fails_retries_image_half() {
+        // image[0] is pure noise (no particles) → image[1] (mid of N=3)
+        // has a valid particle cluster → autocalibrate retries and
+        // reports ImageNHalf.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+        let bad = make_noise_image(64, 200);
+        let input = BatchInput {
+            images: vec![bad.clone(), good.clone(), bad],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("retry on image[N/2] should rescue the batch");
+        assert_eq!(out.autocalibrate_source, AutocalibrateSource::ImageNHalf);
+        assert!(out.dpo_used > 0.0);
+    }
+
+    #[test]
+    fn test_batch_oneshot_dpo_double_failure_errors() {
+        // Both image[0] and image[N/2] are noise → batch-level error.
+        let bad = make_noise_image(64, 200);
+        let input = BatchInput {
+            images: vec![bad.clone(), bad.clone(), bad.clone(), bad],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: true,
+            dpo_hint: 0.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(err.contains("image[0]"));
+        assert!(
+            err.contains("image["),
+            "expected retry attempt mentioned: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_batch_per_image_error_does_not_fail_batch() {
+        // Batch of 3: images 0 and 2 have clusters, image 1 is blank.
+        // The blank one's analyzer call fails ("No object pixels
+        // found"); the batch still returns 3 entries.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let good = make_particle_image(64, &centers, 3.0);
+        // Fully light image — segmentation produces zero object pixels.
+        let blank = Array2::<u8>::from_elem((64, 64), 255);
+
+        let input = BatchInput {
+            images: vec![good.clone(), blank, good],
+            pixels_per_100nm: vec![50.0, 50.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("per-image failure must not kill the batch");
+        assert_eq!(out.results.len(), 3);
+        assert_eq!(out.results[1].index, 1);
+        assert!(
+            out.results[1].error.is_some(),
+            "image 1 should have a captured error"
+        );
+        assert!(out.results[1].fractal_dimension.is_none());
+        // Indices preserved and stable.
+        assert_eq!(out.results[0].index, 0);
+        assert_eq!(out.results[2].index, 2);
+    }
+
+    #[test]
+    fn test_autocalibrate_source_image_index() {
+        assert_eq!(AutocalibrateSource::Manual.image_index(10), None);
+        assert_eq!(AutocalibrateSource::Image0.image_index(10), Some(0));
+        assert_eq!(AutocalibrateSource::ImageNHalf.image_index(10), Some(5));
+        assert_eq!(AutocalibrateSource::ImageNHalf.image_index(3), Some(1));
+    }
+
+    // ── Phase 2: per-image scale tests ─────────────────────────────
+
+    #[test]
+    fn test_vec_scale_per_image_used() {
+        // T2.1 + T2.3: 3 images with 3 different scales.
+        // Each image should use its OWN pixels_per_100nm for the
+        // analyzer (npix field in params). We verify by checking that
+        // per-image `pixels_per_100nm_used` reflects each scale.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let scales = vec![30.0, 50.0, 70.0];
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: scales.clone(),
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out = analyze_batch(input).expect("per-image scale batch must succeed");
+        assert_eq!(out.results.len(), 3);
+        // Each result must report the scale that was used for that image.
+        assert_eq!(out.results[0].pixels_per_100nm_used, 30.0);
+        assert_eq!(out.results[1].pixels_per_100nm_used, 50.0);
+        assert_eq!(out.results[2].pixels_per_100nm_used, 70.0);
+    }
+
+    #[test]
+    fn test_length_mismatch_rejected() {
+        // T2.4: 3 images with 2 scales → descriptive error.
+        let img = make_noise_image(40, 200);
+        let input = BatchInput {
+            images: vec![img.clone(), img.clone(), img],
+            pixels_per_100nm: vec![30.0, 50.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let err = analyze_batch(input).unwrap_err();
+        assert!(
+            err.contains("mismatch"),
+            "expected 'mismatch' in error: {}",
+            err
+        );
+        assert!(
+            err.contains("3") && err.contains("2"),
+            "expected image count (3) and scale count (2) in error: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn test_broadcast_single_scale_to_all_images() {
+        // T2.2: pass single f64 via broadcast wrapper, verify all images
+        // use the same scale internally.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+        let out = analyze_batch_broadcast(
+            vec![img.clone(), img.clone(), img],
+            42.5,
+            false,
+            25.0,
+            BatchAlgorithm::Granulated2012,
+        )
+        .expect("broadcast batch must succeed");
+
+        assert_eq!(out.results.len(), 3);
+        for r in &out.results {
+            assert_eq!(
+                r.pixels_per_100nm_used, 42.5,
+                "broadcast must expand single scale to all images"
+            );
+        }
+    }
+
+    #[test]
+    fn test_per_image_scale_changes_bisection_result() {
+        // T2.5 scenario: same image analyzed with very different scales
+        // should produce different fractal dimension results, because
+        // the scale (npix) changes the bisection parameters.
+        let centers: Vec<(usize, usize)> = (0..6)
+            .flat_map(|r| (0..6).map(move |c| (8 + r * 8, 8 + c * 8)))
+            .collect();
+        let img = make_particle_image(64, &centers, 3.0);
+
+        // Run same image with two very different scales.
+        let input_low = BatchInput {
+            images: vec![img.clone()],
+            pixels_per_100nm: vec![20.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let input_high = BatchInput {
+            images: vec![img],
+            pixels_per_100nm: vec![80.0],
+            input_variants: vec![],
+            autocalibrate_dpo: false,
+            dpo_hint: 25.0,
+            algorithm: BatchAlgorithm::Granulated2012,
+        };
+        let out_low = analyze_batch(input_low).expect("low-scale batch");
+        let out_high = analyze_batch(input_high).expect("high-scale batch");
+
+        // With the same dpo but very different scales, the internal
+        // dpo_pixels = dpo * pixels_per_100nm / escala differs
+        // significantly, affecting the bisection coverage and thus Df.
+        // We just assert they are NOT equal (different scales →
+        // different analysis).
+        let df_low = out_low.results[0].fractal_dimension;
+        let df_high = out_high.results[0].fractal_dimension;
+        // At least one must succeed for meaningful comparison.
+        assert!(
+            df_low.is_some() || df_high.is_some(),
+            "at least one scale must produce a valid Df"
+        );
+        if let (Some(dfl), Some(dfh)) = (df_low, df_high) {
+            assert!(
+                (dfl - dfh).abs() > 1e-6,
+                "different scales should produce different Df: low={} high={}",
+                dfl,
+                dfh
+            );
+        }
+    }
+}

@@ -1,0 +1,17 @@
+kf = 1.4;
+Df = 2.3;
+npo = 30;
+dpo = 25;
+delta = 1;
+metodo = 'PC';
+[ clusters, referencias, intentos, vec, deltas, total_rot ] = kfDfAgglo3D( npo, dpo, delta, kf, Df, metodo );
+part = cell2mat( clusters );
+part = part( :, 3 : end );
+plotAgglomerate( part );
+porcentaje = sum(total_rot-1)/size(total_rot,1) * 100;
+fprintf('El porcentaje de fallos ha sido del %2.2g%%\n', porcentaje );
+cG = calculateCentreOfGravity( part );
+rg = calculateRadiusOfGyration( part, 1, cG );
+fprintf('El radio de giro del aglomeado es %2.2g nm\n', rg );
+Dir = [ 'Tuneado_' num2str( kf ), '_', num2str( Df ), '_', num2str( npo ) ];
+[ escala ] = create2DImages( part, 1, Dir );

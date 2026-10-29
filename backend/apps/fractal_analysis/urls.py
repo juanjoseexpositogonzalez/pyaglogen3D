@@ -1,0 +1,171 @@
+"""Fractal Analysis URLs."""
+
+from django.urls import include, path
+from rest_framework.routers import DefaultRouter
+
+from .views import (
+    ComparisonSetViewSet,
+    FraktalAnalysisViewSet,
+    ImageAnalysisViewSet,
+    batch_csv_view,
+    batch_detail_view,
+    batch_image_detail_view,
+    batch_image_png_view,
+    batch_image_reanalyze_view,
+    batch_list_view,
+    batch_reanalyze_failed_view,
+    fraktal_results_view,
+    fraktal_status_view,
+    single_image_csv_view,
+)
+
+# Main router for direct access
+router = DefaultRouter()
+router.register("analyses", ImageAnalysisViewSet, basename="analysis")
+router.register("fraktal", FraktalAnalysisViewSet, basename="fraktal")
+router.register("comparisons", ComparisonSetViewSet, basename="comparison")
+
+# Nested routes are defined via pattern matching in the URL
+# /projects/{project_pk}/analyses/
+# /projects/{project_pk}/comparisons/
+
+urlpatterns = [
+    path("", include(router.urls)),
+    # Nested project routes
+    path(
+        "projects/<uuid:project_pk>/analyses/",
+        ImageAnalysisViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-analyses-list",
+    ),
+    path(
+        "projects/<uuid:project_pk>/analyses/<uuid:pk>/",
+        ImageAnalysisViewSet.as_view(
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
+        ),
+        name="project-analyses-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/analyses/<uuid:pk>/original_image/",
+        ImageAnalysisViewSet.as_view({"get": "original_image"}),
+        name="project-analyses-original-image",
+    ),
+    path(
+        "projects/<uuid:project_pk>/analyses/<uuid:pk>/processed_image/",
+        ImageAnalysisViewSet.as_view({"get": "processed_image"}),
+        name="project-analyses-processed-image",
+    ),
+    path(
+        "projects/<uuid:project_pk>/comparisons/",
+        ComparisonSetViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-comparisons-list",
+    ),
+    path(
+        "projects/<uuid:project_pk>/comparisons/<uuid:pk>/",
+        ComparisonSetViewSet.as_view(
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
+        ),
+        name="project-comparisons-detail",
+    ),
+    # FRAKTAL analysis routes
+    path(
+        "projects/<uuid:project_pk>/fraktal/",
+        FraktalAnalysisViewSet.as_view({"get": "list", "post": "create"}),
+        name="project-fraktal-list",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/<uuid:pk>/",
+        FraktalAnalysisViewSet.as_view(
+            {
+                "get": "retrieve",
+                "put": "update",
+                "patch": "partial_update",
+                "delete": "destroy",
+            }
+        ),
+        name="project-fraktal-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/<uuid:pk>/original_image/",
+        FraktalAnalysisViewSet.as_view({"get": "original_image"}),
+        name="project-fraktal-original-image",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/<uuid:pk>/rerun/",
+        FraktalAnalysisViewSet.as_view({"post": "rerun"}),
+        name="project-fraktal-rerun",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/delete-all/",
+        FraktalAnalysisViewSet.as_view({"delete": "delete_all"}),
+        name="project-fraktal-delete-all",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/analyze-batch/",
+        FraktalAnalysisViewSet.as_view({"post": "analyze_batch"}),
+        name="project-fraktal-analyze-batch",
+    ),
+    # Async FRAKTAL batch job status + results download (mirrors
+    # projections-status pattern).
+    path(
+        "fraktal-status/<str:job_id>/",
+        fraktal_status_view,
+        name="fraktal-status",
+    ),
+    path(
+        "fraktal-status/<str:job_id>/results/",
+        fraktal_results_view,
+        name="fraktal-results",
+    ),
+    # Batch list (hotfix: dashboard gap)
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/",
+        batch_list_view,
+        name="project-fraktal-batch-list",
+    ),
+    # Phase 4 — Batch drill-down, PNG, re-analyze, delete, CSV endpoints
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/",
+        batch_detail_view,  # handles GET + DELETE
+        name="project-fraktal-batch-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/",
+        batch_image_detail_view,
+        name="project-fraktal-batch-image-detail",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/png/",
+        batch_image_png_view,
+        name="project-fraktal-batch-image-png",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/images/<int:index>/reanalyze/",
+        batch_image_reanalyze_view,
+        name="project-fraktal-batch-image-reanalyze",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/reanalyze-failed/",
+        batch_reanalyze_failed_view,
+        name="project-fraktal-batch-reanalyze-failed",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/batches/<uuid:batch_id>/csv/",
+        batch_csv_view,
+        name="project-fraktal-batch-csv",
+    ),
+    path(
+        "projects/<uuid:project_pk>/fraktal/<uuid:analysis_id>/csv/",
+        single_image_csv_view,
+        name="project-fraktal-single-csv",
+    ),
+]

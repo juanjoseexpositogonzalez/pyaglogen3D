@@ -1,0 +1,104 @@
+[package]
+name = "aglogen-engine"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pure Rust engine for 3D agglomerate simulation and fractal analysis"
+
+[dependencies]
+ndarray = { version = "0.15", features = ["rayon"] }
+nalgebra = "0.33"
+rand = "0.8"
+rand_pcg = "0.3"
+rand_distr = "0.4"
+rayon = "1.8"
+thiserror = "1.0"
+num-complex = "0.4"
+
+[dev-dependencies]
+approx = "0.5"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Diagnostic examples for the BC vs CC-tunable investigation (2026-05-26).
+# Kept under examples/diagnostics/ as historical reference for the bug study
+# documented in engram (topic: cc-tunable-bug-study-2026-05).
+[[example]]
+name = "bc_bias_diagnosis"
+path = "examples/diagnostics/bc_bias_diagnosis.rs"
+
+[[example]]
+name = "bc_peraxis_diagnosis"
+path = "examples/diagnostics/bc_peraxis_diagnosis.rs"
+
+[[example]]
+name = "bc_physical_range"
+path = "examples/diagnostics/bc_physical_range.rs"
+
+[[example]]
+name = "bc_high_df_clamp"
+path = "examples/diagnostics/bc_high_df_clamp.rs"
+
+[[example]]
+name = "bc_vs_sim_real"
+path = "examples/diagnostics/bc_vs_sim_real.rs"
+
+[[example]]
+name = "rg_evolution_tail"
+path = "examples/diagnostics/rg_evolution_tail.rs"
+
+[[example]]
+name = "r24_byte_identity_probe"
+path = "examples/diagnostics/r24_byte_identity_probe.rs"
+
+[[example]]
+name = "r24_in_memory_check"
+path = "examples/diagnostics/r24_in_memory_check.rs"
+
+[[example]]
+name = "r24_json_roundtrip"
+path = "examples/diagnostics/r24_json_roundtrip.rs"
+
+[[example]]
+name = "r25_n_sensitivity"
+path = "examples/diagnostics/r25_n_sensitivity.rs"
+
+[[example]]
+name = "r58_prefactor_scan"
+path = "examples/diagnostics/r58_prefactor_scan.rs"
+
+# Phase 0 diagnostic for cc-tunable-rg-fit-fix (PYA-17): Rg-evolution fit variant
+# comparison (unweighted vs N-weighted vs tail-restricted) + D5 no-clamp check.
+# Run: cargo run --release --example rg_fit_variants_audit -p aglogen-engine
+[[example]]
+name = "rg_fit_variants_audit"
+path = "examples/diagnostics/rg_fit_variants_audit.rs"
+
+# Phase 0 diagnostic for cc-tunable-bc-alignment (PYA-17): BC fit-window
+# alignment sweep (legacy robust fit vs candidate fixed windows, log2-axis
+# cross-check, recomputed-count byte-identity). Feeds design D1/D4 verdict.
+# Run: cargo run --release --example bc_window_alignment_audit -p aglogen-engine
+[[example]]
+name = "bc_window_alignment_audit"
+path = "examples/diagnostics/bc_window_alignment_audit.rs"
+
+# Pre-fix snapshot generator for cc-tunable-low-df-fix (R24 byte-identity).
+# Committed alongside the snapshot fixtures in tests/fixtures/pre_low_df_fix/.
+# Run: cargo run --release --example gen_pre_fix_snapshots -p aglogen-engine
+[[example]]
+name = "gen_pre_fix_snapshots"
+path = "examples/fixtures/gen_pre_fix_snapshots.rs"
+
+# Pre-fix snapshot generator for cc-tunable-high-df-fix (R26.4 byte-identity).
+# Committed alongside the snapshot fixtures in tests/fixtures/pre_high_df_fix/.
+# Run: CC_TUNABLE_USE_HIGH_DF_FIX=false cargo run --release --example gen_pre_high_df_fix_snapshots -p aglogen-engine
+[[example]]
+name = "gen_pre_high_df_fix_snapshots"
+path = "examples/fixtures/gen_pre_high_df_fix_snapshots.rs"
+
+# Diagnostic: before/after comparison for the high-Df contact-guard fix (Cycle 2).
+# Runs Df_target ∈ {2.7, 2.9}, N=100, seed=42 with HIGH_DF_FIX=false and =true.
+# Run: cargo run --release --example high_df_feasibility_audit -p aglogen-engine
+[[example]]
+name = "high_df_feasibility_audit"
+path = "examples/diagnostics/high_df_feasibility_audit.rs"

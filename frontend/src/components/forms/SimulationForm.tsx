@@ -1,0 +1,1629 @@
+'use client'
+
+import { useState, useMemo, useRef } from 'react'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Select } from '@/components/ui/select'
+import { Slider } from '@/components/ui/slider'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Info, FileText, X } from 'lucide-react'
+import {
+  singleSimulationAlgorithmOptions,
+  simulationAlgorithmDescriptions,
+} from '@/lib/simulation-algorithms'
+import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
+import { DistributionSelector, type DistributionValue } from './DistributionSelector'
+
+/**
+ * Get complete hexagonal counts: 1, 7, 19, 37, 61, 91, 127, 169, ...
+ * Formula: N(k) = 1 + 3k(k+1) for k complete rings
+ */
+function getCompleteHexagonalCounts(maxN: number): number[] {
+  const counts: number[] = []
+  for (let k = 0; ; k++) {
+    const n = 1 + 3 * k * (k + 1)
+    if (n > maxN) break
+    counts.push(n)
+  }
+  return counts
+}
+
+/**
+ * Get the nearest complete hexagonal count <= targetN
+ */
+function getNearestCompleteHexagonal(targetN: number): number {
+  const counts = getCompleteHexagonalCounts(targetN + 100)
+  let nearest = 1
+  for (const n of counts) {
+    if (n <= targetN) {
+      nearest = n
+    } else {
+      break
+    }
+  }
+  return nearest
+}
+
+/**
+ * Get complete shell counts for 3D compact clusters (magic numbers)
+ */
+function getCompleteShellCounts(): number[] {
+  return [1, 4, 6, 13, 55, 147, 309, 561]
+}
+
+/**
+ * Get the nearest complete shell count <= targetN
+ */
+function getNearestCompleteShell(targetN: number): number {
+  const counts = getCompleteShellCounts()
+  let nearest = 1
+  for (const n of counts) {
+    if (n <= targetN) {
+      nearest = n
+    } else {
+      break
+    }
+  }
+  return nearest
+}
+
+interface SimulationFormProps {
+  onSubmit: (data: CreateSimulationInput) => void
+  isLoading?: boolean
+}
+
+type LimitingGeometryType = 'chain' | 'plane' | 'sphere'
+
+const limitingGeometryOptions: { value: LimitingGeometryType; label: string }[] = [
+  { value: 'chain', label: 'Chain (Df = 1)' },
+  { value: 'plane', label: 'Plane (Df = 2)' },
+  { value: 'sphere', label: 'Sphere (Df = 3)' },
+]
+
+// Configuration types per geometry
+type ChainConfig = 'lineal' | 'cruz2d' | 'asterisco' | 'cruz3d'
+type PlaneConfig = 'plano' | 'dobleplano' | 'tripleplano'
+type SphereConfig = 'cuboctaedro'
+type PackingType = 'HC' | 'CS' | 'CCC'
+
+const chainConfigOptions: { value: ChainConfig; label: string; description: string }[] = [
+  { value: 'lineal', label: 'Linear', description: 'Straight line along one axis' },
+  { value: 'cruz2d', label: '2D Cross', description: 'Two perpendicular branches' },
+  { value: 'asterisco', label: 'Asterisk', description: 'Six branches at 60° intervals' },
+  { value: 'cruz3d', label: '3D Cross', description: 'Three orthogonal branches' },
+]
+
+const planeConfigOptions: { value: PlaneConfig; label: string; description: string }[] = [
+  { value: 'plano', label: 'Single Plane', description: 'One flat layer' },
+  { value: 'dobleplano', label: 'Double Plane', description: 'Two perpendicular planes' },
+  { value: 'tripleplano', label: 'Triple Plane', description: 'Three planes at 60° (HC only)' },
+]
+
+const sphereConfigOptions: { value: SphereConfig; label: string; description: string }[] = [
+  { value: 'cuboctaedro', label: 'Cuboctahedron', description: '3D compact structure' },
+]
+
+const packingOptions2D: { value: PackingType; label: string; description: string }[] = [
+  { value: 'HC', label: 'HC', description: 'Hexagonal Compact' },
+  { value: 'CS', label: 'CS', description: 'Cubic Simple' },
+]
+
+const packingOptions3D: { value: PackingType; label: string; description: string }[] = [
+  { value: 'HC', label: 'HC', description: 'Hexagonal Compact' },
+  { value: 'CS', label: 'CS', description: 'Cubic Simple' },
+  { value: 'CCC', label: 'CCC', description: 'Face-Centered Cubic' },
+]
+
+type SeedType = 'monomers' | 'dimers' | 'trimers'
+type SinteringDistributionType = 'fixed' | 'uniform' | 'normal'
+type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
+type BoxRfaConnectivityMethod = 'random_walk' | 'nearest_neighbor'
+
+const seedTypeOptions: { value: SeedType; label: string }[] = [
+  { value: 'monomers', label: 'Monomers (default)' },
+  { value: 'dimers', label: 'Dimers' },
+  { value: 'trimers', label: 'Trimers' },
+]
+
+interface FormParams {
+  n_particles: number
+  sticking_probability: number
+  // DLA specific
+  lattice_size: number
+  // CCA specific
+  box_size: number
+  single_agglomerate: boolean
+  // Tunable specific (PC and CC)
+  target_df: number
+  target_kf: number
+  // Tunable CC specific
+  seed_cluster_size: number | null  // null = use monomers
+  max_rotation_attempts: number
+  seed_type: SeedType
+  // FracVAL specific (polydisperse CC)
+  geometric_mean: number      // Geometric mean radius for lognormal distribution
+  geometric_std: number       // Geometric std dev (1.0 = monodisperse)
+  // GCCA specific
+  split_strategy: GccaSplitStrategy
+  stochastic_mean_ratio: number
+  stochastic_std_ratio: number
+  max_placement_attempts: number
+  // Limiting case specific
+  geometry_type: LimitingGeometryType
+  configuration_type: ChainConfig | PlaneConfig | SphereConfig
+  packing: PackingType
+  layers: number | null  // layer-based input
+  // Primary particle size for display scaling (v2 schema: diameter `dpo` in nm)
+  primary_particle_diameter_nm: number
+  // Polydisperse radius ratio (all algorithms)
+  radius_ratio_min: number  // ratio relative to primary (1.0 = same size)
+  radius_ratio_max: number
+  polydisperse: boolean
+  // Sintering parameters
+  sintering_enabled: boolean
+  sintering_type: SinteringDistributionType
+  sintering_coeff: number        // 0.5-1.0 (1.0 = no sintering)
+  sintering_min: number          // for uniform dist
+  sintering_max: number          // for uniform dist
+  sintering_std: number          // for normal dist
+  // Box-Counting RFA parameters
+  box_rfa_n_levels: number       // Refinement levels (4-10)
+  box_rfa_connectivity: BoxRfaConnectivityMethod
+  box_rfa_single_aggregate: boolean  // If true, ensures single connected aggregate (higher Df)
+}
+
+const defaultParams: FormParams = {
+  n_particles: 1000,
+  sticking_probability: 1.0,
+  lattice_size: 200,
+  box_size: 100.0,
+  single_agglomerate: true,
+  target_df: 1.8,
+  target_kf: 1.3,
+  seed_cluster_size: null,  // null = start with monomers
+  max_rotation_attempts: 50,
+  seed_type: 'monomers',
+  geometric_mean: 1.0,    // FracVAL: geometric mean radius
+  geometric_std: 1.0,     // FracVAL: 1.0 = monodisperse
+  // GCCA defaults
+  split_strategy: 'symmetric',
+  stochastic_mean_ratio: 0.5,
+  stochastic_std_ratio: 0.1,
+  max_placement_attempts: 1000,
+  geometry_type: 'chain',
+  configuration_type: 'lineal',
+  packing: 'HC',
+  layers: null,
+  primary_particle_diameter_nm: 25.0,  // typical soot primary particle diameter (dpo)
+  radius_ratio_min: 1.0,
+  radius_ratio_max: 1.0,
+  polydisperse: false,
+  // Sintering defaults (disabled by default)
+  sintering_enabled: false,
+  sintering_type: 'fixed',
+  sintering_coeff: 0.9,  // 10% overlap when enabled
+  sintering_min: 0.85,
+  sintering_max: 0.95,
+  sintering_std: 0.05,
+  // Box-Counting RFA defaults
+  box_rfa_n_levels: 6,
+  box_rfa_connectivity: 'random_walk',
+  box_rfa_single_aggregate: false,  // Default: accurate Df (may have isolated particles)
+}
+
+/**
+ * Calculate N from layer count for each geometry type
+ */
+function getParticleCountFromLayers(geometryType: LimitingGeometryType, layers: number): number {
+  if (geometryType === 'chain') {
+    return layers // For chain, layers = N directly
+  }
+  if (geometryType === 'plane') {
+    // Hexagonal: N = 1 + 3k(k+1) where k = number of rings
+    const k = layers
+    return 1 + 3 * k * (k + 1)
+  }
+  if (geometryType === 'sphere') {
+    // Return magic number for shell index
+    const shells = getCompleteShellCounts()
+    return shells[Math.min(layers, shells.length - 1)] || 1
+  }
+  return layers
+}
+
+/**
+ * Get layer count from particle count (inverse of above)
+ */
+function getLayersFromParticleCount(geometryType: LimitingGeometryType, n: number): number {
+  if (geometryType === 'chain') {
+    return n
+  }
+  if (geometryType === 'plane') {
+    // Solve: N = 1 + 3k(k+1) for k
+    // 3k² + 3k + 1 - N = 0
+    // k = (-3 + sqrt(9 + 12(N-1))) / 6
+    if (n <= 1) return 0
+    const k = Math.floor((-3 + Math.sqrt(9 + 12 * (n - 1))) / 6)
+    return Math.max(0, k)
+  }
+  if (geometryType === 'sphere') {
+    const shells = getCompleteShellCounts()
+    for (let i = shells.length - 1; i >= 0; i--) {
+      if (shells[i] <= n) return i
+    }
+    return 0
+  }
+  return 0
+}
+
+/**
+ * Get configuration options for geometry type
+ */
+function getConfigOptions(geometryType: LimitingGeometryType) {
+  if (geometryType === 'chain') return chainConfigOptions
+  if (geometryType === 'plane') return planeConfigOptions
+  if (geometryType === 'sphere') return sphereConfigOptions
+  return []
+}
+
+/**
+ * Get default configuration for geometry type
+ */
+function getDefaultConfig(geometryType: LimitingGeometryType): ChainConfig | PlaneConfig | SphereConfig {
+  if (geometryType === 'chain') return 'lineal'
+  if (geometryType === 'plane') return 'plano'
+  return 'cuboctaedro'
+}
+
+/**
+ * Check if packing is supported for configuration
+ */
+function supportsPackingSelection(geometryType: LimitingGeometryType, config: string): boolean {
+  if (geometryType === 'chain') return false
+  if (geometryType === 'plane' && config === 'tripleplano') return false  // HC only
+  return true
+}
+
+/**
+ * Calculate actual total particles for a configuration
+ */
+function calculateTotalParticles(
+  geometryType: LimitingGeometryType,
+  config: string,
+  nInput: number
+): number {
+  if (geometryType === 'chain') {
+    if (config === 'lineal') return nInput
+    if (config === 'cruz2d') {
+      // For cruz2d: horizontal branch + 2 vertical branches sharing center
+      return nInput % 2 === 0 ? nInput * 2 : nInput + 2 * Math.floor(nInput / 2)
+    }
+    if (config === 'asterisco') {
+      // 3 diagonals sharing center
+      return nInput % 2 === 0 ? nInput * 3 : nInput * 3 - 2
+    }
+    if (config === 'cruz3d') {
+      // 3 orthogonal branches sharing center
+      return nInput % 2 === 0 ? nInput * 3 : nInput * 3 - 2
+    }
+  }
+  return nInput
+}
+
+/**
+ * Limiting geometry section with cleaner N input
+ */
+function LimitingGeometrySection({
+  params,
+  updateParam,
+}: {
+  params: FormParams
+  updateParam: <K extends keyof FormParams>(key: K, value: FormParams[K]) => void
+}) {
+  // Calculate current layer count from n_particles
+  const currentLayers = useMemo(() => {
+    return getLayersFromParticleCount(params.geometry_type, params.n_particles)
+  }, [params.geometry_type, params.n_particles])
+
+  // Handle geometry type change
+  const handleGeometryChange = (newType: LimitingGeometryType) => {
+    updateParam('geometry_type', newType)
+    updateParam('configuration_type', getDefaultConfig(newType))
+    if (newType === 'chain') {
+      updateParam('packing', 'HC')
+    }
+  }
+
+  // Handle layer input change (for plane/sphere)
+  const handleLayerChange = (newLayers: number) => {
+    const newN = getParticleCountFromLayers(params.geometry_type, newLayers)
+    updateParam('n_particles', newN)
+    updateParam('layers', newLayers)
+  }
+
+  // Get max layers for each geometry type
+  const maxLayers = useMemo(() => {
+    if (params.geometry_type === 'chain') return 50
+    if (params.geometry_type === 'plane') return 20
+    if (params.geometry_type === 'sphere') return getCompleteShellCounts().length - 1
+    return 50
+  }, [params.geometry_type])
+
+  // Get layer label based on geometry type
+  const layerLabel = params.geometry_type === 'plane' ? 'Rings (k)' : 'Shell'
+
+  // Get current config options
+  const configOptions = getConfigOptions(params.geometry_type)
+  const showPacking = supportsPackingSelection(params.geometry_type, params.configuration_type)
+  const packingOptions = params.geometry_type === 'sphere' ? packingOptions3D : packingOptions2D
+
+  // Check if this is a branched configuration (where N means particles per arm)
+  const isBranchedConfig = params.geometry_type === 'chain' && params.configuration_type !== 'lineal'
+
+  // Calculate total particles for display
+  const totalParticles = calculateTotalParticles(
+    params.geometry_type,
+    params.configuration_type,
+    params.n_particles
+  )
+
+  return (
+    <div className="space-y-4">
+      {/* Geometry Type (Df) */}
+      <div className="space-y-2">
+        <Label htmlFor="geometry_type">Fractal Dimension (Df)</Label>
+        <Select
+          value={params.geometry_type}
+          onChange={(e) => handleGeometryChange(e.target.value as LimitingGeometryType)}
+          options={limitingGeometryOptions}
+        />
+        <p className="text-xs text-muted-foreground">
+          {params.geometry_type === 'chain' && 'Df = 1: Linear structures (kf → √3 ≈ 1.732)'}
+          {params.geometry_type === 'plane' && 'Df = 2: Planar structures (kf → 9/5 = 1.8)'}
+          {params.geometry_type === 'sphere' && 'Df = 3: Compact structures (kf ≈ 1.0)'}
+        </p>
+      </div>
+
+      {/* Configuration Type */}
+      <div className="space-y-2">
+        <Label>Configuration</Label>
+        <div className="grid grid-cols-2 gap-2">
+          {configOptions.map((opt) => (
+            <Button
+              key={opt.value}
+              type="button"
+              variant={params.configuration_type === opt.value ? 'default' : 'outline'}
+              size="sm"
+              className="h-auto py-2 px-3 flex flex-col items-start"
+              onClick={() => updateParam('configuration_type', opt.value)}
+            >
+              <span className="font-medium">{opt.label}</span>
+              <span className="text-xs opacity-70 text-left">{opt.description}</span>
+            </Button>
+          ))}
+        </div>
+      </div>
+
+      {/* Packing Type (for plane and sphere) */}
+      {showPacking && (
+        <div className="space-y-2">
+          <Label>Packing Type</Label>
+          <div className="flex gap-2">
+            {packingOptions.map((opt) => (
+              <Button
+                key={opt.value}
+                type="button"
+                variant={params.packing === opt.value ? 'default' : 'outline'}
+                size="sm"
+                className="flex-1"
+                onClick={() => updateParam('packing', opt.value)}
+                title={opt.description}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {params.packing === 'HC' && 'Hexagonal Compact: Dense, natural packing'}
+            {params.packing === 'CS' && 'Cubic Simple: Regular grid arrangement'}
+            {params.packing === 'CCC' && 'Face-Centered Cubic: Highest packing density'}
+          </p>
+        </div>
+      )}
+
+      {/* Primary Particle Count Input */}
+      {params.geometry_type === 'chain' && (
+        <div className="space-y-3 p-3 bg-muted/50 rounded-lg">
+          <div className="space-y-2">
+            <Label htmlFor="n_particles">
+              {isBranchedConfig ? 'Particles per Arm (N)' : 'Number of Particles (N)'}
+            </Label>
+            <div className="flex gap-2">
+              <Input
+                id="n_particles"
+                type="number"
+                min={1}
+                max={100}
+                value={params.n_particles}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value) || 1
+                  updateParam('n_particles', Math.max(1, Math.min(100, val)))
+                }}
+                className="font-mono"
+              />
+              <div className="flex gap-1">
+                {[1, 2, 3, 5, 10].map((n) => (
+                  <Button
+                    key={n}
+                    type="button"
+                    variant={params.n_particles === n ? 'default' : 'outline'}
+                    size="sm"
+                    className="h-10 w-10 p-0 font-mono"
+                    onClick={() => updateParam('n_particles', n)}
+                  >
+                    {n}
+                  </Button>
+                ))}
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {isBranchedConfig
+                ? `Number of primary particles per arm/branch (1-100)`
+                : `Total number of particles in the chain (1-100)`
+              }
+            </p>
+          </div>
+
+          {/* Show calculated total for branched configs */}
+          {isBranchedConfig && (
+            <div className="flex items-center justify-between p-2 bg-primary/10 rounded">
+              <span className="text-sm">Calculated total particles:</span>
+              <span className="text-lg font-bold font-mono">{totalParticles}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Layer-based input for plane/sphere */}
+      {params.geometry_type !== 'chain' && (
+        <div className="bg-muted/50 rounded-lg p-3 space-y-3">
+          <Label className="text-sm font-medium">
+            {`Number of ${layerLabel}`}
+          </Label>
+
+          <div className="flex items-center gap-4">
+            <div className="flex-1 space-y-2">
+              <Slider
+                min={0}
+                max={maxLayers}
+                step={1}
+                value={[currentLayers]}
+                onValueChange={([v]) => handleLayerChange(v)}
+              />
+            </div>
+            <div className="text-right min-w-[80px]">
+              <p className="text-xs text-muted-foreground">{layerLabel}</p>
+              <p className="text-lg font-bold font-mono">{currentLayers}</p>
+            </div>
+          </div>
+
+          {/* Formula explanation */}
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-muted-foreground">
+              {params.geometry_type === 'plane' && `N = 1 + 3×${currentLayers}×${currentLayers + 1}`}
+              {params.geometry_type === 'sphere' && `Shell ${currentLayers}`}
+            </span>
+            <span className="font-mono font-bold">
+              = {getParticleCountFromLayers(params.geometry_type, currentLayers)} particles
+            </span>
+          </div>
+
+          {/* Quick layer buttons */}
+          <div className="flex flex-wrap gap-1 pt-2 border-t">
+            {Array.from({ length: Math.min(10, maxLayers + 1) }, (_, i) => i).map((layer) => {
+              const n = getParticleCountFromLayers(params.geometry_type, layer)
+              return (
+                <Button
+                  key={layer}
+                  type="button"
+                  variant={currentLayers === layer ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-6 px-2 text-xs"
+                  onClick={() => handleLayerChange(layer)}
+                >
+                  {params.geometry_type === 'plane' ? `k=${layer}` : `S${layer}`}
+                  <span className="ml-1 opacity-60">({n})</span>
+                </Button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Current selection summary */}
+      <div className="p-3 bg-primary/5 rounded-lg space-y-2">
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">Configuration:</span>
+          <span className="font-medium">
+            {params.configuration_type}
+            {showPacking && ` (${params.packing})`}
+          </span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-sm text-muted-foreground">
+            {isBranchedConfig ? 'Per arm:' : 'Total particles:'}
+          </span>
+          <span className="font-bold font-mono">
+            {isBranchedConfig ? `N = ${params.n_particles}` : `N = ${params.n_particles}`}
+          </span>
+        </div>
+        {isBranchedConfig && (
+          <div className="flex items-center justify-between pt-1 border-t">
+            <span className="text-sm text-muted-foreground">Total particles:</span>
+            <span className="text-lg font-bold font-mono text-primary">{totalParticles}</span>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
+  const [name, setName] = useState<string>('')
+  const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
+  const [params, setParams] = useState<FormParams>(defaultParams)
+  const [seed, setSeed] = useState<string>('')
+  const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [csvError, setCsvError] = useState<string | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [dpoDistribution, setDpoDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.0 })
+  const [targetKfDistribution, setTargetKfDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.3 })
+
+  const handleAlgorithmChange = (value: SimulationAlgorithm) => {
+    setAlgorithm(value)
+    // Clear CSV file when switching away from imported
+    if (algorithm === 'imported' && value !== 'imported') {
+      clearCsvFile()
+    }
+    // Set sensible defaults when switching algorithms
+    if (value === 'limiting') {
+      // Default to N=7 (first complete hexagonal ring) for limiting case
+      updateParam('n_particles', 7)
+    } else if (value !== 'imported' && params.n_particles < 10) {
+      // Reset to default if coming from limiting case with small N
+      updateParam('n_particles', 1000)
+    }
+  }
+
+  const updateParam = <K extends keyof FormParams>(key: K, value: FormParams[K]) => {
+    setParams((prev) => ({ ...prev, [key]: value }))
+  }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    setCsvError(null)
+
+    if (!file) {
+      setCsvFile(null)
+      return
+    }
+
+    // Validate file type
+    if (!file.name.toLowerCase().endsWith('.csv')) {
+      setCsvError('Please select a CSV file')
+      setCsvFile(null)
+      return
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setCsvError('File size must be less than 10MB')
+      setCsvFile(null)
+      return
+    }
+
+    setCsvFile(file)
+  }
+
+  const clearCsvFile = () => {
+    setCsvFile(null)
+    setCsvError(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+
+    // Handle imported algorithm separately
+    if (algorithm === 'imported') {
+      if (!csvFile) {
+        setCsvError('Please select a CSV file to import')
+        return
+      }
+
+      // Read file and convert to base64
+      const reader = new FileReader()
+      reader.onload = () => {
+        const result = reader.result as string
+        // Extract base64 data (remove data:...;base64, prefix)
+        const base64Data = result.split(',')[1]
+
+        onSubmit({
+          name: name.trim() || undefined,
+          algorithm: 'imported',
+          parameters: {
+            original_filename: csvFile.name,
+          },
+          seed: seed ? parseInt(seed) : undefined,
+          csv_data: base64Data,
+        } as CreateSimulationInput)
+      }
+      reader.onerror = () => {
+        setCsvError('Failed to read file')
+      }
+      reader.readAsDataURL(csvFile)
+      return
+    }
+
+    // Build algorithm-specific parameters
+    // Backend uses dimensionless units (radius ~1.0); we persist the primary
+    // particle DIAMETER in nm for result scaling (v2 schema). The legacy
+    // primary_particle_radius_nm key is never written from this form.
+    let algorithmParams: Record<string, number | boolean | string | undefined> = {
+      n_particles: params.n_particles,
+      sticking_probability: params.sticking_probability,
+      // v2 schema: primary particle diameter (dpo) in nm
+      primary_particle_diameter_nm: params.primary_particle_diameter_nm,
+      // Send dimensionless ratios to backend
+      radius_min: params.radius_ratio_min,
+      // Only include radius_max if polydisperse
+      radius_max: params.polydisperse ? params.radius_ratio_max : undefined,
+    }
+
+    // Add sintering parameters if enabled (for non-limiting algorithms)
+    if (algorithm !== 'limiting' && params.sintering_enabled) {
+      algorithmParams.sintering_type = params.sintering_type
+      algorithmParams.sintering_coeff = params.sintering_coeff
+      algorithmParams.sintering_min = params.sintering_min
+      algorithmParams.sintering_max = params.sintering_max
+      algorithmParams.sintering_std = params.sintering_std
+    }
+
+    // Add algorithm-specific parameters
+    if (algorithm === 'dla') {
+      algorithmParams.lattice_size = params.lattice_size
+    } else if (algorithm === 'cca') {
+      algorithmParams.box_size = params.box_size
+      algorithmParams.single_agglomerate = params.single_agglomerate
+    } else if (algorithm === 'tunable') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+    } else if (algorithm === 'tunable_cc') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+      algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
+      algorithmParams.max_rotation_attempts = params.max_rotation_attempts
+      algorithmParams.seed_type = params.seed_type
+      // Distribution configs (PYA-15)
+      ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
+      ;(algorithmParams as Record<string, unknown>).target_kf_distribution = targetKfDistribution
+      // Backward compat: include scalar fields when mode is fixed
+      if (dpoDistribution.mode === 'fixed') {
+        algorithmParams.radius_min = dpoDistribution.value
+        algorithmParams.radius_max = dpoDistribution.value
+      }
+      if (targetKfDistribution.mode === 'fixed') {
+        algorithmParams.target_kf = targetKfDistribution.value
+      }
+    } else if (algorithm === 'fracval') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+      algorithmParams.geometric_mean = params.geometric_mean
+      algorithmParams.geometric_std = params.geometric_std
+    } else if (algorithm === 'gcca') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.target_kf = params.target_kf
+      algorithmParams.split_strategy = params.split_strategy
+      if (params.split_strategy === 'stochastic') {
+        algorithmParams.stochastic_mean_ratio = params.stochastic_mean_ratio
+        algorithmParams.stochastic_std_ratio = params.stochastic_std_ratio
+      }
+      algorithmParams.max_placement_attempts = params.max_placement_attempts
+    } else if (algorithm === 'box_rfa') {
+      algorithmParams.target_df = params.target_df
+      algorithmParams.n_levels = params.box_rfa_n_levels
+      algorithmParams.connectivity_method = params.box_rfa_connectivity
+      algorithmParams.single_aggregate = params.box_rfa_single_aggregate
+      // n_particles is optional for box_rfa - derived from n_levels if not set
+      delete algorithmParams.n_particles
+      delete algorithmParams.sticking_probability
+    } else if (algorithm === 'limiting') {
+      algorithmParams.geometry_type = params.geometry_type
+      algorithmParams.configuration_type = params.configuration_type
+      algorithmParams.packing = params.packing
+      if (params.layers !== null) {
+        algorithmParams.layers = params.layers
+      }
+    }
+
+    // Remove undefined values (keep false for booleans)
+    algorithmParams = Object.fromEntries(
+      Object.entries(algorithmParams).filter(([, v]) => v !== undefined)
+    ) as Record<string, number | boolean | string>
+
+    onSubmit({
+      name: name.trim() || undefined,
+      algorithm,
+      parameters: algorithmParams as unknown as CreateSimulationInput['parameters'],
+      seed: seed ? parseInt(seed) : undefined,
+    })
+  }
+
+  return (
+    <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Simulation Name */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Simulation Name</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-2">
+            <Label htmlFor="name">Name (optional)</Label>
+            <Input
+              id="name"
+              type="text"
+              placeholder="Leave empty for auto-generated name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Custom name for this simulation. If left empty, a name will be auto-generated (e.g., "DLA Simulation - 2024-02-20 10:30").
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Algorithm Selection */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Algorithm</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <Select
+            value={algorithm}
+            onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
+            options={singleSimulationAlgorithmOptions}
+          />
+          <p className="text-sm text-muted-foreground">
+            {simulationAlgorithmDescriptions[algorithm]}
+          </p>
+        </CardContent>
+      </Card>
+
+      {/* CSV File Upload (only for imported algorithm) */}
+      {algorithm === 'imported' && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-lg">Import CSV File</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <Alert>
+              <Info className="h-4 w-4" />
+              <AlertDescription>
+                For most imports, use the <strong>Import Aggregate</strong> button on the
+                project page — it supports MATLAB <code className="bg-muted px-1 rounded">.mat</code> files
+                and CSV locale auto-detection. This legacy form is kept for backwards compatibility.
+              </AlertDescription>
+            </Alert>
+
+            <div className="space-y-2">
+              <Label htmlFor="csv_file">CSV File</Label>
+              <div className="flex gap-2">
+                <Input
+                  ref={fileInputRef}
+                  id="csv_file"
+                  type="file"
+                  accept=".csv"
+                  onChange={handleFileChange}
+                  className="flex-1"
+                />
+                {csvFile && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="icon"
+                    onClick={clearCsvFile}
+                    title="Clear file"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                )}
+              </div>
+              {csvError && (
+                <p className="text-sm text-destructive">{csvError}</p>
+              )}
+            </div>
+
+            {csvFile && (
+              <div className="flex items-center gap-3 p-3 bg-muted/50 rounded-lg">
+                <FileText className="h-8 w-8 text-muted-foreground" />
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium truncate">{csvFile.name}</p>
+                  <p className="text-sm text-muted-foreground">
+                    {(csvFile.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+              </div>
+            )}
+
+            <div className="p-3 bg-primary/5 rounded-lg space-y-2">
+              <div className="flex items-center gap-2">
+                <Info className="h-4 w-4 text-muted-foreground" />
+                <span className="text-sm font-medium">CSV Format</span>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                The CSV file must contain columns: <code className="bg-muted px-1 rounded">x</code>,{' '}
+                <code className="bg-muted px-1 rounded">y</code>,{' '}
+                <code className="bg-muted px-1 rounded">z</code>,{' '}
+                <code className="bg-muted px-1 rounded">radius</code> (one particle per row).
+                Maximum 100,000 particles. Headers are required.
+              </p>
+              <p className="text-xs text-muted-foreground mt-2">
+                Example:
+              </p>
+              <pre className="text-xs bg-muted p-2 rounded font-mono">
+{`x,y,z,radius
+0.0,0.0,0.0,1.0
+2.0,0.0,0.0,1.0
+4.0,0.0,0.0,1.0`}
+              </pre>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Common Parameters */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-lg">Parameters</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          {/* Number of Particles - hidden for limiting case, box_rfa, and imported (particle count determined by algorithm/file) */}
+          {algorithm !== 'limiting' && algorithm !== 'box_rfa' && algorithm !== 'imported' && (
+            <div className="space-y-2">
+              <Label htmlFor="n_particles">Number of Particles</Label>
+              <Input
+                id="n_particles"
+                type="number"
+                min={10}
+                max={100000}
+                value={params.n_particles}
+                onChange={(e) => updateParam('n_particles', parseInt(e.target.value) || 1000)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Total particles in the agglomerate (10 - 100,000)
+              </p>
+            </div>
+          )}
+
+          {/* Sticking Probability - hidden for limiting, tunable, fracval, gcca, box_rfa, and imported cases */}
+          {!['limiting', 'tunable', 'tunable_cc', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
+            <div className="space-y-2">
+              <Label>
+                Sticking Probability: {params.sticking_probability.toFixed(2)}
+              </Label>
+              <Slider
+                min={0.01}
+                max={1}
+                step={0.01}
+                value={[params.sticking_probability]}
+                onValueChange={([v]) => updateParam('sticking_probability', v)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Probability of adhesion on contact (0 = never, 1 = always)
+              </p>
+            </div>
+          )}
+
+          {/* Primary Particle Diameter in nm - hidden for imported (uses file data) */}
+          {algorithm !== 'imported' && (
+            <div className="space-y-2">
+              <Label htmlFor="primary_diameter">Primary Particle Diameter (nm)</Label>
+              <Input
+                id="primary_diameter"
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                value={params.primary_particle_diameter_nm}
+                onChange={(e) => updateParam('primary_particle_diameter_nm', parseFloat(e.target.value) || 25.0)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Primary particle diameter (dpo) in nm (soot convention). Results (Rg, coordinates) will be displayed in nm.
+              </p>
+            </div>
+          )}
+
+          {/* Polydisperse Section - hidden for limiting, fracval (uses geometric_std), gcca, box_rfa, and imported */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <Label>Size Distribution</Label>
+              <Button
+                type="button"
+                variant={params.polydisperse ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => {
+                  updateParam('polydisperse', !params.polydisperse)
+                  if (!params.polydisperse) {
+                    // Enable polydisperse: set ratio range
+                    updateParam('radius_ratio_min', 0.8)
+                    updateParam('radius_ratio_max', 1.2)
+                  } else {
+                    // Disable: reset to monodisperse
+                    updateParam('radius_ratio_min', 1.0)
+                    updateParam('radius_ratio_max', 1.0)
+                  }
+                }}
+              >
+                {params.polydisperse ? 'Polydisperse' : 'Monodisperse'}
+              </Button>
+            </div>
+
+            {params.polydisperse && (
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="radius_ratio_min">
+                    Min Ratio ({(params.radius_ratio_min * params.primary_particle_diameter_nm).toFixed(1)} nm)
+                  </Label>
+                  <Input
+                    id="radius_ratio_min"
+                    type="number"
+                    min={0.5}
+                    max={1.0}
+                    step={0.05}
+                    value={params.radius_ratio_min}
+                    onChange={(e) => updateParam('radius_ratio_min', parseFloat(e.target.value) || 0.8)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="radius_ratio_max">
+                    Max Ratio ({(params.radius_ratio_max * params.primary_particle_diameter_nm).toFixed(1)} nm)
+                  </Label>
+                  <Input
+                    id="radius_ratio_max"
+                    type="number"
+                    min={1.0}
+                    max={2.0}
+                    step={0.05}
+                    value={params.radius_ratio_max}
+                    onChange={(e) => updateParam('radius_ratio_max', parseFloat(e.target.value) || 1.2)}
+                  />
+                </div>
+              </div>
+            )}
+            <p className="text-xs text-muted-foreground">
+              {params.polydisperse
+                ? `Particle sizes will vary from ${(params.radius_ratio_min * params.primary_particle_diameter_nm).toFixed(1)} to ${(params.radius_ratio_max * params.primary_particle_diameter_nm).toFixed(1)} nm (diameter)`
+                : `All particles will have diameter ${params.primary_particle_diameter_nm} nm`
+              }
+            </p>
+          </div>
+          )}
+
+          {/* Sintering Section - hidden for limiting, fracval, gcca, box_rfa, and imported cases */}
+          {!['limiting', 'fracval', 'gcca', 'box_rfa', 'imported'].includes(algorithm) && (
+          <div className="space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <Label>Sintering (Necking)</Label>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Particles overlap at contact points
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant={params.sintering_enabled ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => updateParam('sintering_enabled', !params.sintering_enabled)}
+              >
+                {params.sintering_enabled ? 'Enabled' : 'Disabled'}
+              </Button>
+            </div>
+
+            {params.sintering_enabled && (
+              <div className="space-y-4 p-3 bg-muted/50 rounded-lg">
+                {/* Distribution Type */}
+                <div className="space-y-2">
+                  <Label>Distribution Type</Label>
+                  <div className="flex gap-2">
+                    {(['fixed', 'uniform', 'normal'] as SinteringDistributionType[]).map((type) => (
+                      <Button
+                        key={type}
+                        type="button"
+                        variant={params.sintering_type === type ? 'default' : 'outline'}
+                        size="sm"
+                        className="flex-1 capitalize"
+                        onClick={() => updateParam('sintering_type', type)}
+                      >
+                        {type}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Fixed coefficient */}
+                {params.sintering_type === 'fixed' && (
+                  <div className="space-y-2">
+                    <Label>
+                      Sintering Coefficient: {params.sintering_coeff.toFixed(2)} ({((1 - params.sintering_coeff) * 100).toFixed(0)}% overlap)
+                    </Label>
+                    <Slider
+                      min={0.5}
+                      max={1.0}
+                      step={0.01}
+                      value={[params.sintering_coeff]}
+                      onValueChange={([v]) => updateParam('sintering_coeff', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      1.0 = particles just touch, 0.5 = 50% overlap (heavy sintering)
+                    </p>
+                  </div>
+                )}
+
+                {/* Uniform distribution */}
+                {params.sintering_type === 'uniform' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Min Coefficient: {params.sintering_min.toFixed(2)}</Label>
+                      <Slider
+                        min={0.5}
+                        max={params.sintering_max}
+                        step={0.01}
+                        value={[params.sintering_min]}
+                        onValueChange={([v]) => updateParam('sintering_min', v)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Max Coefficient: {params.sintering_max.toFixed(2)}</Label>
+                      <Slider
+                        min={params.sintering_min}
+                        max={1.0}
+                        step={0.01}
+                        value={[params.sintering_max]}
+                        onValueChange={([v]) => updateParam('sintering_max', v)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Normal distribution */}
+                {params.sintering_type === 'normal' && (
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label>Mean: {params.sintering_coeff.toFixed(2)}</Label>
+                      <Slider
+                        min={0.5}
+                        max={1.0}
+                        step={0.01}
+                        value={[params.sintering_coeff]}
+                        onValueChange={([v]) => updateParam('sintering_coeff', v)}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Std Dev: {params.sintering_std.toFixed(2)}</Label>
+                      <Slider
+                        min={0.01}
+                        max={0.2}
+                        step={0.01}
+                        value={[params.sintering_std]}
+                        onValueChange={([v]) => updateParam('sintering_std', v)}
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {/* Preview of sintering effect */}
+                <div className="p-2 bg-primary/10 rounded text-sm">
+                  <span className="text-muted-foreground">Contact distance = </span>
+                  {params.sintering_type === 'fixed' && (
+                    <span className="font-mono">{params.sintering_coeff.toFixed(2)} × (r₁ + r₂)</span>
+                  )}
+                  {params.sintering_type === 'uniform' && (
+                    <span className="font-mono">U({params.sintering_min.toFixed(2)}, {params.sintering_max.toFixed(2)}) × (r₁ + r₂)</span>
+                  )}
+                  {params.sintering_type === 'normal' && (
+                    <span className="font-mono">N({params.sintering_coeff.toFixed(2)}, {params.sintering_std.toFixed(2)}) × (r₁ + r₂)</span>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+          )}
+
+          {/* Algorithm-specific parameters */}
+          {algorithm === 'dla' && (
+            <div className="space-y-2">
+              <Label htmlFor="lattice_size">Lattice Size</Label>
+              <Input
+                id="lattice_size"
+                type="number"
+                min={50}
+                max={2000}
+                value={params.lattice_size}
+                onChange={(e) => updateParam('lattice_size', parseInt(e.target.value) || 200)}
+              />
+              <p className="text-xs text-muted-foreground">
+                Size of the simulation domain
+              </p>
+            </div>
+          )}
+
+          {algorithm === 'tunable' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.4}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.4 = open/fluffy, 3.0 = compact/dense)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'tunable_cc' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.4}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.4 = open/fluffy, 3.0 = compact/dense)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="seed_cluster_size">Seed Cluster Size (optional)</Label>
+                <Input
+                  id="seed_cluster_size"
+                  type="number"
+                  min={2}
+                  max={50}
+                  placeholder="Leave empty for monomers"
+                  value={params.seed_cluster_size ?? ''}
+                  onChange={(e) => updateParam('seed_cluster_size', e.target.value ? parseInt(e.target.value) : null)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Initial cluster size (2-50). Leave empty to start with monomers.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="max_rotation_attempts">Max Rotation Attempts</Label>
+                <Input
+                  id="max_rotation_attempts"
+                  type="number"
+                  min={10}
+                  max={200}
+                  value={params.max_rotation_attempts}
+                  onChange={(e) => updateParam('max_rotation_attempts', parseInt(e.target.value) || 50)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Number of rotation attempts to resolve overlaps (10-200)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="seed_type">Seed Type</Label>
+                <Select
+                  id="seed_type"
+                  value={params.seed_type}
+                  onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
+                  options={seedTypeOptions}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
+                </p>
+              </div>
+
+              {/* Distribution selectors for dpo and target_kf (PYA-15) */}
+              <DistributionSelector
+                label="dpo"
+                value={dpoDistribution}
+                onChange={setDpoDistribution}
+              />
+              <DistributionSelector
+                label="target_kf"
+                value={targetKfDistribution}
+                onChange={setTargetKfDistribution}
+              />
+            </>
+          )}
+
+          {algorithm === 'fracval' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.0 = chain, 3.0 = compact sphere)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.1}
+                  max={2.7}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Geometric Mean Radius: {params.geometric_mean.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.0}
+                  step={0.1}
+                  value={[params.geometric_mean]}
+                  onValueChange={([v]) => updateParam('geometric_mean', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Mean radius of lognormal size distribution (normalized units)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Geometric Std Dev (σ_geo): {params.geometric_std.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.geometric_std]}
+                  onValueChange={([v]) => updateParam('geometric_std', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Polydispersity: 1.0 = monodisperse, 1.5-2.0 = typical soot
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'gcca' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.4}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target fractal dimension (1.4 = open/fluffy, 3.0 = compact/dense)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>
+                  Target Prefactor (kf): {params.target_kf.toFixed(2)}
+                </Label>
+                <Slider
+                  min={0.5}
+                  max={2.5}
+                  step={0.1}
+                  value={[params.target_kf]}
+                  onValueChange={([v]) => updateParam('target_kf', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Structural prefactor from N = kf × (Rg/rp)^Df
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Split Strategy</Label>
+                <div className="flex gap-2">
+                  {(['symmetric', 'particle_cluster', 'stochastic'] as GccaSplitStrategy[]).map((strategy) => (
+                    <Button
+                      key={strategy}
+                      type="button"
+                      variant={params.split_strategy === strategy ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateParam('split_strategy', strategy)}
+                    >
+                      {strategy === 'symmetric' && 'Symmetric'}
+                      {strategy === 'particle_cluster' && 'Particle-Cluster'}
+                      {strategy === 'stochastic' && 'Stochastic'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.split_strategy === 'symmetric' && 'N₁ = N₂: Recovers Filippov CCA behavior'}
+                  {params.split_strategy === 'particle_cluster' && 'N₁ = N-1, N₂ = 1: Single particle addition (like DLCA)'}
+                  {params.split_strategy === 'stochastic' && 'Random split with configurable mean ratio'}
+                </p>
+              </div>
+
+              {params.split_strategy === 'stochastic' && (
+                <div className="grid grid-cols-2 gap-4 p-3 bg-muted/50 rounded-lg">
+                  <div className="space-y-2">
+                    <Label>Mean Ratio: {params.stochastic_mean_ratio.toFixed(2)}</Label>
+                    <Slider
+                      min={0.1}
+                      max={0.9}
+                      step={0.05}
+                      value={[params.stochastic_mean_ratio]}
+                      onValueChange={([v]) => updateParam('stochastic_mean_ratio', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Mean N₁/N ratio (0.5 = balanced)
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Std Ratio: {params.stochastic_std_ratio.toFixed(2)}</Label>
+                    <Slider
+                      min={0.01}
+                      max={0.3}
+                      step={0.01}
+                      value={[params.stochastic_std_ratio]}
+                      onValueChange={([v]) => updateParam('stochastic_std_ratio', v)}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Standard deviation of ratio
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              <div className="space-y-2">
+                <Label htmlFor="max_placement_attempts">Max Placement Attempts</Label>
+                <Input
+                  id="max_placement_attempts"
+                  type="number"
+                  min={100}
+                  max={10000}
+                  value={params.max_placement_attempts}
+                  onChange={(e) => updateParam('max_placement_attempts', parseInt(e.target.value) || 1000)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Maximum attempts to place clusters without overlap (100-10000)
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'box_rfa' && (
+            <>
+              <div className="space-y-2">
+                <Label>
+                  Target Fractal Dimension (Df): {params.target_df.toFixed(2)}
+                </Label>
+                <Slider
+                  min={1.0}
+                  max={3.0}
+                  step={0.1}
+                  value={[params.target_df]}
+                  onValueChange={([v]) => updateParam('target_df', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Target Df achieved through grid refinement (1.0 = chain, 2.0 = plane, 3.0 = compact)
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="box_rfa_n_levels">
+                  Refinement Levels: {params.box_rfa_n_levels}
+                </Label>
+                <Slider
+                  min={4}
+                  max={10}
+                  step={1}
+                  value={[params.box_rfa_n_levels]}
+                  onValueChange={([v]) => updateParam('box_rfa_n_levels', v)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  More levels = more particles (~2^(levels×Df) particles). Level 6 ≈ 100-500 particles.
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <Label>Connectivity Method</Label>
+                <div className="flex gap-2">
+                  {(['random_walk', 'nearest_neighbor'] as BoxRfaConnectivityMethod[]).map((method) => (
+                    <Button
+                      key={method}
+                      type="button"
+                      variant={params.box_rfa_connectivity === method ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateParam('box_rfa_connectivity', method)}
+                    >
+                      {method === 'random_walk' ? 'Random Walk' : 'Nearest Neighbor'}
+                    </Button>
+                  ))}
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.box_rfa_connectivity === 'random_walk'
+                    ? 'Random walk ensures connectivity with natural branching'
+                    : 'Nearest neighbor creates more compact structures'
+                  }
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Aggregate Mode</Label>
+                  <Button
+                    type="button"
+                    variant={params.box_rfa_single_aggregate ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => updateParam('box_rfa_single_aggregate', !params.box_rfa_single_aggregate)}
+                  >
+                    {params.box_rfa_single_aggregate ? 'Single Aggregate' : 'Accurate Df'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.box_rfa_single_aggregate
+                    ? 'Guarantees single connected aggregate (Df may be higher than target)'
+                    : 'Achieves accurate target Df (may have a few isolated particles)'
+                  }
+                </p>
+              </div>
+
+              <div className="p-3 bg-primary/5 rounded-lg space-y-2">
+                <div className="flex items-center gap-2">
+                  <Info className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">Box-Counting RFA</span>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  Brown et al. (2010): Grid-based algorithm that constructs aggregates with exact target Df.
+                  Uses recursive grid refinement where N_box(ℓ_k) = (ℓ_max/ℓ_k)^Df.
+                </p>
+              </div>
+            </>
+          )}
+
+          {algorithm === 'limiting' && (
+            <LimitingGeometrySection
+              params={params}
+              updateParam={updateParam}
+            />
+          )}
+
+          {algorithm === 'cca' && (
+            <>
+              <div className="space-y-2">
+                <Label htmlFor="box_size">Box Size</Label>
+                <Input
+                  id="box_size"
+                  type="number"
+                  min={10}
+                  max={1000}
+                  value={params.box_size}
+                  onChange={(e) => updateParam('box_size', parseFloat(e.target.value) || 100.0)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Size of the periodic simulation box
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label>Agglomerate Mode</Label>
+                  <Button
+                    type="button"
+                    variant={params.single_agglomerate ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => updateParam('single_agglomerate', !params.single_agglomerate)}
+                  >
+                    {params.single_agglomerate ? 'Single Agglomerate' : 'Multiple Agglomerates'}
+                  </Button>
+                </div>
+                <p className="text-xs text-muted-foreground">
+                  {params.single_agglomerate
+                    ? 'Iterate until all particles form ONE connected agglomerate'
+                    : 'Stop at iteration limit (may produce multiple separate clusters)'
+                  }
+                </p>
+              </div>
+            </>
+          )}
+
+          {/* Random Seed */}
+          <div className="space-y-2">
+            <Label htmlFor="seed">Random Seed (optional)</Label>
+            <Input
+              id="seed"
+              type="number"
+              placeholder="Leave empty for random"
+              value={seed}
+              onChange={(e) => setSeed(e.target.value)}
+            />
+            <p className="text-xs text-muted-foreground">
+              Set a seed for reproducible results
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Button type="submit" className="w-full" disabled={isLoading}>
+        {isLoading ? 'Starting Simulation...' : 'Run Simulation'}
+      </Button>
+    </form>
+  )
+}

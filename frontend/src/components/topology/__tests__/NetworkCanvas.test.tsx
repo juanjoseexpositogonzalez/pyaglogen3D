@@ -1,0 +1,266 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, act, cleanup, waitFor } from '@testing-library/react'
+import type { NeighborGraphData } from '@/lib/types'
+
+// Setup mock BEFORE importing NetworkCanvas
+import { MockNetwork, resetMock, getCurrentMock } from './__mocks__/visNetworkMock'
+
+vi.mock('vis-network/standalone', () => ({
+  Network: MockNetwork,
+}))
+
+// Import after mock is set up
+import NetworkCanvas from '../NetworkCanvas'
+
+// graphUtils keeps these module-local (graphUtils.ts:42-43) and that file is
+// outside this change's editable surface, so they are restated here.
+const EDGE_LIGHT = '#cbd5e1'
+const EDGE_DARK = '#475569'
+
+// -- Test data --
+function makeData(n: number): NeighborGraphData {
+  const nodes = Array.from({ length: n }, (_, i) => ({
+    id: i + 1,
+    x: i,
+    y: i,
+    z: i,
+    radius: 0.5,
+    coordination: i % 4,
+    distance_from_cdg: i * 0.1,
+  }))
+  return {
+    nodes,
+    edges: n > 1 ? [{ source: 1, target: 2 }] : [],
+    stats: {
+      n_particles: n,
+      n_edges: n > 1 ? 1 : 0,
+      avg_coordination: 2,
+      max_coordination: 3,
+      min_coordination: 0,
+      is_connected: true,
+    },
+  }
+}
+
+const data5 = makeData(5)
+const data3 = makeData(3)
+
+describe('<NetworkCanvas />', () => {
+  beforeEach(() => {
+    resetMock()
+    MockNetwork.mockClear()
+  })
+
+  afterEach(() => {
+    cleanup()
+  })
+
+  it('mounts and calls Network constructor with container, nodes, edges, and options', async () => {
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    expect(MockNetwork).toHaveBeenCalledTimes(1)
+    const args = MockNetwork.mock.calls[0]
+    // First arg is the container DOM element
+    expect(args[0]).toBeInstanceOf(HTMLElement)
+    // Second arg is { nodes, edges } data
+    expect(args[1].nodes).toBeDefined()
+    expect(args[1].edges).toBeDefined()
+    // Third arg is options with physics
+    expect(args[2].physics.solver).toBe('barnesHut')
+  })
+
+  it('registers a click handler via network.on("click", ...)', async () => {
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    const mock = getCurrentMock()
+    expect(mock).not.toBeNull()
+    expect(mock!.instance.on).toHaveBeenCalledWith('click', expect.any(Function))
+  })
+
+  it('click on a node calls onNodeClick with the node id', async () => {
+    const onNodeClick = vi.fn()
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={onNodeClick}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    const mock = getCurrentMock()!
+    // Simulate clicking node 1
+    mock.fireEvent('click', { nodes: [1], edges: [] })
+    expect(onNodeClick).toHaveBeenCalledWith(1)
+  })
+
+  it('click on empty space calls onNodeClick(null)', async () => {
+    const onNodeClick = vi.fn()
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={onNodeClick}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    const mock = getCurrentMock()!
+    mock.fireEvent('click', { nodes: [], edges: [] })
+    expect(onNodeClick).toHaveBeenCalledWith(null)
+  })
+
+  it('calls destroy() on unmount', async () => {
+    let unmount: () => void
+    await act(async () => {
+      const result = render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+      unmount = result.unmount
+    })
+
+    const mock = getCurrentMock()!
+    unmount!()
+    expect(mock.instance.destroy).toHaveBeenCalled()
+  })
+
+  it('calls focus() when selectedNodeId changes to a value', async () => {
+    const { rerender } = await act(async () => {
+      return render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    const mock = getCurrentMock()!
+
+    await act(async () => {
+      rerender(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={3}
+        />,
+      )
+    })
+
+    expect(mock.instance.focus).toHaveBeenCalledWith(3, expect.any(Object))
+  })
+
+  it('shows stabilization spinner initially and hides after stabilizationIterationsDone', async () => {
+    // The mock fires stabilizationIterationsDone immediately via once(),
+    // so stabilization completes synchronously during mount
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={data5}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    // After stabilization fires, spinner should be gone
+    expect(screen.queryByText('Stabilizing…')).toBeNull()
+  })
+
+  it('handles empty nodes array without crash', async () => {
+    const emptyData = makeData(0)
+    await act(async () => {
+      render(
+        <NetworkCanvas
+          data={emptyData}
+          onNodeClick={vi.fn()}
+          selectedNodeId={null}
+        />,
+      )
+    })
+
+    expect(MockNetwork).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('theme follows the application, not the operating system', () => {
+  beforeEach(() => {
+    resetMock()
+    MockNetwork.mockClear()
+  })
+
+  afterEach(() => {
+    cleanup()
+    delete document.documentElement.dataset.theme
+  })
+
+
+  it.each([
+    ['light', EDGE_LIGHT],
+    ['dark', EDGE_DARK],
+  ] as const)(
+    'builds the graph with the %s theme the application resolved',
+    async (theme, expectedEdgeColour) => {
+      // contacts-graph-viz requires the canvas to match "the app's current
+      // theme". Reading prefers-color-scheme satisfied that by accident while
+      // the app had no theme of its own; an explicit choice now overrides it,
+      // and jsdom reports no media query at all, so without reading the
+      // attribute this would always build the light graph.
+      document.documentElement.dataset.theme = theme
+
+      await act(async () => {
+        render(<NetworkCanvas data={data5} onNodeClick={vi.fn()} selectedNodeId={null} />)
+      })
+
+      const [, payload] = MockNetwork.mock.calls[0] as [unknown, { edges: Array<{ color: string }> }]
+      expect(payload.edges[0].color).toBe(expectedEdgeColour)
+    },
+  )
+
+  it('repaints when the user switches theme while the graph is mounted', async () => {
+    // Detection was covered; reaction was not. Replacing the MutationObserver
+    // with null left the suite at 10/10, so nothing asserted that the canvas
+    // follows a live flip, which is the behaviour T6.4 claims.
+    document.documentElement.dataset.theme = 'light'
+
+    await act(async () => {
+      render(<NetworkCanvas data={data5} onNodeClick={vi.fn()} selectedNodeId={null} />)
+    })
+    const before = MockNetwork.mock.calls.length
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark'
+      // MutationObserver callbacks are delivered as microtasks.
+      await Promise.resolve()
+    })
+
+    await waitFor(() => expect(MockNetwork.mock.calls.length).toBeGreaterThan(before))
+    const [, payload] = MockNetwork.mock.calls[MockNetwork.mock.calls.length - 1] as [
+      unknown,
+      { edges: Array<{ color: string }> },
+    ]
+    expect(payload.edges[0].color).toBe(EDGE_DARK)
+  })
+})
