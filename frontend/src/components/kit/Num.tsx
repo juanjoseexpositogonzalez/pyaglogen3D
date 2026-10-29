@@ -14,6 +14,12 @@ import { cn } from '@/lib/utils'
  * claim the engine cannot make, so `sigma` renders inline rather than being
  * left to each caller to format.
  *
+ * Thousands are grouped, which is what the screens did with `toLocaleString`
+ * before the port: a 100 000-particle agglomerate reads `100,000`, not
+ * `100000`, and a column of readings stays scannable. `en-US` rather than the
+ * host locale so the rendered string is the same everywhere, including in
+ * tests.
+ *
  * Covers design-system-foundation R6.
  */
 export interface NumProps {
@@ -48,7 +54,10 @@ function format(value: number | null | undefined, digits: number): string {
   // column definitions that nothing validates.
   const safe = Math.max(0, Math.min(20, Math.trunc(digits)))
   if (value !== 0 && Math.abs(value) < 0.001) return value.toExponential(Math.min(safe, 2))
-  return value.toFixed(safe)
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: safe,
+    maximumFractionDigits: safe,
+  })
 }
 
 export function Num({ value, unit, digits = 2, sigma, className, size = 'md' }: NumProps) {

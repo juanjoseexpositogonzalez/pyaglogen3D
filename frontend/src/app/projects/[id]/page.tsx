@@ -9,15 +9,19 @@ import { useFraktalAnalyses, useDeleteFraktalAnalysis } from '@/hooks/useFraktal
 import { useFraktalBatches } from '@/hooks/useFraktalBatches'
 import { FraktalBatchesSection } from '@/components/fraktal/FraktalBatchesSection'
 import { simulationsApi, fraktalApi } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { StatusChip } from '@/components/kit/StatusChip'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Checkbox } from '@/components/ui/checkbox'
-import { StatusBadge } from '@/components/common/StatusBadge'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, Plus, Atom, ImageIcon, StopCircle, Trash2, Microscope, Layers, Upload, GitCompare } from 'lucide-react'
-import { formatDistanceToNow, formatNumber } from '@/lib/utils'
+import { ArrowLeft, Plus, Atom, StopCircle, Trash2, Microscope, Layers, Upload, GitCompare } from 'lucide-react'
+import { formatDistanceToNow } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { MAX_COMPARE_SIMS } from '@/lib/compare-utils'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
@@ -33,9 +37,13 @@ export default function ProjectDetailPage({
   const { user } = useAuth()
   const router = useRouter()
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
-  const { data: simulations, isLoading: simulationsLoading, refetch } = useSimulations(id)
-  const { data: fraktalAnalyses, isLoading: fraktalLoading, refetch: refetchFraktal } = useFraktalAnalyses(id)
-  const { data: fraktalBatches, isLoading: batchesLoading } = useFraktalBatches(id)
+  const { data: simulations, isLoading: simulationsLoading, error: simulationsError, refetch } = useSimulations(id)
+  const { data: fraktalAnalyses, isLoading: fraktalLoading, error: fraktalError, refetch: refetchFraktal } = useFraktalAnalyses(id)
+  const {
+    data: fraktalBatches,
+    isLoading: batchesLoading,
+    error: batchesError,
+  } = useFraktalBatches(id)
   const deleteFraktal = useDeleteFraktalAnalysis(id)
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -141,31 +149,26 @@ export default function ProjectDetailPage({
   }
 
   if (projectLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading project..." />
-      </div>
-    )
+    return <LoadingScreen message="Loading project..." />
   }
 
   if (projectError || !project) {
     return (
-      <div className="min-h-screen">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">
-                Failed to load project. It may not exist or the backend is unavailable.
-              </p>
-              <Link href="/projects" className="mt-4 inline-block">
-                <Button variant="outline">Back to Projects</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <>
+        <PageHeader eyebrow="PROJECT" title="Project unavailable" />
+        <Callout
+          tone="danger"
+          title="Failed to load project"
+          action={
+            <Link href="/projects">
+              <Button variant="outline">Back to Projects</Button>
+            </Link>
+          }
+        >
+          It may not exist, or the backend is unavailable. This is not an empty project: nothing
+          has been deleted by visiting this page.
+        </Callout>
+      </>
     )
   }
 
@@ -182,49 +185,30 @@ export default function ProjectDetailPage({
   )
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <>
+      {/* Unit convention banner — shown once if any legacy simulation is in the list */}
+      {hasLegacySim && (
+        <UnitConventionBanner
+          simulationId={id}
+          schemaVersion={'v1'}
+          userId={user?.id ?? 'anonymous'}
+        />
+      )}
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Breadcrumb */}
-        <Link
-          href="/projects"
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to Projects
-        </Link>
+      <Link
+        href="/projects"
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to Projects
+      </Link>
 
-        {/* Unit convention banner — shown once if any legacy simulation is in the list */}
-        {hasLegacySim && (
-          <UnitConventionBanner
-            simulationId={id}
-            schemaVersion={'v1'}
-            userId={user?.id ?? 'anonymous'}
-          />
-        )}
-
-        {/* Project Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">{project.name}</h1>
-            {project.description && (
-              <p className="text-muted-foreground mt-2 max-w-2xl">
-                {project.description}
-              </p>
-            )}
-            <div className="flex gap-4 mt-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Atom className="h-4 w-4" />
-                {project.simulation_count} simulations
-              </span>
-              <span className="flex items-center gap-1">
-                <ImageIcon className="h-4 w-4" />
-                {project.analysis_count} analyses
-              </span>
-            </div>
-          </div>
-          <div className="flex gap-2">
+      <PageHeader
+        eyebrow="PROJECT"
+        title={project.name}
+        description={project.description ?? undefined}
+        actions={
+          <>
             <Link href={`/projects/${id}/batch`}>
               <Button variant="outline">
                 <Layers className="h-4 w-4 mr-2" />
@@ -250,79 +234,120 @@ export default function ProjectDetailPage({
                 New Simulation
               </Button>
             </Link>
-          </div>
-        </div>
+          </>
+        }
+      />
+
+      {/*
+        Counts, not readings. `simulation_count` and `analysis_count` are
+        exact by construction, so they demand no sigma and no estimator — the
+        `exact` variant of MetricCard is the one that does not ask for them.
+
+        The label is "Analyses", not "FRAKTAL analyses" as the reference
+        design has it: `Project.analysis_count` adds ImageAnalysis *and*
+        FraktalAnalysis, so the narrower word would promise less than the field
+        returns. The detail line says what the number covers.
+      */}
+      <div className="mb-[18px] grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <MetricCard
+          kind="exact"
+          tone="teal"
+          label="Simulations"
+          value={project.simulation_count}
+          digits={0}
+          detail="Every run, batch studies included"
+        />
+        <MetricCard
+          kind="exact"
+          tone="violet"
+          label="Analyses"
+          value={project.analysis_count}
+          digits={0}
+          detail="Image and FRAKTAL"
+        />
+      </div>
 
         {/* Simulations List */}
-        <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">Simulations</h2>
-            {simulationList.length > 0 && (
-              deleteAllSimsConfirm ? (
-                <div className="flex gap-2 items-center">
-                  <span className="text-sm text-muted-foreground">Delete all {simulationList.length} simulations?</span>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDeleteAllSimulations}
-                    disabled={bulkDeleteLoading}
-                  >
-                    {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDeleteAllSimsConfirm(false)}
-                    disabled={bulkDeleteLoading}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
+        <Panel
+          className="mt-4"
+          title="Simulations"
+          hint="The single runs in this project, with the readings they produced. Batch studies are counted above and listed on their own page."
+          action={
+            simulationList.length > 0 &&
+            (deleteAllSimsConfirm ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-ink-muted">
+                  Delete all {simulationList.length} simulations?
+                </span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteAllSimulations}
+                  disabled={bulkDeleteLoading}
+                >
+                  {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setDeleteAllSimsConfirm(true)}
+                  onClick={() => setDeleteAllSimsConfirm(false)}
+                  disabled={bulkDeleteLoading}
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete All
+                  Cancel
                 </Button>
-              )
-            )}
-          </div>
-
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteAllSimsConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
+            ))
+          }
+        >
           {simulationsLoading ? (
             <LoadingScreen message="Loading simulations..." />
+          ) : simulationsError && !simulations ? (
+            <Callout tone="danger" title="Failed to load simulations">
+              The request did not come back. This is not an empty project: the runs are still
+              there, this page could not read them.
+            </Callout>
           ) : simulationList.length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <Atom className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No simulations yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Run your first simulation to generate 3D agglomerate structures
-                </p>
+            <EmptyState
+              icon={Atom}
+              headingLevel={3}
+              title="No simulations yet"
+              description="Run your first simulation to generate 3D agglomerate structures"
+              action={
                 <Link href={`/projects/${id}/simulations/new`}>
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
                     Run Simulation
                   </Button>
                 </Link>
-              </CardContent>
-            </Card>
+              }
+            />
           ) : (
             <div className="grid gap-4">
               {simulationList.map((sim) => {
                 const isSelected = selectedIds.has(sim.id)
                 const capReached = !isSelected && selectedIds.size >= MAX_COMPARE_SIMS
+                // One name per run, used by the row and by every control in it:
+                // two runs of the same algorithm are the normal case here, so
+                // naming a control after the algorithm names nothing.
+                const runLabel = sim.name?.trim() || sim.algorithm.toUpperCase()
                 return (
                 <Link
                   key={sim.id}
                   href={`/projects/${id}/simulations/${sim.id}`}
+                  className="block"
                 >
-                  <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
+                  <article className="rounded-lg border border-line bg-surface p-4 transition-colors hover:border-brand">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3">
                           {/*
                             Compare selection checkbox — does NOT navigate (R1/S1.6).
                             Wrap in a stopPropagation-only span so the Link's default
@@ -338,33 +363,40 @@ export default function ProjectDetailPage({
                             }}
                           >
                             <Checkbox
-                              aria-label={`Select ${sim.algorithm} simulation for comparison`}
+                              aria-label={`Select ${runLabel} for comparison`}
                               checked={isSelected}
                               disabled={capReached}
                               title={capReached ? `Maximum ${MAX_COMPARE_SIMS} simulations at once` : undefined}
                               onCheckedChange={() => toggleSelection(sim.id)}
                             />
                           </span>
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[13px] font-semibold text-ink">
                                 {/*
                                   Prefer the user-assigned / backend-generated `name`;
                                   fall back to the algorithm code only for legacy
                                   records that predate the name field.
                                 */}
-                                {sim.name?.trim() || sim.algorithm.toUpperCase()}
+                                {runLabel}
                               </span>
                               <Badge variant="outline" className="text-xs">
                                 {sim.algorithm.toUpperCase()}
                               </Badge>
-                              <StatusBadge status={sim.status} />
+                              <StatusChip status={sim.status} />
                             </div>
-                            <p className="text-sm text-muted-foreground mt-1">
-                              {'n_particles' in sim.parameters &&
-                                `${(sim.parameters as { n_particles: number }).n_particles.toLocaleString()} particles`}
-                              {' • '}
-                              {formatDistanceToNow(sim.created_at)}
+                            <p className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-ink-muted">
+                              {'n_particles' in sim.parameters && (
+                                <span className="inline-flex items-baseline gap-1">
+                                  <Num
+                                    value={(sim.parameters as { n_particles: number }).n_particles}
+                                    digits={0}
+                                    size="sm"
+                                  />
+                                  <span>particles</span>
+                                </span>
+                              )}
+                              <span>{formatDistanceToNow(sim.created_at)}</span>
                             </p>
                           </div>
                         </div>
@@ -375,19 +407,19 @@ export default function ProjectDetailPage({
                               (sim.parameters ?? {}) as unknown as Record<string, unknown>,
                             )
                             return (
-                              <div className="text-right">
-                                <p className="text-sm">
-                                  <span className="text-muted-foreground">Df = </span>
-                                  <span className="font-mono font-medium">
-                                    {formatNumber(sim.metrics.fractal_dimension, 3)}
-                                  </span>
+                              <div className="text-right text-[11px] leading-relaxed">
+                                <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                  <span className="text-ink-muted">Df</span>
+                                  <Num value={sim.metrics.fractal_dimension} digits={3} size="sm" />
                                 </p>
-                                <p className="text-sm">
-                                  <span className="text-muted-foreground">Rg = </span>
-                                  <span className="font-mono">
-                                    {formatNumber(sim.metrics.radius_of_gyration * scale, 1)}
-                                  </span>
-                                  <span className="text-muted-foreground text-xs"> nm</span>
+                                <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                  <span className="text-ink-muted">Rg</span>
+                                  <Num
+                                    value={sim.metrics.radius_of_gyration * scale}
+                                    digits={1}
+                                    unit="nm"
+                                    size="sm"
+                                  />
                                 </p>
                               </div>
                             )
@@ -399,6 +431,7 @@ export default function ProjectDetailPage({
                               <Button
                                 variant="outline"
                                 size="sm"
+                                aria-label={`Cancel ${runLabel}`}
                                 onClick={(e) => handleCancel(sim.id, e)}
                                 disabled={actionLoading === sim.id}
                               >
@@ -410,6 +443,7 @@ export default function ProjectDetailPage({
                                 <Button
                                   variant="destructive"
                                   size="sm"
+                                  aria-label={`Yes, delete ${runLabel}`}
                                   onClick={(e) => handleDelete(sim.id, e)}
                                   disabled={actionLoading === sim.id}
                                 >
@@ -418,6 +452,7 @@ export default function ProjectDetailPage({
                                 <Button
                                   variant="outline"
                                   size="sm"
+                                  aria-label={`No, keep ${runLabel}`}
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
@@ -431,6 +466,7 @@ export default function ProjectDetailPage({
                               <Button
                                 variant="outline"
                                 size="sm"
+                                aria-label={`Delete ${runLabel}`}
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -443,95 +479,99 @@ export default function ProjectDetailPage({
                           </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                  </article>
                 </Link>
                 )
               })}
             </div>
           )}
-        </div>
+        </Panel>
 
         {/* FRAKTAL Analyses List */}
-        <div className="space-y-4 mt-8">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold">FRAKTAL Analyses</h2>
-            {(fraktalAnalyses?.results ?? []).length > 0 && (
-              deleteAllFraktalConfirm ? (
-                <div className="flex gap-2 items-center">
-                  <span className="text-sm text-muted-foreground">
-                    Delete all {fraktalAnalyses?.results?.length} analyses?
-                  </span>
-                  <Button
-                    variant="destructive"
-                    size="sm"
-                    onClick={handleDeleteAllFraktal}
-                    disabled={bulkDeleteLoading}
-                  >
-                    {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setDeleteAllFraktalConfirm(false)}
-                    disabled={bulkDeleteLoading}
-                  >
-                    Cancel
-                  </Button>
-                </div>
-              ) : (
+        <Panel
+          className="mt-4"
+          title="FRAKTAL analyses"
+          hint="Recovered fractal properties from generated images or uploaded micrographs."
+          action={
+            (fraktalAnalyses?.results ?? []).length > 0 &&
+            (deleteAllFraktalConfirm ? (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-ink-muted">
+                  Delete all {fraktalAnalyses?.results?.length} analyses?
+                </span>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDeleteAllFraktal}
+                  disabled={bulkDeleteLoading}
+                >
+                  {bulkDeleteLoading ? 'Deleting...' : 'Yes, Delete All'}
+                </Button>
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => setDeleteAllFraktalConfirm(true)}
+                  onClick={() => setDeleteAllFraktalConfirm(false)}
+                  disabled={bulkDeleteLoading}
                 >
-                  <Trash2 className="h-4 w-4 mr-2" />
-                  Delete All
+                  Cancel
                 </Button>
-              )
-            )}
-          </div>
-
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setDeleteAllFraktalConfirm(true)}
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Delete All
+              </Button>
+            ))
+          }
+        >
           {fraktalLoading ? (
             <LoadingScreen message="Loading analyses..." />
+          ) : fraktalError && !fraktalAnalyses ? (
+            <Callout tone="danger" title="Failed to load FRAKTAL analyses">
+              The request did not come back. This is not an empty project: the analyses are still
+              there, this page could not read them.
+            </Callout>
           ) : (fraktalAnalyses?.results ?? []).length === 0 ? (
-            <Card>
-              <CardContent className="p-8 text-center">
-                <Microscope className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                <h3 className="text-lg font-medium mb-2">No FRAKTAL analyses yet</h3>
-                <p className="text-muted-foreground mb-4">
-                  Analyze fractal properties of agglomerate images or simulation projections
-                </p>
+            <EmptyState
+              icon={Microscope}
+              headingLevel={3}
+              title="No FRAKTAL analyses yet"
+              description="Analyze fractal properties of agglomerate images or simulation projections"
+              action={
                 <Link href={`/projects/${id}/fraktal/new`}>
                   <Button>
                     <Plus className="h-4 w-4 mr-2" />
                     Run FRAKTAL Analysis
                   </Button>
                 </Link>
-              </CardContent>
-            </Card>
+              }
+            />
           ) : (
             <div className="grid gap-4">
               {(fraktalAnalyses?.results ?? []).map((analysis) => (
                 <Link
                   key={analysis.id}
                   href={`/projects/${id}/fraktal/${analysis.id}`}
+                  className="block"
                 >
-                  <Card className="hover:border-primary/50 transition-colors cursor-pointer">
-                    <CardContent className="p-4">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-4">
-                          <div>
-                            <div className="flex items-center gap-2">
-                              <span className="font-medium">
+                  <article className="rounded-lg border border-line bg-surface p-4 transition-colors hover:border-brand">
+                      <div className="flex flex-wrap items-center justify-between gap-4">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="min-w-0">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="text-[13px] font-semibold text-ink">
                                 {analysis.model === 'granulated_2012' ? 'Granulated 2012' : 'Voxel 2018'}
                               </span>
                               <Badge variant="outline">
                                 {analysis.source_type === 'uploaded_image' ? 'Image' : 'Projection'}
                               </Badge>
-                              <StatusBadge status={analysis.status} />
+                              <StatusChip status={analysis.status} />
                             </div>
-                            <p className="text-sm text-muted-foreground mt-1">
+                            <p className="mt-1 text-[11px] text-ink-muted">
                               {formatDistanceToNow(analysis.created_at)}
                             </p>
                           </div>
@@ -539,18 +579,14 @@ export default function ProjectDetailPage({
 
                         <div className="flex items-center gap-4">
                           {analysis.status === 'completed' && analysis.results && (
-                            <div className="text-right">
-                              <p className="text-sm">
-                                <span className="text-muted-foreground">Df = </span>
-                                <span className="font-mono font-medium">
-                                  {formatNumber(analysis.results.df, 3)}
-                                </span>
+                            <div className="text-right text-[11px] leading-relaxed">
+                              <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                <span className="text-ink-muted">Df</span>
+                                <Num value={analysis.results.df} digits={3} size="sm" />
                               </p>
-                              <p className="text-sm">
-                                <span className="text-muted-foreground">Npo = </span>
-                                <span className="font-mono">
-                                  {analysis.results.npo?.toLocaleString() ?? 'N/A'}
-                                </span>
+                              <p className="m-0 flex items-baseline justify-end gap-1.5">
+                                <span className="text-ink-muted">Npo</span>
+                                <Num value={analysis.results.npo ?? null} digits={0} size="sm" />
                               </p>
                             </div>
                           )}
@@ -583,6 +619,7 @@ export default function ProjectDetailPage({
                               <Button
                                 variant="outline"
                                 size="sm"
+                                aria-label="Delete FRAKTAL analysis"
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -595,21 +632,20 @@ export default function ProjectDetailPage({
                           </div>
                         </div>
                       </div>
-                    </CardContent>
-                  </Card>
+                  </article>
                 </Link>
               ))}
             </div>
           )}
-        </div>
+        </Panel>
 
         {/* FRAKTAL Batches Section */}
         <FraktalBatchesSection
           projectId={id}
           batches={fraktalBatches?.results}
           isLoading={batchesLoading}
+          error={batchesError}
         />
-      </main>
 
       {/* Sticky Compare bar — only when ≥2 sims selected (R1/S1.3). */}
       {selectedIds.size >= 2 && (
@@ -645,6 +681,6 @@ export default function ProjectDetailPage({
           router.push(`/projects/${id}/simulations/${simulationId}`)
         }}
       />
-    </div>
+    </>
   )
 }
