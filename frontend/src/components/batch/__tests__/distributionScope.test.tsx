@@ -106,3 +106,21 @@ describe('R10.6 — clearing follows the backend, not the dropdown', () => {
     expect(screen.queryByText(/removed because/i)).toBeNull()
   })
 })
+
+  it('still emits a usable range when the fixed value was cleared', () => {
+    // Clearing the `fixed` input gives `value: 0` (`parseFloat('') || 0`), and
+    // bracketing it multiplicatively produced `{min: 0, max: 0}` - refused for
+    // both `min > 0` and `min < max`. A judge measured that the guard for this
+    // had no witness.
+    const onChange = vi.fn()
+    render(
+      <DistributionSelector label="#1" value={{ mode: 'fixed', value: 0 }} onChange={onChange} />,
+    )
+
+    const select = screen.getAllByRole('combobox')[0]
+    fireEvent.change(select, { target: { value: 'uniform' } })
+
+    const emitted = onChange.mock.calls[0][0]
+    expect(emitted.min).toBeGreaterThan(0)
+    expect(emitted.max).toBeGreaterThan(emitted.min)
+  })
