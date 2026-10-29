@@ -172,6 +172,39 @@ Cada comentario nombra su issue de GitHub y su rama. El
 issue de Cycle 3 es **AGLO-2** (proyecto AGLO en `isilduria.atlassian.net`).
 El acceso a Jira es vía MCP Atlassian (session-shared o sesión peer con OAuth).
 
+## Cuentas de GitHub: `gh` — OBLIGATORIO leerlo antes de escribir por API
+
+Esta máquina tiene **dos cuentas** en `github.com` y **la activa cambia entre sesiones**:
+
+| Cuenta | Permisos sobre este repo |
+| --- | --- |
+| `juanjoseexpositogonzalez` | **sí** — es el dueño |
+| `jjeg1979` | **no** |
+
+**El síntoma engaña**: `git push` funciona igual, porque va por credencial HTTPS y no por la API. Lo
+que falla es **todo lo que escribe por API** — cerrar o crear issues, editar un PR, poner
+etiquetas —, y falla de tres formas distintas según el comando: `does not have the correct
+permissions`, `403 Must have admin rights`, o `perms=false` al consultar el repo. Depurar el
+comando es perder el tiempo: la causa es la cuenta activa.
+
+**Comprobación, una línea, antes de cualquier escritura por API:**
+
+```bash
+gh auth status | grep Active      # ¿la activa es juanjoseexpositogonzalez?
+gh api repos/juanjoseexpositogonzalez/pyaglogen3D --jq .permissions.push   # debe decir true
+```
+
+**Arreglo preferido — sin tocar la cuenta activa.** El clon es compartido con otras sesiones y
+cambiar la activa les cambia el contexto a ellas. Se pone el token de la cuenta correcta **solo para
+ese comando**:
+
+```bash
+GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh issue close 141 --reason completed
+```
+
+**Si de verdad hace falta cambiar la activa** (`gh auth switch --user juanjoseexpositogonzalez`),
+avisar primero por intercom: la configuración de `gh` no es por repositorio.
+
 ## Flujo de trabajo Git — OBLIGATORIO
 
 **`main ← develop ← rama de trabajo`**:
