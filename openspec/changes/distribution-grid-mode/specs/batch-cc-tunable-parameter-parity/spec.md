@@ -27,8 +27,7 @@ views read as `sim.parameters[grid key]` and which R5.2 requires, **and**
 One inherited scenario title contradicts its own body and cannot be renamed here: `R1.2 — Scalar
 shorthand normalized to fixed` now requires a 400, because a bare scalar has never been
 normalised (measured: `Distribution config must be a dict.`). The title survives because a
-MODIFIED block may not drop a scenario, and renaming it needs its own change. It is said here, in
-the requirement body, because a note written inside a scenario never reaches `requirement.text`.
+MODIFIED block may not drop a scenario, and renaming it needs its own change.
 
 #### Scenario R1.1 — Happy path: two normal distributions expand correctly
 
@@ -94,9 +93,8 @@ The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened.
 follows the **magnitude**, not the spelling: it applies to `particle_radius_config` and to
 `dpo_distribution` alike, on every surface R13 enumerates. Guarding one name and leaving the
 other open would let the same value reach the same engine input by renaming the key, which is
-weakening it by another route. Approved by the person on 2026-10-26, after measuring
-that `particle_radius_config` answered 400 and `dpo_distribution` 201 for the same
-`std/mean = 0.5`.
+weakening it by another route: measured, `particle_radius_config` answered 400 and
+`dpo_distribution` 201 for the same `std/mean = 0.5`.
 
 This key varies the primary particle size **per run**, not within a run: the engine samples the
 distribution once at run start and every particle of that run shares the sampled value (measured:
@@ -139,7 +137,7 @@ which used to run with no sintering at all, because nothing read `value`, and is
 (R7.3). Nor does it extend to the `normal` mean, which used to travel in `sintering_mean` and
 reach the engine as `1.0`.
 
-One more narrowing belongs in this list, recorded at archive time: a **study-level**
+One more narrowing belongs in this list: a **study-level**
 `sintering_config = {distribution_type:"fixed"}` with no `coefficient` used to be accepted and
 defaulted; it now returns 400, because a setting that says nothing is not a setting.
 
@@ -440,7 +438,7 @@ Two surfaces of the same family are deliberately left out, and this says so rath
 to be discovered: the single-simulation serializer accepts the same two keys for every algorithm,
 and its worker reads them only for `tunable_cc`, so for the other ten they go nowhere. That is real and it is the same silent failure, but it belongs to the
 single-simulation serializer, not to batch expansion, and widening a contract mid-flight to
-cover a newly found surface is what killed this one's predecessor. The second is the AI
+cover a newly found surface is its own change, not this one. The second is the AI
 assistant's study tool, which writes `ParametricStudy` and `Simulation` rows through the ORM
 with no serializer, so no allow-list in this requirement reaches it; R11 named that same door and
 derived it to `study-expansion-single-source`, and so does this one.

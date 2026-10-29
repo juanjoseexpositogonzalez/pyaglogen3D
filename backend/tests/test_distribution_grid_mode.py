@@ -714,6 +714,39 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
             },
             "exceeds the maximum",
         ),
+        # Two ranks a judge reordered with the whole suite still at its
+        # exact baseline: which of the two gates answers, and which carrier
+        # the R13 gate reports when both are at fault. The spec claims
+        # neither, but an unpinned rank is how the last eight drafts went
+        # wrong, so they are rows now.
+        (
+            "the sintering gate answers before the distribution gate",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "sintering_coeff": 0.8,
+                    "kf_distribution": {"mode": "fixed", "value": 1.8},
+                }
+            },
+            "does not consume sintering",
+        ),
+        (
+            "the grid carrier is reported before base_parameters",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                },
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "dpo_distribution": {"mode": "nonsense", "value": 1.0},
+                },
+            },
+            "parameter_grid.kf_distribution",
+        ),
         # A judge measured that the two rows above pin only that the guard
         # exists: their payloads carry no second problem, so `data.get(f)
         # or {}` leaves the gates nothing to answer and the guard is the
