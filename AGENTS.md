@@ -172,48 +172,52 @@ Cada comentario nombra su issue de GitHub y su rama. El
 issue de Cycle 3 es **AGLO-2** (proyecto AGLO en `isilduria.atlassian.net`).
 El acceso a Jira es vía MCP Atlassian (session-shared o sesión peer con OAuth).
 
-## Cuentas de GitHub: `gh` — OBLIGATORIO leerlo antes de escribir por API
+## Cuentas de GitHub: `gh` — dos cuentas, y sólo una tiene permisos
 
-Esta máquina tiene **dos cuentas** en `github.com` y **la activa cambia entre sesiones**:
+Esta máquina tiene **dos cuentas** de `github.com` y la activa **cambia entre sesiones**:
 
 | Cuenta | Permisos sobre este repo |
 | --- | --- |
 | `juanjoseexpositogonzalez` | **sí** — es el dueño |
 | `jjeg1979` | **no** |
 
-**El síntoma engaña**: `git push` funciona igual, porque va por credencial HTTPS y no por la API. Lo
-que falla es **todo lo que escribe por API** — cerrar o crear issues, editar un PR, poner
-etiquetas —, y falla de tres formas distintas según el comando: `does not have the correct
-permissions`, `403 Must have admin rights`, o `perms=false` al consultar el repo. Depurar el
-comando es perder el tiempo: la causa es la cuenta activa.
+### Qué depende de la cuenta activa y qué no
 
-**Comprobación, una línea, antes de cualquier escritura por API:**
+Medido en este clon, porque la intuición engaña:
 
-```bash
-gh auth status | grep Active      # ¿la activa es juanjoseexpositogonzalez?
-gh api repos/juanjoseexpositogonzalez/pyaglogen3D --jq .permissions.push   # debe decir true
-```
+| Operación | ¿Le afecta la cuenta activa de `gh`? |
+| --- | --- |
+| `git push` por `origin` (**SSH**) | **No.** Usa la clave SSH, no `gh`. `ssh -T git@github.com` autentica como el dueño |
+| `git push` por una rama que sigue un remoto **HTTPS** | **Sí**: va por el *credential helper* de `gh` |
+| **Escrituras por API**: `gh issue close/edit/comment`, `gh pr edit/merge`, `gh api -X …`, etiquetas | **Sí** |
 
-**Arreglo preferido — sin tocar la cuenta activa.** El clon es compartido con otras sesiones y
-cambiar la activa les cambia el contexto a ellas. Se pone el token de la cuenta correcta **solo para
-ese comando**:
+**El síntoma engaña por eso**: con `jjeg1979` activa, una escritura por API falla con mensajes que
+no nombran la cuenta — `does not have the correct permissions`, `403 Must have admin rights`,
+`perms=false` al consultar el repo — mientras el push normal sigue funcionando. Depurar el comando
+es perder el tiempo: es la cuenta.
 
-```bash
-GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh issue close 141 --reason completed
-```
+Y hay una segunda trampa, que mordió al escribir esta nota: **`git push -u https://github.com/…`
+deja esa rama siguiendo un remoto HTTPS**, y desde entonces esa rama sí pasa por `gh`. Se ve con
+`git config --get branch.<rama>.remote`. Para empujar por SSH aunque la rama tenga remoto HTTPS:
+`git push origin <rama>`.
 
-**Y ojo con el push**, que aquí muerde igual: `git push` directo por SSH falla en este entorno (el
-agente no tiene identidades), así que el que se usa es el *credential helper* de `gh` —
-`git -c credential.helper='!gh auth git-credential' push …`—, y **ese sí obedece a la cuenta
-activa**: con `jjeg1979` activa devuelve `Permission … denied` y `403`. El mismo prefijo lo arregla:
+### Comprobar y arreglar
 
 ```bash
-GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) \
-  git -c credential.helper='!gh auth git-credential' push origin <rama>
+gh auth status --active          # nombra la cuenta activa (no usar `grep Active`: imprime "true")
+gh api user --jq .login          # alternativa
 ```
 
-**Si de verdad hace falta cambiar la activa** (`gh auth switch --user juanjoseexpositogonzalez`),
-avisar primero por intercom: la configuración de `gh` no es por repositorio.
+Arreglo **sin tocar la cuenta activa** — el clon es compartido con otras sesiones y cambiarla les
+cambia el contexto a ellas. Se pone el token de la cuenta correcta **sólo para ese comando**:
+
+```bash
+GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh issue close <n> --reason completed
+GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh pr merge <n> --merge --delete-branch
+```
+
+Y si de verdad hace falta cambiar la activa (`gh auth switch --user juanjoseexpositogonzalez`),
+**avisar antes por intercom**: la configuración de `gh` no es por repositorio.
 
 ## Flujo de trabajo Git — OBLIGATORIO
 
