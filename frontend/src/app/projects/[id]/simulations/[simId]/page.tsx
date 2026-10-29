@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulation, useSimulationGeometry, useNeighborGraph } from '@/hooks/useSimulations'
 import { ApiError, simulationsApi } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
 import { ViewerControls } from '@/components/viewer3d/ViewerControls'
 import {
@@ -25,8 +24,11 @@ import {
   deriveGeneratedDirections,
 } from '@/lib/projection-grid'
 import { NeighborGraph } from '@/components/topology'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
+import { Callout } from '@/components/kit/Callout'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { StatusChip } from '@/components/kit/StatusChip'
 import { FractalPlot } from '@/components/charts'
 import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES, OpticalPropertiesSection } from '@/components/analysis'
 import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
@@ -34,7 +36,7 @@ import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, BarChart3, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
+import { ArrowLeft, BarChart3, Download, StopCircle, Trash2 } from 'lucide-react'
 import { formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
@@ -262,28 +264,20 @@ export default function SimulationDetailPage({
   }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading simulation..." />
-      </div>
-    )
+    // The shell owns the frame and the navigation; this branch only says what
+    // is happening.
+    return <LoadingScreen message="Loading simulation..." />
   }
 
   if (error || !simulation) {
     return (
-      <div className="min-h-screen">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">
-                Failed to load simulation. It may not exist or the backend is unavailable.
-              </p>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <Card className="border-destructive">
+        <CardContent className="p-6">
+          <p className="text-destructive">
+            Failed to load simulation. It may not exist or the backend is unavailable.
+          </p>
+        </CardContent>
+      </Card>
     )
   }
 
@@ -303,74 +297,64 @@ export default function SimulationDetailPage({
   const radii = (geometry?.radii ?? []).map((r) => r * scaleFactor)
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <>
+      {/* Breadcrumb */}
+      <Link
+        href={`/projects/${id}`}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to {project?.name || 'Project'}
+      </Link>
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Breadcrumb */}
-        <Link
-          href={`/projects/${id}`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to {project?.name || 'Project'}
-        </Link>
+      {/* Unit convention transition banner — shown only for legacy (v1/null) simulations */}
+      {(() => {
+        const schemaVersion = getSchemaVersion(
+          (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
+        )
+        if (schemaVersion === 'v2') return null
+        return (
+          <UnitConventionBanner
+            simulationId={simId}
+            schemaVersion={schemaVersion}
+            userId={user?.id ?? 'anonymous'}
+          />
+        )
+      })()}
 
-        {/* Unit convention transition banner — shown only for legacy (v1/null) simulations */}
-        {(() => {
-          const schemaVersion = getSchemaVersion(
-            (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
-          )
-          if (schemaVersion === 'v2') return null
-          return (
-            <UnitConventionBanner
-              simulationId={simId}
-              schemaVersion={schemaVersion}
-              userId={user?.id ?? 'anonymous'}
-            />
-          )
-        })()}
-
-        {/* Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold">
-                {simulation.algorithm.toUpperCase()} Simulation
-              </h1>
-              <StatusBadge status={simulation.status} />
-            </div>
-            <div className="flex gap-4 mt-2 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Hash className="h-4 w-4" />
-                {'n_particles' in simulation.parameters &&
-                  `${(simulation.parameters as { n_particles: number }).n_particles.toLocaleString()} particles`}
+      <PageHeader
+        eyebrow="SIMULATION"
+        title={simulation.name?.trim() || simulation.algorithm.toUpperCase()}
+        /*
+          Reproducibility goes under the title, before any reading: which
+          algorithm produced this, from how many particles, with which seed,
+          and how long it took. Every number goes through `Num`, so the count
+          reads 1,200 and the seed and the duration line up with the rest of
+          the product.
+        */
+        meta={
+          <>
+            <StatusChip status={simulation.status} />
+            <span>{simulation.algorithm.toUpperCase()}</span>
+            {npo !== undefined && (
+              <span className="inline-flex items-baseline gap-1">
+                <Num value={npo} digits={0} size="sm" />
+                <span>particles</span>
               </span>
-              {simulation.execution_time_ms && (
-                <span className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  {(simulation.execution_time_ms / 1000).toFixed(2)}s
-                </span>
-              )}
-              <span className="flex items-center gap-1">
-                <Settings className="h-4 w-4" />
-                Seed: {simulation.seed}
-              </span>
-            </div>
-          </div>
-
-          {/* Action Buttons */}
-          <div className="flex gap-2">
-            {(simulation.status === 'queued' || simulation.status === 'running') && (
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={isCancelling}
-              >
-                <StopCircle className="h-4 w-4 mr-2" />
-                {isCancelling ? 'Cancelling...' : 'Cancel'}
-              </Button>
             )}
+            {/* A queued run has not been timed yet; an em dash here would read
+                as "took no time", which is a different claim. */}
+            {simulation.execution_time_ms ? (
+              <Num value={simulation.execution_time_ms / 1000} digits={2} size="sm" unit="s" />
+            ) : null}
+            <span className="inline-flex items-baseline gap-1">
+              <span>seed</span>
+              <Num value={simulation.seed} digits={0} size="sm" />
+            </span>
+          </>
+        }
+        actions={
+          <>
             {simulation.status === 'completed' && (
               <Button
                 variant="outline"
@@ -399,8 +383,8 @@ export default function SimulationDetailPage({
               </Button>
             )}
             {showDeleteConfirm ? (
-              <div className="flex gap-2 items-center">
-                <span className="text-sm text-muted-foreground">Delete?</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-ink-muted">Delete?</span>
                 <Button
                   variant="destructive"
                   size="sm"
@@ -427,87 +411,91 @@ export default function SimulationDetailPage({
                 Delete
               </Button>
             )}
+          </>
+        }
+      />
+
+      {/* Running State */}
+      {(simulation.status === 'queued' || simulation.status === 'running') && (
+        <Callout
+          className="mb-6"
+          title={simulation.status === 'queued' ? 'Simulation queued' : 'Simulation running'}
+          action={
+            <Button variant="outline" onClick={handleCancel} disabled={isCancelling}>
+              <StopCircle className="h-4 w-4 mr-2" />
+              {isCancelling ? 'Cancelling...' : 'Cancel simulation'}
+            </Button>
+          }
+        >
+          {simulation.status === 'queued'
+            ? 'Your simulation is in the queue and will start shortly...'
+            : 'Generating agglomerate structure... This page will update automatically.'}
+        </Callout>
+      )}
+
+      {/* Cancelled State */}
+      {simulation.status === 'cancelled' && (
+        <Callout className="mb-6" tone="warning" title="Simulation cancelled">
+          {simulation.error_message || 'This simulation was cancelled.'}
+        </Callout>
+      )}
+
+      {/* Failed State */}
+      {simulation.status === 'failed' && (
+        <Callout className="mb-6" tone="danger" title="Simulation failed">
+          {simulation.error_message || 'An unknown error occurred during simulation.'}
+        </Callout>
+      )}
+
+      {/* Completed State */}
+      {simulation.status === 'completed' && simulation.metrics && (
+        <>
+          {/*
+            The headline readings. Each one goes through a metric card so the
+            value, its unit and its uncertainty are separate elements and the
+            digits stay the ones this page has always printed: Df and kf to
+            three, Rg in nm and porosity as a percentage to one.
+          */}
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              kind="measured"
+              tone="teal"
+              label="Fractal dimension"
+              value={simulation.metrics.fractal_dimension}
+              sigma={simulation.metrics.fractal_dimension_std}
+              digits={3}
+              detail="Fit slope, ± its standard error"
+            />
+            <MetricCard
+              kind="measured"
+              tone="violet"
+              label="Radius of gyration"
+              value={simulation.metrics.radius_of_gyration * scaleFactor}
+              sigma={null}
+              digits={1}
+              unit="nm"
+              detail="Converted to nm with the primary particle diameter"
+            />
+            <MetricCard
+              kind="measured"
+              tone="gold"
+              label="Porosity"
+              value={simulation.metrics.porosity * 100}
+              sigma={null}
+              digits={1}
+              unit="%"
+              detail="Empty share of the enclosing volume"
+            />
+            <MetricCard
+              kind="measured"
+              tone="slate"
+              label="Prefactor (kf)"
+              value={simulation.metrics.prefactor ?? null}
+              sigma={null}
+              digits={3}
+              detail="Scale factor of the same power law"
+            />
           </div>
-        </div>
-
-        {/* Running State */}
-        {(simulation.status === 'queued' || simulation.status === 'running') && (
-          <Card className="mb-8">
-            <CardContent className="p-8 text-center">
-              <div className="animate-pulse">
-                <div className="h-8 w-8 mx-auto mb-4 rounded-full border-4 border-primary border-t-transparent animate-spin" />
-              </div>
-              <h3 className="text-lg font-medium mb-2">
-                {simulation.status === 'queued' ? 'Simulation Queued' : 'Simulation Running'}
-              </h3>
-              <p className="text-muted-foreground mb-4">
-                {simulation.status === 'queued'
-                  ? 'Your simulation is in the queue and will start shortly...'
-                  : 'Generating agglomerate structure... This page will update automatically.'}
-              </p>
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={isCancelling}
-              >
-                <StopCircle className="h-4 w-4 mr-2" />
-                {isCancelling ? 'Cancelling...' : 'Cancel Simulation'}
-              </Button>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Cancelled State */}
-        {simulation.status === 'cancelled' && (
-          <Card className="mb-8 border-yellow-500">
-            <CardContent className="p-6">
-              <h3 className="text-lg font-medium text-yellow-600 mb-2">
-                Simulation Cancelled
-              </h3>
-              <p className="text-muted-foreground">
-                {simulation.error_message || 'This simulation was cancelled.'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Failed State */}
-        {simulation.status === 'failed' && (
-          <Card className="mb-8 border-destructive">
-            <CardContent className="p-6">
-              <h3 className="text-lg font-medium text-destructive mb-2">
-                Simulation Failed
-              </h3>
-              <p className="text-muted-foreground">
-                {simulation.error_message || 'An unknown error occurred during simulation.'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Completed State */}
-        {simulation.status === 'completed' && simulation.metrics && (
-          <>
-            {/* Metrics */}
-            <MetricsGrid className="mb-8">
-              <MetricsCard
-                label="Fractal Dimension"
-                value={formatNumber(simulation.metrics.fractal_dimension, 3)}
-                subvalue={`+/- ${formatNumber(simulation.metrics.fractal_dimension_std, 3)}`}
-              />
-              <MetricsCard
-                label="Prefactor (kf)"
-                value={formatNumber(simulation.metrics.prefactor, 3)}
-              />
-              <MetricsCard
-                label="Radius of Gyration (nm)"
-                value={formatNumber(simulation.metrics.radius_of_gyration * scaleFactor, 1)}
-              />
-              <MetricsCard
-                label="Porosity"
-                value={`${(simulation.metrics.porosity * 100).toFixed(1)}%`}
-              />
-            </MetricsGrid>
 
             {/* Coordination and Shape Analysis */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
@@ -736,7 +724,6 @@ export default function SimulationDetailPage({
             </Card>
           </>
         )}
-      </main>
-    </div>
+    </>
   )
 }
