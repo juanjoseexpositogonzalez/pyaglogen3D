@@ -89,8 +89,8 @@ the name the worker reads (`dpo_distribution`).
 | `{mode: "uniform", min, max}` | `min > 0`, `min < max` |
 
 `uniform` is accepted here because the engine implements `dpo_mode="uniform"` and R13.6 depends
-on it being reachable. The batch form restricts this key to `fixed` and `normal`; aligning the
-form is part of this change, not a licence for the API to differ from it.
+on it being reachable. The batch form offers the same three shapes, so a `uniform` primary size is
+configurable from the interface and not only through the API.
 
 The cap on `std/mean` exists to prevent negative radii and MUST NOT be weakened. It therefore
 follows the **magnitude**, not the spelling: it applies to `particle_radius_config` and to

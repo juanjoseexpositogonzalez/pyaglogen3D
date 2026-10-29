@@ -118,7 +118,7 @@
 - [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
   produce `target_kf_used` distinto del 1.3 por defecto.
 - [x] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
-- [x] T4.4 PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
+- [ ] T4.4 **(archive, cabecera e índice hechos; merge, limpieza, Jira y cierre, pendientes)** PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
   `<!-- Last sync: ... -->`, que `openspec archive` NO reescribe** y hoy sigue nombrando al
   contrato de sinterizado; entrega en Jira y cierre
   manual de la issue.
