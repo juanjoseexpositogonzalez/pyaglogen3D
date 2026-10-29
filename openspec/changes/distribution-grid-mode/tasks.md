@@ -279,3 +279,24 @@ queda igual y el script informa de éxito. Desde aquí toda edición falla ruido
 ancla no está, y la primera vez que lo apliqué paró en seco en un ancla inventada. Es la misma
 lección del guarda del índice (#130): **una comprobación que solo puede pasar no es una
 comprobación.**
+
+**L23 — PR #170: el deshielo, y una convención que costó doce rondas aprender a escribir.** La
+allow-list de R11 se evaluaba en toda actualización, así que una fila guardada antes de que
+existiera no se podía ni renombrar (`PATCH {"name": …}` → 400). El gate de R13.12 se escribe
+ahora en R11 y en su MUST: corre **solo cuando la petición toca un ajuste de sinterizado o el
+algoritmo**, y contra el algoritmo almacenado (`base_algorithm`) cuando la petición no lo trae.
+El eco del algoritmo cuenta como tocarlo, así que un `PUT` sigue juzgándose (R11.8).
+
+Doce rondas de judgment-day encontraron **tres defectos de contrato y ninguno de código** desde
+la segunda: cada THEN que nombra un mensaje incumple su promesa cuando la petición trae un
+segundo problema. La convención aprobada por la persona —cada THEN describe una petición cuyo
+único defecto es el de su GIVEN— se escribe una vez, en el cuerpo de R13, y R1, R2 y R7 la
+señalan. La ronda 12 obligó a tres correcciones más, todas mías: **acotar el alcance** (decía
+«este fichero», y archivada esa frase abarca R5.3 y R6.2, falsos hoy — registrados en #115),
+**determinar los campos no declarados** (si no, la regla se anulaba sola), y **quitar el
+escape** que permitía anular un THEN alegando un segundo defecto que nadie prueba; ésa la
+decidió la persona al cerrar la ronda 2, que terminó `ESCALATED` con el juez A en `APPROVED`.
+
+Medido en cada commit: 15F / 1651P / 1x / 31E con **los mismos quince nombres**, ruff 295, y
+`openspec validate --strict` válido. `R13.9` sigue sin implementar ni citado por ningún test: es
+el PR 2.
