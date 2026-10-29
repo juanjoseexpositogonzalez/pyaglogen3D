@@ -214,7 +214,11 @@ describe('the simulation detail frame', () => {
 
     const headings = screen.getAllByRole('heading', { level: 1 })
     expect(headings).toHaveLength(1)
-    expect(headings[0].textContent).toMatch(/tunable_cc/i)
+    // The label the create form shows, not the wire token: `tunable_cc` is a
+    // value on the request, not a name a researcher reads.
+    const title = headings[0].textContent ?? ''
+    expect(title).toMatch(/tunable cc/i)
+    expect(title).not.toMatch(/tunable_cc/)
   })
 
   it('stops mounting the deprecated navigation', () => {
@@ -285,16 +289,52 @@ describe('the run identity in the header', () => {
   })
 
   it('omits the run time instead of printing a placeholder for it', () => {
-    // A run still in the queue has no measured duration. An em dash in the
-    // identity row would read as "took no time", which is a different claim.
-    withSimulation({ status: 'running', metrics: null, execution_time_ms: null })
+    // A queued run has no measured duration. Forbidding only the em dash would
+    // pass an implementation printing "0.00 s", which is the "took no time"
+    // reading the copy exists to prevent.
+    withSimulation({ status: 'queued', metrics: null, execution_time_ms: null })
     renderPage()
 
-    expect(pageHeader().textContent).not.toMatch(/—/)
+    const meta = pageHeader().textContent ?? ''
+    expect(meta).not.toMatch(/—/)
+    expect(meta).not.toMatch(/elapsed/i)
+    expect(meta).not.toMatch(/\d\.\d\d\s*s/)
+  })
+
+  it('names the duration it shows, instead of leaving a bare number in the row', () => {
+    withSimulation({ execution_time_ms: 4210 })
+    renderPage()
+
+    // The icon that used to identify the number is gone with the old header; a
+    // floating "4.21 s" between two labelled items reads as nobody's number.
+    expect(pageHeader().textContent).toMatch(/elapsed\s*4\.21\s*s/i)
+  })
+
+  it('says when the run happened, which the identity row is for', () => {
+    withSimulation({ created_at: '2026-10-20T10:00:00Z' })
+    renderPage()
+
+    expect(pageHeader().textContent).toMatch(/ago/i)
   })
 })
 
 describe('the readings of a completed run', () => {
+  it('shows the engine note when a reading was not computed', () => {
+    withSimulation({
+      status: 'completed',
+      metrics: {
+        ...simulation().metrics,
+        fractal_dimension: null,
+        notes: { fractal_dimension: 'Insufficient particles for stable box-counting (N < 50)' },
+      },
+    })
+    renderPage()
+
+    // A dash under "fit slope of Rg versus particle count" would announce a
+    // method for a quantity the engine never computed.
+    expect(screen.getByText(/insufficient particles/i)).toBeTruthy()
+  })
+
   it('renders the four readings as metric cards', () => {
     renderPage()
 
@@ -342,6 +382,17 @@ describe('the states a run passes through', () => {
     renderPage()
 
     expect(screen.getByRole('note').textContent).toMatch(/simulation running/i)
+  })
+
+  it('says a queued run is queued, not running', () => {
+    withSimulation({ status: 'queued', metrics: null, execution_time_ms: null })
+    renderPage()
+
+    // The change moved this state out of a card into a Callout, so the branch
+    // that distinguishes queueing from running is exactly the one to pin.
+    const notice = screen.getByRole('note').textContent ?? ''
+    expect(notice).toMatch(/queued/i)
+    expect(notice).not.toMatch(/running/i)
   })
 
   it('offers to cancel a run that is still going, and cancels it', async () => {

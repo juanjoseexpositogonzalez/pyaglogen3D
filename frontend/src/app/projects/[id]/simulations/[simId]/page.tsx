@@ -37,8 +37,9 @@ import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ArrowLeft, BarChart3, Download, StopCircle, Trash2 } from 'lucide-react'
-import { formatNumber } from '@/lib/utils'
+import { formatDistanceToNow, formatNumber } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
+import { simulationAlgorithmLabels } from '@/lib/simulation-algorithms'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
 import { useAuth } from '@/contexts/AuthContext'
 
@@ -324,7 +325,14 @@ export default function SimulationDetailPage({
 
       <PageHeader
         eyebrow="SIMULATION"
-        title={simulation.name?.trim() || simulation.algorithm.toUpperCase()}
+        title={
+          simulation.name?.trim() ||
+          // The generated name is usually present; when it is not, the wire
+          // token (`tunable_cc`) is not a product name. The label map is the
+          // same one the create form shows.
+          (simulationAlgorithmLabels[simulation.algorithm] ??
+            simulation.algorithm.toUpperCase())
+        }
         /*
           Reproducibility goes under the title, before any reading: which
           algorithm produced this, from how many particles, with which seed,
@@ -337,20 +345,24 @@ export default function SimulationDetailPage({
             <StatusChip status={simulation.status} />
             <span>{simulation.algorithm.toUpperCase()}</span>
             {npo !== undefined && (
-              <span className="inline-flex items-baseline gap-1">
-                <Num value={npo} digits={0} size="sm" />
-                <span>particles</span>
+              <span>
+                <Num value={npo} digits={0} size="sm" /> particles
               </span>
             )}
-            {/* A queued run has not been timed yet; an em dash here would read
-                as "took no time", which is a different claim. */}
+            {/* A queued run has not been timed yet: the duration is absent, not
+                zero, because "took no time" is a different claim. It keeps its
+                word — a bare "1.20 s" between two labelled items reads as a
+                number nobody named. */}
             {simulation.execution_time_ms ? (
-              <Num value={simulation.execution_time_ms / 1000} digits={2} size="sm" unit="s" />
+              <span>
+                elapsed{' '}
+                <Num value={simulation.execution_time_ms / 1000} digits={2} size="sm" unit="s" />
+              </span>
             ) : null}
-            <span className="inline-flex items-baseline gap-1">
-              <span>seed</span>
-              <Num value={simulation.seed} digits={0} size="sm" />
+            <span>
+              seed <Num value={simulation.seed} digits={0} size="sm" />
             </span>
+            <span>{formatDistanceToNow(simulation.created_at)}</span>
           </>
         }
         actions={
@@ -464,7 +476,12 @@ export default function SimulationDetailPage({
               value={simulation.metrics.fractal_dimension}
               sigma={simulation.metrics.fractal_dimension_std}
               digits={3}
-              detail="Fit slope, ± its standard error"
+              detail={
+                simulation.metrics.fractal_dimension === null
+                  ? simulation.metrics.notes?.fractal_dimension ??
+                    'Not measured for this record'
+                  : "Fit slope of Rg versus particle count · the ± is the engine's own estimate, not a fit error"
+              }
             />
             <MetricCard
               kind="measured"
@@ -474,7 +491,7 @@ export default function SimulationDetailPage({
               sigma={null}
               digits={1}
               unit="nm"
-              detail="Converted to nm with the primary particle diameter"
+              detail="Scaled to nm with the record's particle diameter (50 nm when it is absent)"
             />
             <MetricCard
               kind="measured"
@@ -484,7 +501,7 @@ export default function SimulationDetailPage({
               sigma={null}
               digits={1}
               unit="%"
-              detail="Empty share of the enclosing volume"
+              detail="Empty fraction of the enclosing sphere; the importer bounds it differently"
             />
             <MetricCard
               kind="measured"
