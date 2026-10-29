@@ -12,7 +12,7 @@
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -82,12 +82,23 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 // Neighbours of another slice: stubbed so a failure in this file is about the
 // header and never about a list this slice does not touch.
+const mockBatchesProps: Array<Record<string, unknown>> = []
+const mockImportDialogProps: Array<Record<string, unknown>> = []
+
 vi.mock('@/components/fraktal/FraktalBatchesSection', () => ({
-  FraktalBatchesSection: () => React.createElement('div', { 'data-testid': 'batches-section' }),
+  // Records its props: a bare stub cannot tell "the page forwards the batches
+  // and their error" from "the page stopped mounting the section at all".
+  FraktalBatchesSection: (props: Record<string, unknown>) => {
+    mockBatchesProps.push(props)
+    return React.createElement('div', { 'data-testid': 'batches-section' })
+  },
 }))
 
 vi.mock('@/components/forms/ImportAggregateDialog', () => ({
-  ImportAggregateDialog: () => null,
+  ImportAggregateDialog: (props: Record<string, unknown>) => {
+    mockImportDialogProps.push(props)
+    return props.open ? React.createElement('div', {}, 'Import aggregate dialog') : null
+  },
 }))
 
 vi.mock('@/components/banners/UnitConventionBanner', () => ({
@@ -124,6 +135,8 @@ const metricCard = (label: string): HTMLElement | null | undefined =>
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockBatchesProps.length = 0
+  mockImportDialogProps.length = 0
   mockUseProject.mockReturnValue({ data: project(), isLoading: false, error: null })
   mockUseSimulations.mockReturnValue({ data: { results: [] }, isLoading: false, refetch: vi.fn() })
   mockUseFraktalAnalyses.mockReturnValue({
@@ -215,8 +228,8 @@ describe('the project counts', () => {
   it('renders both counts as whole numbers, with no decimal point at all', () => {
     renderPage()
 
-    // `Num` defaults to two decimals, so dropping `digits={0}` would render
-    // "6.00". Scoped to the card rather than to the document: slice 2 puts
+    // `MetricCard` passes `digits={3}`, so dropping `digits={0}` would render
+    // "6.000". Scoped to the card rather than to the document: slice 2 puts
     // real decimal readings (Df, Rg) further down the same page.
     expect(metricCard('Simulations')?.querySelector('.num')?.textContent).toBe('6')
     expect(metricCard('Analyses')?.querySelector('.num')?.textContent).toBe('2')
@@ -313,7 +326,7 @@ describe('the simulations section', () => {
     const { container } = renderPage()
 
     const texts = Array.from(container.querySelectorAll('.num')).map((node) => node.textContent)
-    expect(texts).toContain('1200')
+    expect(texts).toContain('1,200')
   })
 
   it('does not invent readings for a run that has none', () => {
@@ -351,7 +364,7 @@ describe('the simulations section', () => {
     withSimulations(sim())
     renderPage()
 
-    const box = screen.getByRole('checkbox', { name: /select tunable_cc simulation/i }) as HTMLInputElement
+    const box = screen.getByRole('checkbox', { name: /select baseline run/i }) as HTMLInputElement
     fireEvent.click(box)
 
     // The click that selects is the click that must not open the run: the
@@ -366,8 +379,8 @@ describe('the simulations section', () => {
 
     expect(screen.queryByRole('region', { name: /compare simulations/i })).toBeNull()
 
-    fireEvent.click(screen.getByRole('checkbox', { name: /select tunable_cc simulation/i }))
-    fireEvent.click(screen.getByRole('checkbox', { name: /select gcca simulation/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /select baseline run/i }))
+    fireEvent.click(screen.getByRole('checkbox', { name: /select high df/i }))
 
     expect(screen.getByRole('region', { name: /compare simulations/i })).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: /compare \(2\)/i }))
@@ -390,7 +403,175 @@ describe('the simulations section', () => {
 
     // Confirmation stays in line rather than in a native confirm(): the
     // pattern this screen already had and #178 shows the list lacks.
-    await screen.findByRole('button', { name: /delete all/i })
-    expect(mockDeleteAll).toHaveBeenCalledWith('p1')
+    await waitFor(() => expect(mockDeleteAll).toHaveBeenCalledWith('p1'))
+  })
+})
+
+const analysis = (overrides: Record<string, unknown> = {}) => ({
+  id: 'a1',
+  project: 'p1',
+  model: 'granulated_2012',
+  source_type: 'uploaded_image',
+  status: 'completed',
+  results: { df: 1.7456, npo: 1234 },
+  created_at: '2026-10-20T10:00:00Z',
+  ...overrides,
+})
+
+const withAnalyses = (...analyses: unknown[]) =>
+  mockUseFraktalAnalyses.mockReturnValue({
+    data: { results: analyses },
+    isLoading: false,
+    refetch: vi.fn(),
+  })
+
+describe('the FRAKTAL analyses section', () => {
+  it('names the section, so it is reachable by heading', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { level: 2, name: 'FRAKTAL analyses' })).toBeTruthy()
+  })
+
+  it('lists one entry per analysis, naming its model and its source', () => {
+    withAnalyses(analysis(), analysis({ id: 'a2', model: 'voxel_2018', source_type: 'projection' }))
+    renderPage()
+
+    expect(screen.getByRole('link', { name: /granulated 2012/i }).getAttribute('href')).toBe(
+      '/projects/p1/fraktal/a1',
+    )
+    expect(screen.getByRole('link', { name: /voxel 2018/i }).getAttribute('href')).toBe(
+      '/projects/p1/fraktal/a2',
+    )
+    expect(screen.getByText('Image')).toBeTruthy()
+    expect(screen.getByText('Projection')).toBeTruthy()
+  })
+
+  it('says what state an analysis is in, in words', () => {
+    withAnalyses(analysis(), analysis({ id: 'a2', status: 'failed', results: null }))
+    renderPage()
+
+    expect(screen.getByText('Completed')).toBeTruthy()
+    expect(screen.getByText('Failed')).toBeTruthy()
+  })
+
+  it('shows the readings a finished analysis produced', () => {
+    withAnalyses(analysis())
+    const { container } = renderPage()
+
+    const texts = Array.from(container.querySelectorAll('.num')).map((node) => node.textContent)
+    expect(texts).toContain('1.746')
+    // Number of primary particles: a count, so no decimals at all.
+    expect(texts).toContain('1,234')
+  })
+
+  it('does not invent readings for an analysis that has none', () => {
+    withAnalyses(analysis({ status: 'running', results: null }))
+    renderPage()
+
+    expect(screen.queryByText('Df')).toBeNull()
+    expect(screen.queryByText('Npo')).toBeNull()
+  })
+
+  it('offers an empty state that says what an analysis is for', () => {
+    renderPage()
+
+    expect(screen.getByRole('heading', { name: /no fraktal analyses yet/i })).toBeTruthy()
+    expect(
+      screen.getByRole('link', { name: /run fraktal analysis/i }).getAttribute('href'),
+    ).toBe('/projects/p1/fraktal/new')
+  })
+
+  it('reports a failed analyses list instead of pretending there are none', () => {
+    mockUseFraktalAnalyses.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+      refetch: vi.fn(),
+    })
+    renderPage()
+
+    const alerts = screen.getAllByRole('alert').map((node) => node.textContent ?? '')
+    expect(alerts.some((text) => /failed to load fraktal analyses/i.test(text))).toBe(true)
+    expect(screen.queryByText(/no fraktal analyses yet/i)).toBeNull()
+  })
+
+  it('confirms in line before deleting an analysis, and cancelling keeps it', () => {
+    withAnalyses(analysis())
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete fraktal analysis/i }))
+    expect(screen.getByRole('button', { name: 'Yes' })).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: 'No' }))
+    expect(screen.queryByRole('button', { name: 'Yes' })).toBeNull()
+  })
+})
+
+describe('the findings the two judges left open', () => {
+  it('says the count includes batch runs, which the list below it does not', () => {
+    withSimulations(sim())
+    renderPage()
+
+    // `Project.simulation_count` counts every simulation, batch included; the
+    // list endpoint filters `is_batch=False`. A card that says "Simulations 42"
+    // over a list of single runs needs the difference said out loud.
+    expect(metricCard('Simulations')?.textContent).toMatch(/batch/i)
+  })
+
+  it('keeps the rows on screen when a background refetch fails', () => {
+    mockUseSimulations.mockReturnValue({
+      data: { results: [sim()] },
+      isLoading: false,
+      error: new Error('blip'),
+      refetch: vi.fn(),
+    })
+    renderPage()
+
+    // The rows were readable a moment ago and are still in cache. Replacing
+    // them with "this page could not read them" is a worse lie than showing
+    // stale rows with no notice.
+    expect(screen.getByRole('link', { name: /baseline run/i })).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+
+  it('names every control in a row after the run it acts on', () => {
+    withSimulations(sim(), sim({ id: 's2', name: 'Low density sweep' }))
+    renderPage()
+
+    // Two runs of the same algorithm are the normal case: a control named
+    // after the algorithm names nothing.
+    expect(screen.getByRole('button', { name: 'Delete Baseline run' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Delete Low density sweep' })).toBeTruthy()
+    expect(
+      screen.getByRole('checkbox', { name: 'Select Low density sweep for comparison' }),
+    ).toBeTruthy()
+  })
+
+  it('opens the import dialog from the header action', () => {
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Import Aggregate' }))
+
+    // The dialog stub renders only when it is told to open, so this asserts the
+    // wiring rather than the presence of a button nobody pressed.
+    expect(screen.getByText('Import aggregate dialog')).toBeTruthy()
+    expect(mockImportDialogProps.at(-1)?.open).toBe(true)
+  })
+
+  it('tells the batches section which project it belongs to, and about a failure', () => {
+    const batches = [{ id: 'b1', status: 'completed', n_images: 2 }]
+    mockUseFraktalBatches.mockReturnValue({ data: { results: batches }, isLoading: false })
+    renderPage()
+    expect(mockBatchesProps.at(-1)?.projectId).toBe('p1')
+    expect(mockBatchesProps.at(-1)?.batches).toEqual(batches)
+
+    mockUseFraktalBatches.mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error('boom'),
+    })
+    renderPage()
+    // A section that is never told about the failure cannot tell a 5xx from an
+    // empty project.
+    expect(mockBatchesProps.at(-1)?.error).toBeTruthy()
   })
 })

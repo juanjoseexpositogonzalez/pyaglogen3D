@@ -49,7 +49,18 @@ export function PageHeader({
           </p>
         )}
       </div>
-      {actions && <div className="flex shrink-0 flex-wrap items-center gap-2">{actions}</div>}
+      {/*
+        No `shrink-0` here. A flex item that refuses to shrink never gets
+        narrow enough to wrap its own children, so a header with four actions
+        pushed itself to 718px on a 320px viewport with `flex-wrap` declared
+        and inert. `justify-end` only from `sm` up: on one column the buttons
+        read better starting at the same edge as the title.
+      */}
+      {actions && (
+        <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2 sm:justify-end">
+          {actions}
+        </div>
+      )}
     </header>
   )
 }
