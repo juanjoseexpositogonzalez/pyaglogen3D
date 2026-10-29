@@ -432,10 +432,11 @@ never as a list of the excluded: the model declares eleven algorithms and an enu
 excluded silently omitted two of them.
 
 **How a refusal scenario is read.** In R1, R2, R7, R11 and R13, a scenario that expects a refusal
-describes a request whose only defect is the one its GIVEN names: every field the GIVEN leaves
-unstated takes a value that satisfies the rules the request touches. Its THEN promises the message
-every such request receives, and says nothing about a request that breaks a second rule as well.
-The scenarios of R5 and R6 are outside this convention.
+describes a request whose only defect is the one its GIVEN names: the payload the GIVEN writes is
+taken as written, and every field it leaves unstated takes a value that satisfies the rules the
+request touches. Its THEN promises the message that request receives; nothing the scenario asserts
+is excused by a defect the GIVEN does not write. The scenarios of R5 and R6 are outside this
+convention.
 
 | Algorithm | These four keys |
 |---|---|
