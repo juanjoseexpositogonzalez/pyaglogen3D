@@ -22,6 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mockUseProject = vi.fn()
 const mockUseSimulation = vi.fn()
 const mockUseSimulationGeometry = vi.fn()
+const mockViewerProps = vi.fn()
 const mockRefetch = vi.fn()
 const mockPush = vi.fn()
 const mockExportCsv = vi.fn()
@@ -88,10 +89,13 @@ vi.mock('@/components/banners/UnitConventionBanner', () => ({
 
 // Neighbours owned by later slices, and by the shell. Stubbed so a plotly chart
 // or a projection cannot decide whether this slice is correct. The 3D viewer
-// itself is stubbed too: this file asserts where it is mounted and when it is
-// replaced, not what three.js paints.
+// itself is stubbed too: this file asserts where it is mounted, what it is
+// handed and when it is replaced, not what three.js paints.
 vi.mock('@/components/viewer3d/AgglomerateViewer', () => ({
-  AgglomerateViewer: () => React.createElement('div', {}, 'viewer'),
+  AgglomerateViewer: (props: Record<string, unknown>) => {
+    mockViewerProps(props)
+    return React.createElement('div', {}, 'viewer')
+  },
 }))
 
 vi.mock('@/components/viewer3d/ViewerControls', () => ({
@@ -170,8 +174,22 @@ const geometry = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 })
 
-const withGeometry = (data: unknown = geometry()) =>
-  mockUseSimulationGeometry.mockReturnValue({ data })
+type GeometryState = { isLoading?: boolean; isError?: boolean }
+
+const withGeometry = (data: unknown = geometry(), state: GeometryState = {}) =>
+  mockUseSimulationGeometry.mockReturnValue({
+    data,
+    isLoading: false,
+    isError: false,
+    ...state,
+  })
+
+/** `count` particles in dimensionless units, all on the x axis. */
+const manyParticles = (count: number) =>
+  geometry({
+    coordinates: Array.from({ length: count }, (_, i) => [i * 0.01, 0, 0]),
+    radii: Array.from({ length: count }, () => 0.04),
+  })
 
 const withSimulation = (overrides: Record<string, unknown> = {}) =>
   mockUseSimulation.mockReturnValue({
@@ -217,9 +235,13 @@ beforeEach(() => {
   mockExportCsv.mockResolvedValue(new Blob(['a,b']))
   mockCancel.mockResolvedValue(undefined)
   mockDelete.mockResolvedValue(undefined)
-  // No geometry by default: the engine has not answered yet, or this record
+  // No geometry by default, and none of it in flight or failed: this record
   // has no particle positions. That is the empty stage, not a blank canvas.
-  mockUseSimulationGeometry.mockReturnValue({ data: undefined })
+  mockUseSimulationGeometry.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  })
   mockUseProject.mockReturnValue({
     data: { id: 'p1', name: 'Soot aggregates' },
     isLoading: false,
@@ -529,10 +551,13 @@ describe('the 3D stage and the values behind it', () => {
 
     // Both numbers already exist on the page: two particles were handed to the
     // canvas, and the record's Rg of 12 scales to 300 nm. The stage repeats
-    // them so the readings sit on the surface they describe.
+    // them so the readings sit on the surface they describe — and the count is
+    // labelled by where it came from, because the header counts the record's
+    // `n_particles` (1,200 here) and two unlabelled counts would contradict
+    // each other on screen.
     expect(panelNumbers()).toContain('2')
     expect(panelNumbers()).toContain('300.0')
-    expect(viewerPanel().textContent).toMatch(/particles/)
+    expect(viewerPanel().textContent).toMatch(/in geometry/i)
     expect(viewerPanel().textContent).toMatch(/nm/)
   })
 
@@ -623,5 +648,115 @@ describe('the 3D stage and the values behind it', () => {
     // nothing.
     expect(screen.queryByRole('button', { name: 'Show values' })).toBeNull()
     expect(screen.queryByRole('table')).toBeNull()
+  })
+
+  it('sits the values table on paper instead of on the dark canvas', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The stage is near-black in both themes, so cells painted in `--ink`
+    // measured 1.29:1 there and the caption 3.3:1 — under AA, for the exact
+    // reader the table exists for. `DataTable` is correct on a paper surface;
+    // the surface is what the page owes it.
+    const table = screen.getByRole('table')
+    const surface = table.closest('.bg-surface-strong')
+    expect(surface).not.toBeNull()
+    expect(viewerPanel().contains(surface)).toBe(true)
+    // Still inside the stage: the frame, the title and the readings stay.
+    expect(viewerPanel().contains(table)).toBe(true)
+  })
+
+  it('leaves the last row of the table above the readings bar', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The caption bar is absolute inside the stage: ~35px tall, 12px off the
+    // bottom edge. A table allowed to fill the stage scrolls its last row under
+    // the bar, so the cap has to leave that room — and the bar's own backdrop
+    // stays dark, which is the contrast the readings were toned for.
+    const stage = viewerPanel().querySelector('.bg-visual') as HTMLElement
+    const region = screen.getByRole('region')
+    const stageHeight = Number.parseFloat(stage.style.height)
+    const tableHeight = Number.parseFloat(region.style.maxHeight)
+
+    expect(stageHeight).toBe(600)
+    expect(tableHeight).toBeLessThan(stageHeight)
+    expect(stageHeight - tableHeight).toBeGreaterThanOrEqual(40)
+  })
+
+  it('caps the rows it paints and says in the caption what it left out', () => {
+    // The serializer accepts up to 100,000 particles; painting them all stalls
+    // the page. A bounded head is fine, a silent one is not: the caption is the
+    // only thing that says the table is not the whole run.
+    withGeometry(manyParticles(600))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // one header row plus the cap
+    expect(screen.getAllByRole('row')).toHaveLength(501)
+    expect(screen.getByText(/first 500 of 600 particles/i)).toBeTruthy()
+  })
+
+  it('does not claim a truncation that did not happen', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    expect(viewerPanel().textContent).not.toMatch(/first \d+ of/i)
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+  })
+
+  it('says the positions are still arriving instead of showing an empty stage', () => {
+    // Nothing has failed and nothing is missing: the payload is in flight, and
+    // "nothing to draw" would be a claim about the run rather than about the
+    // request.
+    withGeometry(undefined, { isLoading: true })
+    renderPage()
+
+    const stage = viewerPanel()
+    expect(stage.textContent).toMatch(/reading particle positions/i)
+    expect(stage.textContent).not.toMatch(/nothing to draw/i)
+    expect(screen.queryByText('viewer')).toBeNull()
+  })
+
+  it('reports a geometry failure as a notice, not as an empty stage', () => {
+    withGeometry(undefined, { isError: true })
+    renderPage()
+
+    const notice = screen.getByRole('alert')
+    expect(notice.textContent).toMatch(/particle positions/i)
+    expect(notice.textContent).toMatch(/could not be loaded/i)
+    expect(viewerPanel().textContent).not.toMatch(/nothing to draw/i)
+  })
+
+  it('hands the viewer the geometry scaled to nm and the record principal axes', () => {
+    withGeometry()
+    renderPage()
+
+    const props = mockViewerProps.mock.calls.at(-1)?.[0] as Record<string, unknown>
+    const coordinates = props.coordinates as number[][]
+    const radii = props.radii as number[]
+
+    // The page exports `principalAxes` so the stage's render-prop body can use
+    // it; without this witness that refactor is invisible to the suite.
+    expect(coordinates).toHaveLength(2)
+    expect(coordinates[0].map((n) => Number(n.toFixed(6)))).toEqual([2.5, -5, 10])
+    expect(coordinates[1]).toEqual([25, 50, 75])
+    expect(radii.map((r) => Number(r.toFixed(6)))).toEqual([1, 1.5])
+    expect(props.principalAxes).toEqual(simulation().metrics.principal_axes)
+  })
+
+  it('reads the caption bar in the tone the dark stage provides', () => {
+    withGeometry()
+    renderPage()
+
+    // The bar is glass over a near-black canvas: paper ink there measured
+    // 1.29:1. The tokens are pinned here; the ratio is measured in a browser.
+    const stage = viewerPanel()
+    expect(stage.querySelector('.num.text-ink-on-dark')).not.toBeNull()
+    expect(stage.querySelector('.num-unit.text-ink-on-dark-faint')).not.toBeNull()
+    expect(stage.querySelector('.num.text-ink')).toBeNull()
   })
 })

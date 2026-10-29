@@ -73,9 +73,33 @@ const PARTICLE_COLUMNS: Column<ParticleRow>[] = [
   { key: 'radius', header: 'radius', numeric: true, unit: 'nm', digits: 1, value: (row) => row.radius },
 ]
 
-/** What the table is, said once: the caption is all a reader has once the canvas is gone. */
-const PARTICLE_CAPTION =
-  "Particles behind this view: position and radius in nm, scaled with the record's particle diameter."
+/**
+ * How many particle rows the table paints. The serializer accepts up to
+ * 100,000 particles, and a table of that size stalls the page; a bounded head
+ * is honest as long as the caption says it is one.
+ */
+const PARTICLE_ROW_LIMIT = 500
+
+/** The stage's height, in px. */
+const STAGE_HEIGHT = 600
+
+/**
+ * Room left under the table for `VisualPanel`'s readings bar: the bar is about
+ * 35px tall and sits 12px off the bottom edge, so 52px covers it with a few px
+ * to spare. The table's cap must stay *below* the stage height — equal values
+ * scroll the last row under the bar — and the gap also keeps the bar over the
+ * dark canvas, which is the contrast its readings are toned for.
+ */
+const READINGS_BAR_CLEARANCE = 52
+
+/**
+ * What the table is, said once: the caption is all a reader has once the canvas
+ * is gone, so it may not imply more rows than the table paints.
+ */
+const particleCaption = (shown: number, total: number): string =>
+  shown < total
+    ? `First ${shown} of ${total} particles: position and radius in nm, scaled with the record's particle diameter.`
+    : "Particles behind this view: position and radius in nm, scaled with the record's particle diameter."
 
 export default function SimulationDetailPage({
   params,
@@ -87,10 +111,11 @@ export default function SimulationDetailPage({
   const { user } = useAuth()
   const { data: project } = useProject(id)
   const { data: simulation, isLoading, error, refetch } = useSimulation(id, simId)
-  const { data: geometry } = useSimulationGeometry(
-    simId,
-    simulation?.status === 'completed'
-  )
+  const {
+    data: geometry,
+    isLoading: isGeometryLoading,
+    isError: isGeometryError,
+  } = useSimulationGeometry(simId, simulation?.status === 'completed')
   const { data: neighborGraph, isLoading: isGraphLoading } = useNeighborGraph(
     id,
     simId,
@@ -340,7 +365,7 @@ export default function SimulationDetailPage({
    * from the same scaled array the viewer gets, so a geometry payload that
    * ships fewer radii than positions reads as missing, not as zero.
    */
-  const particleRows: ParticleRow[] = coordinates.map(([x, y, z], index) => ({
+  const particleRows: ParticleRow[] = coordinates.slice(0, PARTICLE_ROW_LIMIT).map(([x, y, z], index) => ({
     n: index + 1,
     x,
     y,
@@ -356,15 +381,17 @@ export default function SimulationDetailPage({
 
   /**
    * The caption bar repeats two numbers the page already has — how many
-   * particles the canvas holds and the record's Rg in nm — so the readings sit
-   * on the surface they describe. Nothing is recomputed for them.
+   * particles the geometry holds and the record's Rg in nm — so the readings
+   * sit on the surface they describe. Nothing is recomputed for them, and the
+   * count says where it comes from: the header counts the record's
+   * `n_particles`, which is not the same number when the payload is short.
    */
   const visualReadouts: Readout[] | undefined =
     hasParticles && simulation.metrics
       ? [
           {
-            label: 'particles',
-            value: <Num value={coordinates.length} digits={0} size="sm" />,
+            label: 'in geometry',
+            value: <Num value={coordinates.length} digits={0} size="sm" onDark />,
           },
           {
             label: 'Rg',
@@ -374,6 +401,7 @@ export default function SimulationDetailPage({
                 unit="nm"
                 digits={1}
                 size="sm"
+                onDark
               />
             ),
           },
@@ -736,20 +764,40 @@ export default function SimulationDetailPage({
                 <ShowValues
                   columns={PARTICLE_COLUMNS}
                   rows={particleRows}
-                  caption={PARTICLE_CAPTION}
-                  maxHeight={600}
+                  caption={particleCaption(particleRows.length, coordinates.length)}
+                  maxHeight={STAGE_HEIGHT - READINGS_BAR_CLEARANCE}
                 >
                   {({ toggle, table }) => (
                     <VisualPanel
                       title="3D Visualization"
                       readouts={visualReadouts}
                       action={hasParticles ? toggle : undefined}
-                      height={600}
+                      height={STAGE_HEIGHT}
                     >
-                      {!hasParticles ? (
+                      {isGeometryError ? (
+                        // The request failed; the run may be fine. Saying
+                        // "nothing to draw" would blame the record for a
+                        // transport error.
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
+                          <Callout
+                            tone="danger"
+                            title="Particle positions could not be loaded"
+                            className="w-full max-w-[46ch]"
+                          >
+                            The canvas draws what the engine wrote for this run, and that record
+                            could not be read. Reload the page to ask again.
+                          </Callout>
+                        </div>
+                      ) : isGeometryLoading ? (
+                        // In flight is not missing: same distinction, one state
+                        // earlier.
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
+                          <p className="hint m-0">Reading particle positions…</p>
+                        </div>
+                      ) : !hasParticles ? (
                         // An empty canvas reads as a broken renderer. The stage
                         // says what it is waiting for instead.
-                        <div className="flex h-full items-center justify-center bg-surface px-6">
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
                           <EmptyState
                             headingLevel={3}
                             title="Nothing to draw yet"
@@ -757,15 +805,20 @@ export default function SimulationDetailPage({
                             className="max-w-[46ch]"
                           />
                         </div>
+                      ) : table ? (
+                        // Paper under the table. `DataTable` paints cells in
+                        // `--ink` and its caption in `--ink-muted`, which over
+                        // the stage measured 1.29:1 and 3.3:1; on the strong
+                        // surface they measure 14.4:1 and 5.7:1 in the light
+                        // theme, and the dark theme flips both tokens together.
+                        <div className="bg-surface-strong">{table}</div>
                       ) : (
-                        table ?? (
-                          <AgglomerateViewer
-                            coordinates={coordinates}
-                            radii={radii}
-                            principalAxes={principalAxes}
-                            className="h-[600px]"
-                          />
-                        )
+                        <AgglomerateViewer
+                          coordinates={coordinates}
+                          radii={radii}
+                          principalAxes={principalAxes}
+                          className="h-[600px]"
+                        />
                       )}
                     </VisualPanel>
                   )}

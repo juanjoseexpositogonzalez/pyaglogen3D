@@ -167,18 +167,27 @@ describe('ShowValues driven by a render prop', () => {
 
   it('keeps the node form laying out header and body exactly as before', () => {
     // The old shape is not deprecated by the new one: a caller that passes a
-    // node still gets the toggle rendered for it, above the visual.
+    // node still gets the toggle rendered for it, in the primitive's own
+    // right-aligned wrapper and *before* the visual in the document — the
+    // wrapper and the order are the two things the render-prop form must not
+    // have disturbed.
     const { container } = render(
       <ShowValues columns={columns} rows={rows} caption="Rg against N">
         <Chart />
       </ShowValues>,
     )
 
-    expect(container.querySelector('header')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Show values' })).toBeTruthy()
-    expect(screen.getByTestId('chart')).toBeTruthy()
+    const toggle = screen.getByRole('button', { name: 'Show values' })
+    const chart = screen.getByTestId('chart')
 
-    fireEvent.click(screen.getByRole('button'))
+    expect(container.querySelector('header')).toBeNull()
+    expect(toggle.parentElement?.className).toContain('mb-2.5')
+    expect(toggle.parentElement?.className).toContain('justify-end')
+    expect(
+      toggle.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy()
+
+    fireEvent.click(toggle)
     expect(screen.getByRole('table')).toBeTruthy()
   })
 })
