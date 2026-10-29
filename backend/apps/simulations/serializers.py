@@ -314,6 +314,33 @@ class SimulationDetailSerializer(SimulationSerializer):
         return obj.geometry is not None
 
 
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    """A stored container, or an empty one when it is not a mapping.
+
+    Rows written outside the serializer - the admin and the AI assistant's
+    tool both write these JSON fields directly - can hold anything, and
+    `.get` on a list raised instead of answering. Such a stored value is
+    ignored rather than held against the request: the request is judged on
+    what it carries, and a row that holds a non-mapping cannot be expanded
+    anyway.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
+def _swept_payload(limiting: Any) -> Any:
+    """The swept map of a payload, or nothing when the container is not one.
+
+    Called only with payload values, so the case that actually happens is
+    the dull one: the field is absent and `limiting` is `None`. A payload
+    holding a non-mapping is already refused at the top of `validate`, so
+    that branch is defensive - it exists so this helper does not depend on
+    the ordering of a guard elsewhere, not because a list reaches it today.
+    """
+    if not isinstance(limiting, Mapping):
+        return None
+    return limiting.get("theoretical_extremes")
+
+
 class ParametricStudySerializer(serializers.ModelSerializer):
     """Serializer for ParametricStudy model."""
 
@@ -623,16 +650,18 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             return getattr(self.instance, field, None)
 
         algorithm = _effective("base_algorithm", data.get("base_algorithm"))
-        eff_base = _effective("base_parameters", base_params) or {}
-        eff_grid = _effective("parameter_grid", grid) or {}
-        eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        # All four stored containers get the same guard. Giving it to two of
+        # them and not to the other two left `.get` on a list raising a 500
+        # where a 400 belongs, for rows written outside the serializer - the
+        # admin and the AI assistant's tool both do that.
+        eff_base = _as_mapping(_effective("base_parameters", base_params))
+        eff_grid = _as_mapping(_effective("parameter_grid", grid))
+        eff_limiting = _as_mapping(_effective("limiting_cases_config", limiting))
         # A stored container can be a truthy non-mapping on rows written
         # through the ORM - the AI assistant's tool and admin both do - and
         # `.get` on a list turned a rename into a 500. New payloads are
         # rejected above; a stored one is ignored rather than held against
         # the request, like the extremes map one level deeper.
-        if not isinstance(eff_limiting, Mapping):
-            eff_limiting = {}
         stored_extremes = eff_limiting.get("theoretical_extremes")
         # A row written before the payload guard can carry a non-object here.
         # Reading it without checking turned an innocent rename into a 500 and
@@ -640,17 +669,42 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # above; a stored one is ignored rather than held against the request.
         eff_extremes = stored_extremes if isinstance(stored_extremes, dict) else {}
 
-        try:
-            check_algorithm_scope(
-                algorithm,
-                dicts=(
-                    eff_grid.get("sintering_config"),
-                    _effective("sintering_config", data.get("sintering_config")),
-                    eff_base.get("sintering_config"),
-                    eff_extremes.get("sintering_config"),
-                ),
-                flats=(eff_base, eff_grid, eff_extremes),
+        # Same gate R13.12 states for the distribution keys, and for the same
+        # reason: R11 fixes *which* algorithm the rule is evaluated against -
+        # the stored one, on a partial update that omits it - not *when* it
+        # runs. Running it on a request that touches no sintering setting and
+        # no algorithm froze every row stored before the allow-list existed:
+        # renaming one answered 400 with no way out but deleting it. The
+        # bypass #97 closed stays closed, because adding the setting touches
+        # it and changing the algorithm touches the algorithm.
+        sintering_touched = (
+            "base_algorithm" in data
+            or "sintering_config" in data
+            or any(
+                key.startswith("sintering_")
+                for carrier in (
+                    data.get("parameter_grid"),
+                    data.get("base_parameters"),
+                    _swept_payload(data.get("limiting_cases_config")),
+                )
+                if isinstance(carrier, Mapping)
+                for key in carrier
             )
+        )
+        try:
+            if sintering_touched:
+                check_algorithm_scope(
+                    algorithm,
+                    dicts=(
+                        eff_grid.get("sintering_config"),
+                        _as_mapping(
+                            _effective("sintering_config", data.get("sintering_config"))
+                        ),
+                        eff_base.get("sintering_config"),
+                        eff_extremes.get("sintering_config"),
+                    ),
+                    flats=(eff_base, eff_grid, eff_extremes),
+                )
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 
@@ -672,7 +726,7 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             for carrier in (
                 data.get("parameter_grid"),
                 data.get("base_parameters"),
-                (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+                _swept_payload(data.get("limiting_cases_config")),
             )
             for key in _DIST_KEYS
         )
