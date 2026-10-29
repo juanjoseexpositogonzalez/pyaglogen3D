@@ -128,6 +128,6 @@ describe('<FraktalBatchesSection />', () => {
       />
     )
 
-    expect(screen.getByText('FRAKTAL Batches')).toBeTruthy()
+    expect(screen.getByText('FRAKTAL batches')).toBeTruthy()
   })
 })
