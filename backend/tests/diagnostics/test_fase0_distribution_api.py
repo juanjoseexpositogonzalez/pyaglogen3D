@@ -105,10 +105,10 @@ def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -
         api_client,
         project,
         parameter_grid={
-            "kf_distribution": [{"distribution_type": "fixed", "value": 1.5}]
+            "kf_distribution": [{"mode": "fixed", "value": 1.5}]
         },
     )
-    _report("D1 kf_distribution {distribution_type}", resp, 201)
+    _report("D1 kf_distribution {mode}", resp, 201)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         for child in study.simulations.all():
@@ -178,8 +178,8 @@ def test_d7_limiting_cases_with_dict_grid(
             include_limiting_cases=True,
             parameter_grid={
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "fixed", "value": 1.8},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "fixed", "value": 1.8},
                 ]
             },
         )

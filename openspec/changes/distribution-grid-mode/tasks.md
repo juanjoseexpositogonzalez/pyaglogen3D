@@ -300,3 +300,31 @@ decidió la persona al cerrar la ronda 2, que terminó `ESCALATED` con el juez A
 Medido en cada commit: 15F / 1651P / 1x / 31E con **los mismos quince nombres**, ruff 295, y
 `openspec validate --strict` válido. `R13.9` sigue sin implementar ni citado por ningún test: es
 el PR 2.
+
+**L24 — PR #184: la traducción, y una regla que hubo que aprender al reparar.** Hasta este PR, una
+distribución declarada bajo su nombre de rejilla **no llegaba al motor**: el hijo la guardaba, el
+worker leía el nombre del engine, y la corrida usaba el valor por defecto sin avisar a nadie. Y en
+la dirección contraria, la magnitud que el estudio **barre** perdía contra la que sobrescribe: con
+rejilla 1.5 y base 1.8 el motor recibía 1.8. Las dos salen del mismo sitio — el hijo nace como
+copia de `base_parameters`.
+
+`set_distribution_parameter` escribe el valor barrido bajo los dos nombres de su magnitud;
+`complete_distribution_aliases` rellena el que falta. Lo usan el camino real y el preview, que
+existe para no modelar la expansión. **R1 se cierra**: la tolerancia a `distribution_type` existía,
+en palabras del propio código, «hasta que aterrice la traducción».
+
+**La regla que hubo que aprender**: traducir **añade y nunca reemplaza**. La primera versión
+sincronizaba los dos nombres en el barrido, y con una rejilla que declaraba **las dos grafías** de
+la misma magnitud la segunda entrada pisaba a la primera: dos barridos no llegaban a ningún
+consumidor y el hijo incumplía el *verbatim* de R1. Lo midió el juez A de la ronda 1 y era una
+regresión introducida aquí. Ahora el hermano que la petición declara se respeta.
+
+**Declarado, no arreglado**: R13.9 dice «para cada hijo» y los diez hijos de casos límite conservan
+el valor de `base_parameters` bajo ambos nombres — el mismo comportamiento que ya tienen los
+escalares. La frase del contrato es más ancha que el diseño; registrado en #115, decide la persona.
+Y el panel de exportación del frontend compone la etiqueta con `Object.entries`, así que cada
+distribución aparece dos veces: cosmético, y el consumidor es del frontend.
+
+Medido: 15F / 1662P / 1x / 31E con **los mismos quince nombres**, ruff 295, `validate --strict`
+válido, y 19 testigos en el módulo nuevo, los tres críticos verificados por mutación. Excepción de
+tamaño declarada en #141 (603 líneas, 150 de producción).

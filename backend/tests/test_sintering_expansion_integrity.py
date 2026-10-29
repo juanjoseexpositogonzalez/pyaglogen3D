@@ -754,8 +754,8 @@ def test_r12_a_non_list_grid_value_cannot_disable_validation(
             "two kf distributions",
             {
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "fixed", "value": 1.5},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "fixed", "value": 1.5},
                 ]
             },
         ),
@@ -1103,8 +1103,8 @@ def test_r12_particle_radius_config_with_two_entries_is_accepted(
         project,
         parameter_grid={
             "particle_radius_config": [
-                {"distribution_type": "fixed", "value": 1.0},
-                {"distribution_type": "fixed", "value": 1.2},
+                {"mode": "fixed", "value": 1.0},
+                {"mode": "fixed", "value": 1.2},
             ]
         },
         include_limiting_cases=True,

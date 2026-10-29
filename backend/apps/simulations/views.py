@@ -1761,9 +1761,11 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
         from .utils import (
             apply_sintering_config,
+            complete_distribution_aliases,
             generate_limiting_cases,
             generate_simulation_name,
             generate_sintering_extreme_cases,
+            set_distribution_parameter,
         )
 
         project_id = self.kwargs.get("project_pk")
@@ -1814,6 +1816,10 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 ):
                     sim_params[param_name] = int(sim_params[param_name])
 
+            # R13.10: a parity key declared anywhere reaches the engine under
+            # the name the worker reads, and the grid key stays for the views.
+            sim_params = complete_distribution_aliases(sim_params)
+
             for seed_idx in range(study.seeds_per_combination):
                 seed = random.randint(0, 2**31 - 1)
 
@@ -1848,7 +1854,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         for combo in combinations:
             params = dict(study.base_parameters)
             for i, name in enumerate(param_names):
-                params[name] = combo[i]
+                set_distribution_parameter(
+                    params, name, combo[i], declared=param_names
+                )
             combo_str = ", ".join(
                 f"{name}={combo[i]}" for i, name in enumerate(param_names)
             )
@@ -1878,6 +1886,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     for param_name in integer_params:
                         if param_name in sim_params:
                             sim_params[param_name] = int(sim_params[param_name])
+                    sim_params = complete_distribution_aliases(sim_params)
 
                     for seed_idx in range(study.seeds_per_combination):
                         seed = random.randint(0, 2**31 - 1)
