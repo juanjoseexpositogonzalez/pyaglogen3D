@@ -96,9 +96,7 @@ def _on_surface(key: str, carrier: str, config: Any) -> dict[str, Any]:
     if carrier == "parameter_grid":
         return {"parameter_grid": {key: [config]}}
     if carrier == "base_parameters":
-        return {
-            "base_parameters": {"n_particles": 60, "target_df": 2.0, key: config}
-        }
+        return {"base_parameters": {"n_particles": 60, "target_df": 2.0, key: config}}
     return {
         "include_limiting_cases": True,
         "limiting_cases_config": {"theoretical_extremes": {key: [config]}},
@@ -118,7 +116,9 @@ def test_unknown_mode_is_refused_on_every_surface(
 ) -> None:
     """Twelve surfaces, one rule. Today ten of them answer 201."""
     resp = _post(
-        api_client, project, **_on_surface(key, carrier, {"mode": "lognormal", "value": 1.8})
+        api_client,
+        project,
+        **_on_surface(key, carrier, {"mode": "lognormal", "value": 1.8}),
     )
 
     assert resp.status_code == 400, (
@@ -147,7 +147,11 @@ def test_unknown_mode_is_refused_on_every_surface(
 )
 @pytest.mark.parametrize("key", ALL_KEYS)
 def test_out_of_range_is_refused(
-    api_client: APIClient, project: Project, key: str, label: str, config: dict[str, Any]
+    api_client: APIClient,
+    project: Project,
+    key: str,
+    label: str,
+    config: dict[str, Any],
 ) -> None:
     """R13.8. Three of these panic the worker with a non-Exception."""
     resp = _post(api_client, project, **_on_surface(key, "parameter_grid", config))
@@ -213,7 +217,9 @@ def test_the_key_cannot_be_added_by_update(
         format="json",
     )
 
-    assert resp.status_code == 400, f"PATCH slipped {key} past the allow-list: {resp.data}"
+    assert resp.status_code == 400, (
+        f"PATCH slipped {key} past the allow-list: {resp.data}"
+    )
 
 
 @pytest.mark.parametrize("key", ALL_KEYS)
@@ -235,9 +241,13 @@ def test_the_algorithm_cannot_be_moved_out_of_the_allow_list(
     )
 
 
-def test_an_unrelated_update_still_works(api_client: APIClient, project: Project) -> None:
+def test_an_unrelated_update_still_works(
+    api_client: APIClient, project: Project
+) -> None:
     """R13.12's last clause: a stored row stays editable in its other fields."""
-    created = _post(api_client, project, **_on_surface("kf_distribution", "parameter_grid", GOOD))
+    created = _post(
+        api_client, project, **_on_surface("kf_distribution", "parameter_grid", GOOD)
+    )
     assert created.status_code == 201, created.data
 
     resp = api_client.patch(
@@ -366,14 +376,46 @@ def test_the_std_over_mean_cap_follows_the_magnitude_not_the_spelling(
 @pytest.mark.parametrize(
     ("label", "grid", "limiting"),
     [
-        ("legacy spelling on a parity key", {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
+        (
+            "legacy spelling on a parity key",
+            {"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+            None,
+        ),
         ("unknown mode", {"target_kf_distribution": [{"mode": "lognormal"}]}, None),
-        ("legacy spelling on an engine key", {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]}, None),
-        ("over the std/mean cap", {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]}, None),
-        ("a bare object swept", {}, {"theoretical_extremes": {"kf_distribution": {"mode": "fixed", "value": 1.8}}}),
-        ("a non-numeric bound", {"target_kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]}, None),
-        ("a negative value", {"kf_distribution": [{"mode": "fixed", "value": -1.0}]}, None),
-        ("a non-object entry swept", {}, {"theoretical_extremes": {"dpo_distribution": ["1.8"]}}),
+        (
+            "legacy spelling on an engine key",
+            {"target_kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+            None,
+        ),
+        (
+            "over the std/mean cap",
+            {"dpo_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]},
+            None,
+        ),
+        (
+            "a bare object swept",
+            {},
+            {
+                "theoretical_extremes": {
+                    "kf_distribution": {"mode": "fixed", "value": 1.8}
+                }
+            },
+        ),
+        (
+            "a non-numeric bound",
+            {"target_kf_distribution": [{"mode": "uniform", "min": 0.5, "max": "3.0"}]},
+            None,
+        ),
+        (
+            "a negative value",
+            {"kf_distribution": [{"mode": "fixed", "value": -1.0}]},
+            None,
+        ),
+        (
+            "a non-object entry swept",
+            {},
+            {"theoretical_extremes": {"dpo_distribution": ["1.8"]}},
+        ),
     ],
 )
 @pytest.mark.parametrize("algorithm", (CONSUMES, "fracval"))
@@ -499,7 +541,9 @@ def test_a_row_stored_before_this_change_stays_editable(
         name="historical",
         base_algorithm="tunable",
         base_parameters={"n_particles": 60},
-        parameter_grid={"kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]},
+        parameter_grid={
+            "kf_distribution": [{"distribution_type": "fixed", "value": 1.3}]
+        },
         seeds_per_combination=1,
     )
 
@@ -536,3 +580,221 @@ def test_a_well_formed_config_is_accepted_where_it_is_consumed(
     study = ParametricStudy.objects.get(id=resp.data["id"])
     children = list(study.simulations.all())
     assert children, "accepted the study and created no child"
+
+
+@pytest.mark.parametrize(
+    ("label", "payload", "expected"),
+    [
+        # Counted by what answers them, not by position, because every
+        # positional count written here so far has been wrong. Six rows are
+        # answered by the allow-list; the rest are not, and not for one
+        # reason: the swept non-list is refused inside the R13 gate by
+        # collect_surfaces, the two legacy grid entries by the older grid
+        # loop, the two non-object carriers by the container guard before
+        # any of it, and the oversized sweep by the expansion preview.
+        (
+            "mode spelling in the grid",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "mode spelling in base_parameters",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "kf_distribution": {"mode": "nonsense", "value": 1.8},
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "legacy spelling in base_parameters",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "kf_distribution": {
+                        "distribution_type": "uniform",
+                        "min": 1.5,
+                        "max": 1.0,
+                    },
+                }
+            },
+            "only consumed by",
+        ),
+        # The key dimension, which the first version of this table missed:
+        # the legacy grid loop iterates _DISTRIBUTION_GRID_KEYS, which holds
+        # only the two parity keys, so an engine key answers scope first in
+        # the very carrier and spelling where kf_distribution does not.
+        (
+            "legacy spelling, engine key in the grid",
+            {
+                "parameter_grid": {
+                    "target_kf_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "legacy spelling, dpo key in the grid",
+            {
+                "parameter_grid": {
+                    "dpo_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
+            "only consumed by",
+        ),
+        (
+            "legacy spelling in a swept carrier",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "kf_distribution": [
+                            {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                        ]
+                    }
+                },
+            },
+            "only consumed by",
+        ),
+        # The exceptions. The first is the carrier's own shape. The other
+        # two are the legacy grid loop, which runs before the allow-list and
+        # skips only entries carrying `mode`, so in parameter_grid alone the
+        # precedence depends on the spelling.
+        (
+            "swept container that is not a list",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "kf_distribution": {"mode": "fixed", "value": 1.8}
+                    }
+                },
+            },
+            "must be a list",
+        ),
+        (
+            "legacy spelling in the grid",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [
+                        {"distribution_type": "uniform", "min": 1.5, "max": 1.0}
+                    ]
+                }
+            },
+            "must be <=",
+        ),
+        (
+            "legacy non-dict entry in the grid",
+            {"parameter_grid": {"kf_distribution": [1.3]}},
+            "must be a dict",
+        ),
+        # And the carrier's own container shape, which a judge measured
+        # after the fifth version of the sentence still called the swept
+        # carrier the only container that answers first. It is not.
+        ("grid that is not an object", {"parameter_grid": []}, "must be an object"),
+        # The expansion preview, which answers before either gate: a judge
+        # measured that moving it behind both left the whole suite green,
+        # so the paragraph claimed an order nothing watched.
+        (
+            "expansion preview outruns the allow-list",
+            {
+                "parameter_grid": {
+                    "target_df": [float(i) for i in range(1001)],
+                    "kf_distribution": [{"mode": "fixed", "value": 1.5}],
+                }
+            },
+            "exceeds the maximum",
+        ),
+        # Two ranks a judge reordered with the whole suite still at its
+        # exact baseline: which of the two gates answers, and which carrier
+        # the R13 gate reports when both are at fault. The spec claims
+        # neither, but an unpinned rank is how the last eight drafts went
+        # wrong, so they are rows now.
+        (
+            "the sintering gate answers before the distribution gate",
+            {
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "sintering_coeff": 0.8,
+                    "kf_distribution": {"mode": "fixed", "value": 1.8},
+                }
+            },
+            "does not consume sintering",
+        ),
+        (
+            "the grid carrier is reported before base_parameters",
+            {
+                "parameter_grid": {
+                    "kf_distribution": [{"mode": "nonsense", "value": 1.8}]
+                },
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "dpo_distribution": {"mode": "nonsense", "value": 1.0},
+                },
+            },
+            "parameter_grid.kf_distribution",
+        ),
+        # A judge measured that the two rows above pin only that the guard
+        # exists: their payloads carry no second problem, so `data.get(f)
+        # or {}` leaves the gates nothing to answer and the guard is the
+        # only refusal available at any position. This one carries both.
+        (
+            "non-object carrier beats a scope violation",
+            {
+                "parameter_grid": [],
+                "base_parameters": {
+                    "n_particles": 60,
+                    "target_df": 2.0,
+                    "target_kf": 1.3,
+                    "kf_distribution": {"mode": "fixed", "value": 1.8},
+                },
+            },
+            "must be an object",
+        ),
+        (
+            "base_parameters that is not an object",
+            {"base_parameters": []},
+            "must be an object",
+        ),
+    ],
+)
+def test_the_measured_precedence_between_scope_and_shape(
+    api_client: APIClient,
+    project: Project,
+    label: str,
+    payload: dict[str, Any],
+    expected: str,
+) -> None:
+    """The measured order, pinned here because the contract does not state it.
+
+    Earlier drafts of R11's precedence paragraph were false, each in a
+    dimension its author had not probed. The spec describes the order no
+    longer; this table is where it is measured, because a table fails when
+    the order changes and a paragraph goes quietly stale.
+
+    The dimensions that falsified a draft, all of them live here: the
+    carrier, the spelling, the key family (`_DISTRIBUTION_GRID_KEYS` holds
+    only the two parity keys), and the kind of malformation. In the grid,
+    `kf_distribution` in the legacy spelling is answered by the older loop
+    while the same key in the `mode` spelling, and any engine key, is
+    answered by the allow-list.
+    """
+    resp = _post(api_client, project, base_algorithm="fracval", **payload)
+
+    assert resp.status_code == 400, f"{label} was accepted: {resp.data}"
+    assert expected in str(resp.data), (
+        f"{label} answered with another precedence than R11 states: {resp.data}"
+    )
