@@ -560,3 +560,47 @@ def test_a_swept_extreme_of_two_spellings_keeps_the_base_engine_value(
     assert swept[0]["target_kf_distribution"] == BASE_KF, (
         "the sweep overwrote a spelling the same request declares"
     )
+
+
+def test_the_grid_wins_on_its_children_and_not_on_the_limiting_ones(
+    api_client: APIClient, user: User
+) -> None:
+    """GIVEN a grid and base_parameters declare the same magnitude, with limiting cases on.
+
+    R13.9 is scoped to the children the grid produces, and this pins both halves
+    of that sentence: the grid children carry the swept value under both names,
+    and the limiting-case children carry what `base_parameters` declared, which
+    is how this expansion has always built them - scalars included.
+
+    The scope was narrowed by decision of the person on 2026-10-29: the sentence
+    said "for every child" and the limiting ones never obeyed it, so the
+    contract was wider than the design.
+    """
+    project = Project.objects.create(name="scoped precedence", owner=user)
+    response = _post(
+        api_client,
+        project,
+        parameter_grid={"kf_distribution": [GRID_KF]},
+        base_parameters={**BASE, "target_kf_distribution": BASE_KF},
+        include_limiting_cases=True,
+    )
+
+    assert response.status_code == 201, response.data
+    grid_children, limiting_children = [], []
+    for child in _children(project):
+        params = child.parameters or {}
+        (grid_children if params.get("kf_distribution") == GRID_KF else limiting_children).append(
+            params
+        )
+
+    assert grid_children, "the grid produced no child"
+    for params in grid_children:
+        assert params["target_kf_distribution"] == GRID_KF, (
+            "a grid child did not carry the swept value to the engine"
+        )
+
+    assert limiting_children, "the study produced no limiting-case child"
+    for params in limiting_children:
+        assert params["target_kf_distribution"] == BASE_KF, (
+            "a limiting-case child did not keep what base_parameters declared"
+        )

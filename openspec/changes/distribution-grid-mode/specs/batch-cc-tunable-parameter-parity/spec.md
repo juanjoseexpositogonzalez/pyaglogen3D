@@ -536,7 +536,11 @@ simulation stuck in `RUNNING`.
 
 - GIVEN a study whose `base_parameters` declares `target_kf_distribution` and whose `parameter_grid` declares `kf_distribution`
 - WHEN its children are expanded
-- THEN the grid entry wins for every child, because the grid is what the study is sweeping
+- THEN the grid entry wins for every child **the grid produces**, because the grid is what the
+  study is sweeping
+- AND the children of the limiting cases are not among them: they are built from
+  `base_parameters` and keep its value under both names, which is how this expansion has always
+  built them
 - AND the same holds for every pair naming the same magnitude, in either direction: a grid entry under `kf_distribution` or `target_kf_distribution` beats either name in `base_parameters`, and likewise for `particle_radius_config` and `dpo_distribution`
 - AND that precedence is the same one R3 already fixes for the sintering equivalent
 
