@@ -11,7 +11,12 @@ import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
-import { consumesSintering, rejectsVariation, toSinteringConfig } from '@/lib/sinteringShape'
+import {
+  consumesDistribution,
+  consumesSintering,
+  rejectsVariation,
+  toSinteringConfig,
+} from '@/lib/sinteringShape'
 import { Callout } from '@/components/kit/Callout'
 
 const limitingGeometryOptions = [
@@ -111,12 +116,18 @@ algorithm: SimulationAlgorithm,
     options.push({ value: 'target_kf', label: 'Target kf' })
   }
 
-  // New batch-CC parameter grid options
-  options.push(
-    { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
-    { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
-    { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
-  )
+  // New batch-CC parameter grid options.
+  // R10.8: the two distribution keys are offered only where the worker reads
+  // them - `tunable_cc` alone. The other ten accepted them and read nothing,
+  // which the backend now refuses, so offering them here invited a 400 the
+  // batch page could not display.
+  if (consumesDistribution(algorithm)) {
+    options.push(
+      { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
+      { value: 'particle_radius_config', label: 'Particle radius (varies per run)' },
+    )
+  }
+  options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
 
   // R10.4: only the algorithms whose engine invocation receives sintering.
   // The backend answers 400 for the rest since T4, so offering it here
