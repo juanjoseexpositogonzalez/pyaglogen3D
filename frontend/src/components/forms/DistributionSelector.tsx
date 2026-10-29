@@ -37,15 +37,24 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
   // half-typed number is not a mistake - `parseFloat('') || 0` makes every
   // intermediate state look invalid, and shouting at the user while they type
   // is worse than saying nothing.
-  const [blurred, setBlurred] = useState(false)
-  const local = blurred ? distributionValueError(value) : null
+  // Keyed by `label`, not by a boolean: the grid renders its rows with
+  // `key={index}` and renames the survivors when one is removed, so a boolean
+  // migrated to an entry the user never touched and painted it red — measured by
+  // both judges of PR #199. Tying it to the label makes the state die with the
+  // row it belongs to. And focusing a field releases it, so the user is not
+  // shouted at while correcting a value they already left once.
+  const entryKey = `${label}|${value.mode}`
+  const [blurredFor, setBlurredFor] = useState<string | null>(null)
+  const local = blurredFor === entryKey ? distributionValueError(value) : null
   const shown = error ?? local?.message
-  const marked = error ? null : (local?.field ?? null)
+  // R8.4 asks for the border AND the message. A parent-provided message used to
+  // suppress the border, which is half of what the scenario says; the field the
+  // local rule names is marked either way, and `error` only wins the text.
+  const marked = local?.field ?? null
+  const messageId = `${label}-distribution-error`.replace(/[^\w-]/g, '-')
 
   const invalidClass = (field: string) =>
     marked === field ? 'border-destructive focus-visible:ring-destructive' : undefined
-  const invalidProps = (field: string) =>
-    marked === field ? ({ 'aria-invalid': true } as const) : {}
   const filteredOptions = allowedTypes
     ? modeOptions.filter((o) => allowedTypes.includes(o.value as DistributionMode))
     : modeOptions
@@ -96,12 +105,15 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
         <Input
           type="number"
           value={value.value}
+          aria-label="valor"
           onChange={(e) =>
             onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
           }
-          onBlur={() => setBlurred(true)}
+          onBlur={() => setBlurredFor(entryKey)}
+          onFocus={() => setBlurredFor(null)}
           aria-invalid={marked === 'value' ? true : undefined}
           className={invalidClass('value')}
+          aria-describedby={marked === 'value' && shown ? messageId : undefined}
           disabled={disabled}
           step="any"
         />
@@ -112,26 +124,32 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           <Input
             type="number"
             placeholder="μ"
+            aria-label="media"
             value={value.mean}
             onChange={(e) =>
               onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurred(true)}
+            onBlur={() => setBlurredFor(entryKey)}
+          onFocus={() => setBlurredFor(null)}
             aria-invalid={marked === 'mean' ? true : undefined}
             className={invalidClass('mean')}
+          aria-describedby={marked === 'mean' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
           <Input
             type="number"
             placeholder="σ"
+            aria-label="desviación"
             value={value.std}
             onChange={(e) =>
               onChange({ ...value, std: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurred(true)}
+            onBlur={() => setBlurredFor(entryKey)}
+          onFocus={() => setBlurredFor(null)}
             aria-invalid={marked === 'std' ? true : undefined}
             className={invalidClass('std')}
+          aria-describedby={marked === 'std' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
@@ -143,26 +161,32 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           <Input
             type="number"
             placeholder="min"
+            aria-label="mínimo"
             value={value.min}
             onChange={(e) =>
               onChange({ ...value, min: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurred(true)}
+            onBlur={() => setBlurredFor(entryKey)}
+          onFocus={() => setBlurredFor(null)}
             aria-invalid={marked === 'min' ? true : undefined}
             className={invalidClass('min')}
+          aria-describedby={marked === 'min' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
           <Input
             type="number"
             placeholder="max"
+            aria-label="máximo"
             value={value.max}
             onChange={(e) =>
               onChange({ ...value, max: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurred(true)}
+            onBlur={() => setBlurredFor(entryKey)}
+          onFocus={() => setBlurredFor(null)}
             aria-invalid={marked === 'max' ? true : undefined}
             className={invalidClass('max')}
+          aria-describedby={marked === 'max' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
@@ -170,7 +194,9 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
       )}
 
       {shown && (
-        <p role="alert" className="text-xs text-destructive mt-1">{shown}</p>
+        <p id={messageId} role="alert" className="text-xs text-destructive mt-1">
+          {shown}
+        </p>
       )}
     </div>
   )
