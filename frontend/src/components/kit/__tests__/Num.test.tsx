@@ -81,6 +81,39 @@ describe('Num', () => {
     expect(container.querySelector('.num')).not.toBeNull()
   })
 
+  it('tones a reading for the dark stage instead of the paper surface', () => {
+    // `VisualPanel` puts live readings on a near-black caption bar. The paper
+    // tone there measures 1.29:1 in the light theme; the on-dark tokens measure
+    // ~17:1 for the value and 9.4:1 for the unit. jsdom resolves no cascade, so
+    // this pins the tokens and the browser holds the measurement.
+    const { container } = render(<Num value={300} unit="nm" digits={1} onDark />)
+
+    const value = container.querySelector('.num')
+    const unit = container.querySelector('.num-unit')
+
+    expect(value?.classList.contains('text-ink-on-dark')).toBe(true)
+    expect(value?.classList.contains('text-ink')).toBe(false)
+    expect(unit?.classList.contains('text-ink-on-dark-faint')).toBe(true)
+  })
+
+  it('keeps the paper tone by default, so every other caller is untouched', () => {
+    const { container } = render(<Num value={300} unit="nm" digits={1} />)
+
+    const value = container.querySelector('.num')
+    const unit = container.querySelector('.num-unit')
+
+    expect(value?.classList.contains('text-ink')).toBe(true)
+    expect(value?.classList.contains('text-ink-on-dark')).toBe(false)
+    expect(unit?.classList.contains('text-ink-on-dark-faint')).toBe(false)
+  })
+
+  it('tones the uncertainty with the value it qualifies, not against it', () => {
+    const { container } = render(<Num value={2.53} sigma={0.04} digits={2} onDark />)
+
+    const sigma = container.querySelector('[aria-label="standard deviation"]')
+    expect(sigma?.classList.contains('text-ink-on-dark-faint')).toBe(true)
+  })
+
   it('omits the unit element entirely when there is no unit', () => {
     const { container } = render(<Num value={512} digits={0} />)
     expect(container.querySelector('.num-unit')).toBeNull()

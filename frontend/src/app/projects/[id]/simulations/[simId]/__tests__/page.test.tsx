@@ -1,11 +1,11 @@
 /**
- * Simulation detail migrated onto the design-system kit (issue #180, slice 1).
+ * Simulation detail migrated onto the design-system kit (issue #180).
  *
- * This slice is the header, the identity row and the headline readings. The 3D
- * viewer, the projections, the topology graph, the optical section, the
- * parameters table and the FRAKTAL dialog belong to slices 2 and 3 and are
- * stubbed here, so a failure in this file is about the header and never about a
- * neighbour.
+ * Slice 1 is the header, the identity row and the headline readings; slice 2 is
+ * the 3D stage and the values behind it. The projections, the topology graph,
+ * the optical section, the parameters table and the FRAKTAL dialog belong to
+ * slice 3 and are stubbed here, so a failure in this file is about the pieces
+ * this file owns and never about a neighbour.
  *
  * Asserted through what a user can perceive — headings, roles, accessible
  * names, hrefs and the rendered numbers — rather than through which components
@@ -21,6 +21,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseProject = vi.fn()
 const mockUseSimulation = vi.fn()
+const mockUseSimulationGeometry = vi.fn()
+const mockViewerProps = vi.fn()
 const mockRefetch = vi.fn()
 const mockPush = vi.fn()
 const mockExportCsv = vi.fn()
@@ -58,7 +60,7 @@ vi.mock('@/hooks/useProjects', () => ({
 
 vi.mock('@/hooks/useSimulations', () => ({
   useSimulation: () => mockUseSimulation(),
-  useSimulationGeometry: () => ({ data: undefined }),
+  useSimulationGeometry: () => mockUseSimulationGeometry(),
   useNeighborGraph: () => ({ data: null, isLoading: false }),
 }))
 
@@ -85,10 +87,15 @@ vi.mock('@/components/banners/UnitConventionBanner', () => ({
   UnitConventionBanner: () => React.createElement('div', {}, 'Unit convention changed'),
 }))
 
-// Neighbours owned by later slices, and by the shell. Stubbed so a three.js
-// canvas or a plotly chart cannot decide whether the header is correct.
+// Neighbours owned by later slices, and by the shell. Stubbed so a plotly chart
+// or a projection cannot decide whether this slice is correct. The 3D viewer
+// itself is stubbed too: this file asserts where it is mounted, what it is
+// handed and when it is replaced, not what three.js paints.
 vi.mock('@/components/viewer3d/AgglomerateViewer', () => ({
-  AgglomerateViewer: () => React.createElement('div', {}, 'viewer'),
+  AgglomerateViewer: (props: Record<string, unknown>) => {
+    mockViewerProps(props)
+    return React.createElement('div', {}, 'viewer')
+  },
 }))
 
 vi.mock('@/components/viewer3d/ViewerControls', () => ({
@@ -153,6 +160,37 @@ const simulation = (overrides: Record<string, unknown> = {}) => ({
 
 const renderPage = () => render(<SimulationDetailPage params={{ id: 'p1', simId: 's1' }} />)
 
+/**
+ * Two particles in dimensionless engine units. The record's 50 nm diameter
+ * makes the page scale them by 25, so every expected cell value below is
+ * arithmetic: 0.1 → 2.5 nm, -0.2 → -5.0 nm, radius 0.06 → 1.5 nm.
+ */
+const geometry = (overrides: Record<string, unknown> = {}) => ({
+  coordinates: [
+    [0.1, -0.2, 0.4],
+    [1, 2, 3],
+  ],
+  radii: [0.04, 0.06],
+  ...overrides,
+})
+
+type GeometryState = { isLoading?: boolean; isError?: boolean }
+
+const withGeometry = (data: unknown = geometry(), state: GeometryState = {}) =>
+  mockUseSimulationGeometry.mockReturnValue({
+    data,
+    isLoading: false,
+    isError: false,
+    ...state,
+  })
+
+/** `count` particles in dimensionless units, all on the x axis. */
+const manyParticles = (count: number) =>
+  geometry({
+    coordinates: Array.from({ length: count }, (_, i) => [i * 0.01, 0, 0]),
+    radii: Array.from({ length: count }, () => 0.04),
+  })
+
 const withSimulation = (overrides: Record<string, unknown> = {}) =>
   mockUseSimulation.mockReturnValue({
     data: simulation(overrides),
@@ -184,11 +222,26 @@ const cardNumbers = (label: string): string[] =>
 const pageHeader = (): HTMLElement =>
   screen.getByRole('heading', { level: 1 }).closest('header') as HTMLElement
 
+/** The 3D stage, reached from its own title so no other section can win. */
+const viewerPanel = (): HTMLElement =>
+  screen.getByRole('heading', { name: '3D Visualization' }).closest('section') as HTMLElement
+
+/** The numbers rendered inside the 3D stage, in document order. */
+const panelNumbers = (): string[] =>
+  Array.from(viewerPanel().querySelectorAll('.num')).map((node) => node.textContent ?? '')
+
 beforeEach(() => {
   vi.clearAllMocks()
   mockExportCsv.mockResolvedValue(new Blob(['a,b']))
   mockCancel.mockResolvedValue(undefined)
   mockDelete.mockResolvedValue(undefined)
+  // No geometry by default, and none of it in flight or failed: this record
+  // has no particle positions. That is the empty stage, not a blank canvas.
+  mockUseSimulationGeometry.mockReturnValue({
+    data: undefined,
+    isLoading: false,
+    isError: false,
+  })
   mockUseProject.mockReturnValue({
     data: { id: 'p1', name: 'Soot aggregates' },
     isLoading: false,
@@ -464,5 +517,246 @@ describe('the actions on the run', () => {
     fireEvent.click(screen.getByRole('button', { name: /analyze projections/i }))
 
     expect(mockPush).toHaveBeenCalledWith('/projects/p1/fraktal/batch?origin=simulation&sim_id=s1')
+  })
+})
+
+describe('the 3D stage and the values behind it', () => {
+  it('gives the scene a titled stage, not a bare canvas', () => {
+    withGeometry()
+    renderPage()
+
+    // A level-two heading, so the stage sits under the page title rather than
+    // competing with it, and the scene itself is on screen.
+    const heading = screen.getByRole('heading', { level: 2, name: '3D Visualization' })
+    expect(heading).toBeTruthy()
+    expect(screen.getByText('viewer')).toBeTruthy()
+  })
+
+  it('keeps the values control with the stage title, not loose above the canvas', () => {
+    withGeometry()
+    renderPage()
+
+    // The toggle belongs to the panel header: a control floating over an
+    // unlabelled canvas is the arrangement the kit's header slot exists to
+    // prevent.
+    const header = viewerPanel().querySelector('header')
+    expect(header).not.toBeNull()
+    expect(header?.textContent).toMatch(/3D Visualization/)
+    expect(header?.querySelector('button')?.textContent).toBe('Show values')
+  })
+
+  it('carries the count and the Rg of what is on the stage', () => {
+    withGeometry()
+    renderPage()
+
+    // Both numbers already exist on the page: two particles were handed to the
+    // canvas, and the record's Rg of 12 scales to 300 nm. The stage repeats
+    // them so the readings sit on the surface they describe — and the count is
+    // labelled by where it came from, because the header counts the record's
+    // `n_particles` (1,200 here) and two unlabelled counts would contradict
+    // each other on screen.
+    expect(panelNumbers()).toContain('2')
+    expect(panelNumbers()).toContain('300.0')
+    expect(viewerPanel().textContent).toMatch(/in geometry/i)
+    expect(viewerPanel().textContent).toMatch(/nm/)
+  })
+
+  it('swaps the scene for the particles behind it, in place', () => {
+    withGeometry()
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The table takes the canvas's position: the stage, its title and its
+    // frame stay, and only the thing being inspected changes.
+    expect(screen.queryByText('viewer')).toBeNull()
+    const table = screen.getByRole('table')
+    expect(table).toBeTruthy()
+    expect(viewerPanel().contains(table)).toBe(true)
+    expect(screen.getByRole('heading', { name: '3D Visualization' })).toBeTruthy()
+  })
+
+  it('renames the control and reports its state, instead of hiding what it did', () => {
+    withGeometry()
+    renderPage()
+
+    const toggle = screen.getByRole('button', { name: 'Show values' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+
+    fireEvent.click(toggle)
+
+    const back = screen.getByRole('button', { name: 'Show chart' })
+    expect(back.getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('tabulates every particle as number, position and radius, in nanometres', () => {
+    withGeometry()
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // One header row plus one row per particle the page handed to the viewer —
+    // not the 1,200 the record declares, because the table has to match what a
+    // reader would otherwise be looking at.
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+
+    const headers = screen.getAllByRole('columnheader').map((node) => node.textContent)
+    expect(headers).toEqual(['#', 'x', 'y', 'z', 'radius'])
+
+    // Scaled with the record's own factor: 0.1 → 2.5 nm, -0.2 → -5.0 nm,
+    // radius 0.06 → 1.5 nm. Raw engine units here would be a unit lie.
+    const cells = screen.getAllByRole('cell').map((node) => node.textContent ?? '')
+    expect(cells.some((text) => text.includes('2.5'))).toBe(true)
+    expect(cells.some((text) => text.includes('-5.0'))).toBe(true)
+    expect(cells.some((text) => text.includes('75.0'))).toBe(true)
+    expect(cells.some((text) => text.includes('1.5'))).toBe(true)
+    expect(viewerPanel().textContent).toMatch(/nm/)
+  })
+
+  it('takes the table from the primitive, caption and scroll region included', () => {
+    withGeometry()
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The page configures the table and never assembles one itself, so the
+    // caption, the row set and the keyboard-reachable scroll region are the
+    // pieces the primitive wires on the page's behalf.
+    const caption = /particles behind this view/i
+    expect(screen.getByText(caption)).toBeTruthy()
+    const region = screen.getByRole('region')
+    expect(region.getAttribute('tabindex')).toBe('0')
+    expect(region.getAttribute('aria-label')).toMatch(caption)
+    expect(region.contains(screen.getByRole('table'))).toBe(true)
+  })
+
+  it('says the stage is empty instead of drawing an empty canvas', () => {
+    renderPage()
+
+    // No geometry means no particles to draw. A black rectangle with nothing in
+    // it reads as a broken renderer, not as a run with no positions.
+    expect(screen.queryByText('viewer')).toBeNull()
+    const stage = viewerPanel()
+    expect(stage.textContent).toMatch(/nothing to draw/i)
+    expect(stage.textContent).toMatch(/particle positions/i)
+  })
+
+  it('offers no values table when there are no values to show', () => {
+    renderPage()
+
+    // The control is only an offer: an empty table would cost a click to learn
+    // nothing.
+    expect(screen.queryByRole('button', { name: 'Show values' })).toBeNull()
+    expect(screen.queryByRole('table')).toBeNull()
+  })
+
+  it('sits the values table on paper instead of on the dark canvas', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The stage is near-black in both themes, so cells painted in `--ink`
+    // measured 1.29:1 there and the caption 3.3:1 — under AA, for the exact
+    // reader the table exists for. `DataTable` is correct on a paper surface;
+    // the surface is what the page owes it.
+    const table = screen.getByRole('table')
+    const surface = table.closest('.bg-surface-strong')
+    expect(surface).not.toBeNull()
+    expect(viewerPanel().contains(surface)).toBe(true)
+    // Still inside the stage: the frame, the title and the readings stay.
+    expect(viewerPanel().contains(table)).toBe(true)
+  })
+
+  it('leaves the last row of the table above the readings bar', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // The caption bar is absolute inside the stage: ~35px tall, 12px off the
+    // bottom edge. A table allowed to fill the stage scrolls its last row under
+    // the bar, so the cap has to leave that room — and the bar's own backdrop
+    // stays dark, which is the contrast the readings were toned for.
+    const stage = viewerPanel().querySelector('.bg-visual') as HTMLElement
+    const region = screen.getByRole('region')
+    const stageHeight = Number.parseFloat(stage.style.height)
+    const tableHeight = Number.parseFloat(region.style.maxHeight)
+
+    expect(stageHeight).toBe(600)
+    expect(tableHeight).toBeLessThan(stageHeight)
+    expect(stageHeight - tableHeight).toBeGreaterThanOrEqual(40)
+  })
+
+  it('caps the rows it paints and says in the caption what it left out', () => {
+    // The serializer accepts up to 100,000 particles; painting them all stalls
+    // the page. A bounded head is fine, a silent one is not: the caption is the
+    // only thing that says the table is not the whole run.
+    withGeometry(manyParticles(600))
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // one header row plus the cap
+    expect(screen.getAllByRole('row')).toHaveLength(501)
+    expect(screen.getByText(/first 500 of 600 particles/i)).toBeTruthy()
+  })
+
+  it('does not claim a truncation that did not happen', () => {
+    withGeometry()
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    expect(viewerPanel().textContent).not.toMatch(/first \d+ of/i)
+    expect(screen.getAllByRole('row')).toHaveLength(3)
+  })
+
+  it('says the positions are still arriving instead of showing an empty stage', () => {
+    // Nothing has failed and nothing is missing: the payload is in flight, and
+    // "nothing to draw" would be a claim about the run rather than about the
+    // request.
+    withGeometry(undefined, { isLoading: true })
+    renderPage()
+
+    const stage = viewerPanel()
+    expect(stage.textContent).toMatch(/reading particle positions/i)
+    expect(stage.textContent).not.toMatch(/nothing to draw/i)
+    expect(screen.queryByText('viewer')).toBeNull()
+  })
+
+  it('reports a geometry failure as a notice, not as an empty stage', () => {
+    withGeometry(undefined, { isError: true })
+    renderPage()
+
+    const notice = screen.getByRole('alert')
+    expect(notice.textContent).toMatch(/particle positions/i)
+    expect(notice.textContent).toMatch(/could not be loaded/i)
+    expect(viewerPanel().textContent).not.toMatch(/nothing to draw/i)
+  })
+
+  it('hands the viewer the geometry scaled to nm and the record principal axes', () => {
+    withGeometry()
+    renderPage()
+
+    const props = mockViewerProps.mock.calls.at(-1)?.[0] as Record<string, unknown>
+    const coordinates = props.coordinates as number[][]
+    const radii = props.radii as number[]
+
+    // The page exports `principalAxes` so the stage's render-prop body can use
+    // it; without this witness that refactor is invisible to the suite.
+    expect(coordinates).toHaveLength(2)
+    expect(coordinates[0].map((n) => Number(n.toFixed(6)))).toEqual([2.5, -5, 10])
+    expect(coordinates[1]).toEqual([25, 50, 75])
+    expect(radii.map((r) => Number(r.toFixed(6)))).toEqual([1, 1.5])
+    expect(props.principalAxes).toEqual(simulation().metrics.principal_axes)
+  })
+
+  it('reads the caption bar in the tone the dark stage provides', () => {
+    withGeometry()
+    renderPage()
+
+    // The bar is glass over a near-black canvas: paper ink there measured
+    // 1.29:1. The tokens are pinned here; the ratio is measured in a browser.
+    const stage = viewerPanel()
+    expect(stage.querySelector('.num.text-ink-on-dark')).not.toBeNull()
+    expect(stage.querySelector('.num-unit.text-ink-on-dark-faint')).not.toBeNull()
+    expect(stage.querySelector('.num.text-ink')).toBeNull()
   })
 })
