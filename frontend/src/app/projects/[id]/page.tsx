@@ -39,7 +39,11 @@ export default function ProjectDetailPage({
   const { data: project, isLoading: projectLoading, error: projectError } = useProject(id)
   const { data: simulations, isLoading: simulationsLoading, error: simulationsError, refetch } = useSimulations(id)
   const { data: fraktalAnalyses, isLoading: fraktalLoading, error: fraktalError, refetch: refetchFraktal } = useFraktalAnalyses(id)
-  const { data: fraktalBatches, isLoading: batchesLoading } = useFraktalBatches(id)
+  const {
+    data: fraktalBatches,
+    isLoading: batchesLoading,
+    error: batchesError,
+  } = useFraktalBatches(id)
   const deleteFraktal = useDeleteFraktalAnalysis(id)
 
   const [actionLoading, setActionLoading] = useState<string | null>(null)
@@ -251,6 +255,7 @@ export default function ProjectDetailPage({
           label="Simulations"
           value={project.simulation_count}
           digits={0}
+          detail="Every run, batch studies included"
         />
         <MetricCard
           kind="exact"
@@ -264,8 +269,9 @@ export default function ProjectDetailPage({
 
         {/* Simulations List */}
         <Panel
+          className="mt-4"
           title="Simulations"
-          hint="Every run in this project, with the readings it produced. Tick two or more to compare them."
+          hint="The single runs in this project, with the readings they produced. Batch studies are counted above and listed on their own page."
           action={
             simulationList.length > 0 &&
             (deleteAllSimsConfirm ? (
@@ -304,7 +310,7 @@ export default function ProjectDetailPage({
         >
           {simulationsLoading ? (
             <LoadingScreen message="Loading simulations..." />
-          ) : simulationsError ? (
+          ) : simulationsError && !simulations ? (
             <Callout tone="danger" title="Failed to load simulations">
               The request did not come back. This is not an empty project: the runs are still
               there, this page could not read them.
@@ -329,6 +335,10 @@ export default function ProjectDetailPage({
               {simulationList.map((sim) => {
                 const isSelected = selectedIds.has(sim.id)
                 const capReached = !isSelected && selectedIds.size >= MAX_COMPARE_SIMS
+                // One name per run, used by the row and by every control in it:
+                // two runs of the same algorithm are the normal case here, so
+                // naming a control after the algorithm names nothing.
+                const runLabel = sim.name?.trim() || sim.algorithm.toUpperCase()
                 return (
                 <Link
                   key={sim.id}
@@ -353,7 +363,7 @@ export default function ProjectDetailPage({
                             }}
                           >
                             <Checkbox
-                              aria-label={`Select ${sim.algorithm} simulation for comparison`}
+                              aria-label={`Select ${runLabel} for comparison`}
                               checked={isSelected}
                               disabled={capReached}
                               title={capReached ? `Maximum ${MAX_COMPARE_SIMS} simulations at once` : undefined}
@@ -368,7 +378,7 @@ export default function ProjectDetailPage({
                                   fall back to the algorithm code only for legacy
                                   records that predate the name field.
                                 */}
-                                {sim.name?.trim() || sim.algorithm.toUpperCase()}
+                                {runLabel}
                               </span>
                               <Badge variant="outline" className="text-xs">
                                 {sim.algorithm.toUpperCase()}
@@ -421,6 +431,7 @@ export default function ProjectDetailPage({
                               <Button
                                 variant="outline"
                                 size="sm"
+                                aria-label={`Cancel ${runLabel}`}
                                 onClick={(e) => handleCancel(sim.id, e)}
                                 disabled={actionLoading === sim.id}
                               >
@@ -432,6 +443,7 @@ export default function ProjectDetailPage({
                                 <Button
                                   variant="destructive"
                                   size="sm"
+                                  aria-label={`Yes, delete ${runLabel}`}
                                   onClick={(e) => handleDelete(sim.id, e)}
                                   disabled={actionLoading === sim.id}
                                 >
@@ -440,6 +452,7 @@ export default function ProjectDetailPage({
                                 <Button
                                   variant="outline"
                                   size="sm"
+                                  aria-label={`No, keep ${runLabel}`}
                                   onClick={(e) => {
                                     e.preventDefault()
                                     e.stopPropagation()
@@ -453,6 +466,7 @@ export default function ProjectDetailPage({
                               <Button
                                 variant="outline"
                                 size="sm"
+                                aria-label={`Delete ${runLabel}`}
                                 onClick={(e) => {
                                   e.preventDefault()
                                   e.stopPropagation()
@@ -475,6 +489,7 @@ export default function ProjectDetailPage({
 
         {/* FRAKTAL Analyses List */}
         <Panel
+          className="mt-4"
           title="FRAKTAL analyses"
           hint="Recovered fractal properties from generated images or uploaded micrographs."
           action={
@@ -515,7 +530,7 @@ export default function ProjectDetailPage({
         >
           {fraktalLoading ? (
             <LoadingScreen message="Loading analyses..." />
-          ) : fraktalError ? (
+          ) : fraktalError && !fraktalAnalyses ? (
             <Callout tone="danger" title="Failed to load FRAKTAL analyses">
               The request did not come back. This is not an empty project: the analyses are still
               there, this page could not read them.
@@ -629,6 +644,7 @@ export default function ProjectDetailPage({
           projectId={id}
           batches={fraktalBatches?.results}
           isLoading={batchesLoading}
+          error={batchesError}
         />
 
       {/* Sticky Compare bar — only when ≥2 sims selected (R1/S1.3). */}

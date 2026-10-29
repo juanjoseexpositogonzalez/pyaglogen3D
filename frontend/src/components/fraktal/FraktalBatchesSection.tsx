@@ -5,6 +5,7 @@ import { Layers, Plus } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Callout } from '@/components/kit/Callout'
 import { EmptyState } from '@/components/kit/EmptyState'
 import { Num } from '@/components/kit/Num'
 import { Panel } from '@/components/kit/Panel'
@@ -27,21 +28,33 @@ interface FraktalBatchesSectionProps {
   projectId: string
   batches: FraktalBatchListItem[] | undefined
   isLoading: boolean
+  /**
+   * A failed request. Required, and deliberately not folded into `batches`:
+   * without it a 5xx and a project with no batches render the same sentence,
+   * and that sentence tells the user their results do not exist.
+   */
+  error?: unknown
 }
 
 export function FraktalBatchesSection({
   projectId,
   batches,
   isLoading,
+  error,
 }: FraktalBatchesSectionProps) {
   return (
     <Panel
       title="FRAKTAL batches"
       hint="Image sets analysed together, with the aggregate statistics of the surviving images."
-      className="mt-8"
+      className="mt-4"
     >
       {isLoading ? (
         <LoadingScreen message="Loading batches..." />
+      ) : error && !batches ? (
+        <Callout tone="danger" title="Failed to load FRAKTAL batches">
+          The request did not come back. This is not an empty project: the batches are still
+          there, this page could not read them.
+        </Callout>
       ) : !batches || batches.length === 0 ? (
         <EmptyState
           icon={Layers}

@@ -119,6 +119,22 @@ describe('<FraktalBatchesSection />', () => {
     )
   })
 
+  it('reports a failed request instead of saying the project has no batches', () => {
+    render(
+      <FraktalBatchesSection
+        projectId="proj-1"
+        batches={undefined}
+        isLoading={false}
+        error={new Error('boom')}
+      />
+    )
+
+    // A 5xx and a project with no batches must not render the same sentence:
+    // "No FRAKTAL batches yet" tells a researcher their results are gone.
+    expect(screen.getByRole('alert').textContent).toMatch(/failed to load fraktal batches/i)
+    expect(screen.queryByText(/no fraktal batches yet/i)).toBeNull()
+  })
+
   it('renders the section heading', () => {
     render(
       <FraktalBatchesSection

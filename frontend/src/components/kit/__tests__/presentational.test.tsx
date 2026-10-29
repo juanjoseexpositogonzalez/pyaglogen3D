@@ -146,6 +146,23 @@ describe('Panel', () => {
     )
     expect(screen.queryByRole('heading')).toBeNull()
   })
+
+  it('stacks its title and action on one column instead of squeezing the hint', () => {
+    // Measured in the browser, not asserted here: with the header in a single
+    // row, a panel that carries an action left the hint a ~90px column on a
+    // 320px viewport — ten lines of three words each, next to a "Delete All"
+    // button. jsdom has no layout, so this guards the classes that allow the
+    // header to stack; the measurement lives in the visual evidence for #174.
+    const { container } = render(
+      <Panel title="Simulations" hint="Every run in this project." action={<button>Delete All</button>}>
+        <p>body</p>
+      </Panel>,
+    )
+    const header = container.querySelector('section > header')
+    expect(header, 'the panel header is missing').not.toBeNull()
+    expect(header?.className).toContain('flex-col')
+    expect(header?.className).toContain('sm:flex-row')
+  })
 })
 
 describe('PageHeader', () => {
@@ -153,6 +170,23 @@ describe('PageHeader', () => {
     render(<PageHeader eyebrow="SIMULATION" title="Soot aggregate 12" />)
     expect(screen.getByRole('heading', { level: 1, name: 'Soot aggregate 12' })).toBeTruthy()
     expect(screen.getByText('SIMULATION')).toBeTruthy()
+  })
+
+  it('lets the action cluster narrow instead of widening the header', () => {
+    // Measured with a real browser, not asserted here: the project detail's
+    // four action buttons forced the header to 718px on a 320px viewport,
+    // because the cluster carried `shrink-0` — and a flex item that refuses
+    // to shrink never gets narrow enough to wrap its own children, however
+    // much `flex-wrap` it declares. jsdom has no layout, so this guards the
+    // two classes that caused it; the pixel measurement lives in the visual
+    // evidence for #174.
+    const { container } = render(
+      <PageHeader title="Soot aggregate 12" actions={<button>Import aggregate</button>} />,
+    )
+    const cluster = container.querySelector('header > div:last-child')
+    expect(cluster, 'the action cluster is missing').not.toBeNull()
+    expect(cluster?.className).not.toContain('shrink-0')
+    expect(cluster?.className).toContain('flex-wrap')
   })
 })
 
