@@ -192,9 +192,9 @@ Medido en este clon, porque la intuición engaña:
 | **Escrituras por API**: `gh issue close/edit/comment`, `gh pr edit/merge`, `gh api -X …`, etiquetas | **Sí** |
 
 **El síntoma engaña por eso**: con `jjeg1979` activa, una escritura por API falla con mensajes que
-no nombran la cuenta — `does not have the correct permissions`, `403 Must have admin rights`,
-`perms=false` al consultar el repo — mientras el push normal sigue funcionando. Depurar el comando
-es perder el tiempo: es la cuenta.
+no nombran la cuenta — `does not have the correct permissions`, `403 Must have admin rights`, o
+`gh api repos/<owner>/<repo> --jq .permissions.push` devolviendo **`false`** — mientras el push por
+SSH sigue funcionando. Depurar el comando es perder el tiempo: es la cuenta.
 
 Y hay una segunda trampa, que mordió al escribir esta nota: **`git push -u https://github.com/…`
 deja esa rama siguiendo un remoto HTTPS**, y desde entonces esa rama sí pasa por `gh`. Se ve con
@@ -212,9 +212,17 @@ Arreglo **sin tocar la cuenta activa** — el clon es compartido con otras sesio
 cambia el contexto a ellas. Se pone el token de la cuenta correcta **sólo para ese comando**:
 
 ```bash
-GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh issue close <n> --reason completed
-GH_TOKEN=$(gh auth token --user juanjoseexpositogonzalez) gh pr merge <n> --merge --delete-branch
+TOKEN=$(gh auth token --user juanjoseexpositogonzalez) || { echo "sin token para esa cuenta"; exit 1; }
+GH_TOKEN=$TOKEN gh api user --jq .login      # debe imprimir la cuenta dueña, no la activa
+GH_TOKEN=$TOKEN gh issue close <n> --reason completed
+GH_TOKEN=$TOKEN gh pr merge <n> --merge --delete-branch
 ```
+
+**La comprobación de identidad no es ceremonia.** Si `gh auth token --user …` no encuentra token
+—cuenta mal escrita, llavero caído—, la sustitución devuelve **vacío**, y `gh` trata un `GH_TOKEN`
+vacío como no puesto: **cae en la cuenta activa y la escritura se ejecuta igual**, con la identidad
+equivocada y sin avisar. Medido: con una cuenta inexistente, `gh api user` respondió `jjeg1979`. Por
+eso el `|| exit 1` y el `gh api user` antes de escribir.
 
 Y si de verdad hace falta cambiar la activa (`gh auth switch --user juanjoseexpositogonzalez`),
 **avisar antes por intercom**: la configuración de `gh` no es por repositorio.
