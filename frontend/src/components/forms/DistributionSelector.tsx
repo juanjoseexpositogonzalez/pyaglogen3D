@@ -1,9 +1,11 @@
 'use client'
 
+import { useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import type { DistributionMode, DistributionValue } from '@/lib/types'
+import { distributionValueError } from '@/lib/distributionShape'
 
 // Re-export for convenience — consumers can import from here or from types
 export type { DistributionMode, DistributionValue }
@@ -31,6 +33,19 @@ const modeOptions = [
  * distribution configuration.
  */
 export function DistributionSelector({ label, value, onChange, disabled, allowedTypes, error }: Props) {
+  // R8.4: the field reports itself when it loses focus. Until then an empty or
+  // half-typed number is not a mistake - `parseFloat('') || 0` makes every
+  // intermediate state look invalid, and shouting at the user while they type
+  // is worse than saying nothing.
+  const [blurred, setBlurred] = useState(false)
+  const local = blurred ? distributionValueError(value) : null
+  const shown = error ?? local?.message
+  const marked = error ? null : (local?.field ?? null)
+
+  const invalidClass = (field: string) =>
+    marked === field ? 'border-destructive focus-visible:ring-destructive' : undefined
+  const invalidProps = (field: string) =>
+    marked === field ? ({ 'aria-invalid': true } as const) : {}
   const filteredOptions = allowedTypes
     ? modeOptions.filter((o) => allowedTypes.includes(o.value as DistributionMode))
     : modeOptions
@@ -84,6 +99,9 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           onChange={(e) =>
             onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
           }
+          onBlur={() => setBlurred(true)}
+          aria-invalid={marked === 'value' ? true : undefined}
+          className={invalidClass('value')}
           disabled={disabled}
           step="any"
         />
@@ -98,6 +116,9 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurred(true)}
+            aria-invalid={marked === 'mean' ? true : undefined}
+            className={invalidClass('mean')}
             disabled={disabled}
             step="any"
           />
@@ -108,6 +129,9 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, std: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurred(true)}
+            aria-invalid={marked === 'std' ? true : undefined}
+            className={invalidClass('std')}
             disabled={disabled}
             step="any"
           />
@@ -123,6 +147,9 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, min: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurred(true)}
+            aria-invalid={marked === 'min' ? true : undefined}
+            className={invalidClass('min')}
             disabled={disabled}
             step="any"
           />
@@ -133,14 +160,17 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, max: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurred(true)}
+            aria-invalid={marked === 'max' ? true : undefined}
+            className={invalidClass('max')}
             disabled={disabled}
             step="any"
           />
         </div>
       )}
 
-      {error && (
-        <p role="alert" className="text-xs text-destructive mt-1">{error}</p>
+      {shown && (
+        <p role="alert" className="text-xs text-destructive mt-1">{shown}</p>
       )}
     </div>
   )
