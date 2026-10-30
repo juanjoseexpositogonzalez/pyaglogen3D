@@ -1842,14 +1842,6 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 simulations_created.append(sim)
                 study.simulations.add(sim)
 
-                # Queue the task
-                try:
-                    result = run_simulation_task.delay(str(sim.id))
-                    sim.task_id = result.id
-                    sim.save(update_fields=["task_id"])
-                except Exception as e:
-                    logger.warning(f"Failed to queue simulation {sim.id}: {e}")
-
         # 1. Regular grid combinations
         for combo in combinations:
             params = dict(study.base_parameters)
@@ -1907,12 +1899,17 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         simulations_created.append(sim)
                         study.simulations.add(sim)
 
-                        try:
-                            result = run_simulation_task.delay(str(sim.id))
-                            sim.task_id = result.id
-                            sim.save(update_fields=["task_id"])
-                        except Exception as e:
-                            logger.warning(f"Failed to queue simulation {sim.id}: {e}")
+        # Dispatch only once every child exists and is linked. The study settles
+        # when its last child finishes, and dispatching per child let the first
+        # one finish while the endpoint was still creating siblings: a study
+        # was closed with one of three children created (measured, #152).
+        for sim in simulations_created:
+            try:
+                result = run_simulation_task.delay(str(sim.id))
+                sim.task_id = result.id
+                sim.save(update_fields=["task_id"])
+            except Exception as e:
+                logger.warning(f"Failed to queue simulation {sim.id}: {e}")
 
         logger.info(
             f"Created parametric study {study.id} with {len(simulations_created)} simulations"
@@ -2000,7 +1997,10 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "base_algorithm": study.base_algorithm,
                 "base_parameters": study.base_parameters,
                 "parameter_grid": study.parameter_grid,
-                "status": "completed" if running == 0 else "running",
+                # The study now settles authoritatively (#152); reporting the
+                # computed guess here made two endpoints disagree about the
+                # same study (measured: field "failed", this "completed").
+                "status": study.status,
                 "progress": {
                     "total": total,
                     "completed": completed,

@@ -172,16 +172,20 @@ def create_parametric_study_handler(
                 status=SimulationStatus.QUEUED,
             )
             simulations_created.append(sim)
+            # Linked as it is created, and dispatched only below: a child that
+            # finished before its siblings were linked settled the study on a
+            # partial set (#152).
+            study.simulations.add(sim)
 
-            # Queue Celery task
-            task = run_simulation_task.delay(str(sim.id))
-            sim.task_id = task.id
-            sim.save(update_fields=["task_id"])
-
-    # Link simulations to study
-    study.simulations.add(*simulations_created)
+    # Running before dispatch, never after: settling when the last child
+    # finishes would otherwise be overwritten by this save.
     study.status = SimulationStatus.RUNNING
     study.save(update_fields=["status"])
+
+    for sim in simulations_created:
+        task = run_simulation_task.delay(str(sim.id))
+        sim.task_id = task.id
+        sim.save(update_fields=["task_id"])
 
     return {
         "status": "running",
