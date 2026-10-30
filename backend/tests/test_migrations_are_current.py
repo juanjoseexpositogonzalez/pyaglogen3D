@@ -77,9 +77,7 @@ def test_the_migration_does_not_change_anything_the_database_sees(
 
     loader = MigrationLoader(None, ignore_no_migrations=True)
     node = (app, name)
-    parents = tuple(
-        sorted(parent.key for parent in loader.graph.node_map[node].parents)
-    )
+    parents = tuple(sorted(parent.key for parent in loader.graph.node_map[node].parents))
     before = loader.project_state(parents)
     after = loader.project_state([node])
 
