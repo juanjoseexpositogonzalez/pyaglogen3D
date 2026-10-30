@@ -28,7 +28,7 @@ docs/, scripts/      # Documentación y utilidades
 ```bash
 cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo test -p aglogen-engine --release
 cd aglogen_core && PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1 cargo check -p aglogen-python
-cd backend && pytest && ruff check && mypy .
+cd backend && python manage.py makemigrations --check --dry-run && pytest && ruff check && mypy .
 cd frontend && npm test && npm run lint && npm run type-check
 ```
 
