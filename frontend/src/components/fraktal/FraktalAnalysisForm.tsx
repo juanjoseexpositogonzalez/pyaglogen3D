@@ -7,7 +7,9 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { Num } from '@/components/kit/Num'
+import { Panel } from '@/components/kit/Panel'
 import type {
   FraktalModel,
   FraktalSourceType,
@@ -95,6 +97,32 @@ const defaultParams: FormParams = {
   scaleBarNm: 100,      // Default: 100nm scale bar
 }
 
+/**
+ * The create-analysis form, on the design-system kit (issue #176, slice 1).
+ *
+ * One `Panel` per group of parameters, in the order the analysis reads them:
+ * what it is called, where the image comes from, which model runs, how the
+ * scale is calibrated, the model's own parameters, then segmentation. Each
+ * group is a `<section>` headed by an `h2`, and that is what puts the six of
+ * them in the heading outline under the page's only `h1`.
+ *
+ * They are not landmarks. A `<section>` without an accessible name is not one,
+ * and `Panel` does not name its own, so this file makes no claim about regions:
+ * the guarantee on offer is the heading outline, which is what the test checks.
+ *
+ * Every reading on screen goes through `Num`, including the four that used to
+ * be interpolated strings ("Azimuth: 90°"). A number and its unit in one string
+ * cannot be aligned down a column and cannot be read apart from it.
+ *
+ * The two tinted boxes this form used to paint in blue and amber are `Callout`s
+ * now, and the difference matters beyond looks: the scale-bar helper is an
+ * `info` note and the auto-calibrate switch is a `warning` one, so a reader on
+ * a greyscale print or with a different colour axis still sees which is which.
+ *
+ * Nothing about what the form *does* changed with the port. Same fields, same
+ * defaults, same client-side checks, same payload — a shape the backend
+ * validates field by field, and one this file does not get to redefine.
+ */
 export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: FraktalAnalysisFormProps) {
   const [name, setName] = useState<string>('')
   const [params, setParams] = useState<FormParams>(defaultParams)
@@ -202,178 +230,176 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
   const completedSimulations = simulations.filter((s) => s.status === 'completed')
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-4">
       {/* Analysis Name */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Analysis Name</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            <Label htmlFor="name">Name (optional)</Label>
-            <Input
-              id="name"
-              type="text"
-              placeholder="Leave empty for auto-generated name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Custom name for this analysis. If left empty, a name will be auto-generated (e.g., "FRAKTAL Voxel 2018 - 2024-02-20 10:30").
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+      <Panel title="Analysis Name">
+        <div className="space-y-2">
+          <Label htmlFor="name">Name (optional)</Label>
+          <Input
+            id="name"
+            type="text"
+            placeholder="Leave empty for auto-generated name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+          />
+          <p className="hint">
+            Custom name for this analysis. If left empty, a name will be auto-generated (e.g., &quot;FRAKTAL Voxel 2018 - 2024-02-20 10:30&quot;).
+          </p>
+        </div>
+      </Panel>
 
       {/* Source Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Image Source</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Select
-            value={params.source_type}
-            onChange={(e) => updateParam('source_type', e.target.value as FraktalSourceType)}
-            options={sourceOptions}
-          />
+      <Panel title="Image Source" bodyClassName="space-y-4">
+        {/* Named, because the panel title is not the control's label: an
+            unnamed combobox announces as "combobox" and nothing else. */}
+        <Select
+          aria-label="Image source"
+          value={params.source_type}
+          onChange={(e) => updateParam('source_type', e.target.value as FraktalSourceType)}
+          options={sourceOptions}
+        />
 
-          {params.source_type === 'uploaded_image' ? (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Upload Image</Label>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/png,image/jpeg,image/tiff,image/bmp"
-                  onChange={handleFileChange}
-                  className="hidden"
-                />
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => fileInputRef.current?.click()}
-                  className="w-full"
-                >
-                  {imageFile ? imageFile.name : 'Select Image File'}
-                </Button>
-              </div>
-              {imageFile && (
-                imagePreview ? (
-                  <div className="relative aspect-square w-full max-w-xs mx-auto border rounded-lg overflow-hidden">
-                    <img
-                      src={imagePreview}
-                      alt="Preview"
-                      className="object-contain w-full h-full"
-                    />
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center p-8 max-w-xs mx-auto border-2 border-dashed rounded-md bg-muted/30">
-                    <FileImage className="h-12 w-12 text-muted-foreground mb-2" />
-                    <p className="text-sm text-muted-foreground font-medium truncate max-w-full">
-                      {imageFile.name}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Preview not available for{' '}
-                      {imageFile.type.split('/')[1]?.toUpperCase() || 'this format'}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      ({(imageFile.size / 1024).toFixed(1)} KB)
-                    </p>
-                  </div>
-                )
-              )}
-              <p className="text-xs text-muted-foreground">
-                Supported formats: PNG, JPEG, TIFF, BMP. Grayscale images work best.
-              </p>
+        {params.source_type === 'uploaded_image' ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="image_file">Upload Image</Label>
+              <input
+                id="image_file"
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/tiff,image/bmp"
+                onChange={handleFileChange}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => fileInputRef.current?.click()}
+                className="w-full"
+              >
+                {imageFile ? imageFile.name : 'Select Image File'}
+              </Button>
             </div>
-          ) : (
-            <div className="space-y-4">
-              <div className="space-y-2">
-                <Label>Select Simulation</Label>
-                <Select
-                  value={params.simulation_id}
-                  onChange={(e) => updateParam('simulation_id', e.target.value)}
-                  options={[
-                    { value: '', label: 'Select a simulation...' },
-                    ...completedSimulations.map((sim) => ({
-                      value: sim.id,
-                      label: `${sim.algorithm.toUpperCase()} - ${new Date(sim.created_at).toLocaleDateString()}`,
-                    })),
-                  ]}
-                />
-              </div>
+            {imageFile && (
+              imagePreview ? (
+                <div className="relative mx-auto aspect-square w-full max-w-xs overflow-hidden rounded-lg border border-line">
+                  <img
+                    src={imagePreview}
+                    alt="Preview"
+                    className="h-full w-full object-contain"
+                  />
+                </div>
+              ) : (
+                <div className="mx-auto flex max-w-xs flex-col items-center justify-center rounded-lg border-2 border-dashed border-line bg-surface-soft p-8">
+                  <FileImage className="mb-2 h-12 w-12 text-ink-faint" aria-hidden="true" />
+                  <p className="max-w-full truncate text-[13px] font-medium text-ink-muted">
+                    {imageFile.name}
+                  </p>
+                  <p className="hint mt-1">
+                    Preview not available for{' '}
+                    {imageFile.type.split('/')[1]?.toUpperCase() || 'this format'}
+                  </p>
+                  <p className="hint">
+                    ({(imageFile.size / 1024).toFixed(1)} KB)
+                  </p>
+                </div>
+              )
+            )}
+            <p className="hint">
+              Supported formats: PNG, JPEG, TIFF, BMP. Grayscale images work best.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="simulation_id">Select Simulation</Label>
+              <Select
+                id="simulation_id"
+                value={params.simulation_id}
+                onChange={(e) => updateParam('simulation_id', e.target.value)}
+                options={[
+                  { value: '', label: 'Select a simulation...' },
+                  ...completedSimulations.map((sim) => ({
+                    value: sim.id,
+                    label: `${sim.algorithm.toUpperCase()} - ${new Date(sim.created_at).toLocaleDateString()}`,
+                  })),
+                ]}
+              />
+            </div>
 
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Azimuth: {params.azimuth}°</Label>
+            <div className="grid grid-cols-2 gap-4">
+              {/*
+                The range input sits inside its label. `Slider` does not
+                forward an `id`, and `htmlFor` pointing at nothing names
+                nothing: nesting is the association that needs no id.
+              */}
+              <div className="space-y-2">
+                <Label className="block">
+                  Azimuth: <Num value={params.azimuth} digits={0} unit="°" size="sm" />
                   <Slider
+                    className="mt-2 block w-full"
                     min={0}
                     max={360}
                     step={15}
                     value={[params.azimuth]}
                     onValueChange={([v]) => updateParam('azimuth', v)}
                   />
-                </div>
-                <div className="space-y-2">
-                  <Label>Elevation: {params.elevation}°</Label>
+                </Label>
+              </div>
+              <div className="space-y-2">
+                <Label className="block">
+                  Elevation: <Num value={params.elevation} digits={0} unit="°" size="sm" />
                   <Slider
+                    className="mt-2 block w-full"
                     min={-90}
                     max={90}
                     step={15}
                     value={[params.elevation]}
                     onValueChange={([v]) => updateParam('elevation', v)}
                   />
-                </div>
-              </div>
-
-              <div className="space-y-2">
-                <Label htmlFor="resolution">Resolution (px)</Label>
-                <Input
-                  id="resolution"
-                  type="number"
-                  min={128}
-                  max={2048}
-                  step={64}
-                  value={params.resolution}
-                  onChange={(e) => updateParam('resolution', parseInt(e.target.value) || 512)}
-                />
+                </Label>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
+
+            <div className="space-y-2">
+              <Label htmlFor="resolution">Resolution (px)</Label>
+              <Input
+                id="resolution"
+                type="number"
+                min={128}
+                max={2048}
+                step={64}
+                value={params.resolution}
+                onChange={(e) => updateParam('resolution', parseInt(e.target.value) || 512)}
+              />
+            </div>
+          </div>
+        )}
+      </Panel>
 
       {/* Model Selection */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Analysis Model</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <Select
-            value={params.model}
-            onChange={(e) => updateParam('model', e.target.value as FraktalModel)}
-            options={modelOptions}
-          />
-          <p className="text-sm text-muted-foreground">
-            {modelDescriptions[params.model]}
-          </p>
-        </CardContent>
-      </Card>
+      <Panel title="Analysis Model" bodyClassName="space-y-4">
+        <Select
+          aria-label="Analysis model"
+          value={params.model}
+          onChange={(e) => updateParam('model', e.target.value as FraktalModel)}
+          options={modelOptions}
+        />
+        <p className="text-[13px] leading-relaxed text-ink-muted">
+          {modelDescriptions[params.model]}
+        </p>
+      </Panel>
 
       {/* Scale Calibration */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Scale Calibration</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {/* Scale Bar Calibration Helper */}
-          <div className="p-4 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-lg space-y-4">
-            <p className="text-sm font-medium text-blue-700 dark:text-blue-300">
-              📏 Measure your scale bar to calibrate
-            </p>
+      <Panel title="Scale Calibration" bodyClassName="space-y-4">
+        {/* Scale Bar Calibration Helper */}
+        <Callout tone="info" title="Measure your scale bar to calibrate">
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="scaleBarPixels">Scale bar length (pixels)</Label>
+                <Label htmlFor="scaleBarPixels" className="text-ink">
+                  Scale bar length (pixels)
+                </Label>
                 <Input
                   id="scaleBarPixels"
                   type="number"
@@ -389,12 +415,12 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
                     updateParam('npix', Math.round(calculatedNpix * 10) / 10)
                   }}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Measure the scale bar in your image
-                </p>
+                <p className="hint">Measure the scale bar in your image</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="scaleBarNm">Scale bar value (nm)</Label>
+                <Label htmlFor="scaleBarNm" className="text-ink">
+                  Scale bar value (nm)
+                </Label>
                 <Input
                   id="scaleBarNm"
                   type="number"
@@ -410,222 +436,214 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
                     updateParam('npix', Math.round(calculatedNpix * 10) / 10)
                   }}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Value shown on scale bar (e.g., 50, 100)
-                </p>
+                <p className="hint">Value shown on scale bar (e.g., 50, 100)</p>
               </div>
             </div>
-            <div className="flex items-center justify-between pt-2 border-t border-blue-200 dark:border-blue-700">
-              <span className="text-sm text-blue-700 dark:text-blue-300">Calculated npix:</span>
-              <span className="text-lg font-bold font-mono text-blue-800 dark:text-blue-200">
-                {params.npix.toFixed(1)} px/100nm
-              </span>
+            <div className="flex items-center justify-between border-t border-line pt-2">
+              <span className="text-[12px] text-ink-muted">Calculated npix:</span>
+              <Num value={params.npix} digits={1} unit="px/100nm" size="lg" />
             </div>
-            <p className="text-xs text-blue-600 dark:text-blue-400">
-              = {(params.npix / 100).toFixed(3)} pixels per nm
+            <p className="hint">
+              = <Num value={params.npix / 100} digits={3} unit="pixels per nm" size="sm" />
             </p>
           </div>
+        </Callout>
 
-          {/* Manual npix override */}
-          <div className="space-y-2">
-            <Label htmlFor="npix">Pixels per 100nm (npix) - Manual</Label>
-            <Input
-              id="npix"
-              type="number"
-              min={0.1}
-              max={1000}
-              step={0.1}
-              value={params.npix}
-              onChange={(e) => updateParam('npix', parseFloat(e.target.value) || 100)}
-            />
-            <p className="text-xs text-muted-foreground">
-              You can also enter this value directly if you know it
-            </p>
-          </div>
+        {/* Manual npix override */}
+        <div className="space-y-2">
+          <Label htmlFor="npix">Pixels per 100nm (npix) - Manual</Label>
+          <Input
+            id="npix"
+            type="number"
+            min={0.1}
+            max={1000}
+            step={0.1}
+            value={params.npix}
+            onChange={(e) => updateParam('npix', parseFloat(e.target.value) || 100)}
+          />
+          <p className="hint">You can also enter this value directly if you know it</p>
+        </div>
 
-          {params.model === 'granulated_2012' && (
-            <>
-              {/* Auto-calibrate toggle */}
-              <div className="p-4 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded-lg space-y-3">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <Label className="text-amber-700 dark:text-amber-300 font-medium">
-                      Auto-calibrate dpo
-                    </Label>
-                    <p className="text-xs text-amber-600 dark:text-amber-400 mt-1">
-                      Automatically find optimal primary particle diameter
-                    </p>
-                  </div>
-                  <Button
-                    type="button"
-                    variant={params.auto_calibrate ? 'default' : 'outline'}
-                    size="sm"
-                    onClick={() => updateParam('auto_calibrate', !params.auto_calibrate)}
-                    className={params.auto_calibrate ? 'bg-amber-600 hover:bg-amber-700' : ''}
-                  >
-                    {params.auto_calibrate ? 'Enabled' : 'Disabled'}
-                  </Button>
-                </div>
+        {params.model === 'granulated_2012' && (
+          <>
+            {/* Auto-calibrate toggle */}
+            <Callout
+              tone="warning"
+              title="Auto-calibrate dpo"
+              action={
+                <Button
+                  type="button"
+                  variant={params.auto_calibrate ? 'default' : 'outline'}
+                  size="sm"
+                  // The visible word is the state; the name stays the same in
+                  // both states, so a screen reader does not hear "Enabled,
+                  // pressed" as two different claims.
+                  aria-label="Auto-calibrate dpo"
+                  aria-pressed={params.auto_calibrate}
+                  onClick={() => updateParam('auto_calibrate', !params.auto_calibrate)}
+                >
+                  {params.auto_calibrate ? 'Enabled' : 'Disabled'}
+                </Button>
+              }
+            >
+              <p className="m-0">
+                Automatically find optimal primary particle diameter
+              </p>
+              {params.auto_calibrate && (
+                <p className="m-0 mt-2 border-t border-line pt-2">
+                  The algorithm will test multiple dpo values (0.5x to 2x of starting point)
+                  and select the one with best alignment between calculated and visual particle count.
+                </p>
+              )}
+            </Callout>
+
+            <div className="space-y-2">
+              <Label htmlFor="dpo">
+                Primary Particle Diameter (nm)
                 {params.auto_calibrate && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400 border-t border-amber-200 dark:border-amber-700 pt-2">
-                    The algorithm will test multiple dpo values (0.5x to 2x of starting point)
-                    and select the one with best alignment between calculated and visual particle count.
-                  </p>
+                  <span className="ml-2 text-[11px] font-normal text-warning">
+                    (starting point)
+                  </span>
                 )}
-              </div>
+              </Label>
+              <Input
+                id="dpo"
+                type="number"
+                min={1}
+                max={1000}
+                step={1}
+                value={params.dpo}
+                onChange={(e) => updateParam('dpo', parseFloat(e.target.value) || 40)}
+              />
+              <p className="hint">
+                {params.auto_calibrate
+                  ? 'Starting value for auto-calibration. The algorithm will search around this value.'
+                  : 'Mean diameter of primary spherical particles. If analysis fails, try the suggested dpo from the error message.'}
+              </p>
+            </div>
+          </>
+        )}
 
-              <div className="space-y-2">
-                <Label htmlFor="dpo">
-                  Primary Particle Diameter (nm)
-                  {params.auto_calibrate && (
-                    <span className="text-amber-600 dark:text-amber-400 ml-2 text-xs font-normal">
-                      (starting point)
-                    </span>
-                  )}
-                </Label>
-                <Input
-                  id="dpo"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  step={1}
-                  value={params.dpo}
-                  onChange={(e) => updateParam('dpo', parseFloat(e.target.value) || 40)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  {params.auto_calibrate
-                    ? 'Starting value for auto-calibration. The algorithm will search around this value.'
-                    : 'Mean diameter of primary spherical particles. If analysis fails, try the suggested dpo from the error message.'}
-                </p>
-              </div>
-            </>
-          )}
-
-          <div className="space-y-2">
-            <Label htmlFor="escala">Scale Reference (nm)</Label>
-            <Input
-              id="escala"
-              type="number"
-              min={10}
-              max={10000}
-              step={10}
-              value={params.escala}
-              onChange={(e) => updateParam('escala', parseFloat(e.target.value) || 100)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Reference scale in nanometers (default: 100nm)
-            </p>
-          </div>
-        </CardContent>
-      </Card>
+        <div className="space-y-2">
+          <Label htmlFor="escala">Scale Reference (nm)</Label>
+          <Input
+            id="escala"
+            type="number"
+            min={10}
+            max={10000}
+            step={10}
+            value={params.escala}
+            onChange={(e) => updateParam('escala', parseFloat(e.target.value) || 100)}
+          />
+          <p className="hint">Reference scale in nanometers (default: 100nm)</p>
+        </div>
+      </Panel>
 
       {/* Model Parameters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Model Parameters</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {params.model === 'granulated_2012' && (
-            <>
-              <div className="space-y-2">
-                <Label>Filling Factor (delta): {params.delta.toFixed(2)}</Label>
+      <Panel title="Model Parameters" bodyClassName="space-y-4">
+        {params.model === 'granulated_2012' && (
+          <>
+            <div className="space-y-2">
+              <Label className="block">
+                Filling Factor (delta): <Num value={params.delta} digits={2} size="sm" />
                 <Slider
+                  className="mt-2 block w-full"
                   min={1.0}
                   max={1.5}
                   step={0.05}
                   value={[params.delta]}
                   onValueChange={([v]) => updateParam('delta', v)}
                 />
-                <p className="text-xs text-muted-foreground">
-                  Particle filling factor (1.0 = touching, 1.5 = overlapping)
-                </p>
-              </div>
+              </Label>
+              <p className="hint">
+                Particle filling factor (1.0 = touching, 1.5 = overlapping)
+              </p>
+            </div>
 
-              <div className="space-y-2">
-                <Label htmlFor="npo_limit">Minimum Particle Count</Label>
-                <Input
-                  id="npo_limit"
-                  type="number"
-                  min={1}
-                  max={1000}
-                  value={params.npo_limit}
-                  onChange={(e) => updateParam('npo_limit', parseInt(e.target.value) || 5)}
-                />
-                <p className="text-xs text-muted-foreground">
-                  Minimum number of primary particles for valid analysis
-                </p>
-              </div>
-            </>
-          )}
-
-          {params.model === 'voxel_2018' && (
             <div className="space-y-2">
-              <Label>m Exponent: {params.m_exponent.toFixed(2)}</Label>
+              <Label htmlFor="npo_limit">Minimum Particle Count</Label>
+              <Input
+                id="npo_limit"
+                type="number"
+                min={1}
+                max={1000}
+                value={params.npo_limit}
+                onChange={(e) => updateParam('npo_limit', parseInt(e.target.value) || 5)}
+              />
+              <p className="hint">
+                Minimum number of primary particles for valid analysis
+              </p>
+            </div>
+          </>
+        )}
+
+        {params.model === 'voxel_2018' && (
+          <div className="space-y-2">
+            <Label className="block">
+              m Exponent: <Num value={params.m_exponent} digits={2} size="sm" />
               <Slider
+                className="mt-2 block w-full"
                 min={0.5}
                 max={2.0}
                 step={0.1}
                 value={[params.m_exponent]}
                 onValueChange={([v]) => updateParam('m_exponent', v)}
               />
-              <p className="text-xs text-muted-foreground">
-                Exponent for zp calculation in voxel model
-              </p>
-            </div>
-          )}
-
-          <div className="flex items-center justify-between">
-            <Label>3D Correction</Label>
-            <Button
-              type="button"
-              variant={params.correction_3d ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => updateParam('correction_3d', !params.correction_3d)}
-            >
-              {params.correction_3d ? 'Enabled' : 'Disabled'}
-            </Button>
+            </Label>
+            <p className="hint">Exponent for zp calculation in voxel model</p>
           </div>
-          <p className="text-xs text-muted-foreground">
-            Apply 3D correction to radius of gyration (Rg)
-          </p>
-        </CardContent>
-      </Card>
+        )}
+
+        <div className="flex items-center justify-between">
+          {/* `htmlFor` cannot point a label at a button: the visible label
+              names the control through `aria-labelledby` instead, and the
+              state travels in `aria-pressed`. */}
+          <Label id="correction_3d_label">3D Correction</Label>
+          <Button
+            type="button"
+            variant={params.correction_3d ? 'default' : 'outline'}
+            size="sm"
+            aria-labelledby="correction_3d_label"
+            aria-pressed={params.correction_3d}
+            onClick={() => updateParam('correction_3d', !params.correction_3d)}
+          >
+            {params.correction_3d ? 'Enabled' : 'Disabled'}
+          </Button>
+        </div>
+        <p className="hint">Apply 3D correction to radius of gyration (Rg)</p>
+      </Panel>
 
       {/* Segmentation Parameters */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-lg">Segmentation</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-2 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="pixel_min">Min Pixel Value</Label>
-              <Input
-                id="pixel_min"
-                type="number"
-                min={0}
-                max={255}
-                value={params.pixel_min}
-                onChange={(e) => updateParam('pixel_min', parseInt(e.target.value) || 10)}
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="pixel_max">Max Pixel Value</Label>
-              <Input
-                id="pixel_max"
-                type="number"
-                min={0}
-                max={255}
-                value={params.pixel_max}
-                onChange={(e) => updateParam('pixel_max', parseInt(e.target.value) || 240)}
-              />
-            </div>
+      <Panel
+        title="Segmentation"
+        hint="Pixel intensity range for color segmentation (0-255). Pixels within this range are considered part of the agglomerate."
+        bodyClassName="space-y-4"
+      >
+        <div className="grid grid-cols-2 gap-4">
+          <div className="space-y-2">
+            <Label htmlFor="pixel_min">Min Pixel Value</Label>
+            <Input
+              id="pixel_min"
+              type="number"
+              min={0}
+              max={255}
+              value={params.pixel_min}
+              onChange={(e) => updateParam('pixel_min', parseInt(e.target.value) || 10)}
+            />
           </div>
-          <p className="text-xs text-muted-foreground">
-            Pixel intensity range for color segmentation (0-255). Pixels within this range are considered part of the agglomerate.
-          </p>
-        </CardContent>
-      </Card>
+          <div className="space-y-2">
+            <Label htmlFor="pixel_max">Max Pixel Value</Label>
+            <Input
+              id="pixel_max"
+              type="number"
+              min={0}
+              max={255}
+              value={params.pixel_max}
+              onChange={(e) => updateParam('pixel_max', parseInt(e.target.value) || 240)}
+            />
+          </div>
+        </div>
+      </Panel>
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Running Analysis...' : 'Run FRAKTAL Analysis'}
