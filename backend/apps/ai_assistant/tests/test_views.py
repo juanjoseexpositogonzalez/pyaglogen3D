@@ -300,10 +300,9 @@ class TestSanitizeErrorMessage:
             ("api-key-test error", "[REDACTED] error"),
         ]
 
-        for input_msg, _expected_pattern in test_cases:
+        for input_msg, expected_pattern in test_cases:
             result = viewset._sanitize_error_message(input_msg)
-            assert "sk-" not in result
-            assert "key-" not in result.replace("[REDACTED]", "")
+            assert result == expected_pattern
 
     def test_sanitize_truncates_long_messages(self, authenticated_client):
         """Test that long messages are truncated."""

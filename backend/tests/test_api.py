@@ -5,6 +5,12 @@ project default) and object-level access is decided by ``IsProjectOwnerOrShared`
 so each test needs a signed-in client and objects owned by that user. The
 fixtures below override the ownerless, anonymous ones in ``tests/conftest.py`` —
 those still serve the model/serializer tests, which do not go through the API.
+
+``force_authenticate`` installs ``request.user`` directly, so it hides the
+authentication layer: the guard rails themselves are covered explicitly by
+``test_list_projects_requires_authentication`` and
+``test_get_project_denied_to_another_user``, the only tests here that do not run
+as the project's owner.
 """
 
 import uuid
@@ -33,6 +39,24 @@ def api_client(user):
     """Return a DRF client authenticated as `user`."""
     client = APIClient()
     client.force_authenticate(user=user)
+    return client
+
+
+@pytest.fixture
+def anonymous_client():
+    """Return a DRF client that never authenticated."""
+    return APIClient()
+
+
+@pytest.fixture
+def stranger_client(db):
+    """Return a client authenticated as a user with no access to `project`."""
+    stranger = User.objects.create_user(
+        email=f"stranger-{uuid.uuid4()}@example.com",
+        password="testpass123",
+    )
+    client = APIClient()
+    client.force_authenticate(user=stranger)
     return client
 
 
@@ -79,6 +103,25 @@ class TestProjectsAPI:
         assert response.status_code == status.HTTP_200_OK
         assert "results" in response.data
 
+    def test_list_projects_requires_authentication(self, anonymous_client, db):
+        """An anonymous request is rejected before the list is built.
+
+        Guards DRF's default ``IsAuthenticated``: every other test in this module
+        arrives already authenticated, so removing the permission class would
+        leave them all green.
+
+        The status is 401 with the production authenticator (JWT, which sends a
+        ``WWW-Authenticate`` header) and 403 here, because ``config.settings.test``
+        swaps JWT for ``SessionAuthentication``, whose ``authenticate_header`` is
+        ``None`` and makes DRF downgrade ``NotAuthenticated`` to 403. Both mean
+        "rejected before the view ran"; 200 is the failure this test exists for.
+        """
+        response = anonymous_client.get("/api/v1/projects/")
+        assert response.status_code in (
+            status.HTTP_401_UNAUTHORIZED,
+            status.HTTP_403_FORBIDDEN,
+        )
+
     def test_create_project(self, api_client, db):
         """Test creating a project."""
         response = api_client.post(
@@ -95,6 +138,24 @@ class TestProjectsAPI:
         response = api_client.get(f"/api/v1/projects/{project.id}/")
         assert response.status_code == status.HTTP_200_OK
         assert response.data["id"] == str(project.id)
+
+    def test_get_project_denied_to_another_user(self, stranger_client, project):
+        """A user who neither owns nor shares the project cannot read it.
+
+        Guards ``IsProjectOwnerOrShared`` and the owner/share filter in
+        ``ProjectViewSet.get_queryset``: with the same owner in every test,
+        dropping either one would go unnoticed.
+
+        Measured today: 404, because ``get_object()`` resolves against the
+        filtered queryset before the object permission runs. 403 is what
+        ``IsProjectOwnerOrShared`` would answer for a foreign project, so both
+        are accepted — the failure this test exists for is 200.
+        """
+        response = stranger_client.get(f"/api/v1/projects/{project.id}/")
+        assert response.status_code in (
+            status.HTTP_403_FORBIDDEN,
+            status.HTTP_404_NOT_FOUND,
+        )
 
     def test_delete_project(self, api_client, project):
         """Test deleting a project."""
@@ -162,9 +223,14 @@ class TestSimulationsAPI:
         assert response.data["id"] == str(simulation.id)
 
     def test_geometry_download_not_available(self, api_client, simulation):
-        """Test geometry download when not available."""
+        """Test geometry download when not available.
+
+        This endpoint answers 404 both for a missing geometry and for an object
+        the caller cannot reach, so the error body is what tells them apart.
+        """
         response = api_client.get(f"/api/v1/simulations/{simulation.id}/geometry/")
         assert response.status_code == status.HTTP_404_NOT_FOUND
+        assert response.data["error"] == "Geometry not available"
 
 
 class TestImageAnalysisAPI:
