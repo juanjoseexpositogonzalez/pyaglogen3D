@@ -106,7 +106,11 @@ export function CompareGrid({
       style={gridTemplateStyle(layout)}
     >
       {simulations.map((sim) => {
-        const color = colorMap[sim.id] ?? '#999999'
+        // The simulation's identity, from the one map the table, the overlay and
+        // the chart also read: an index in the theme's ramp, so this cell's
+        // border follows the theme with everything else. No substitute colour
+        // here — a grey invented on this surface would be half an identity.
+        const color = colorMap[sim.id]
         const scale = getScaleFactorNm(sim.parameters)
 
         // Apply per-sim nm scaling at this boundary. Each viewer then

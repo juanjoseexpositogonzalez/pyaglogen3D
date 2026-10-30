@@ -85,7 +85,7 @@ type SentTrace = {
   name?: string
   mode?: string
   line: { color: string; dash?: string }
-  marker: { color: string; symbol?: string }
+  marker: { color: string; symbol?: string; size?: number | number[] }
 }
 
 const layoutSent = (): SentLayout =>
@@ -288,6 +288,73 @@ describe('<RgEvolutionChart /> — the theme the plot is drawn in', () => {
     // only re-rendered its frame would leave these identical.
     expect(after.font?.color).not.toBe(before.font?.color)
     expect(after.xaxis?.gridcolor).not.toBe(before.xaxis?.gridcolor)
+  })
+
+  it('labels the axes the way the capability contract fixes them', async () => {
+    render(<RgEvolutionChart series={[seriesA]} />)
+    await flushMicrotasks()
+
+    const layout = layoutSent()
+    expect(layout.xaxis?.title?.text).toBe('log10(N)')
+    // `log10(Rg/nm)`, not `log10 Rg (nm)`: the plotted quantity is a ratio and
+    // therefore dimensionless. Spec `multi-aggregate-comparison` S6.4 fixes the
+    // label and `docs/unit-convention.md` records that resting it on `log10(Rg)`
+    // was a fixed mistake, so a free hand here is how it comes back.
+    expect(layout.yaxis?.title?.text).toBe('log10(Rg/nm)')
+  })
+
+  it('thins the markers on a long series instead of smearing them', async () => {
+    const long = Array.from({ length: 200 }, (_, i) => 1 + i * 0.01)
+    render(
+      <RgEvolutionChart
+        series={[{ label: 'Long', color: '#4E79A7', rgEvolution: long }]}
+      />,
+    )
+    await flushMicrotasks()
+
+    // A 7px glyph on all two hundred samples paints a band, not a curve. The
+    // kit thins by position (`markEvery`), so the trace carries a per-point
+    // size and most points get none.
+    const size = tracesSent()[0].marker.size
+    expect(Array.isArray(size)).toBe(true)
+    const sizes = size as number[]
+    expect(sizes).toHaveLength(200)
+    const marked = sizes.filter((s) => s > 0).length
+    expect(marked).toBeGreaterThan(0)
+    expect(marked).toBeLessThan(60)
+  })
+
+  it('keeps a marker on every point of a short series', async () => {
+    render(<RgEvolutionChart series={[seriesA]} />)
+    await flushMicrotasks()
+
+    const sizes = tracesSent()[0].marker.size as number[]
+    // Three samples are already a legible scatter: thinning them would hide
+    // data rather than declutter it.
+    expect(sizes).toHaveLength(3)
+    expect(sizes.filter((s) => s > 0)).toHaveLength(3)
+  })
+
+  it('repaints when the theme attribute moves without the store', async () => {
+    // `chart-theme` refreshes its in-memory ramp from a MutationObserver of
+    // `data-theme`, but that refresh does not wake a mounted plot. A theme
+    // changed from another tab — or by anything that does not go through the
+    // store — would leave this chart drawn in the previous theme while the ramp
+    // already returns the new one.
+    render(<RgEvolutionChart series={[seriesA]} />)
+    await flushMicrotasks()
+
+    const before = layoutSent()
+
+    await act(async () => {
+      document.documentElement.dataset.theme = 'dark'
+      injectTokens(DARK_TOKENS)
+    })
+
+    const after = layoutSent()
+    expect(after.font?.color).toBe(DARK_TOKENS['--ink'])
+    expect(after.xaxis?.gridcolor).toBe(DARK_TOKENS['--visual-grid'])
+    expect(after.font?.color).not.toBe(before.font?.color)
   })
 
   it('draws a lone series in the ramp in force, and follows it across the theme', async () => {

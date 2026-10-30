@@ -37,10 +37,10 @@
  * what the plot receives rather than on the frame around it.
  */
 import dynamic from 'next/dynamic'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { PlotParams } from 'react-plotly.js'
 
-import { axisTitle, layout as chartLayout, traceStyle } from '@/lib/chart-theme'
+import { layout as chartLayout, markEvery, traceStyle } from '@/lib/chart-theme'
 import { getScaleFactorNm } from '@/lib/units'
 import { useThemeStore } from '@/stores/useThemeStore'
 
@@ -48,6 +48,13 @@ const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 
 /** Room the plot takes inside whatever surface frames it. */
 const PLOT_HEIGHT = '300px'
+
+/**
+ * Most markers one curve may carry. Beyond this the glyphs overlap into a
+ * band, which is how a sampled series turns into a smear; past it, the line
+ * carries the shape and the markers mark it at intervals.
+ */
+const MAX_MARKERS = 48
 
 // ---------------------------------------------------------------------------
 // Single-series prop shape (legacy).
@@ -96,12 +103,48 @@ function isMultiSeries(
  *
  * `chart-theme` reads its colours from the document while a layout is built, so
  * a chart rendered during a theme flip is already drawn in the new theme. What
- * it cannot do on its own is ask for that render. Subscribing to the resolved
- * theme is the request; the value itself is not used, and that is deliberate —
- * everything derived from it is read at build time, not stored.
+ * it cannot do on its own is ask for that render. Two independent triggers
+ * cover the ways a theme changes, and neither one's value is used: everything
+ * derived from the theme is read at build time, never stored.
+ *
+ *   1. The store's resolved theme — what the theme control writes.
+ *   2. The `data-theme` attribute itself — what another tab, the bootstrap
+ *      script or any future non-store integration writes. `chart-theme` already
+ *      watches that attribute to refresh its ramp in memory, but refreshing the
+ *      ramp does not wake a mounted plot, so without this the chart would keep
+ *      the previous theme's ink while the ramp had already moved on.
  */
 function useChartTheme(): void {
   useThemeStore((state) => state.resolved)
+
+  const [, bump] = useState(0)
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') {
+      return
+    }
+    const observer = new MutationObserver(() => bump((tick) => tick + 1))
+    observer.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: ['data-theme', 'class'],
+    })
+    return () => observer.disconnect()
+  }, [])
+}
+
+/**
+ * Per-point marker sizes: the kit's thinning, as Plotly takes it.
+ *
+ * `markEvery` decides which samples keep a glyph; a size array of the series'
+ * own length is how a single scatter trace carries that decision, because
+ * Plotly has no "mark every n-th point" of its own.
+ */
+function markerSizes(pointCount: number, size: number): number[] {
+  const sizes: number[] = []
+  for (let i = 0; i < pointCount; i++) sizes.push(0)
+  const marked = markEvery(pointCount, MAX_MARKERS)
+  for (let i = 0; i < marked.length; i++) sizes[marked[i]] = size
+  return sizes
 }
 
 /**
@@ -122,11 +165,10 @@ function buildLayout(showLegend: boolean): PlotParams['layout'] {
   // and the axis-specific text are ours.
   return {
     ...base,
-    xaxis: { ...xaxis, title: { text: axisTitle({ quantity: 'log10 N' }) } },
-    yaxis: {
-      ...yaxis,
-      title: { text: axisTitle({ quantity: 'log10 Rg', unit: 'nm' }) },
-    },
+    // `log10(Rg/nm)`, not `log10 Rg (nm)`: what is plotted is a ratio, so it is
+    // dimensionless. Spec `multi-aggregate-comparison` S6.4 fixes both labels.
+    xaxis: { ...xaxis, title: { text: 'log10(N)' } },
+    yaxis: { ...yaxis, title: { text: 'log10(Rg/nm)' } },
   } as unknown as PlotParams['layout']
 }
 
@@ -145,7 +187,12 @@ function buildTrace(
   boundColor?: string,
   soleSeries?: boolean,
 ): NonNullable<PlotParams['data']>[number] {
-  const style = traceStyle(index, { color: boundColor, name, soleSeries })
+  const style = traceStyle(index, {
+    color: boundColor,
+    name,
+    soleSeries,
+    pointCount: y.length,
+  })
   // SAFETY: `chart-theme` types `mode` and `line.dash` as `string` on purpose —
   // it is a plain data module with no dependency on Plotly's types. The values
   // it returns are Plotly's own (a mode from its enum, a dash pattern in its
@@ -158,7 +205,10 @@ function buildTrace(
     mode: style.mode,
     name: style.name,
     line: style.line,
-    marker: style.marker,
+    // A lone series is drawn as a line: it needs no glyphs to be told apart.
+    marker: soleSeries
+      ? style.marker
+      : { ...style.marker, size: markerSizes(y.length, style.marker.size) },
     showlegend: style.showlegend,
   } as unknown as NonNullable<PlotParams['data']>[number]
 }

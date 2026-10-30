@@ -20,6 +20,9 @@
 import { render, screen, within } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 
+import { series } from '@/lib/chart-theme'
+import { getCompareColorPalette } from '@/lib/compare-utils'
+
 import {
   CompareMetricsTable,
   type CompareSimWithMetrics,
@@ -54,21 +57,46 @@ function literal(text: string): RegExp {
   return new RegExp(text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
 }
 
-/** The cell of `row` whose column header names simulation `simName`. */
+/**
+ * The column of a simulation, matched on the header's whole text.
+ *
+ * A substring match here is a trap the first version of this file fell into:
+ * "A" is contained in "Agg A", so every lookup landed on the first column and
+ * the assertions passed for the wrong cell.
+ */
+function columnOf(simName: string): number {
+  const headers = screen.getAllByRole('columnheader')
+  for (let i = 0; i < headers.length; i++) {
+    if ((headers[i].textContent ?? '') === simName) return i
+  }
+  throw new Error('no column headed ' + simName)
+}
+
+/** The cell of `metricLabel`'s row, in `simName`'s column. */
 function cellOf(metricLabel: string, simName: string): HTMLElement {
   const table = screen.getByRole('table')
-  const headers = within(table).getAllByRole('columnheader')
-  const column = headers.findIndex((h) => (h.textContent ?? '').includes(simName))
   const row = within(table).getByRole('row', { name: literal(metricLabel) })
-  return within(row).getAllByRole('cell')[column]
+  return within(row).getAllByRole('cell')[columnOf(simName)]
 }
 
 /** The colour marker a simulation's column header paints. */
 function headerMarker(simName: string): HTMLElement {
-  const header = screen
-    .getAllByRole('columnheader')
-    .find((h) => (h.textContent ?? '').includes(simName)) as HTMLElement
+  const header = screen.getAllByRole('columnheader')[columnOf(simName)]
   return header.querySelector('[aria-hidden="true"]') as HTMLElement
+}
+
+/** jsdom normalises an inline colour to `rgb()`, which is what it hands back. */
+function rgb(hex: string): string {
+  const value = hex.replace('#', '')
+  return (
+    'rgb(' +
+    parseInt(value.slice(0, 2), 16) +
+    ', ' +
+    parseInt(value.slice(2, 4), 16) +
+    ', ' +
+    parseInt(value.slice(4, 6), 16) +
+    ')'
+  )
 }
 
 describe('<CompareMetricsTable />', () => {
@@ -179,17 +207,29 @@ describe('<CompareMetricsTable />', () => {
     }
   })
 
-  it('falls back to the series ramp when the palette has no entry for a sim', () => {
-    const sims = [makeSim({ id: 'sim-a', name: 'A' }), makeSim({ id: 'sim-b', name: 'B' })]
-    render(<CompareMetricsTable simulations={sims} colorMap={{}} />)
+  it('takes each column marker from the identity the map gives its simulation', () => {
+    // The page hands this table the same map the chart and the grid read, whose
+    // values are the theme's ramp in slot order. Asserted exactly: two colours
+    // that merely differ would pass with the wrong two.
+    const map = getCompareColorPalette(['sim-a', 'sim-b'])
+    const sims = [
+      makeSim({ id: 'sim-a', name: 'Agg A' }),
+      makeSim({ id: 'sim-b', name: 'Agg B' }),
+    ]
+    render(<CompareMetricsTable simulations={sims} colorMap={map} />)
 
-    // The fallback is not one grey for everybody: two simulations that arrive
-    // without a palette entry still have to be told apart, so the kit's ramp is
-    // read by column position.
-    const first = headerMarker('A').style.backgroundColor
-    const second = headerMarker('B').style.backgroundColor
-    expect(first).toBeTruthy()
-    expect(second).toBeTruthy()
-    expect(first).not.toBe(second)
+    expect(headerMarker('Agg A').style.backgroundColor).toBe(rgb(series(0)))
+    expect(headerMarker('Agg B').style.backgroundColor).toBe(rgb(series(1)))
+    expect(headerMarker('Agg A').style.backgroundColor).toBe(rgb(map['sim-a']))
+  })
+
+  it('lets the panel be the frame instead of drawing a box inside it', () => {
+    render(<CompareMetricsTable simulations={[makeSim()]} colorMap={colorMap} />)
+
+    // The table lives inside a kit `Panel`; a border and a radius of its own put
+    // a second frame a few pixels inside the first.
+    const box = screen.getByRole('table').parentElement as HTMLElement
+    expect(box.className).not.toMatch(/border/)
+    expect(box.className).not.toMatch(/rounded/)
   })
 })

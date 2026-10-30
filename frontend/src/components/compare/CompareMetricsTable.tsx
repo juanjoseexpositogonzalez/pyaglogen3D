@@ -20,7 +20,6 @@
  */
 import type { ReactNode } from 'react'
 
-import { series } from '@/lib/chart-theme'
 import { getScaleFactorNm } from '@/lib/units'
 
 import { DataTable, type Column } from '@/components/kit/DataTable'
@@ -164,11 +163,12 @@ export function CompareMetricsTable({
 
   for (let index = 0; index < simulations.length; index++) {
     const sim = simulations[index]
-    // The palette binds a column to its simulation's own colour, shared with
-    // that simulation's grid cell and its curve on the chart. An id the palette
-    // does not cover still has to be told apart from its neighbours, so it
-    // falls back to the series ramp by position rather than to one grey.
-    columns.push(simulationColumn(sim, colorMap[sim.id] ?? series(index)))
+    // One identity, four surfaces: this is the same map the chart, the grid and
+    // the overlay read, so a simulation's marker here is the colour of its
+    // curve and of its grid cell. The map is total for the ids the page passes
+    // (see `getCompareColorPalette`), which is why there is no substitute value
+    // here — a grey invented on this surface would be half an identity.
+    columns.push(simulationColumn(sim, colorMap[sim.id]))
   }
 
   return (
@@ -177,7 +177,6 @@ export function CompareMetricsTable({
       rows={METRIC_ROWS}
       rowKey={(row) => row.key}
       caption={CAPTION}
-      className="rounded-lg border border-line"
     />
   )
 }
