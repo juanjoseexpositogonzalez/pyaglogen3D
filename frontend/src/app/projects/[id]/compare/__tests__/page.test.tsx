@@ -21,7 +21,7 @@
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
-import { fireEvent, render, screen } from '@testing-library/react'
+import { fireEvent, render, screen, within } from '@testing-library/react'
 import React from 'react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -105,7 +105,12 @@ const fetched = (id: string, name: string, overrides: Record<string, unknown> = 
     algorithm: 'tunable_cc',
     status: 'completed',
     parameters: { primary_particle_diameter_nm: 20, n_particles: 1200 },
-    metrics: { fractal_dimension: 1.8, prefactor: 1.4, radius_of_gyration: 12 },
+    metrics: {
+      fractal_dimension: 1.8,
+      prefactor: 1.4,
+      radius_of_gyration: 12,
+      rg_evolution: [1, 2, 4],
+    },
     created_at: '2026-10-20T10:00:00Z',
     ...overrides,
   },
@@ -543,13 +548,92 @@ describe('the comparison zone', () => {
     expect(kitFrameOf(screen.getByText('compare overlay widget'))?.tagName).toBe('SECTION')
   })
 
-  it('still mounts the metrics table and the chart this slice does not own', () => {
+  it('frames the metrics table and the chart in kit panels of their own', () => {
     renderPage()
 
-    // Slice 2 migrates these two; until then they stay on the page, outside the
-    // comparison panel, and dropping one here would be an invisible regression.
-    expect(screen.getByText('compare metrics widget')).toBeTruthy()
-    expect(screen.getByText('rg evolution widget')).toBeTruthy()
-    expect(kitFrameOf(screen.getByText('compare metrics widget'))).toBeNull()
+    // Slice 1 left these two on the bare canvas; slice 2 gives each the surface
+    // the rest of the product reads on. Both must name what they hold, because
+    // the chart's own Plotly title is gone — a heading is the only name a
+    // reader gets before the plot.
+    //
+    // The heading is asserted as the panel's own, by role and exact name: a
+    // loose match over the whole subtree was satisfied by the child's own text
+    // ("compare metrics widget"), so it would have passed with no heading at all.
+    const tableFrame = screen
+      .getByRole('heading', { level: 2, name: 'Metrics' })
+      .closest('section') as HTMLElement
+    expect(tableFrame.tagName).toBe('SECTION')
+    expect(tableFrame.contains(screen.getByText('compare metrics widget'))).toBe(true)
+
+    const chartFrame = screen
+      .getByRole('heading', { level: 2, name: 'Radius of gyration evolution' })
+      .closest('section') as HTMLElement
+    expect(chartFrame.tagName).toBe('SECTION')
+    expect(chartFrame.contains(screen.getByText('rg evolution widget'))).toBe(true)
+
+    // One frame each: naming the pair under one heading would leave the chart
+    // outside the surface it is drawn on.
+    expect(tableFrame).not.toBe(chartFrame)
+  })
+
+  it('offers the numbers behind the chart, in the chart panel', () => {
+    renderPage()
+
+    const chartFrame = screen
+      .getByRole('heading', { level: 2, name: 'Radius of gyration evolution' })
+      .closest('section') as HTMLElement
+
+    // R7: a chart owes its reader the data behind it, in place. The control sits
+    // with the panel's title, which is the pattern the simulation page set.
+    const toggle = within(chartFrame).getByRole('button', { name: /show values/i })
+    expect(chartFrame.querySelector('header')?.contains(toggle)).toBe(true)
+
+    fireEvent.click(toggle)
+
+    // The table takes the plot's place inside the same frame: nothing moves on
+    // screen except the thing being inspected.
+    expect(within(chartFrame).queryByText('rg evolution widget')).toBeNull()
+    expect(within(chartFrame).getByRole('button', { name: /show chart/i })).toBeTruthy()
+
+    const table = within(chartFrame).getByRole('table')
+    const headers = within(table).getAllByRole('columnheader')
+    expect(headers.map((h) => h.textContent)).toEqual(['N', 'Agg A', 'Agg B'])
+
+    // diameter 20 nm → scale 10 → the three samples are 10.00, 20.00, 40.00 nm.
+    const firstRow = within(within(table).getAllByRole('row')[1]).getAllByRole('cell')
+    expect(firstRow.map((c) => c.textContent)).toEqual(['1', '10.00nm', '10.00nm'])
+
+    fireEvent.click(within(chartFrame).getByRole('button', { name: /show chart/i }))
+    expect(within(chartFrame).getByText('rg evolution widget')).toBeTruthy()
+  })
+
+  it('counts what is being compared and what is not, above the comparison', () => {
+    withSims('sim-a,sim-b,sim-c')
+    withQueries([
+      loadedQuery('sim-a', 'Agg A'),
+      loadedQuery('sim-b', 'Agg B'),
+      failedQuery(new ApiError('gone', 404)),
+    ])
+    renderPage()
+
+    const cards = screen.getAllByRole('article')
+    expect(cards).toHaveLength(2)
+
+    // Asserted as the rendered number, not as "the text contains a 2": `digits`
+    // decides the precision, and a substring match cannot tell 2 from 2.000.
+    const compared = cards.find((c) => c.textContent?.includes('Simulations compared'))
+    expect(compared?.querySelector('.num')?.textContent).toBe('2')
+
+    const missingFromComparison = cards.find((c) => c.textContent?.includes('Not in the comparison'))
+    expect(missingFromComparison?.querySelector('.num')?.textContent).toBe('1')
+  })
+
+  it('keeps the counts off the screen when there is no comparison to count', () => {
+    withSims('')
+    withQueries([])
+    renderPage()
+
+    // Two cards reading zero above an empty state is noise describing nothing.
+    expect(screen.queryAllByRole('article')).toHaveLength(0)
   })
 })

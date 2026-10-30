@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Multi-aggregate Compare page — design-system kit, slice 1 (issue #175).
+ * Multi-aggregate Compare page — design-system kit, issue #175 slices 1 and 2.
  *
  * Reads `?sims=<csv>` from the URL, fetches each simulation's metadata
  * and geometry in parallel, partitions results into
@@ -71,12 +71,17 @@ import {
   type CompareMode,
 } from '@/components/compare/CompareSettingsPanel'
 import { Callout } from '@/components/kit/Callout'
+import { type Column } from '@/components/kit/DataTable'
 import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
 import { PageHeader } from '@/components/kit/PageHeader'
 import { Panel } from '@/components/kit/Panel'
+import { ShowValues } from '@/components/kit/ShowValues'
 import { buttonVariants } from '@/components/ui/button'
 import { useProject } from '@/hooks/useProjects'
 import { ApiError, simulationsApi } from '@/lib/api'
+import { getScaleFactorNm } from '@/lib/units'
 import {
   MAX_COMPARE_SIMS,
   deriveSimName,
@@ -84,6 +89,7 @@ import {
   parseCompareSimsParam,
 } from '@/lib/compare-utils'
 import type { GeometryData, Simulation } from '@/lib/types'
+import { useThemeStore } from '@/stores/useThemeStore'
 
 interface CompareFetchResult {
   simulation: Simulation
@@ -219,6 +225,10 @@ export default function CompareSimulationsPage() {
   const searchParams = useSearchParams()
   const projectId = params.id
   const { data: project } = useProject(projectId)
+  // Identities are the theme's ramp, read from the document when the map below
+  // is built, so this page has to render again when the theme flips. Nothing
+  // consumes the value itself: the rendered colours do.
+  useThemeStore((state) => state.resolved)
 
   const rawSims = searchParams?.get('sims') ?? null
   const { ids, truncated } = parseCompareSimsParam(rawSims)
@@ -274,7 +284,11 @@ export default function CompareSimulationsPage() {
     loaded.push({ id: ids[i], result })
   }
 
-  const colorMap = useMemo(() => getCompareColorPalette(ids), [ids])
+  // Not memoised, and not only because a memo keyed on `ids` never hits —
+  // `parseCompareSimsParam` returns a fresh array on every render. A cached map
+  // is precisely what would keep the previous theme's identities after a flip,
+  // and nine entries are not worth the cache.
+  const colorMap = getCompareColorPalette(ids)
 
   // Map loaded sims → CompareSim + metrics shape for Grid/Overlay/Table/Chart.
   //
@@ -360,7 +374,10 @@ export default function CompareSimulationsPage() {
           .metrics?.rg_evolution
         return {
           label: sim.name,
-          color: colorMap[sim.id] ?? '#999999',
+          // The simulation's identity, from the same map its grid cell and its
+          // metrics column read: one index in the theme's ramp, one colour on
+          // every surface, and it follows the theme with everything else.
+          color: colorMap[sim.id],
           rgEvolution: Array.isArray(raw) ? raw : [],
           parameters: sim.parameters,
         }
@@ -562,19 +579,106 @@ export default function CompareSimulationsPage() {
       )}
 
       {canCompare && (
-        <div className="mt-4">
-          <CompareCameraProvider>
-            <CompareBody
-              simulations={compareSims}
-              gridSims={gridSims}
-              rgSeries={rgSeries}
-              colorMap={colorMap}
+        <>
+          {/*
+            Counts, not readings: how much of the requested set this comparison
+            is actually made of. `MetricCard`'s `exact` variant is the one that
+            demands no sigma and no estimator, because a count has neither. The
+            two cards only exist once there is something to count — above an
+            empty state they would be describing nothing.
+          */}
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <MetricCard
+              kind="exact"
+              tone="teal"
+              label="Simulations compared"
+              value={loaded.length}
+              digits={0}
+              detail="Each one in its own colour, with a grid cell and a metrics column; the plot draws the curves that have evolution data"
             />
-          </CompareCameraProvider>
-        </div>
+            <MetricCard
+              kind="exact"
+              tone="slate"
+              label="Not in the comparison"
+              value={ids.length - loaded.length}
+              digits={0}
+              detail="Requested but not drawn: still arriving, still computing, refused by the server, or unreachable"
+            />
+          </div>
+
+          <div className="mt-4">
+            <CompareCameraProvider>
+              <CompareBody
+                simulations={compareSims}
+                gridSims={gridSims}
+                rgSeries={rgSeries}
+                colorMap={colorMap}
+              />
+            </CompareCameraProvider>
+          </div>
+        </>
       )}
     </>
   )
+}
+
+/**
+ * One sample of the plotted curve: its N, and every simulation's Rg at that N
+ * in nanometres. `ShowValues` renders these as the table behind the plot.
+ */
+interface RgSampleRow {
+  n: number
+  readings: Array<number | null>
+}
+
+/**
+ * The pairs the plot draws, sample by sample. A series shorter than the
+ * longest contributes an em dash rather than a zero: a missing reading is not
+ * a measurement of nothing.
+ */
+function rgSampleRows(seriesList: RgSeries[]): RgSampleRow[] {
+  let longest = 0
+  for (let i = 0; i < seriesList.length; i++) {
+    longest = Math.max(longest, seriesList[i].rgEvolution.length)
+  }
+
+  const rows: RgSampleRow[] = []
+  for (let sample = 0; sample < longest; sample++) {
+    const readings: Array<number | null> = []
+    for (let i = 0; i < seriesList.length; i++) {
+      const series = seriesList[i]
+      readings.push(
+        sample < series.rgEvolution.length
+          ? // Engine Rg → nm with this simulation's own scale factor, the same
+            // conversion the chart applies before taking the logarithm.
+            series.rgEvolution[sample] * getScaleFactorNm(series.parameters)
+          : null,
+      )
+    }
+    rows.push({ n: sample + 1, readings })
+  }
+  return rows
+}
+
+/** One column per simulation over a shared N, in the kit's number primitive. */
+function rgSampleColumns(seriesList: RgSeries[]): Column<RgSampleRow>[] {
+  const columns: Column<RgSampleRow>[] = [
+    { key: 'n', header: 'N', numeric: true, digits: 0, value: (row) => row.n },
+  ]
+
+  for (let i = 0; i < seriesList.length; i++) {
+    const column = i
+    columns.push({
+      key: 'series-' + column,
+      header: seriesList[column].label,
+      numeric: true,
+      render: (row) => (
+        <Num value={row.readings[column]} unit="nm" digits={2} size="sm" />
+      ),
+    })
+  }
+
+  return columns
 }
 
 /**
@@ -582,8 +686,10 @@ export default function CompareSimulationsPage() {
  * panel and swaps between grid and overlay. Kept as a separate component
  * so `useCompareCamera()` can be called inside the provider.
  *
- * The metrics table and the Rg chart stay outside `Panel`: they are slice 2's
- * surfaces and keep their own frames until that slice migrates them.
+ * The metrics table and the Rg chart get a `Panel` each: they are this
+ * screen's two reading surfaces, and a surface is what a chart hands its ink
+ * and grid to. The chart's own Plotly title is gone in favour of the panel's
+ * heading, so one name is said once.
  */
 function CompareBody({
   simulations,
@@ -622,9 +728,33 @@ function CompareBody({
         )}
       </Panel>
 
-      <CompareMetricsTable simulations={simulations} colorMap={colorMap} />
+      <Panel title="Metrics">
+        {/* The table's own caption says what a column holds, so the panel only
+            names the surface. */}
+        <CompareMetricsTable simulations={simulations} colorMap={colorMap} />
+      </Panel>
 
-      <RgEvolutionChart series={rgSeries} />
+      {/*
+        R7: the chart owes its reader the numbers behind it, in place. The
+        toggle sits with the panel's title — the pattern the simulation page
+        set — and the table takes the plot's place inside the same frame.
+      */}
+      <ShowValues
+        columns={rgSampleColumns(rgSeries)}
+        rows={rgSampleRows(rgSeries)}
+        caption="The numbers behind the plot: N and radius of gyration in nm for every curve, one column per simulation."
+        maxHeight={300}
+      >
+        {({ toggle, table }) => (
+          <Panel
+            title="Radius of gyration evolution"
+            hint="log10 of Rg/nm against log10 of N, one curve per simulation. The plot takes its ink and its grid from the theme in force, so it is readable on the paper it is drawn on in both themes."
+            action={toggle}
+          >
+            {table ?? <RgEvolutionChart series={rgSeries} />}
+          </Panel>
+        )}
+      </ShowValues>
     </div>
   )
 }

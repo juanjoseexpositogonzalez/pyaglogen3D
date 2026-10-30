@@ -10,6 +10,8 @@
  * they can be unit-tested trivially and reused from server components if
  * needed later.
  */
+import { series } from './chart-theme'
+
 export const MAX_COMPARE_SIMS = 9
 
 /**
@@ -41,25 +43,32 @@ export function deriveSimName(sim: NamableSim): string {
 }
 
 /**
- * Deterministic palette used for sim identity across the Compare page
- * (viewer border tint, overlay particle color, metrics table header dot,
- * Rg-evolution chart series color).
+ * The palette the Compare page identifies simulations with, in slot order.
  *
- * These are the Tableau10 colors from `d3-scale-chromatic`. Inlined
- * deliberately: adding a runtime dependency for nine hex strings is
- * unjustified. See design.md §"Color palette".
+ * An identity is a simulation's **index in the theme's series ramp**, never a
+ * literal. `lib/chart-theme.ts` is the one place that carries a ramp whose
+ * contrast is checked in both themes, and every surface that names a
+ * simulation — the chart's curves and legend, the metrics table's header
+ * marker, the grid cell's border, the overlay's particles and legend — reads
+ * the same index through this module, so one simulation looks the same
+ * everywhere and follows the theme with everything else.
+ *
+ * The page caps a comparison at `MAX_COMPARE_SIMS` (9) and the ramp has six
+ * colours, so the last three slots repeat the first three. A repeated colour is
+ * not a repeated identity: the chart also indexes a dash pattern and a marker
+ * glyph by the same position (`traceStyle`), and every surface prints the
+ * simulation's name beside its colour.
+ *
+ * This replaced nine hand-picked literals (Tableau10). Four of those sat
+ * between 1.6:1 and 2.4:1 against the light theme's paper, under the 3:1 WCAG
+ * asks of a graphical object, once the plot's background became the panel's
+ * paper instead of a fixed dark rectangle.
  */
-export const COMPARE_PALETTE = [
-  '#4E79A7',
-  '#F28E2B',
-  '#E15759',
-  '#76B7B2',
-  '#59A14F',
-  '#EDC948',
-  '#B07AA1',
-  '#FF9DA7',
-  '#9C755F',
-] as const
+export function comparePalette(): string[] {
+  const out: string[] = []
+  for (let slot = 0; slot < MAX_COMPARE_SIMS; slot++) out.push(series(slot))
+  return out
+}
 
 export interface CompareGridLayout {
   cols: number
@@ -114,21 +123,26 @@ export function parseCompareSimsParam(
 }
 
 /**
- * Assign a palette color to each simulation id, deterministically.
+ * Assign an identity to each simulation id, deterministically.
  *
- * The assignment is stable across refreshes and independent of the URL
- * order: we sort the ids lexicographically and map index → palette color.
- * If more ids than palette entries are provided, the palette wraps
- * (modulo) — the cap-at-9 rule is enforced elsewhere (in
- * `parseCompareSimsParam`), but wrapping keeps this function total.
+ * The assignment is stable across refreshes and independent of the URL order:
+ * we sort the ids lexicographically and map position → ramp slot. If more ids
+ * than slots are provided the palette wraps (modulo) — the cap-at-9 rule is
+ * enforced elsewhere (in `parseCompareSimsParam`), but wrapping keeps this
+ * function total.
+ *
+ * The colours are read from the document at call time, so the result belongs to
+ * the theme that was in force when it was built: a caller that has to survive a
+ * theme flip rebuilds the map rather than caching it.
  *
  * Returns a record keyed by the original ids.
  */
 export function getCompareColorPalette(ids: string[]): Record<string, string> {
+  const palette = comparePalette()
   const sorted = [...ids].sort()
   const map: Record<string, string> = {}
   for (let i = 0; i < sorted.length; i++) {
-    map[sorted[i]] = COMPARE_PALETTE[i % COMPARE_PALETTE.length]
+    map[sorted[i]] = palette[i % palette.length]
   }
   return map
 }
