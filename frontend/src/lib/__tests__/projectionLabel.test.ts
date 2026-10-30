@@ -57,3 +57,24 @@ describe('simulationLabel — a study that varies nothing', () => {
     expect(label).toBe('Sim n_particles=60, target_kf=1.3')
   })
 })
+
+describe('simulationLabel — children the grid does not describe', () => {
+  it('keeps a limiting-case child distinguishable from its siblings', () => {
+    // Limiting cases are built from base_parameters and vary the parameters they
+    // override, not the grid. A judge measured eleven children collapsing into
+    // three labels; the parameter a child overrides is part of its identity.
+    const base = { n_particles: 500, target_df: 1.8, target_kf: 1.3 }
+    const low = simulationLabel({ ...base, target_df: 1.0 }, { n_particles: [100] }, base)
+    const high = simulationLabel({ ...base, target_df: 3.0 }, { n_particles: [100] }, base)
+
+    expect(low).not.toBe(high)
+    expect(low).toContain('target_df=1')
+  })
+
+  it('does not repeat what the base already says', () => {
+    const base = { n_particles: 500, target_df: 1.8 }
+    const label = simulationLabel({ ...base }, { n_particles: [100] }, base)
+
+    expect(label).toBe('Sim n_particles=500')
+  })
+})

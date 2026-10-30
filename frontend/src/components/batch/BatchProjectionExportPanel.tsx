@@ -205,7 +205,10 @@ export function BatchProjectionExportPanel({
                         aria-label={`Select ${sim.name}`}
                       />
                     </td>
-                    <td className="px-3 py-2">{sim.name}</td>
+                    {/* The label now carries distribution values, whose JSON has no
+                      spaces to break on: without a break the row is clipped silently
+                      inside an overflow-hidden container. */}
+                    <td className="px-3 py-2 font-mono break-all">{sim.name}</td>
                     <td className="px-3 py-2 text-muted-foreground">{sim.status}</td>
                   </tr>
                 ))}
