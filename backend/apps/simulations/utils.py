@@ -3,6 +3,7 @@
 import csv
 import io
 import logging
+import math
 import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime
@@ -713,6 +714,15 @@ def parse_csv_geometry(
             y = float(_normalize_numeric_cell(row[column_map["y"]], decimal))
             z = float(_normalize_numeric_cell(row[column_map["z"]], decimal))
             radius = float(_normalize_numeric_cell(row[column_map["radius"]], decimal))
+
+            # The .mat parser already refuses non-finite coordinates for this
+            # reason, and the CSV path did not: `nan <= 0` is False, so a NaN
+            # radius was stored as geometry and the analysis died later with
+            # a LinAlgError instead of answering 400 (#202).
+            if not all(math.isfinite(v) for v in (x, y, z, radius)):
+                raise CSVParseError(
+                    f"Row {row_num} contains non-finite (NaN/Inf) values"
+                )
 
             if radius <= 0:
                 raise CSVParseError(
