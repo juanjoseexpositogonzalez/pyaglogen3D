@@ -1,7 +1,8 @@
 """Tests for AI Assistant views."""
-import pytest
+
 from unittest.mock import MagicMock, patch
-from django.urls import reverse
+
+import pytest
 from rest_framework import status
 
 from apps.ai_assistant.models import AIProviderConfig
@@ -52,7 +53,9 @@ class TestAIProviderConfigViewSet:
         assert response.status_code == status.HTTP_200_OK
         assert len(response.data["results"]) == 1
 
-    def test_create_provider_config(self, authenticated_client, encryption_key, settings):
+    def test_create_provider_config(
+        self, authenticated_client, encryption_key, settings
+    ):
         """Test creating a provider config."""
         settings.AI_ENCRYPTION_KEY = encryption_key
 
@@ -282,7 +285,9 @@ class TestSetDefaultAction:
 class TestSanitizeErrorMessage:
     """Tests for error message sanitization."""
 
-    def test_sanitize_removes_api_keys(self, authenticated_client, user, encryption_key, settings):
+    def test_sanitize_removes_api_keys(
+        self, authenticated_client, user, encryption_key, settings
+    ):
         """Test that API keys are removed from error messages."""
         from apps.ai_assistant.views import AIProviderConfigViewSet
 
@@ -295,7 +300,7 @@ class TestSanitizeErrorMessage:
             ("api-key-test error", "[REDACTED] error"),
         ]
 
-        for input_msg, expected_pattern in test_cases:
+        for input_msg, _expected_pattern in test_cases:
             result = viewset._sanitize_error_message(input_msg)
             assert "sk-" not in result
             assert "key-" not in result.replace("[REDACTED]", "")

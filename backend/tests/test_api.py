@@ -1,6 +1,73 @@
-"""Tests for REST API endpoints."""
+"""Tests for REST API endpoints.
+
+Every endpoint here now requires authentication (DRF's ``IsAuthenticated`` is the
+project default) and object-level access is decided by ``IsProjectOwnerOrShared``,
+so each test needs a signed-in client and objects owned by that user. The
+fixtures below override the ownerless, anonymous ones in ``tests/conftest.py`` —
+those still serve the model/serializer tests, which do not go through the API.
+"""
+
+import uuid
+
 import pytest
 from rest_framework import status
+from rest_framework.test import APIClient
+
+from apps.accounts.models import User
+from apps.fractal_analysis.models import ImageAnalysis
+from apps.projects.models import Project
+from apps.simulations.models import Simulation
+
+
+@pytest.fixture
+def user(db):
+    """Create the user the API requests are authenticated as."""
+    return User.objects.create_user(
+        email=f"api-{uuid.uuid4()}@example.com",
+        password="testpass123",
+    )
+
+
+@pytest.fixture
+def api_client(user):
+    """Return a DRF client authenticated as `user`."""
+    client = APIClient()
+    client.force_authenticate(user=user)
+    return client
+
+
+@pytest.fixture
+def project(user):
+    """Create a project owned by the authenticated user."""
+    return Project.objects.create(
+        name="Test Project",
+        description="Test project description",
+        owner=user,
+    )
+
+
+@pytest.fixture
+def simulation(project):
+    """Create a test simulation inside the owned project."""
+    return Simulation.objects.create(
+        project=project,
+        algorithm="dla",
+        parameters={"n_particles": 100, "sticking_probability": 1.0},
+        seed=42,
+    )
+
+
+@pytest.fixture
+def image_analysis(project):
+    """Create a test image analysis inside the owned project."""
+    return ImageAnalysis.objects.create(
+        project=project,
+        original_image=b"\x89PNG\r\n\x1a\n",  # Minimal PNG header
+        original_filename="test.png",
+        original_content_type="image/png",
+        preprocessing_params={"threshold": 128, "invert": False},
+        method="box_counting",
+    )
 
 
 class TestProjectsAPI:
@@ -45,8 +112,13 @@ class TestSimulationsAPI:
 
     def test_create_simulation(self, api_client, project, mocker):
         """Test creating a simulation."""
-        # Mock the Celery task to avoid actual execution
-        mocker.patch("apps.simulations.views.run_simulation_task.delay")
+        # Mock the Celery task to avoid actual execution. The view persists the
+        # returned task id on `Simulation.task_id` (a CharField), so the mock has
+        # to look like a Celery `AsyncResult` rather than a bare `MagicMock`.
+        mocker.patch(
+            "apps.simulations.views.run_simulation_task.delay",
+            return_value=mocker.Mock(id="test-task-id"),
+        )
 
         response = api_client.post(
             f"/api/v1/projects/{project.id}/simulations/",
@@ -64,7 +136,10 @@ class TestSimulationsAPI:
 
     def test_create_simulation_validates_parameters(self, api_client, project, mocker):
         """Test that simulation creation validates parameters."""
-        mocker.patch("apps.simulations.views.run_simulation_task.delay")
+        mocker.patch(
+            "apps.simulations.views.run_simulation_task.delay",
+            return_value=mocker.Mock(id="test-task-id"),
+        )
 
         # Missing n_particles
         response = api_client.post(

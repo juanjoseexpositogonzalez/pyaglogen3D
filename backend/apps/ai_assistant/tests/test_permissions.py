@@ -1,6 +1,8 @@
 """Tests for AI Assistant permissions."""
+
 import pytest
 from django.contrib.auth import get_user_model
+from django.db import IntegrityError
 from rest_framework.test import APIRequestFactory
 
 from apps.ai_assistant.models import AIUserProfile
@@ -19,7 +21,6 @@ def request_factory():
 def user_without_profile(db):
     """Create a user without AI profile."""
     return User.objects.create_user(
-        username="noprofile",
         email="noprofile@example.com",
         password="testpass123",
     )
@@ -29,7 +30,6 @@ def user_without_profile(db):
 def user_with_access(db):
     """Create a user with AI access."""
     user = User.objects.create_user(
-        username="hasaccess",
         email="hasaccess@example.com",
         password="testpass123",
     )
@@ -41,7 +41,6 @@ def user_with_access(db):
 def user_without_access(db):
     """Create a user without AI access (profile exists but access denied)."""
     user = User.objects.create_user(
-        username="noaccess",
         email="noaccess@example.com",
         password="testpass123",
     )
@@ -69,7 +68,9 @@ class TestIsAIUserPermission:
 
         assert permission.has_permission(request, None) is True
 
-    def test_user_with_ai_access_allowed(self, request_factory, user_with_access, settings):
+    def test_user_with_ai_access_allowed(
+        self, request_factory, user_with_access, settings
+    ):
         """Test that users with AI access are allowed."""
         settings.DEBUG = False  # Test production behavior
         permission = IsAIUser()
@@ -178,16 +179,16 @@ class TestAIUserProfileModel:
     def test_profile_str_with_access(self, user):
         """Test profile string representation with access."""
         profile = AIUserProfile.objects.create(user=user, has_ai_access=True)
-        assert str(profile) == f"{user.username} [\u2713]"
+        assert str(profile) == f"{user.email} [\u2713]"
 
     def test_profile_str_without_access(self, user):
         """Test profile string representation without access."""
         profile = AIUserProfile.objects.create(user=user, has_ai_access=False)
-        assert str(profile) == f"{user.username} [\u2717]"
+        assert str(profile) == f"{user.email} [\u2717]"
 
     def test_one_to_one_relationship(self, user):
         """Test that user can only have one AI profile."""
         AIUserProfile.objects.create(user=user, has_ai_access=True)
 
-        with pytest.raises(Exception):  # IntegrityError
+        with pytest.raises(IntegrityError):
             AIUserProfile.objects.create(user=user, has_ai_access=False)
