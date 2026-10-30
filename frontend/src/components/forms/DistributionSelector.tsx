@@ -1,9 +1,11 @@
 'use client'
 
+import { useId, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import type { DistributionMode, DistributionValue } from '@/lib/types'
+import { distributionValueError } from '@/lib/distributionShape'
 
 // Re-export for convenience — consumers can import from here or from types
 export type { DistributionMode, DistributionValue }
@@ -31,6 +33,34 @@ const modeOptions = [
  * distribution configuration.
  */
 export function DistributionSelector({ label, value, onChange, disabled, allowedTypes, error }: Props) {
+  // R8.4: the field reports itself when it loses focus. Until then an empty or
+  // half-typed number is not a mistake - `parseFloat('') || 0` makes every
+  // intermediate state look invalid, and shouting at the user while they type
+  // is worse than saying nothing.
+  // The blurred state is tied to the entry's *identity*, not to its position.
+  // The grid renders its rows with `key={index}`, so deleting one hands this
+  // component a different entry; a positional key (label, or label plus mode)
+  // migrated the state to a row nobody touched and painted it red — measured by
+  // both judges of PR #199, the second time with two rows of the same mode,
+  // which is why the mode was not enough either. Comparing the object the state
+  // was set with makes the state die with the entry it belongs to, whatever its
+  // position. Focusing a field releases it too, so the user is not shouted at
+  // while correcting a value they already left once.
+  const [blurredValue, setBlurredValue] = useState<DistributionValue | null>(null)
+  const local = blurredValue === value ? distributionValueError(value) : null
+  const shown = error ?? local?.message
+  // R8.4 asks for the border AND the message. A parent-provided message used to
+  // suppress the border, which is half of what the scenario says; the field the
+  // local rule names is marked either way, and `error` only wins the text.
+  const marked = local?.field ?? null
+  // From `useId`, not from `label`: the batch form renders one grid per
+  // variation and every grid starts at `#1`, so two grids in the same page
+  // produced the same id and `aria-describedby` could announce the other grid's
+  // message - measured by a judge of PR #199.
+  const messageId = useId()
+
+  const invalidClass = (field: string) =>
+    marked === field ? 'border-destructive focus-visible:ring-destructive' : undefined
   const filteredOptions = allowedTypes
     ? modeOptions.filter((o) => allowedTypes.includes(o.value as DistributionMode))
     : modeOptions
@@ -71,6 +101,7 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
     <div className="space-y-2">
       <Label className="text-sm font-medium">{label}</Label>
       <Select
+        aria-label={`${label}: modo de distribución`}
         value={value.mode}
         onChange={(e) => handleModeChange(e.target.value as DistributionMode)}
         disabled={disabled}
@@ -81,9 +112,15 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
         <Input
           type="number"
           value={value.value}
+          aria-label="valor"
           onChange={(e) =>
             onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
           }
+          onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
+          aria-invalid={marked === 'value' ? true : undefined}
+          className={invalidClass('value')}
+          aria-describedby={marked === 'value' && shown ? messageId : undefined}
           disabled={disabled}
           step="any"
         />
@@ -94,20 +131,32 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           <Input
             type="number"
             placeholder="μ"
+            aria-label="media"
             value={value.mean}
             onChange={(e) =>
               onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
+            aria-invalid={marked === 'mean' ? true : undefined}
+            className={invalidClass('mean')}
+          aria-describedby={marked === 'mean' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
           <Input
             type="number"
             placeholder="σ"
+            aria-label="desviación"
             value={value.std}
             onChange={(e) =>
               onChange({ ...value, std: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
+            aria-invalid={marked === 'std' ? true : undefined}
+            className={invalidClass('std')}
+          aria-describedby={marked === 'std' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
@@ -119,28 +168,42 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           <Input
             type="number"
             placeholder="min"
+            aria-label="mínimo"
             value={value.min}
             onChange={(e) =>
               onChange({ ...value, min: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
+            aria-invalid={marked === 'min' ? true : undefined}
+            className={invalidClass('min')}
+          aria-describedby={marked === 'min' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
           <Input
             type="number"
             placeholder="max"
+            aria-label="máximo"
             value={value.max}
             onChange={(e) =>
               onChange({ ...value, max: parseFloat(e.target.value) || 0 })
             }
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
+            aria-invalid={marked === 'max' ? true : undefined}
+            className={invalidClass('max')}
+          aria-describedby={marked === 'max' && shown ? messageId : undefined}
             disabled={disabled}
             step="any"
           />
         </div>
       )}
 
-      {error && (
-        <p role="alert" className="text-xs text-destructive mt-1">{error}</p>
+      {shown && (
+        <p id={messageId} role="alert" className="text-xs text-destructive mt-1">
+          {shown}
+        </p>
       )}
     </div>
   )

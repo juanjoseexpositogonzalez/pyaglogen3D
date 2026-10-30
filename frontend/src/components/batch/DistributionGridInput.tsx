@@ -1,5 +1,6 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { DistributionSelector } from '@/components/forms/DistributionSelector'
@@ -16,6 +17,9 @@ interface DistributionGridInputProps {
 
 const DEFAULT_ENTRY: DistributionValue = { mode: 'fixed', value: 1.0 }
 
+// Monotonic, so an entry keeps its key when its neighbours are removed.
+let nextEntryId = 0
+
 export function DistributionGridInput({
   value,
   onChange,
@@ -23,11 +27,32 @@ export function DistributionGridInput({
   allowedTypes,
   minEntries = 1,
 }: DistributionGridInputProps) {
+  // Rows used to be keyed by index, which made every bit of row state belong to
+  // the POSITION: deleting a row handed its state to its neighbour. R8.4's
+  // "already blurred" flag lived there, so a row nobody touched appeared red and
+  // a row the user had touched lost its message - both measured by the judges of
+  // PR #199. Entries now carry an identity that survives deletion; an update
+  // coming from outside this component (a parent resetting the field) falls back
+  // to position, which is the best that can be done without an id in the payload.
+  const [ids, setIds] = useState<string[]>(() =>
+    value.map(() => `entry-${nextEntryId++}`),
+  )
+
+  useEffect(() => {
+    setIds((prev) =>
+      prev.length === value.length
+        ? prev
+        : value.map((_, index) => prev[index] ?? `entry-${nextEntryId++}`),
+    )
+  }, [value.length])
+
   const handleAdd = () => {
+    setIds((prev) => [...prev, `entry-${nextEntryId++}`])
     onChange([...value, { ...DEFAULT_ENTRY }])
   }
 
   const handleRemove = (index: number) => {
+    setIds((prev) => prev.filter((_, i) => i !== index))
     onChange(value.filter((_, i) => i !== index))
   }
 
@@ -54,7 +79,7 @@ export function DistributionGridInput({
       </div>
 
       {value.map((entry, index) => (
-        <div key={index} className="flex items-start gap-2 p-2 border rounded bg-muted/30">
+        <div key={ids[index] ?? index} className="flex items-start gap-2 p-2 border rounded bg-muted/30">
           <div className="flex-1">
             <DistributionSelector
               label={`#${index + 1}`}
