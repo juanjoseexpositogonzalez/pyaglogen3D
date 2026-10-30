@@ -36,7 +36,9 @@ SHAPES = [
 
 
 @pytest.mark.parametrize(("mode", "field"), SHAPES)
-@pytest.mark.parametrize("bad", NON_FINITE)
+# `10**400` también: `float()` lanza OverflowError con él, y esa cláusula
+# del validador no tenía testigo propio (lo midió el juez A).
+@pytest.mark.parametrize("bad", NON_FINITE + [10**400])
 def test_a_non_finite_magnitude_is_refused(mode: str, field: str, bad: float) -> None:
     config: dict[str, object] = {
         "mode": mode,
@@ -73,13 +75,14 @@ def user(db: None) -> User:
 def test_the_serializer_refuses_a_non_finite_magnitude_from_python(
     user: User,
 ) -> None:
-    """A guard on the writing path, which today blocks it one layer earlier.
+    """It pins the property, not the guard - and this docstring says which.
 
-    Measured: the model-level `JSONField` accepts the value (its validator runs
-    json with nan allowed) and the database constraint refuses it at write. This
-    pins the property - a non-finite magnitude cannot be stored - whichever layer
-    enforces it, and it asserts the reason, not just falsiness, so it cannot pass
-    because some unrelated field was invalid.
+    Measured by a judge: with `_positive`'s guard removed this test **still
+    passes**, because the refusal it observes comes from DRF's `JSONField`
+    (`Value must be valid JSON.`), one layer above. So it witnesses "a
+    non-finite magnitude cannot be stored", which is worth pinning, and it does
+    **not** witness the validator - that is what the fifteen unit cases and the
+    form-encoded one are for.
     """
     from apps.simulations.serializers import ParametricStudySerializer
 
