@@ -25,6 +25,7 @@ silently lost while this contract was being written.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -114,6 +115,13 @@ def _positive(config: Mapping[str, Any], field: str) -> None:
         value = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"'{field}' must be a number, got {raw!r}") from exc
+    # `nan <= 0` is False and `inf` is positive, so both used to pass a validator
+    # whose whole job is to say whether the engine can run the value. Nothing
+    # stores them today - every writable path goes through a JSONField, which
+    # refuses non-finite literals - so this closes a gap between what is checked
+    # and what is claimed, and it says the truth when it fires (#202).
+    if not math.isfinite(value):
+        raise ValueError(f"'{field}' must be a finite number, got {raw!r}")
     if value <= 0:
         raise ValueError(f"'{field}' must be greater than 0, got {value}")
 
