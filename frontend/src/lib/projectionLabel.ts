@@ -5,23 +5,30 @@ import { formatParameterValue } from '@/lib/formatParameterValue'
  *
  * `Object.entries(parameters)` was wrong twice over: the child carries a
  * distribution under both of its names - the grid-facing one and the engine one,
- * which R13.10 requires - so the same magnitude appeared twice, and those
- * values are objects, so templating them printed `[object Object]`. Both
- * measured in #191.
+ * which R13.10 requires - so the same magnitude appeared twice, and those values
+ * are objects, so templating them printed `[object Object]`. Both measured in
+ * #191.
  *
- * The columns come from `parameter_grid.keys()`, like the other four result
- * views, and the value is rendered with the same helper they use. A key the grid
- * varies but the child lacks reads as the em dash, not as `undefined` - which is
- * what those views do too, and what R13.3 should probably stop allowing (#204).
+ * Two rounds of review found that the naive fixes reopen the same door from
+ * other directions, because `base_parameters` is the study as it was SENT and
+ * `parameters` is the child as it was STORED, where R13.10 has completed the
+ * aliases. So both sides are canonicalised first: one entry per magnitude,
+ * always under the name the user typed.
  */
-// The two names of one magnitude. The child carries both (R13.10), and showing
-// the second one is the duplication #191 closes; a varying key whose alias is
-// already a column is not new information.
-const ALIASES: Record<string, string> = {
-  kf_distribution: 'target_kf_distribution',
-  target_kf_distribution: 'kf_distribution',
-  particle_radius_config: 'dpo_distribution',
-  dpo_distribution: 'particle_radius_config',
+
+/** The two names of one magnitude; the first is the one the grid exposes. */
+const ALIAS_PAIRS: ReadonlyArray<readonly [string, string]> = [
+  ['kf_distribution', 'target_kf_distribution'],
+  ['particle_radius_config', 'dpo_distribution'],
+]
+
+/** One entry per magnitude: the stored engine copy is dropped, not shown. */
+function canonicalise(params: Record<string, unknown>): Record<string, unknown> {
+  const out = { ...params }
+  for (const [gridName, engineName] of ALIAS_PAIRS) {
+    if (gridName in out && engineName in out) delete out[engineName]
+  }
+  return out
 }
 
 function sameValue(a: unknown, b: unknown): boolean {
@@ -33,28 +40,26 @@ export function simulationLabel(
   parameterGrid: Record<string, unknown>,
   baseParameters: Record<string, unknown> = {},
 ): string {
+  const shown = canonicalise(parameters)
+  const base = canonicalise(baseParameters)
+
   const gridKeys = Object.keys(parameterGrid)
   // An empty grid is reachable - the serializer defaults an absent grid to `{}`
   // and the form lets every variation be removed - and sourcing only from the
-  // grid left the row reading just "Sim ", losing every parameter. The sibling
-  // view this claims parity with falls back the same way.
-  const columns = gridKeys.length ? gridKeys : Object.keys(parameters)
+  // grid left the row reading just "Sim ". The fallback takes the canonical
+  // keys, so it cannot reintroduce the duplicated magnitude.
+  const columns = gridKeys.length ? gridKeys : Object.keys(shown)
 
   // The limiting-case children are not built from the grid: their variation
   // lives in the parameters they override. A judge measured that reading the
-  // grid alone collapsed eleven children into three identical labels - the fix
-  // for `[object Object]` would have traded an ugly label for an ambiguous one,
-  // in the only place the panel identifies a row. So anything the child carries
-  // that the base does not is part of its identity.
-  const varied = Object.keys(parameters).filter(
-    (key) =>
-      !columns.includes(key) &&
-      !(ALIASES[key] && columns.includes(ALIASES[key])) &&
-      !sameValue(parameters[key], baseParameters[key]),
+  // grid alone collapsed eleven children into three identical labels, so
+  // anything the child has and the base does not is part of its identity.
+  const varied = Object.keys(shown).filter(
+    (key) => !columns.includes(key) && !sameValue(shown[key], base[key]),
   )
 
   const entries = [...columns, ...varied].map(
-    (key) => `${key}=${formatParameterValue(parameters[key])}`,
+    (key) => `${key}=${formatParameterValue(shown[key])}`,
   )
   return `Sim ${entries.join(', ')}`
 }

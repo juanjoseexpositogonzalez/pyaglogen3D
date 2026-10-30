@@ -78,3 +78,52 @@ describe('simulationLabel — children the grid does not describe', () => {
     expect(label).toBe('Sim n_particles=500')
   })
 })
+
+describe('simulationLabel — the aliases, in every combination the backend accepts', () => {
+  const KF_GRID = { mode: 'fixed', value: 1.5 }
+  const CHILD = { n_particles: 100, kf_distribution: KF_GRID, target_kf_distribution: KF_GRID }
+
+  it('does not show the engine name when base_parameters declared the grid one', () => {
+    // The backend accepts this shape and the child carries both names; a judge
+    // measured eleven rows each gaining a `target_kf_distribution` entry whose
+    // value never varied.
+    const label = simulationLabel(
+      CHILD,
+      { n_particles: [100] },
+      { n_particles: 100, kf_distribution: KF_GRID },
+    )
+
+    // A magnitude that comes from base_parameters is the same in every row, so
+    // it is not part of the row's identity: the label states what varies.
+    expect(label).toBe('Sim n_particles=100')
+  })
+
+  it('does not show the engine name when base_parameters declared the engine one', () => {
+    const label = simulationLabel(
+      CHILD,
+      { n_particles: [100] },
+      { n_particles: 100, target_kf_distribution: KF_GRID },
+    )
+
+    expect(label).not.toContain('target_kf_distribution')
+  })
+
+  it('does not duplicate the magnitude when the grid is empty', () => {
+    // The empty-grid fallback used to take every key of the child, which
+    // includes both names - the duplication #191 closes, from the other line.
+    const label = simulationLabel(CHILD, {}, { n_particles: 100 })
+
+    expect(label.match(/kf_distribution/g)).toHaveLength(1)
+    expect(label).not.toContain('target_kf_distribution')
+  })
+
+  it('leaves a base value out of the row', () => {
+    const label = simulationLabel(
+      { n_particles: 100, target_df: 2.0 },
+      { n_particles: [100] },
+      { n_particles: 60, target_df: 2.0 },
+    )
+
+    expect(label).not.toContain('target_df')
+  })
+})

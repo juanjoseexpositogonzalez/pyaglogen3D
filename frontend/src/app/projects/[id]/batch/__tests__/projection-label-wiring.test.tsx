@@ -107,5 +107,10 @@ describe('batch page — projection row labels (#191)', () => {
     expect(label).not.toContain('[object Object]')
     // The engine name is the same magnitude and must not be a second column.
     expect(label).not.toContain('target_kf_distribution')
+    // And base_parameters must reach the helper: `n_particles` is 60 in the base
+    // of every child, so it belongs nowhere on the row. Passing only two
+    // arguments - the shape that shipped before this review - brings it back, and
+    // that reverted call site used to leave the whole suite green.
+    expect(label).not.toContain('n_particles')
   })
 })
