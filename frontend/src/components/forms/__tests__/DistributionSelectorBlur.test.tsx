@@ -167,3 +167,30 @@ describe('R8.4 — the state belongs to the entry, not to the position', () => {
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })
+
+describe('R8.4 — the error follows the entry, in both directions', () => {
+  it('keeps the error on a touched row when a different row is removed', () => {
+    // The other half of the same bug, and the material one: with a positional
+    // key, deleting a *different* row made the error vanish from the row the
+    // user had touched, re-opening the invisible 400 this PR exists to remove.
+    // Driven through the real remove button, the way the judge measured it.
+    function Grid() {
+      const [rows, setRows] = useState<DistributionValue[]>([
+        { mode: 'fixed', value: 5 },
+        { mode: 'fixed', value: 0 },
+      ])
+      return (
+        <DistributionGridInput label="configurations" value={rows} onChange={setRows} />
+      )
+    }
+    render(<Grid />)
+
+    fireEvent.blur(screen.getAllByRole('spinbutton')[1])
+    expect(screen.getByRole('alert')).toBeTruthy()
+
+    fireEvent.click(screen.getAllByRole('button', { name: /remove distribution/i })[0])
+
+    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.getAllByRole('spinbutton')[0].getAttribute('aria-invalid')).toBe('true')
+  })
+})

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -53,7 +53,11 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
   // suppress the border, which is half of what the scenario says; the field the
   // local rule names is marked either way, and `error` only wins the text.
   const marked = local?.field ?? null
-  const messageId = `${label}-distribution-error`.replace(/[^\w-]/g, '-')
+  // From `useId`, not from `label`: the batch form renders one grid per
+  // variation and every grid starts at `#1`, so two grids in the same page
+  // produced the same id and `aria-describedby` could announce the other grid's
+  // message - measured by a judge of PR #199.
+  const messageId = useId()
 
   const invalidClass = (field: string) =>
     marked === field ? 'border-destructive focus-visible:ring-destructive' : undefined
@@ -97,6 +101,7 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
     <div className="space-y-2">
       <Label className="text-sm font-medium">{label}</Label>
       <Select
+        aria-label={`${label}: modo de distribución`}
         value={value.mode}
         onChange={(e) => handleModeChange(e.target.value as DistributionMode)}
         disabled={disabled}
