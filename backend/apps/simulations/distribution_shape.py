@@ -25,6 +25,7 @@ silently lost while this contract was being written.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Iterable, Mapping
 from typing import Any
 
@@ -114,6 +115,32 @@ def _positive(config: Mapping[str, Any], field: str) -> None:
         value = float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"'{field}' must be a number, got {raw!r}") from exc
+    except OverflowError as exc:
+        # An int literal past float range - 10**400 - used to escape as a 500:
+        # `float()` raises OverflowError and the clause above does not catch it.
+        # PostgreSQL's jsonb stores such a literal and hands it back as an int, so
+        # a stored row could make any update of these keys a 500 instead of a 400.
+        raise ValueError(
+            f"'{field}' must be a finite number, got a value out of range"
+        ) from exc
+    # `nan <= 0` is False and `inf` is positive, so both used to pass a validator
+    # whose whole job is to say whether the engine can run the value.
+    #
+    # Where they were stopped was a layer below, and not always: the model-level
+    # JSONField accepts them (its validator runs json with nan allowed) and the
+    # database constraint refuses them at write - which for a request that reaches
+    # it is an IntegrityError, not a 400. And a form-encoded request does reach
+    # here: DRF's JSONField takes a JSON *string* through `json.loads` without the
+    # non-finite check, so a multipart post carrying `1e999` answered 500 before
+    # this guard and answers 400 now. The guard is the layer that turns that into
+    # a refusal the caller can read (#202).
+    #
+    # This is about the distribution magnitudes. The assertion does not generalise
+    # to the repository: `Simulation.geometry` is a `BinaryField` and the CSV
+    # import wrote NaN into it until the same guard was added to that parser,
+    # where the `.mat` sibling already had it.
+    if not math.isfinite(value):
+        raise ValueError(f"'{field}' must be a finite number, got {raw!r}")
     if value <= 0:
         raise ValueError(f"'{field}' must be greater than 0, got {value}")
 
