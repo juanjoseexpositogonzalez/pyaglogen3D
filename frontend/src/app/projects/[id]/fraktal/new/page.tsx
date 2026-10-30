@@ -5,15 +5,28 @@ import Link from 'next/link'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulations } from '@/hooks/useSimulations'
 import { useCreateFraktalAnalysis } from '@/hooks/useFraktalAnalyses'
-import { Header } from '@/components/layout/Header'
 import { FraktalAnalysisForm } from '@/components/fraktal/FraktalAnalysisForm'
-import { Card, CardContent } from '@/components/ui/card'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Callout } from '@/components/kit/Callout'
+import { PageHeader } from '@/components/kit/PageHeader'
 import { Button } from '@/components/ui/button'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft, FileArchive } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import type { CreateFraktalInput } from '@/lib/types'
 
+/**
+ * Where a FRAKTAL analysis starts: name it, point it at an image or at a
+ * completed simulation, and set the parameters the model reads.
+ *
+ * The shell owns the navigation and the page container, so this file mounts
+ * neither a `Header` nor a page landmark of its own: a page that does ends up
+ * with two of them the moment the shell changes, and the deprecated `Header`
+ * renders nothing inside the shell anyway.
+ *
+ * Two notices sit on the screen besides the form, and they are not the same
+ * kind of thing: the batch-analysis pointer is navigation and reads as a note;
+ * a failed request is a failure and reads as an alert, with the server's own
+ * reason kept in the sentence so it can be acted on.
+ */
 export default function NewFraktalAnalysisPage({
   params,
 }: {
@@ -35,31 +48,25 @@ export default function NewFraktalAnalysisPage({
   }
 
   if (projectLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading project..." />
-      </div>
-    )
+    return <LoadingScreen message="Loading project..." />
   }
 
   if (projectError || !project) {
     return (
-      <div className="min-h-screen">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">
-                Failed to load project. It may not exist or the backend is unavailable.
-              </p>
-              <Link href="/projects" className="mt-4 inline-block">
-                <Button variant="outline">Back to Projects</Button>
-              </Link>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <>
+        <PageHeader eyebrow="FRAKTAL" title="Project unavailable" />
+        <Callout
+          tone="danger"
+          title="Failed to load project"
+          action={
+            <Link href="/projects">
+              <Button variant="outline">Back to Projects</Button>
+            </Link>
+          }
+        >
+          It may not exist or the backend is unavailable.
+        </Callout>
+      </>
     )
   }
 
@@ -74,61 +81,47 @@ export default function NewFraktalAnalysisPage({
     }))
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <>
+      {/* Breadcrumb */}
+      <Link
+        href={`/projects/${id}`}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to {project.name}
+      </Link>
 
-      <main className="container mx-auto px-4 py-8 max-w-2xl">
-        {/* Breadcrumb */}
+      <PageHeader
+        eyebrow="FRAKTAL"
+        title="New FRAKTAL Analysis"
+        description="Analyze fractal properties of agglomerate images using the FRAKTAL algorithm. Upload an image or generate a projection from a simulation."
+      />
+
+      {/* Batch analysis CTA (T4.6) */}
+      <Callout tone="info" title="Analyzing a whole simulation?" className="mb-4">
+        Have a ZIP of projections from a simulation?{' '}
         <Link
-          href={`/projects/${id}`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
+          href={`/projects/${id}/fraktal/batch`}
+          className="font-medium underline"
         >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to {project.name}
-        </Link>
+          Try batch analysis
+        </Link>{' '}
+        for automatic calibration and distribution statistics.
+      </Callout>
 
-        {/* Header */}
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">New FRAKTAL Analysis</h1>
-          <p className="text-muted-foreground mt-2">
-            Analyze fractal properties of agglomerate images using the FRAKTAL algorithm.
-            Upload an image or generate a projection from a simulation.
-          </p>
-        </div>
+      {/* Form */}
+      <FraktalAnalysisForm
+        onSubmit={handleSubmit}
+        isLoading={createAnalysis.isPending}
+        simulations={completedSimulations}
+      />
 
-        {/* Batch analysis CTA (T4.6) */}
-        <Alert className="mb-6">
-          <FileArchive className="h-4 w-4" />
-          <AlertDescription>
-            Have a ZIP of projections from a simulation?{' '}
-            <Link
-              href={`/projects/${id}/fraktal/batch`}
-              className="underline font-medium"
-            >
-              Try batch analysis
-            </Link>{' '}
-            for automatic calibration and distribution statistics.
-          </AlertDescription>
-        </Alert>
-
-        {/* Form */}
-        <FraktalAnalysisForm
-          onSubmit={handleSubmit}
-          isLoading={createAnalysis.isPending}
-          simulations={completedSimulations}
-        />
-
-        {/* Error Display */}
-        {createAnalysis.isError && (
-          <Card className="mt-4 border-destructive">
-            <CardContent className="p-4">
-              <p className="text-destructive text-sm">
-                Failed to create analysis: {(createAnalysis.error as Error)?.message || 'Unknown error'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-      </main>
-    </div>
+      {/* Error Display */}
+      {createAnalysis.isError && (
+        <Callout tone="danger" title="Failed to create analysis" className="mt-4">
+          {(createAnalysis.error as Error)?.message || 'Unknown error'}
+        </Callout>
+      )}
+    </>
   )
 }
