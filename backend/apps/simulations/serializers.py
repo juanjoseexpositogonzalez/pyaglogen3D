@@ -453,7 +453,7 @@ class ParametricStudySerializer(serializers.ModelSerializer):
     #: Grid keys validated via distribution helper.
     _DISTRIBUTION_GRID_KEYS: dict[str, dict] = {
         "kf_distribution": {},
-        "particle_radius_config": {"max_std_over_mean": STD_OVER_MEAN_CAP},
+        "particle_radius_config": {},
     }
 
     _BATCH_HARD_CAP = 1000
@@ -494,9 +494,16 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 # accepts, and would hide the allow-list message.
                 if isinstance(entry, dict) and "mode" in entry:
                     continue
+                # The cap is read here, not baked into the class table: a class
+                # attribute evaluates the constant once at import time and then
+                # disagrees with the R13 site if the constant changes, which is
+                # two live caps again (#201 review).
+                caps = dict(constraints)
+                if key in CAPPED_MAGNITUDE:
+                    caps["max_std_over_mean"] = STD_OVER_MEAN_CAP
                 try:
                     validate_distribution_config(
-                        entry, allowed_dist_types, **constraints
+                        entry, allowed_dist_types, **caps
                     )
                 except serializers.ValidationError as exc:
                     raise serializers.ValidationError(
