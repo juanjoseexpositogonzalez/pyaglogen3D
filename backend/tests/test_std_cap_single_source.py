@@ -46,6 +46,23 @@ def test_the_constant_keeps_the_value_r2_fixes() -> None:
     )
 
 
+#: The behavioural controls are about validation, not about running anything.
+#: This project's test settings run Celery eagerly, so posting a study executes
+#: its children for real - engine, random seeds, a database write per child. A
+#: judge asked me to chase a single failure of the second control that never
+#: reproduced in twenty runs of the module or in eight API probes; the honest
+#: repair is to remove the nondeterminism from a test that does not need it.
+@pytest.fixture(autouse=True)
+def _no_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import MagicMock
+
+    from apps.simulations import views
+
+    monkeypatch.setattr(
+        views, "run_simulation_task", MagicMock(delay=MagicMock(return_value=MagicMock(id="t")))
+    )
+
+
 @pytest.fixture
 def user(db: None) -> User:
     import uuid
