@@ -23,6 +23,8 @@ const mockUseProject = vi.fn()
 const mockUseSimulation = vi.fn()
 const mockUseSimulationGeometry = vi.fn()
 const mockViewerProps = vi.fn()
+const mockFractalPlotProps = vi.fn()
+const mockFractalPlotMount = vi.fn()
 const mockRefetch = vi.fn()
 const mockPush = vi.fn()
 const mockExportCsv = vi.fn()
@@ -112,13 +114,25 @@ vi.mock('@/components/topology', () => ({
 }))
 
 vi.mock('@/components/charts', () => ({
-  FractalPlot: () => React.createElement('div', {}, 'fractal plot'),
+  // A mount is what carries the plot's own state — exclusion sliders, background,
+  // legend — so counting mounts is how a test sees that state being thrown away.
+  // The props are recorded because the table behind the plot must mirror the
+  // series the plot was handed, not a recomputation of it.
+  FractalPlot: (props: Record<string, unknown>) => {
+    mockFractalPlotProps(props)
+    React.useEffect(() => {
+      mockFractalPlotMount()
+    }, [])
+    return React.createElement('div', {}, 'fractal plot')
+  },
 }))
 
 vi.mock('@/components/analysis', () => ({
-  BoxCountingAnalysis: () => React.createElement('div', {}, 'box counting'),
-  LimitingCasesCard: () => React.createElement('div', {}, 'limiting cases'),
-  OpticalPropertiesSection: () => React.createElement('div', {}, 'optical'),
+  // The stubs say what they are, in words that are not the panel's own title, so
+  // a test can tell "the child is here" from "the page printed its heading".
+  BoxCountingAnalysis: () => React.createElement('div', {}, 'box counting widget'),
+  LimitingCasesCard: () => React.createElement('div', {}, 'limiting cases widget'),
+  OpticalPropertiesSection: () => React.createElement('div', {}, 'optical properties form'),
   LIMITING_CASES: [],
 }))
 
@@ -246,6 +260,21 @@ const panelByTitle = (title: string): HTMLElement =>
 /** Every reading inside a surface, in document order. */
 const numbersIn = (element: HTMLElement): string[] =>
   Array.from(element.querySelectorAll('.num')).map((node) => node.textContent ?? '')
+
+/**
+ * The kit frame a child is mounted in.
+ *
+ * `Panel` and `VisualPanel` are the only two frames this page uses, and both
+ * paint a `shadow-panel` box; `VisualPanel` paints it on the dark stage. The
+ * neighbours are stubbed here, so the frame is the one thing the page itself
+ * contributes to each block — reaching it from the child is what proves the
+ * child was not left loose on the page.
+ */
+const kitFrameOf = (child: HTMLElement): HTMLElement | null =>
+  child.closest('[class*="shadow-panel"]')
+
+/** The dark stage a spatial child is mounted on, if any. */
+const stageOf = (child: HTMLElement): HTMLElement | null => child.closest('.bg-visual')
 
 /** The numbers rendered inside the 3D stage, in document order. */
 const panelNumbers = (): string[] =>
@@ -645,7 +674,9 @@ describe('the 3D stage and the values behind it', () => {
     // pieces the primitive wires on the page's behalf.
     const caption = /particles behind this view/i
     expect(screen.getByText(caption)).toBeTruthy()
-    const region = screen.getByRole('region')
+    // Scoped to the stage: the projection and topology stages are named regions
+    // of their own now, so an unscoped query finds three and cannot say which.
+    const region = within(viewerPanel()).getByRole('region')
     expect(region.getAttribute('tabindex')).toBe('0')
     expect(region.getAttribute('aria-label')).toMatch(caption)
     expect(region.contains(screen.getByRole('table'))).toBe(true)
@@ -698,7 +729,7 @@ describe('the 3D stage and the values behind it', () => {
     // the bar, so the cap has to leave that room — and the bar's own backdrop
     // stays dark, which is the contrast the readings were toned for.
     const stage = viewerPanel().querySelector('.bg-visual') as HTMLElement
-    const region = screen.getByRole('region')
+    const region = within(viewerPanel()).getByRole('region')
     const stageHeight = Number.parseFloat(stage.style.height)
     const tableHeight = Number.parseFloat(region.style.maxHeight)
 
@@ -813,49 +844,107 @@ describe('the analysis blocks on the kit', () => {
     expect(panel.textContent).toMatch(/compact/i)
   })
 
-  it('puts the box-counting analysis in a kit panel', () => {
+  it('puts the box-counting analysis inside a kit panel', () => {
     renderPage()
 
-    const panel = panelByTitle('Box counting')
-    expect(panel.textContent).toMatch(/box counting/i)
+    // The child still paints its own card, so what this page contributes is the
+    // frame. Mounted loose, the block would sit directly on the page surface
+    // with none of the kit's geometry.
+    const child = screen.getByText('box counting widget')
+    expect(kitFrameOf(child)?.tagName).toBe('SECTION')
+    expect(stageOf(child)).toBeNull()
   })
 
-  it('names the limiting cases on a panel of their own', () => {
+  it('puts the limiting cases in a kit panel, open rather than collapsed', () => {
     renderPage()
 
-    // The block carries the overlay control that drives the scaling plot, so it
-    // stays open: a disclosure would hide the switch that makes the lines
-    // appear.
-    const panel = panelByTitle('Limiting cases')
-    expect(panel.textContent).toMatch(/limiting cases/i)
+    // They carry the switch that draws their lines on the scaling plot, so a
+    // disclosure would hide a control and not just reference data.
+    const child = screen.getByText('limiting cases widget')
+    expect(kitFrameOf(child)?.tagName).toBe('SECTION')
+    expect(child.closest('[aria-expanded]')).toBeNull()
+  })
+
+  it('puts the optical properties in a kit panel', () => {
+    renderPage()
+
+    const child = screen.getByText('optical properties form')
+    expect(kitFrameOf(child)?.tagName).toBe('SECTION')
+    expect(stageOf(child)).toBeNull()
   })
 
   it('puts the 2D projection on the dark stage and leaves its controls beside it', () => {
     renderPage()
 
-    const panel = panelByTitle('2D projection')
-    const stage = panel.querySelector('.bg-visual') as HTMLElement
+    const child = screen.getByText('projection viewer')
+    const stage = stageOf(child)
     expect(stage).not.toBeNull()
-    expect(stage.textContent).toMatch(/projection viewer/)
-    // Generation and download are not this slice's business: the controls keep
-    // their column, outside the stage.
-    expect(stage.textContent).not.toMatch(/projection controls/)
+    // The child names itself ("Preview (Az… )"), so the stage adds the frame and
+    // not a second heading; the region's label is what names it for a reader.
+    expect(screen.getByRole('region', { name: '2D projection preview' })).toBeTruthy()
+    // Generation and download keep their column, outside the stage.
+    expect(stage?.textContent).not.toMatch(/projection controls/)
     expect(screen.getByText('projection controls')).toBeTruthy()
   })
 
   it('puts the topology graph on the dark stage', () => {
     renderPage()
 
-    const stage = panelByTitle('Topology').querySelector('.bg-visual') as HTMLElement
-    expect(stage).not.toBeNull()
-    expect(stage.textContent).toMatch(/neighbor graph/)
+    expect(stageOf(screen.getByText('neighbor graph'))).not.toBeNull()
+    expect(screen.getByRole('region', { name: 'Topology graph' })).toBeTruthy()
   })
 
-  it('puts the optical properties in a kit panel', () => {
+  it('sits the projection stage on paper instead of on the dark canvas', () => {
     renderPage()
 
-    const panel = panelByTitle('Optical properties')
-    expect(panel.textContent).toMatch(/optical/i)
+    // The legacy viewer paints `bg-card/70`. Over the stage (#07141d) that
+    // composites to #b5b9bb and its `--muted-foreground` measures 2.78:1 in the
+    // light theme — under AA, on the labels a reader needs in order to use the
+    // controls. On `--surface-strong` the same text measures 5.52:1 (light) and
+    // 8.01:1 (dark, where it was already 8.53:1 against the canvas).
+    const region = screen.getByRole('region', { name: '2D projection preview' })
+    expect(region.className).toMatch(/bg-surface-strong/)
+    expect(region.closest('.bg-visual')).not.toBeNull()
+  })
+
+  it('sits the topology stage on paper too', () => {
+    renderPage()
+
+    const region = screen.getByRole('region', { name: 'Topology graph' })
+    expect(region.className).toMatch(/bg-surface-strong/)
+    expect(region.closest('.bg-visual')).not.toBeNull()
+  })
+
+  it('names and focuses each scrolling stage, so the keyboard can reach it', () => {
+    renderPage()
+
+    // A scroll box with no focusable content cannot be reached by keyboard, and
+    // the legacy card inside these stages is taller than the stage. Without the
+    // region role the stage has no name either, because the child brings its own
+    // heading instead of borrowing the panel's.
+    for (const name of ['2D projection preview', 'Topology graph']) {
+      expect(screen.getByRole('region', { name }).getAttribute('tabindex')).toBe('0')
+    }
+  })
+
+  it('names only the blocks it owns, and leaves the rest to their own headers', () => {
+    // With an evolution series so every block this test talks about is on the
+    // page: the scaling panel is the one title the page still has to supply.
+    withRgEvolution()
+    renderPage()
+
+    // Five blocks name themselves inside their own card. Repeating that name as
+    // a kit panel title stacks two headings a few pixels apart ("Optical
+    // properties" over "Optical Properties"). The page keeps a title only where
+    // it has to: the scaling panel, whose header carries the values control.
+    const level2 = screen.getAllByRole('heading', { level: 2 }).map((node) => node.textContent)
+    expect(level2).toEqual([
+      'Coordination number',
+      'Shape analysis',
+      'Fractal scaling',
+      '3D visualization',
+      'Simulation parameters',
+    ])
   })
 
   it('recaps the run parameters as a labelled list, with the numbers through Num', () => {
@@ -867,6 +956,26 @@ describe('the analysis blocks on the kit', () => {
     expect(panel.textContent).toMatch(/primary particle diameter nm/i)
     expect(numbersIn(panel)).toContain('1,200')
     expect(numbersIn(panel)).toContain('50')
+  })
+
+  it('prints a fractional parameter with the digits it carries', () => {
+    withSimulation({
+      parameters: {
+        primary_particle_diameter_nm: 50,
+        n_particles: 1200,
+        sintering_fraction: 1.8,
+        prefactor_override: 0.125,
+      },
+    })
+    renderPage()
+
+    const numbers = numbersIn(panelByTitle('Simulation parameters'))
+    // 1.8 is written with one decimal because that is what the record holds.
+    // Padding it to three invents precision the run never had, which is the one
+    // thing a parameter recap must not do.
+    expect(numbers).toContain('1.8')
+    expect(numbers).not.toContain('1.800')
+    expect(numbers).toContain('0.125')
   })
 
   it('encodes a nested parameter instead of printing an object', () => {
@@ -884,14 +993,33 @@ describe('the analysis blocks on the kit', () => {
     expect(panel.textContent).not.toContain('[object Object]')
   })
 
-  it('leaves the retired card surface out of its own markup', () => {
-    const { container } = renderPage()
+  it('lets a long unbreakable parameter wrap instead of overflowing the panel', () => {
+    const filename = `${'a'.repeat(80)}.tif`
+    withSimulation({ parameters: { n_particles: 1200, original_filename: filename } })
+    renderPage()
 
-    // `bg-card` is the shadcn card surface, and the kit's panels carry their own
-    // tokens. A page that still mounts one nests a legacy frame inside a kit
-    // panel, which is what this slice exists to remove. The neighbours this file
-    // stubs still paint their own cards until their own slices migrate them.
-    expect(container.querySelector('[class*="bg-card"]')).toBeNull()
+    // `import_metadata` and filenames arrive without a space in them, and one
+    // unbreakable token pushes the panel wider than its column. jsdom measures
+    // no layout, so the witness has to be the element that does the wrapping.
+    expect(screen.getByText(filename).className).toMatch(/break-words/)
+  })
+
+  it('mounts every wrapped neighbour inside a kit surface rather than loose', () => {
+    renderPage()
+
+    // The children are stubbed, so the part this file can witness is the one the
+    // page owns: every block is framed. (The real page still shows their own
+    // `bg-card` cards inside those frames — that is what wrapping, rather than
+    // rewriting, means until their own slices migrate them.)
+    for (const text of [
+      'box counting widget',
+      'limiting cases widget',
+      'optical properties form',
+      'projection viewer',
+      'neighbor graph',
+    ]) {
+      expect(kitFrameOf(screen.getByText(text))).not.toBeNull()
+    }
   })
 })
 
@@ -900,13 +1028,14 @@ describe('the values behind the scaling plot', () => {
     withRgEvolution()
     renderPage()
 
-    // A level-two heading, so the plot sits under the page title, and the
-    // control lives in the panel header rather than floating over the chart.
+    // The panel keeps its own title because this is the one header that carries
+    // the values control; the plot below it names nothing. Transient by design:
+    // once the plot is on the kit it will name itself and this title goes.
     const panel = panelByTitle('Fractal scaling')
     expect(within(panel).getByRole('button', { name: 'Show values' })).toBeTruthy()
   })
 
-  it('tabulates the Rg/rp pairs behind the plot, and the fitted line', () => {
+  it('tabulates the points the chart draws, and claims no fit of its own', () => {
     withRgEvolution()
     renderPage()
 
@@ -916,26 +1045,34 @@ describe('the values behind the scaling plot', () => {
     expect(within(table).getAllByRole('columnheader').map((node) => node.textContent)).toEqual([
       'N',
       'Rg/rp',
-      'N (fit)',
     ])
-    // One header row plus one row per sampled Rg. The N column carries the
-    // sampling step the chart drew (1,200 particles over four samples), so the
-    // table and the axis count the same run.
-    expect(within(table).getAllByRole('row')).toHaveLength(5)
 
+    // The rows are the series the chart was handed, in the chart's own order. A
+    // fitted column would have to come from the chart's regression, which moves
+    // with the exclusion sliders only the chart can see — so a column computed
+    // here would contradict the line on screen, and the table states none.
+    const props = mockFractalPlotProps.mock.calls.at(-1)?.[0] as {
+      rgEvolution: number[]
+      totalParticles: number
+    }
+    const step = props.totalParticles / props.rgEvolution.length
     const cells = within(table).getAllByRole('cell').map((node) => node.textContent ?? '')
-    expect(cells).toContain('300')
-    expect(cells).toContain('1,200')
-    expect(cells).toContain('1.200')
-    expect(cells).toContain('4.800')
-    // The fit the chart draws: N = kf·(Rg/rp)^Df, evaluated at the first point
-    // with the run's own kf and Df. Without it the table would show the points
-    // the line passes through and never the line.
-    const fitted = (1.7 * Math.pow(1.2, 1.8234)).toLocaleString('en-US', {
-      minimumFractionDigits: 1,
-      maximumFractionDigits: 1,
-    })
-    expect(cells).toContain(fitted)
+    expect(cells).toEqual(
+      props.rgEvolution.flatMap((rgRp, index) => [
+        ((index + 1) * step).toLocaleString('en-US'),
+        rgRp.toLocaleString('en-US', { minimumFractionDigits: 3, maximumFractionDigits: 3 }),
+      ]),
+    )
+    expect(table.textContent).not.toMatch(/fit/i)
+  })
+
+  it('says in the caption what the table holds', () => {
+    withRgEvolution()
+    renderPage()
+
+    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
+
+    expect(screen.getByText(/sampled Rg points the scaling plot draws/i)).toBeTruthy()
   })
 
   it('leaves out the points the chart cannot plot', () => {
@@ -950,21 +1087,14 @@ describe('the values behind the scaling plot', () => {
     const table = within(panelByTitle('Fractal scaling')).getByRole('table')
     // One header row plus the two points that clear the floor.
     expect(within(table).getAllByRole('row')).toHaveLength(3)
-    const cells = within(table).getAllByRole('cell').map((node) => node.textContent ?? '')
-    expect(cells).not.toContain('0.050')
-    // 1,200 particles over three samples is a step of 400, and the dropped
-    // first point takes its N with it: the kept points are 800 and 1,200.
-    expect(cells).toContain('800')
-    expect(cells).toContain('1,200')
-  })
-
-  it('says what the fitted column is, and where its exponent came from', () => {
-    withRgEvolution()
-    renderPage()
-
-    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
-
-    expect(screen.getByText(/with the fitted N from the run's Df and kf/i)).toBeTruthy()
+    // 1,200 particles over three samples is a step of 400, and the dropped first
+    // point takes its N with it: the kept points are 800 and 1,200.
+    expect(within(table).getAllByRole('cell').map((node) => node.textContent)).toEqual([
+      '800',
+      '1.200',
+      '1,200',
+      '2.400',
+    ])
   })
 
   it('keeps the panel frame, its title and its control when the table takes the plot', () => {
@@ -973,12 +1103,26 @@ describe('the values behind the scaling plot', () => {
 
     fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
 
-    // The chart is gone and the table sits where it was, inside the same panel:
-    // the title, the frame and the control stay put.
-    expect(screen.queryByText('fractal plot')).toBeNull()
+    // The table sits where the chart was, inside the same panel: the title, the
+    // frame and the control stay put, and the chart is hidden rather than gone
+    // so the frame does not change height between the two.
     const panel = panelByTitle('Fractal scaling')
     expect(within(panel).getByRole('table')).toBeTruthy()
     expect(within(panel).getByRole('button', { name: 'Show chart' })).toBeTruthy()
+    expect(screen.getByText('fractal plot').closest('.hidden')).not.toBeNull()
+  })
+
+  it('keeps the chart mounted, so an exclusion survives a look at the table', () => {
+    withRgEvolution()
+    renderPage()
+
+    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
+    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show chart' }))
+
+    // The exclusion sliders, the background and the legend live inside the plot.
+    // A second mount means the reader comes back to a different Df/kf without
+    // being told, so one mount across the round trip is the contract.
+    expect(mockFractalPlotMount).toHaveBeenCalledTimes(1)
   })
 
   it('keeps each values control with the panel it belongs to', () => {
@@ -1003,6 +1147,6 @@ describe('the values behind the scaling plot', () => {
     // No `rg_evolution` means no plot and nothing to tabulate. A panel with an
     // empty table would cost a click to learn nothing.
     expect(screen.queryByRole('heading', { name: 'Fractal scaling' })).toBeNull()
-    expect(screen.queryByText(/with the fitted N/i)).toBeNull()
+    expect(screen.queryByText(/sampled Rg points/i)).toBeNull()
   })
 })

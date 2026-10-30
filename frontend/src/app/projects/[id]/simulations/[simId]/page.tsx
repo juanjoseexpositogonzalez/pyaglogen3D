@@ -136,39 +136,38 @@ const TOPOLOGY_STAGE_HEIGHT = 640
 interface ScalingRow {
   n: number
   rgRp: number
-  fitted: number
 }
 
 /**
- * The data behind the scaling plot: the count the chart draws on its vertical
- * axis, the Rg/rp it draws on the horizontal one, and the fit the engine
- * reported, evaluated at that same ratio. Without the last column the table
- * would show the points and never the line the plot draws through them.
+ * The points the scaling plot draws: the count it puts on its vertical axis and
+ * the Rg/rp it puts on its horizontal one.
+ *
+ * There is deliberately no fitted column. The line on screen is the chart's own
+ * log-log regression over the points its exclusion sliders leave in, and those
+ * sliders are chart state this page cannot read. A column computed here — from
+ * the record's Df and kf, or from a second regression over these rows — would
+ * contradict the line the reader is looking at, and a header may not call itself
+ * "fit" when it is not the fit that is drawn.
  */
 const SCALING_COLUMNS: Column<ScalingRow>[] = [
   { key: 'n', header: 'N', numeric: true, digits: 0, value: (row) => row.n },
   { key: 'rgRp', header: 'Rg/rp', numeric: true, digits: 3, value: (row) => row.rgRp },
-  { key: 'fitted', header: 'N (fit)', numeric: true, digits: 1, value: (row) => row.fitted },
 ]
 
-/** What the scaling table is: the sampled series, and the law drawn over it. */
+/** What the scaling table is: exactly the series the chart was handed. */
 const SCALING_CAPTION =
-  "Sampled Rg points behind the scaling plot: the particle count, the Rg/rp on the horizontal axis, together with the fitted N from the run's Df and kf."
+  'Sampled Rg points the scaling plot draws: the particle count of each sample and the Rg/rp it puts on the horizontal axis.'
 
 /**
  * The pairs `FractalPlot` draws. The page derives them because the page owns the
  * table of them: the plot samples `rg_evolution` at a step of
- * totalParticles / length, drops ratios under 0.1 so its log axis stays finite,
- * and fits a power law over what is left. Mirroring the sampling here keeps the
- * table's N in step with the axis. The fit column is the record's reported Df
- * and kf rather than a second regression, because the chart's own fit moves with
- * exclusion sliders that only the chart can see.
+ * totalParticles / length and drops ratios under 0.1 so its log axis stays
+ * finite. Mirroring that sampling here keeps the table's N in step with the axis
+ * and its rows equal to the points on screen.
  */
 const scalingRows = (
   rgEvolution: number[],
   totalParticles: number | undefined,
-  fractalDimension: number,
-  prefactor: number,
 ): ScalingRow[] => {
   const step =
     totalParticles && rgEvolution.length > 0
@@ -179,11 +178,7 @@ const scalingRows = (
   rgEvolution.forEach((rg, index) => {
     const rgRp = rg / PRIMARY_PARTICLE_RADIUS
     if (rgRp < MIN_RG_RP) return
-    rows.push({
-      n: (index + 1) * step,
-      rgRp,
-      fitted: prefactor * Math.pow(rgRp, fractalDimension),
-    })
+    rows.push({ n: (index + 1) * step, rgRp })
   })
   return rows
 }
@@ -197,17 +192,33 @@ const anisotropyVerdict = (anisotropy: number): string =>
  *
  * The wire key is the only label the record carries, so underscores read as
  * spaces. Nested dicts (`import_metadata` and the like) are JSON-encoded, which
- * is the only rendering that does not collapse into "[object Object]". A number
- * keeps its scale: an integer reads 1,200 rather than 1,200.00, and a fractional
- * parameter keeps the three decimals the engine's own readings use.
+ * is the only rendering that does not collapse into "[object Object]".
  */
 const parameterItem = ([key, value]: [string, unknown]): DetailItem => {
   const label = key.replace(/_/g, ' ')
   if (typeof value === 'number') {
-    return { label, value, digits: Number.isInteger(value) ? 0 : 3 }
+    return { label, value, digits: parameterDigits(value) }
   }
   if (value === null || value === undefined) return { label, value: null }
-  return { label, value: typeof value === 'object' ? JSON.stringify(value) : String(value) }
+  // A nested dict renders as JSON and a filename arrives as one unbroken token.
+  // Both are wrapped here, on the page, because neither fits a 20-character
+  // column and `DetailList` owes every caller the same list, not this fix.
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return { label, value: <span className="break-words">{text}</span> }
+}
+
+/**
+ * How many decimals a recorded parameter is written with: as many as the value
+ * carries, never a fixed fill.
+ *
+ * `1.8` gets one decimal because that is what the record holds; printing `1.800`
+ * would invent two digits the run never had. The cap only bites float artefacts
+ * such as 0.30000000000000004, where the digits past the sixth describe the
+ * double rather than the parameter.
+ */
+const parameterDigits = (value: number): number => {
+  if (Number.isInteger(value)) return 0
+  return Math.min(String(value).split('.')[1]?.length ?? 0, 6)
 }
 
 export default function SimulationDetailPage({
@@ -536,12 +547,7 @@ export default function SimulationDetailPage({
           rgEvolution: simulation.metrics.rg_evolution,
           fractalDimension: simulation.metrics.fractal_dimension,
           prefactor: simulation.metrics.prefactor,
-          rows: scalingRows(
-            simulation.metrics.rg_evolution,
-            npo,
-            simulation.metrics.fractal_dimension,
-            simulation.metrics.prefactor,
-          ),
+          rows: scalingRows(simulation.metrics.rg_evolution, npo),
         }
       : null
 
@@ -859,7 +865,14 @@ export default function SimulationDetailPage({
                       hint="Radius of gyration against particle count on log axes, with the power law fitted to this run."
                       action={toggle}
                     >
-                      {table ?? (
+                      {/*
+                        The chart stays mounted and is hidden while the table
+                        shows. Unmounting it throws away the exclusion sliders,
+                        the plot background and the legend, so a reader who
+                        excludes points, looks at the numbers and comes back
+                        would meet a different fit without being told.
+                      */}
+                      <div className={table ? 'hidden' : undefined}>
                         <FractalPlot
                           rgEvolution={scaling.rgEvolution}
                           fractalDimension={scaling.fractalDimension}
@@ -868,7 +881,8 @@ export default function SimulationDetailPage({
                           totalParticles={npo}
                           limitingCases={limitingCaseLines}
                         />
-                      )}
+                      </div>
+                      {table}
                     </Panel>
                   )}
                 </ShowValues>
@@ -881,12 +895,15 @@ export default function SimulationDetailPage({
                 switch that draws their lines: a collapsed block would hide the
                 control as well as the reference table. */}
             <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
-              <Panel title="Box counting">
+              {/* No panel title: these three blocks carry their own card header,
+                  and a kit heading above it would stack two names a few pixels
+                  apart. The page only frames them. */}
+              <Panel>
                 <BoxCountingAnalysis projectId={id} simulationId={simId} />
               </Panel>
 
               {'n_particles' in simulation.parameters && (
-                <Panel title="Limiting cases">
+                <Panel>
                   <LimitingCasesCard
                     npo={(simulation.parameters as { n_particles: number }).n_particles}
                     actualDf={simulation.metrics.fractal_dimension}
@@ -984,8 +1001,29 @@ export default function SimulationDetailPage({
                 download it keep their own column and their own behaviour. */}
             <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-4">
               <div className="lg:col-span-3">
-                <VisualPanel title="2D projection" height={PROJECTION_STAGE_HEIGHT}>
-                  <div className="h-full overflow-y-auto">
+                {/* No title: the viewer names itself ("Preview (Az…, El…)").
+                    The stage adds the frame, and the region label below is what
+                    names it for a screen reader. */}
+                <VisualPanel height={PROJECTION_STAGE_HEIGHT}>
+                  {/*
+                    Paper under the legacy card. Its own `bg-card/70` over the
+                    stage (#07141d) composites to #b5b9bb, where its
+                    `--muted-foreground` measures 2.78:1 in the light theme —
+                    under AA, on the labels a reader needs in order to use the
+                    controls. On `--surface-strong` the same text measures 5.52:1
+                    (light) and 8.01:1 (dark), which is the remedy slice 2
+                    applied to the particle table.
+
+                    `role`/`tabIndex` matter as much: the card inside is taller
+                    than the stage, and a scroll box with no focusable content
+                    cannot be reached by keyboard.
+                  */}
+                  <div
+                    role="region"
+                    aria-label="2D projection preview"
+                    tabIndex={0}
+                    className="h-full overflow-y-auto bg-surface-strong"
+                  >
                     <ProjectionViewer
                       imageUrl={projectionUrl}
                       azimuth={projectionParams.azimuth}
@@ -1020,8 +1058,16 @@ export default function SimulationDetailPage({
             {/* Topology. A graph is a view of the object too: same stage,
                 same frame. */}
             <div className="mb-8">
-              <VisualPanel title="Topology" height={TOPOLOGY_STAGE_HEIGHT}>
-                <div className="h-full overflow-y-auto">
+              {/* Same frame, same paper and same keyboard contract as the
+                  projection stage: the graph names itself, and its node panel
+                  scrolls. */}
+              <VisualPanel height={TOPOLOGY_STAGE_HEIGHT}>
+                <div
+                  role="region"
+                  aria-label="Topology graph"
+                  tabIndex={0}
+                  className="h-full overflow-y-auto bg-surface-strong"
+                >
                   <NeighborGraph data={neighborGraph ?? null} isLoading={isGraphLoading} />
                 </div>
               </VisualPanel>
@@ -1029,7 +1075,7 @@ export default function SimulationDetailPage({
 
             {/* Optical properties */}
             <div className="mb-8">
-              <Panel title="Optical properties">
+              <Panel>
                 <OpticalPropertiesSection
                   projectId={id}
                   simulationId={simId}
