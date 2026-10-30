@@ -12,6 +12,7 @@ import { relaunchPayloadFor, studyMayHaveRunWithoutSintering } from '@/lib/sinte
 import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { simulationLabel } from '@/lib/projectionLabel'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { AlertTriangle, ArrowLeft, Plus, Trash2 } from 'lucide-react'
@@ -359,7 +360,13 @@ export default function BatchSimulationsPage({
                       .filter((r) => r.status === 'completed')
                       .map((r) => ({
                         id: r.simulation_id,
-                        name: `Sim ${Object.entries(r.parameters).map(([k, v]) => `${k}=${v}`).join(', ')}`,
+                            // #191: one entry per varying parameter, and the
+                        // value rendered as a value, not `[object Object]`.
+                        name: simulationLabel(
+                          r.parameters,
+                          studyResults.parameter_grid,
+                          studyResults.base_parameters,
+                        ),
                         status: r.status,
                       }))}
                   />
