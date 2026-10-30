@@ -115,23 +115,27 @@ describe('R8.4 — the state belongs to the entry, not to the position', () => {
     // Both judges of PR #199 measured the blurred state migrating to an entry
     // nobody touched; the key now carries the mode, which is what tells those
     // two rows apart.
+    // Two rows of the SAME mode on purpose: the first version of this fix keyed
+    // the state by label plus mode, which separated a `fixed` row from a
+    // `normal` one and left the same-mode case broken - a judge measured it by
+    // clicking the real remove button.
     const { rerender } = render(
       <DistributionGridInput
         label="configurations"
         value={[
+          { mode: 'fixed', value: 5 } as DistributionValue,
           { mode: 'fixed', value: 0 } as DistributionValue,
-          { mode: 'normal', mean: -1, std: 0.1 } as DistributionValue,
         ]}
         onChange={vi.fn()}
       />,
     )
     fireEvent.blur(screen.getAllByRole('spinbutton')[0])
-    expect(screen.getByRole('alert')).toBeTruthy()
+    expect(screen.queryByRole('alert')).toBeNull()
 
     rerender(
       <DistributionGridInput
         label="configurations"
-        value={[{ mode: 'normal', mean: -1, std: 0.1 } as DistributionValue]}
+        value={[{ mode: 'fixed', value: 0 } as DistributionValue]}
         onChange={vi.fn()}
       />,
     )

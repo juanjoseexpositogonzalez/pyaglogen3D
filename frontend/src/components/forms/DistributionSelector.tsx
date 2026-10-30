@@ -37,15 +37,17 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
   // half-typed number is not a mistake - `parseFloat('') || 0` makes every
   // intermediate state look invalid, and shouting at the user while they type
   // is worse than saying nothing.
-  // Keyed by `label`, not by a boolean: the grid renders its rows with
-  // `key={index}` and renames the survivors when one is removed, so a boolean
-  // migrated to an entry the user never touched and painted it red — measured by
-  // both judges of PR #199. Tying it to the label makes the state die with the
-  // row it belongs to. And focusing a field releases it, so the user is not
-  // shouted at while correcting a value they already left once.
-  const entryKey = `${label}|${value.mode}`
-  const [blurredFor, setBlurredFor] = useState<string | null>(null)
-  const local = blurredFor === entryKey ? distributionValueError(value) : null
+  // The blurred state is tied to the entry's *identity*, not to its position.
+  // The grid renders its rows with `key={index}`, so deleting one hands this
+  // component a different entry; a positional key (label, or label plus mode)
+  // migrated the state to a row nobody touched and painted it red — measured by
+  // both judges of PR #199, the second time with two rows of the same mode,
+  // which is why the mode was not enough either. Comparing the object the state
+  // was set with makes the state die with the entry it belongs to, whatever its
+  // position. Focusing a field releases it too, so the user is not shouted at
+  // while correcting a value they already left once.
+  const [blurredValue, setBlurredValue] = useState<DistributionValue | null>(null)
+  const local = blurredValue === value ? distributionValueError(value) : null
   const shown = error ?? local?.message
   // R8.4 asks for the border AND the message. A parent-provided message used to
   // suppress the border, which is half of what the scenario says; the field the
@@ -109,8 +111,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
           onChange={(e) =>
             onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
           }
-          onBlur={() => setBlurredFor(entryKey)}
-          onFocus={() => setBlurredFor(null)}
+          onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
           aria-invalid={marked === 'value' ? true : undefined}
           className={invalidClass('value')}
           aria-describedby={marked === 'value' && shown ? messageId : undefined}
@@ -129,8 +131,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurredFor(entryKey)}
-          onFocus={() => setBlurredFor(null)}
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
             aria-invalid={marked === 'mean' ? true : undefined}
             className={invalidClass('mean')}
           aria-describedby={marked === 'mean' && shown ? messageId : undefined}
@@ -145,8 +147,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, std: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurredFor(entryKey)}
-          onFocus={() => setBlurredFor(null)}
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
             aria-invalid={marked === 'std' ? true : undefined}
             className={invalidClass('std')}
           aria-describedby={marked === 'std' && shown ? messageId : undefined}
@@ -166,8 +168,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, min: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurredFor(entryKey)}
-          onFocus={() => setBlurredFor(null)}
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
             aria-invalid={marked === 'min' ? true : undefined}
             className={invalidClass('min')}
           aria-describedby={marked === 'min' && shown ? messageId : undefined}
@@ -182,8 +184,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
             onChange={(e) =>
               onChange({ ...value, max: parseFloat(e.target.value) || 0 })
             }
-            onBlur={() => setBlurredFor(entryKey)}
-          onFocus={() => setBlurredFor(null)}
+            onBlur={() => setBlurredValue(value)}
+          onFocus={() => setBlurredValue(null)}
             aria-invalid={marked === 'max' ? true : undefined}
             className={invalidClass('max')}
           aria-describedby={marked === 'max' && shown ? messageId : undefined}
