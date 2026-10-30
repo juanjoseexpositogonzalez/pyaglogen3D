@@ -61,6 +61,29 @@ interface CompareGridProps {
  * (rather than Tailwind utility classes) because `grid-cols-N` needs to
  * be dynamic across N ∈ [2..9] and Tailwind's JIT can't handle arbitrary
  * template-column counts without safelisting.
+ *
+ * The layout has no breakpoints, and this is the number that costs. At a 320px
+ * viewport the shell's `<main>` spends `px-10` (80px), leaving 240px; the kit
+ * `Panel` this grid sits in spends `p-[21px]` and a 1px border, leaving 196px.
+ * With `gap-3` (12px) that is ~92px per cell for two simulations and ~57px for
+ * three — thumbnails, not views:
+ *
+ *   - The corner label chip (border + `px-2` + the 8px colour dot + `gap-2`)
+ *     spends ~26px of that, so the name is truncated to `max-w-[150px]`→ the
+ *     remaining ~67px at two sims and ~32px at three, i.e. two or three
+ *     characters plus an ellipsis.
+ *   - `aspect-square` means the cell is as tall as it is wide (92px or 57px),
+ *     and `overflow-hidden` clips the rest: the "No geometry data" line is
+ *     `text-sm` (14px/20px) and needs three lines to wrap at 57px, so the
+ *     bottom of that message is cut off where it matters most — the cell whose
+ *     geometry is missing.
+ *   - With nine simulations the layout is 3×3, so each cell is the 57px case
+ *     with nine of them on one page.
+ *
+ * Documented rather than fixed on purpose: the issue asks for this degradation
+ * to be written down, and a compare grid on a phone is a different product,
+ * not a smaller one. Any fix (one column under `sm`, a horizontal scroller, a
+ * list fallback) is a design decision with its own slice.
  */
 function gridTemplateStyle(layout: CompareGridLayout): React.CSSProperties {
   return {

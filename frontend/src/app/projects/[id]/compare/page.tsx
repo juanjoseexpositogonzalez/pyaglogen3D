@@ -10,6 +10,7 @@
  *   ┌────────────────────────────────────────────────────────┐
  *   │ PageHeader — project name, counts, way back            │
  *   │ Truncation note (>9 sim ids)                           │
+ *   │ Session-expired notice (401: sign in again)            │
  *   │ Load-failure notice (the request did not come back)    │
  *   │ Missing-sim notice (404/403 answers)                   │
  *   │ Still-processing note (sim exists but no geometry yet) │
@@ -22,20 +23,26 @@
  * The shell owns the page frame — `AppShell` mounts the navigation and the
  * single `<main>` — so this page returns a fragment.
  *
+ * What gets drawn is what loaded: one simulation renders a one-cell grid, one
+ * metrics column and one chart series (spec `multi-aggregate-comparison` S8.4
+ * and R5). The empty surface is reserved for having nothing to draw at all
+ * (S8.3), which is a different statement from "fewer than two arrived".
+ *
  * Decisions for Phase 4:
  *   - No top-level color legend: each grid cell already has its own
  *     colored-dot label (CompareGrid:115-124), and overlay has its own
  *     legend panel (CompareOverlay:138-163). A third shared legend would
  *     be redundant.
- *   - Missing, unreachable and processing are tracked separately, because
- *     they are three different pieces of news. A 404/403 fetch goes into
- *     `missing[]`: the server answered, that simulation is gone or is not
- *     this user's. A fetch that failed some other way (network, 5xx) goes
- *     into `unreachable[]`: nothing is known about the simulation at all.
- *     A sim that returns metadata but whose status is still
- *     `queued`/`running` goes into `processing[]`. Collapsing the first
- *     two into one banner would tell a reader on a flaky connection that
- *     their simulations had been deleted.
+ *   - Five outcomes are tracked separately, because they are five different
+ *     pieces of news. A 404/403 fetch goes into `missing[]`: the server
+ *     answered, that simulation is gone or is not this user's. A 401 goes
+ *     into `expired[]`: the server answered too, and what failed is the
+ *     session. A fetch that failed some other way (network, 5xx) goes into
+ *     `unreachable[]`: nothing is known about the simulation at all. A sim
+ *     that returns metadata but whose status is still `queued`/`running`
+ *     goes into `processing[]`. Collapsing these into one banner would tell
+ *     a reader on a flaky connection that their work had been deleted, or
+ *     tell a reader with two running simulations that nothing was found.
  */
 import { useQueries } from '@tanstack/react-query'
 import { ArrowLeft, GitCompare } from 'lucide-react'
@@ -67,7 +74,7 @@ import { Callout } from '@/components/kit/Callout'
 import { EmptyState } from '@/components/kit/EmptyState'
 import { PageHeader } from '@/components/kit/PageHeader'
 import { Panel } from '@/components/kit/Panel'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import { useProject } from '@/hooks/useProjects'
 import { ApiError, simulationsApi } from '@/lib/api'
 import {
@@ -100,17 +107,35 @@ async function fetchSimulationWithGeometry(
 }
 
 /**
- * Whether a failed fetch is the server answering "this simulation is gone or is
- * not yours" rather than "the request never came back".
+ * How a failed fetch is reported. Three different pieces of news share one
+ * shape of failure and must not share one message:
  *
- * The two are different news and produce different screens. A 404/403 is an
- * answer about one id while the rest of the comparison still stands; a network
- * or 5xx failure says nothing about any id, and reporting it as "these
- * simulations could not be loaded, they were probably deleted" tells a reader
- * on a flaky connection that their work is gone.
+ *   - `missing`    — the server answered 404/403: this id is gone, or it is not
+ *                    this user's. The rest of the comparison still stands.
+ *   - `expired`    — the server answered 401: the request arrived and the
+ *                    session did not. Retrying is the wrong instruction;
+ *                    signing in again is the right one.
+ *   - `unreachable` — anything else (network, DNS, timeout): it is not known
+ *                    whether the simulation exists, so nothing may be claimed
+ *                    about it.
+ *
+ * Reporting an outage as "deleted", a dead session as "no answer", or a 500 as
+ * "the request never arrived" sends a reader to fix something that is not
+ * broken.
  */
-function isMissingSimError(error: unknown): boolean {
-  return error instanceof ApiError && (error.status === 404 || error.status === 403)
+type FetchFailure = 'missing' | 'expired' | 'server' | 'network'
+
+function classifyFetchFailure(error: unknown): FetchFailure {
+  if (error instanceof ApiError) {
+    if (error.status === 404 || error.status === 403) return 'missing'
+    if (error.status === 401) return 'expired'
+    // 5xx is an answer as well: the request arrived and the server broke. It is
+    // neither a dead session nor a dead connection, so it gets its own words.
+    if (error.status >= 500) return 'server'
+    // 5xx is an answer as well: the request arrived and the server broke. It is
+    // neither a dead session nor a dead connection, so it gets its own words.
+  }
+  return 'network'
 }
 
 /**
@@ -123,30 +148,20 @@ function shortId(id: string): string {
 }
 
 /**
- * What the empty surface says. The title is the same condition every time —
- * fewer than two simulations cannot be compared — but the reason differs, and
- * the reason is the only part a reader can act on.
+ * What the empty surface says. It is only shown when there is nothing to draw
+ * at all (spec S8.3), so the reason it gives is always "nothing arrived" —
+ * whether because nothing was selected or because the server refused every id.
  */
-function emptyComparisonCopy(
-  requested: number,
-  loaded: number,
-): { title: string; description: string } {
+function emptyComparisonCopy(requested: number): { title: string; description: string } {
   if (requested === 0) {
     return {
       title: 'No simulations to compare',
       description: 'Select two or more simulations from the project page to compare them.',
     }
   }
-  if (loaded === 0) {
-    return {
-      title: 'Fewer than two simulations to compare',
-      description: 'None of the requested simulations are accessible. A comparison needs two.',
-    }
-  }
   return {
-    title: 'Fewer than two simulations to compare',
-    description:
-      'Only one of the requested simulations can be compared. A comparison needs two.',
+    title: 'No simulations to compare',
+    description: 'None of the requested simulations are accessible.',
   }
 }
 
@@ -220,7 +235,11 @@ export default function CompareSimulationsPage() {
   const loaded: Array<{ id: string; result: CompareFetchResult }> = []
   /** Sims the server answered 404/403 for: gone, or not this user's. */
   const missing: string[] = []
-  /** Sims whose fetch failed for any other reason: nothing is known about them. */
+  /** Sims the server answered 401 for: the session ended, the ids are fine. */
+  const expired: string[] = []
+  /** Sims whose request the server took and then failed on (5xx). */
+  const serverFailed: string[] = []
+  /** Sims whose request never reached the server: nothing is known about them. */
   const unreachable: string[] = []
   /**
    * Sims whose metadata loaded successfully but whose `status` isn't
@@ -237,11 +256,11 @@ export default function CompareSimulationsPage() {
       continue
     }
     if (q.isError || !q.data) {
-      if (q.isError && !isMissingSimError(q.error)) {
-        unreachable.push(ids[i])
-      } else {
-        missing.push(ids[i])
-      }
+      const failure = q.isError ? classifyFetchFailure(q.error) : 'missing'
+      if (failure === 'missing') missing.push(ids[i])
+      else if (failure === 'expired') expired.push(ids[i])
+      else if (failure === 'server') serverFailed.push(ids[i])
+      else unreachable.push(ids[i])
       continue
     }
     const result = q.data
@@ -351,37 +370,63 @@ export default function CompareSimulationsPage() {
   )
 
   /**
-   * One cell is not a comparison, and the grid has nowhere to put it. Two is
-   * the number the flow guarantees: the project page only offers the button
-   * once two are ticked, so this state means the URL was edited or a
-   * simulation was deleted in between.
+   * One cell is a comparison of one, and the spec asks for exactly that: S8.4
+   * draws `?sims=A,B` with A refused as "grid renders B only", and R5 asks for
+   * one metrics column per successfully loaded simulation. Hiding the survivor
+   * would throw away the data the page exists for.
    */
-  const canCompare = loaded.length >= 2
-  const failedToLoad = unreachable.length > 0
-  // A request still in flight is not an empty set: the empty surface waits.
-  const showEmptyComparison = !anyLoading && !failedToLoad && !canCompare
-  const emptyCopy = emptyComparisonCopy(ids.length, loaded.length)
+  const canCompare = loaded.length >= 1
+  const failedToLoad = unreachable.length > 0 || serverFailed.length > 0
+  const sessionExpired = expired.length > 0
+  /**
+   * The empty surface is for having nothing to draw — nothing selected, or
+   * every id refused (S8.3). It is not for "not everything is here yet": a
+   * request in flight, a run still computing, or an outage all have their own
+   * notice, and telling a reader their simulations are inaccessible while
+   * another banner says those simulations are running is two lies at once.
+   */
+  const showEmptyComparison =
+    !anyLoading &&
+    !failedToLoad &&
+    !sessionExpired &&
+    loaded.length === 0 &&
+    processing.length === 0
+  const emptyCopy = emptyComparisonCopy(ids.length)
   const projectName = project?.name?.trim()
 
   return (
     <>
       <PageHeader
-        eyebrow="COMPARE"
-        title={projectName || 'Compare simulations'}
+        eyebrow="PROJECT"
+        title="Compare simulations"
         meta={
-          <span>
-            {ids.length === 0
-              ? 'No simulations selected'
-              : `${loaded.length} of ${ids.length} loaded`}
-          </span>
+          <>
+            {/*
+              The title names the screen; the project is identity, which is what
+              this row is for. The project detail page already owns its own name
+              as its <h1>, and two screens titled "Soot aggregates" leave a
+              reader moving by heading unable to tell them apart.
+            */}
+            {projectName && <span>{projectName}</span>}
+            <span>
+              {ids.length === 0
+                ? 'No simulations selected'
+                : `${loaded.length} of ${ids.length} loaded`}
+            </span>
+          </>
         }
         description="Grid draws each simulation in its own cell; overlay stacks them in one scene, each in its own colour."
+        // `Button` has an `asChild` prop that is declared and not implemented, so
+        // wrapping it in a Link puts a <button> inside an <a>: invalid HTML, two
+        // tab stops for one destination, and a visible target that swallows the
+        // modifier-click. The look comes from the variant's classes instead.
         actions={
-          <Link href={`/projects/${projectId}`}>
-            <Button variant="outline">
-              <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
-              Back to project
-            </Button>
+          <Link
+            href={`/projects/${projectId}`}
+            className={buttonVariants({ variant: 'outline' })}
+          >
+            <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+            Back to project
           </Link>
         }
       />
@@ -397,7 +442,43 @@ export default function CompareSimulationsPage() {
           </Callout>
         )}
 
-        {failedToLoad && (
+        {sessionExpired && (
+          <Callout
+            tone="danger"
+            title="Your session expired"
+            action={
+              <Link
+                href="/auth/login"
+                className={buttonVariants({ variant: 'outline', size: 'sm' })}
+              >
+                Sign in again
+              </Link>
+            }
+          >
+            The server answered, but it no longer recognises this session, so
+            none of these simulations could be read. Signing in again is what
+            restores access; retrying will not.
+          </Callout>
+        )}
+
+        {serverFailed.length > 0 && (
+          <Callout tone="danger" title="The server could not answer">
+            <p className="mb-1">
+              The request reached the server and it failed there. Nothing was
+              lost and nothing is missing: this is a fault on the server&apos;s
+              side, and trying again in a moment is the thing that helps.
+            </p>
+            <ul className="space-y-0.5 font-mono text-xs">
+              {serverFailed.map((id) => (
+                <li key={id} data-sim-id={id}>
+                  {shortId(id)}
+                </li>
+              ))}
+            </ul>
+          </Callout>
+        )}
+
+        {unreachable.length > 0 && (
           <Callout tone="danger" title="Failed to load simulations">
             <p className="mb-1">
               The request did not come back. This is not a missing simulation:
@@ -455,7 +536,14 @@ export default function CompareSimulationsPage() {
       </div>
 
       {anyLoading && loaded.length === 0 && (
-        <LoadingScreen message="Loading simulations..." />
+        /*
+          `LoadingScreen` paints a bare div, so the page owes it a surface. A kit
+          panel keeps the wait on the same paper as the rest of the product and
+          gives its message the ink that was measured against it.
+        */
+        <Panel className="mt-3">
+          <LoadingScreen message="Loading simulations..." />
+        </Panel>
       )}
 
       {showEmptyComparison && (
@@ -466,8 +554,8 @@ export default function CompareSimulationsPage() {
           title={emptyCopy.title}
           description={emptyCopy.description}
           action={
-            <Link href={`/projects/${projectId}`}>
-              <Button>Select simulations</Button>
+            <Link href={`/projects/${projectId}`} className={buttonVariants()}>
+              Select simulations
             </Link>
           }
         />

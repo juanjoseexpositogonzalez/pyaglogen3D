@@ -1,11 +1,18 @@
 /**
  * The compare screen on the design-system kit (issue #175, slice 1 of 2).
  *
- * Slice 1 owns the frame: the page header, the three states a comparison can be
- * in (loading, failed request, fewer than two simulations) and the surface the
- * comparison itself sits on. Slice 2 owns the metrics table and the Rg chart, so
- * both are stubbed here: a failure in this file is about the surfaces this file
- * owns and never about a neighbour it only mounts.
+ * Slice 1 owns the frame: the page header, the states a comparison can be in,
+ * and the surface the comparison itself sits on. Slice 2 owns the metrics table
+ * and the Rg chart, so both are stubbed here: a failure in this file is about
+ * the surfaces this file owns and never about a neighbour it only mounts.
+ *
+ * The states are not three variations of "empty". A request in flight, a run
+ * still computing, a refused id (404/403), a dead session (401) and a request
+ * that never came back (network) are five different pieces of news, and the
+ * empty surface is reserved for the one case where nothing loaded at all —
+ * spec `multi-aggregate-comparison` S8.3. S8.4 draws the survivors of a partly
+ * refused set, and R5 gives the metrics table one column per loaded simulation,
+ * so one load is a comparison of one and is painted, not hidden.
  *
  * Asserted through what a reader perceives — headings, roles, links, the words
  * of each state — rather than through which components were imported, because a
@@ -37,14 +44,19 @@ vi.mock('next/link', () => ({
   default: ({
     children,
     href,
+    className,
   }: {
     children: React.ReactNode
     href: string
+    className?: string
   }) =>
     React.createElement(
       'a',
       {
         href,
+        // Forwarded so a test can see that the look of the link comes from the
+        // variant's classes rather than from a <button> nested inside it.
+        className,
         onClick: (event: React.MouseEvent) => {
           if (!event.defaultPrevented) mockPush(href)
         },
@@ -124,6 +136,18 @@ const failedQuery = (error: unknown) => ({
   data: undefined,
 })
 
+/**
+ * A simulation whose metadata arrived but whose geometry has not been computed
+ * yet — the row that reaches the page as "still processing", not as a failure.
+ */
+const processingQuery = (id: string, name: string) => ({
+  ...loadedQuery(id, name, { status: 'running', metrics: null }),
+  data: {
+    simulation: fetched(id, name, { status: 'running', metrics: null }).simulation,
+    geometry: null,
+  },
+})
+
 const withQueries = (queries: unknown[]) => mockUseQueries.mockReturnValue(queries)
 
 const withSims = (sims: string) => {
@@ -156,12 +180,20 @@ beforeEach(() => {
 })
 
 describe('the compare frame', () => {
-  it('opens with the project name as the only level-one heading', () => {
+  it('names the screen itself, not the project a second time', () => {
     renderPage()
 
+    // The project detail page already owns "Soot aggregates" as its <h1>. A
+    // reader moving by heading would otherwise hear the same title on two
+    // different screens, so the eyebrow names the context and the title names
+    // what this screen does.
     const headings = screen.getAllByRole('heading', { level: 1 })
     expect(headings).toHaveLength(1)
-    expect(headings[0].textContent).toBe('Soot aggregates')
+    expect(headings[0].textContent).toBe('Compare simulations')
+    expect(pageHeader().textContent).toMatch(/PROJECT/)
+    // The project name still has to be on the page: it is which project's
+    // simulations these are.
+    expect(pageHeader().textContent).toMatch(/Soot aggregates/)
   })
 
   it('keeps a name on the page when the project itself could not be read', () => {
@@ -173,12 +205,31 @@ describe('the compare frame', () => {
     renderPage()
 
     // The comparison does not depend on the project record, so a failed project
-    // fetch must not take the screen down with it — but the page still needs a
-    // title, and an empty <h1> leaves it unnamed.
+    // fetch must not take the screen down with it — and the title, which names
+    // the screen rather than the project, survives it.
     const headings = screen.getAllByRole('heading', { level: 1 })
     expect(headings).toHaveLength(1)
-    expect((headings[0].textContent ?? '').trim().length).toBeGreaterThan(0)
+    expect(headings[0].textContent).toBe('Compare simulations')
     expect(screen.getByText('compare grid widget')).toBeTruthy()
+  })
+
+  it('offers each way out as one link, with no button inside the anchor', () => {
+    withSims('')
+    withQueries([])
+    renderPage()
+
+    // `<Link><Button /></Link>` renders a <button> inside an <a>: invalid HTML,
+    // two tab stops for one destination, and the visible target of a
+    // modifier-click swallows the new-tab gesture. Both exits are checked here,
+    // because both were written the same way.
+    for (const name of [/back to project/i, /select simulations/i]) {
+      const link = screen.getByRole('link', { name })
+      expect(link.tagName).toBe('A')
+      expect(link.querySelector('button, a')).toBeNull()
+      // It still has to look like a button: the look now comes from the
+      // variant's own classes rather than from a nested element.
+      expect(link.className).toMatch(/inline-flex/)
+    }
   })
 
   it('stops mounting the deprecated navigation', () => {
@@ -220,9 +271,39 @@ describe('the states a comparison passes through', () => {
     renderPage()
 
     expect(screen.getByText(/loading simulations/i)).toBeTruthy()
-    // A request in flight is not an empty set, and it is not a failure.
+    // A request in flight is not an empty set, and it is not a failure. (The
+    // page <h1> is its own, so what must be absent is the comparison surface
+    // and the empty surface — both would be level-two headings.)
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(screen.queryByRole('heading', { name: /compare/i })).toBeNull()
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull()
+  })
+
+  it('shows the spinner on a kit surface, not on the bare page canvas', () => {
+    withQueries([loadingQuery(), loadingQuery()])
+    renderPage()
+
+    // `LoadingScreen` paints a bare div; the page owes it a surface for the
+    // message it prints. A kit panel is the surface the rest of the product
+    // waits on, and its ink is the ink that message was measured against.
+    const frame = kitFrameOf(screen.getByText(/loading simulations/i))
+    expect(frame?.tagName).toBe('SECTION')
+    expect(frame?.className).toMatch(/bg-surface-strong/)
+  })
+
+  it('does not claim the comparison is empty while the simulations are still computing', () => {
+    withQueries([processingQuery('sim-a', 'Agg A'), processingQuery('sim-b', 'Agg B')])
+    renderPage()
+
+    // Two runs in flight is the ordinary way to reach this screen: the project
+    // page offers the button with two ticked and never looks at their status.
+    // Saying "none are accessible" here would be two banners contradicting each
+    // other about whether the runs still exist.
+    expect(screen.getByTestId('compare-processing-banner').textContent).toMatch(
+      /2 simulations still processing/i,
+    )
+    expect(screen.queryByText(/none of the requested simulations/i)).toBeNull()
+    expect(screen.queryByText(/select two or more/i)).toBeNull()
+    expect(screen.queryByRole('heading', { level: 2 })).toBeNull()
   })
 
   it('reports a request that did not come back as a failure, not as a missing simulation', () => {
@@ -237,7 +318,41 @@ describe('the states a comparison passes through', () => {
     // only one of the two screens can tell a reader what to do next.
     expect(alert.textContent).not.toMatch(/none of the requested/i)
     expect(screen.queryByText(/select two or more/i)).toBeNull()
-    expect(screen.queryByText(/fewer than two/i)).toBeNull()
+  })
+
+  it('names the session, not the connection, when the server answers 401', () => {
+    withQueries([
+      failedQuery(new ApiError('unauthorized', 401)),
+      failedQuery(new ApiError('unauthorized', 401)),
+    ])
+    renderPage()
+
+    // The server answered: the request came back, the session did not. Telling a
+    // reader "the request did not come back" would send them to retry a
+    // connection that is fine.
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/session/i)
+    expect(alert.textContent).not.toMatch(/did not come back/i)
+    expect(alert.textContent).not.toMatch(/none of the requested/i)
+    expect(screen.getByRole('link', { name: /sign in again/i }).getAttribute('href')).toBe(
+      '/auth/login',
+    )
+  })
+
+  it('names the server, not the connection, when the server answers 500', () => {
+    withQueries([
+      failedQuery(new ApiError('internal error', 500)),
+      failedQuery(new ApiError('internal error', 500)),
+    ])
+    renderPage()
+
+    // A 500 is an answer too: the request arrived and the server broke. "The
+    // request did not come back" describes a network that is not the problem,
+    // and "your session expired" sends the reader to sign in for nothing.
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/server/i)
+    expect(alert.textContent).not.toMatch(/did not come back/i)
+    expect(alert.textContent).not.toMatch(/session/i)
   })
 
   it('names the simulations the server says are gone, without calling it a failure', () => {
@@ -257,28 +372,54 @@ describe('the states a comparison passes through', () => {
     expect(screen.getByText('compare grid widget')).toBeTruthy()
   })
 
-  it('asks for two simulations instead of drawing a comparison of one', () => {
-    withSims('sim-a')
-    withQueries([loadedQuery('sim-a', 'Agg A')])
+  it('compares the one simulation that arrived instead of hiding it behind an empty state', () => {
+    // Spec S8.4: `?sims=A,B` where A returns 403 renders B only. This test used
+    // to demand the opposite — an empty state instead of a one-cell grid — and
+    // that assertion was wrong: R5 asks for one column per successfully loaded
+    // simulation, and hiding the only survivor hides the data the page exists
+    // for.
+    withSims('sim-a,sim-b')
+    withQueries([
+      failedQuery(new ApiError('forbidden', 403)),
+      loadedQuery('sim-b', 'Agg B'),
+    ])
     renderPage()
 
-    // One cell is not a comparison, and the grid would have nowhere to put it.
-    expect(screen.queryByText('compare grid widget')).toBeNull()
-    const heading = screen.getByRole('heading', { level: 2, name: /fewer than two/i })
-    expect(heading).toBeTruthy()
-    // The way out is the screen where the selection is made.
-    const action = screen.getByRole('link', { name: /select simulations/i })
-    expect(action.getAttribute('href')).toBe('/projects/p1')
+    expect(screen.getByText('compare grid widget')).toBeTruthy()
+    expect(screen.getByTestId('compare-missing-banner').textContent).toMatch(/sim-a/)
+    // Nothing is empty here: one cell is what loaded, and it is painted.
+    expect(
+      screen.queryByRole('heading', { level: 2, name: /no simulations to compare/i }),
+    ).toBeNull()
+    expect(screen.queryByText(/none of the requested/i)).toBeNull()
+  })
+
+  it('keeps the comparison on screen while the rest of the set is still coming', () => {
+    withSims('sim-a,sim-b')
+    withQueries([loadedQuery('sim-a', 'Agg A'), loadingQuery()])
+    renderPage()
+
+    // One arrived and one is in flight: neither the spinner nor the empty state
+    // may take the screen, or the reader waits for a comparison that is already
+    // drawable. (The comparison panel's own level-two title is expected here;
+    // what must be absent is the empty surface.)
+    expect(screen.getByText('compare grid widget')).toBeTruthy()
+    expect(screen.queryByText(/loading simulations/i)).toBeNull()
+    expect(
+      screen.queryByRole('heading', { level: 2, name: /no simulations to compare/i }),
+    ).toBeNull()
   })
 
   it('says none of the requested simulations are accessible when every fetch is a 404', () => {
     withQueries([failedQuery(new ApiError('gone', 404)), failedQuery(new ApiError('gone', 404))])
     renderPage()
 
-    expect(
-      screen.getByRole('heading', { level: 2, name: /fewer than two/i }),
-    ).toBeTruthy()
+    // Spec S8.3: no grid, no metrics, no chart — the empty surface plus the
+    // warning that names what the server refused.
+    expect(screen.getByRole('heading', { level: 2, name: /no simulations to compare/i })).toBeTruthy()
     expect(screen.getByText(/none of the requested simulations are accessible/i)).toBeTruthy()
+    expect(screen.queryByText('compare grid widget')).toBeNull()
+    expect(screen.getByTestId('compare-missing-banner')).toBeTruthy()
   })
 
   it('invites a selection when the URL carries no simulation at all', () => {
@@ -286,6 +427,7 @@ describe('the states a comparison passes through', () => {
     withQueries([])
     renderPage()
 
+    expect(screen.getByRole('heading', { level: 2, name: /no simulations to compare/i })).toBeTruthy()
     expect(screen.getByText(/select two or more simulations/i)).toBeTruthy()
     expect(screen.getByRole('link', { name: /select simulations/i }).getAttribute('href')).toBe(
       '/projects/p1',
@@ -319,6 +461,22 @@ describe('the states a comparison passes through', () => {
     expect(screen.queryByTestId('compare-missing-banner')).toBeNull()
   })
 
+  it('keeps the simulation that arrived when another never answered', () => {
+    withSims('sim-a,sim-b')
+    withQueries([loadedQuery('sim-a', 'Agg A'), failedQuery(new Error('timeout'))])
+    renderPage()
+
+    // An outage on one id is news about that id. Today the survivor used to
+    // vanish behind a red banner with nothing to act on; it is drawable, so it
+    // is drawn, with the failure named above it.
+    expect(screen.getByRole('alert').textContent).toMatch(/failed to load simulations/i)
+    expect(screen.getByText('compare grid widget')).toBeTruthy()
+    expect(screen.getByText('compare metrics widget')).toBeTruthy()
+    expect(
+      screen.queryByRole('heading', { level: 2, name: /no simulations to compare/i }),
+    ).toBeNull()
+  })
+
   it('treats a 403 as an answer about that simulation, not as an outage', () => {
     withQueries([
       loadedQuery('sim-a', 'Agg A'),
@@ -340,13 +498,7 @@ describe('the states a comparison passes through', () => {
     withQueries([
       loadedQuery('sim-a', 'Agg A'),
       loadedQuery('sim-b', 'Agg B'),
-      {
-        ...loadedQuery('sim-c', 'Agg C', { status: 'running', metrics: null }),
-        data: {
-          simulation: fetched('sim-c', 'Agg C', { status: 'running', metrics: null }).simulation,
-          geometry: null,
-        },
-      },
+      processingQuery('sim-c', 'Agg C'),
     ])
     withSims('sim-a,sim-b,sim-c')
     renderPage()

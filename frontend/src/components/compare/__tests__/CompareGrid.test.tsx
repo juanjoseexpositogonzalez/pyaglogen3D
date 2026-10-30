@@ -154,21 +154,33 @@ describe('<CompareGrid />', () => {
 
     const cells = screen.getAllByTestId('compare-grid-cell')
     for (const cell of cells) {
-      // The palette colour stays inline: it is per-simulation data, not a
-      // surface. Everything else comes from the kit.
-      expect(cell.className).toMatch(/rounded-lg/)
-      expect(cell.className).toMatch(/bg-surface/)
+      // The surface is the property that changed: a cell used to be a bare
+      // bordered box on the page canvas and now sits on the kit's surface. The
+      // radius is not asserted here — it was already `rounded-lg` before the
+      // migration, so matching it would prove nothing.
+      expect(cell.className).toMatch(/bg-surface\b/)
       expect(cell.className).not.toMatch(/bg-background|bg-card/)
     }
 
-    // The corner label is glass over a dark canvas: a kit surface and a kit
-    // line, rather than the retired `bg-background` and its bare shadow.
-    const chip = cells[0].querySelector('div')
-    expect(chip?.className).toMatch(/bg-surface/)
-    expect(chip?.className).toMatch(/border-line/)
-    expect(chip?.className).toMatch(/text-ink\b/)
+    // The palette colour is per-simulation data and stays inline: it is what
+    // tells one cell from another. jsdom normalises the hex to rgb().
+    expect((cells[0] as HTMLElement).style.borderColor).toBe('rgb(78, 121, 167)')
+    expect((cells[1] as HTMLElement).style.borderColor).toBe('rgb(242, 142, 43)')
 
-    // The degraded cell is muted ink, not `text-muted-foreground`.
+    // The corner label is glass over a dark canvas: a kit surface and a kit
+    // line, rather than the retired `bg-background` and its bare shadow. The
+    // ink is asserted as an exact token: `\btext-ink\b` also matches
+    // `text-ink-muted`, so a boundary match cannot tell the label's ink from
+    // its muted neighbour.
+    const chip = cells[0].querySelector('div')
+    expect(chip?.className).toMatch(/bg-surface\b/)
+    expect(chip?.className).toMatch(/border-line/)
+    expect((chip?.className ?? '').split(/\s+/)).toContain('text-ink')
+    expect(chip?.className).not.toMatch(/bg-background/)
+    expect(chip?.className).not.toMatch(/shadow-sm/)
+
+    // The degraded cell is muted ink, not `text-muted-foreground` — and not the
+    // label's full-strength ink either, which the exact-token form catches.
     expect(screen.getByText('No geometry data').className).toMatch(/text-ink-muted/)
   })
 })
