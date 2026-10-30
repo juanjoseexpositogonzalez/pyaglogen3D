@@ -52,6 +52,11 @@ _REQUIRED: dict[str, tuple[str, ...]] = {
 #: to prevent negative radii, so it follows the magnitude, not the key name.
 CAPPED_MAGNITUDE: frozenset[str] = frozenset({"particle_radius_config", "dpo_distribution"})
 
+#: The cap R2 fixes for those magnitudes. It lives here, once, because the
+#: serializer had two live copies - a value in `_DISTRIBUTION_GRID_KEYS` and a
+#: literal at the call site - and a number with two homes drifts (#201).
+STD_OVER_MEAN_CAP: float = 0.3
+
 
 def validate_shape(
     config: Any,

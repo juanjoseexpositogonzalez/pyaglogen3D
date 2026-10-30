@@ -11,7 +11,11 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .distribution_shape import CAPPED_MAGNITUDE, SweptShapeError
+from .distribution_shape import (
+    CAPPED_MAGNITUDE,
+    STD_OVER_MEAN_CAP,
+    SweptShapeError,
+)
 from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
 from .distribution_shape import check_algorithm_scope as check_distribution_scope
 from .distribution_shape import collect_surfaces as collect_distribution_surfaces
@@ -449,7 +453,7 @@ class ParametricStudySerializer(serializers.ModelSerializer):
     #: Grid keys validated via distribution helper.
     _DISTRIBUTION_GRID_KEYS: dict[str, dict] = {
         "kf_distribution": {},
-        "particle_radius_config": {"max_std_over_mean": 0.3},
+        "particle_radius_config": {"max_std_over_mean": STD_OVER_MEAN_CAP},
     }
 
     _BATCH_HARD_CAP = 1000
@@ -755,7 +759,9 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 try:
                     validate_distribution_shape(
                         config,
-                        max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
+                        max_std_over_mean=(
+                            STD_OVER_MEAN_CAP if key in CAPPED_MAGNITUDE else None
+                        ),
                     )
                 except ValueError as exc:
                     raise serializers.ValidationError({label: str(exc)}) from exc
