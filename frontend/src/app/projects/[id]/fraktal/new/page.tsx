@@ -17,10 +17,20 @@ import type { CreateFraktalInput } from '@/lib/types'
  * Where a FRAKTAL analysis starts: name it, point it at an image or at a
  * completed simulation, and set the parameters the model reads.
  *
- * The shell owns the navigation and the page container, so this file mounts
- * neither a `Header` nor a page landmark of its own: a page that does ends up
- * with two of them the moment the shell changes, and the deprecated `Header`
- * renders nothing inside the shell anyway.
+ * The shell draws the navigation, so this file does not. What that costs is
+ * worth stating plainly, because the next page to be ported will copy this
+ * shape: `Header` was mounted here to cover the sessions the shell leaves
+ * chromeless. `showChrome` is `!chromeless && isAuthenticated && !isLoading`,
+ * while the middleware only checks that a session cookie exists — so a stale
+ * cookie with a rejected token paints this route with no rail, no top bar and
+ * no account link, and `Header` used to be the one way out of it. Dropping it
+ * is the migration's deliberate trade (navigation is the shell's job, not this
+ * page's); it is not a claim that the two components are equivalent.
+ *
+ * The column is capped at 672px, the measure `projects/new` and
+ * `simulations/new` still use. Left to itself the form stretches to the
+ * shell's full 1440px and the two-column rows inside each panel grow to ~650px
+ * per cell.
  *
  * Two notices sit on the screen besides the form, and they are not the same
  * kind of thing: the batch-analysis pointer is navigation and reads as a note;
@@ -53,7 +63,7 @@ export default function NewFraktalAnalysisPage({
 
   if (projectError || !project) {
     return (
-      <>
+      <div className="mx-auto w-full max-w-2xl">
         <PageHeader eyebrow="FRAKTAL" title="Project unavailable" />
         <Callout
           tone="danger"
@@ -66,7 +76,7 @@ export default function NewFraktalAnalysisPage({
         >
           It may not exist or the backend is unavailable.
         </Callout>
-      </>
+      </div>
     )
   }
 
@@ -81,7 +91,7 @@ export default function NewFraktalAnalysisPage({
     }))
 
   return (
-    <>
+    <div className="mx-auto w-full max-w-2xl">
       {/* Breadcrumb */}
       <Link
         href={`/projects/${id}`}
@@ -122,6 +132,6 @@ export default function NewFraktalAnalysisPage({
           {(createAnalysis.error as Error)?.message || 'Unknown error'}
         </Callout>
       )}
-    </>
+    </div>
   )
 }

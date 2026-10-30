@@ -102,9 +102,17 @@ const defaultParams: FormParams = {
  *
  * One `Panel` per group of parameters, in the order the analysis reads them:
  * what it is called, where the image comes from, which model runs, how the
- * scale is calibrated, the model's own parameters, then segmentation. The
- * panels are `<section>`s with an `h2`, so the six groups are regions of the
- * document and not six cards that happen to look alike.
+ * scale is calibrated, the model's own parameters, then segmentation. Each
+ * group is a `<section>` headed by an `h2`, and that is what puts the six of
+ * them in the heading outline under the page's only `h1`.
+ *
+ * They are not landmarks. A `<section>` without an accessible name is not one,
+ * and `Panel` does not name its own, so this file makes no claim about regions:
+ * the guarantee on offer is the heading outline, which is what the test checks.
+ *
+ * Every reading on screen goes through `Num`, including the four that used to
+ * be interpolated strings ("Azimuth: 90°"). A number and its unit in one string
+ * cannot be aligned down a column and cannot be read apart from it.
  *
  * The two tinted boxes this form used to paint in blue and amber are `Callout`s
  * now, and the difference matters beyond looks: the scale-bar helper is an
@@ -242,7 +250,10 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
 
       {/* Source Selection */}
       <Panel title="Image Source" bodyClassName="space-y-4">
+        {/* Named, because the panel title is not the control's label: an
+            unnamed combobox announces as "combobox" and nothing else. */}
         <Select
+          aria-label="Image source"
           value={params.source_type}
           onChange={(e) => updateParam('source_type', e.target.value as FraktalSourceType)}
           options={sourceOptions}
@@ -251,8 +262,9 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         {params.source_type === 'uploaded_image' ? (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Upload Image</Label>
+              <Label htmlFor="image_file">Upload Image</Label>
               <input
+                id="image_file"
                 ref={fileInputRef}
                 type="file"
                 accept="image/png,image/jpeg,image/tiff,image/bmp"
@@ -300,8 +312,9 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         ) : (
           <div className="space-y-4">
             <div className="space-y-2">
-              <Label>Select Simulation</Label>
+              <Label htmlFor="simulation_id">Select Simulation</Label>
               <Select
+                id="simulation_id"
                 value={params.simulation_id}
                 onChange={(e) => updateParam('simulation_id', e.target.value)}
                 options={[
@@ -315,25 +328,36 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
             </div>
 
             <div className="grid grid-cols-2 gap-4">
+              {/*
+                The range input sits inside its label. `Slider` does not
+                forward an `id`, and `htmlFor` pointing at nothing names
+                nothing: nesting is the association that needs no id.
+              */}
               <div className="space-y-2">
-                <Label>Azimuth: {params.azimuth}°</Label>
-                <Slider
-                  min={0}
-                  max={360}
-                  step={15}
-                  value={[params.azimuth]}
-                  onValueChange={([v]) => updateParam('azimuth', v)}
-                />
+                <Label className="block">
+                  Azimuth: <Num value={params.azimuth} digits={0} unit="°" size="sm" />
+                  <Slider
+                    className="mt-2 block w-full"
+                    min={0}
+                    max={360}
+                    step={15}
+                    value={[params.azimuth]}
+                    onValueChange={([v]) => updateParam('azimuth', v)}
+                  />
+                </Label>
               </div>
               <div className="space-y-2">
-                <Label>Elevation: {params.elevation}°</Label>
-                <Slider
-                  min={-90}
-                  max={90}
-                  step={15}
-                  value={[params.elevation]}
-                  onValueChange={([v]) => updateParam('elevation', v)}
-                />
+                <Label className="block">
+                  Elevation: <Num value={params.elevation} digits={0} unit="°" size="sm" />
+                  <Slider
+                    className="mt-2 block w-full"
+                    min={-90}
+                    max={90}
+                    step={15}
+                    value={[params.elevation]}
+                    onValueChange={([v]) => updateParam('elevation', v)}
+                  />
+                </Label>
               </div>
             </div>
 
@@ -356,6 +380,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
       {/* Model Selection */}
       <Panel title="Analysis Model" bodyClassName="space-y-4">
         <Select
+          aria-label="Analysis model"
           value={params.model}
           onChange={(e) => updateParam('model', e.target.value as FraktalModel)}
           options={modelOptions}
@@ -372,7 +397,9 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label htmlFor="scaleBarPixels">Scale bar length (pixels)</Label>
+                <Label htmlFor="scaleBarPixels" className="text-ink">
+                  Scale bar length (pixels)
+                </Label>
                 <Input
                   id="scaleBarPixels"
                   type="number"
@@ -391,7 +418,9 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
                 <p className="hint">Measure the scale bar in your image</p>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="scaleBarNm">Scale bar value (nm)</Label>
+                <Label htmlFor="scaleBarNm" className="text-ink">
+                  Scale bar value (nm)
+                </Label>
                 <Input
                   id="scaleBarNm"
                   type="number"
@@ -412,7 +441,7 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
             </div>
             <div className="flex items-center justify-between border-t border-line pt-2">
               <span className="text-[12px] text-ink-muted">Calculated npix:</span>
-              <Num value={params.npix} digits={1} unit="px/100nm" />
+              <Num value={params.npix} digits={1} unit="px/100nm" size="lg" />
             </div>
             <p className="hint">
               = <Num value={params.npix / 100} digits={3} unit="pixels per nm" size="sm" />
@@ -446,6 +475,10 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
                   type="button"
                   variant={params.auto_calibrate ? 'default' : 'outline'}
                   size="sm"
+                  // The visible word is the state; the name stays the same in
+                  // both states, so a screen reader does not hear "Enabled,
+                  // pressed" as two different claims.
+                  aria-label="Auto-calibrate dpo"
                   aria-pressed={params.auto_calibrate}
                   onClick={() => updateParam('auto_calibrate', !params.auto_calibrate)}
                 >
@@ -511,14 +544,17 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
         {params.model === 'granulated_2012' && (
           <>
             <div className="space-y-2">
-              <Label>Filling Factor (delta): {params.delta.toFixed(2)}</Label>
-              <Slider
-                min={1.0}
-                max={1.5}
-                step={0.05}
-                value={[params.delta]}
-                onValueChange={([v]) => updateParam('delta', v)}
-              />
+              <Label className="block">
+                Filling Factor (delta): <Num value={params.delta} digits={2} size="sm" />
+                <Slider
+                  className="mt-2 block w-full"
+                  min={1.0}
+                  max={1.5}
+                  step={0.05}
+                  value={[params.delta]}
+                  onValueChange={([v]) => updateParam('delta', v)}
+                />
+              </Label>
               <p className="hint">
                 Particle filling factor (1.0 = touching, 1.5 = overlapping)
               </p>
@@ -543,24 +579,31 @@ export function FraktalAnalysisForm({ onSubmit, isLoading, simulations = [] }: F
 
         {params.model === 'voxel_2018' && (
           <div className="space-y-2">
-            <Label>m Exponent: {params.m_exponent.toFixed(2)}</Label>
-            <Slider
-              min={0.5}
-              max={2.0}
-              step={0.1}
-              value={[params.m_exponent]}
-              onValueChange={([v]) => updateParam('m_exponent', v)}
-            />
+            <Label className="block">
+              m Exponent: <Num value={params.m_exponent} digits={2} size="sm" />
+              <Slider
+                className="mt-2 block w-full"
+                min={0.5}
+                max={2.0}
+                step={0.1}
+                value={[params.m_exponent]}
+                onValueChange={([v]) => updateParam('m_exponent', v)}
+              />
+            </Label>
             <p className="hint">Exponent for zp calculation in voxel model</p>
           </div>
         )}
 
         <div className="flex items-center justify-between">
-          <Label>3D Correction</Label>
+          {/* `htmlFor` cannot point a label at a button: the visible label
+              names the control through `aria-labelledby` instead, and the
+              state travels in `aria-pressed`. */}
+          <Label id="correction_3d_label">3D Correction</Label>
           <Button
             type="button"
             variant={params.correction_3d ? 'default' : 'outline'}
             size="sm"
+            aria-labelledby="correction_3d_label"
             aria-pressed={params.correction_3d}
             onClick={() => updateParam('correction_3d', !params.correction_3d)}
           >

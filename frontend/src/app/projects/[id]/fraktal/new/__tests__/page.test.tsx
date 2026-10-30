@@ -114,25 +114,30 @@ afterEach(() => {
 })
 
 describe('FRAKTAL new-analysis page', () => {
-  it('leaves the chrome to the shell: no deprecated header and no <main> of its own', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const source = readFileSync(
-      join(process.cwd(), 'src/app/projects/[id]/fraktal/new/page.tsx'),
-      'utf8',
-    )
-
-    // Asserted on the import and on the layout element, not on the absence of
-    // `<header>` tags: the kit header renders one legitimately, so counting
-    // tags would both fail on a correct page and pass on a wrong one.
-    //
-    // The shell owns navigation and the page container now. A page that mounts
-    // either gets two of them the moment the shell changes.
-    expect(source).not.toContain('components/layout/Header')
-    expect(source).not.toContain('<main')
-
+  it('does not mount the deprecated header', () => {
     renderPage()
+
+    // Asserted on what is on screen, not on an import line: a page can import
+    // the component and not render it, and a substring check on the source
+    // misses a tag split across lines. The mock stands in for the deprecated
+    // component so its presence is observable at all.
     expect(screen.queryByTestId('deprecated-header')).toBeNull()
+  })
+
+  it('keeps its column at the width the other creation screens use', () => {
+    const { container } = renderPage()
+
+    // Without a cap the form stretches to the shell's 1440px and the two-column
+    // rows inside each panel grow to ~650px per cell. `projects/new` and
+    // `simulations/new` are still capped at 672px, so this screen travels at
+    // the same measure instead of inventing its own.
+    const column = container.querySelector('.max-w-2xl')
+    expect(column).toBeTruthy()
+    expect(column!.contains(screen.getByTestId('fraktal-form'))).toBe(true)
+    // The title and the batch note belong to the same column as the form: a
+    // heading that spans the shell over a capped form reads as two screens.
+    expect(column!.textContent).toContain('New FRAKTAL Analysis')
+    expect(column!.textContent).toContain('Try batch analysis')
   })
 
   it('names the screen in the kit page header, under the project it belongs to', () => {

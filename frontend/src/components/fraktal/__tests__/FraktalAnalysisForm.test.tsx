@@ -57,17 +57,18 @@ function selectFile(file: File) {
  * @testing-library/jest-dom.
  */
 describe('<FraktalAnalysisForm /> — design-system kit', () => {
-  it('composes its sections as panels, each with a second-level heading', () => {
-    const { container } = render(
-      <FraktalAnalysisForm onSubmit={vi.fn()} simulations={[]} />,
-    )
+  it('composes its sections as panels, each headed by a second-level heading', () => {
+    render(<FraktalAnalysisForm onSubmit={vi.fn()} simulations={[]} />)
 
     const titles = screen
       .getAllByRole('heading', { level: 2 })
       .map((heading) => heading.textContent)
 
     // The page owns the only h1; every section below it is an h2, so the
-    // outline still reads as one document instead of six.
+    // outline reads as one document instead of six. This is the heading
+    // outline and nothing more: `Panel` renders a <section> without an
+    // accessible name, and an unnamed section is not a landmark — so there is
+    // deliberately no assertion about regions here, because there are none.
     expect(titles).toEqual([
       'Analysis Name',
       'Image Source',
@@ -76,9 +77,54 @@ describe('<FraktalAnalysisForm /> — design-system kit', () => {
       'Model Parameters',
       'Segmentation',
     ])
-    // A `Panel` is a <section>: the sections are real regions, not divs that
-    // only look like cards.
-    expect(container.querySelectorAll('section').length).toBeGreaterThanOrEqual(6)
+  })
+
+  it('names both selects that decide the request body, and labels every control', () => {
+    render(<FraktalAnalysisForm onSubmit={vi.fn()} simulations={[]} />)
+
+    // An unnamed combobox announces as "combobox" and nothing else, so there
+    // is no way to tell which one picks the image source and which the model.
+    expect(screen.getByRole('combobox', { name: 'Image source' })).toBeTruthy()
+    expect(screen.getByRole('combobox', { name: 'Analysis model' })).toBeTruthy()
+
+    // Labels wrap or point at their control, so `getByLabelText` resolves each
+    // one to the input it names rather than finding only the text.
+    const labelled = [
+      /^Name \(optional\)/,
+      /^Upload Image/,
+      /^Pixels per 100nm/,
+      /^Primary Particle Diameter/,
+      /^Scale Reference/,
+      /^Minimum Particle Count/,
+      /^Min Pixel Value/,
+      /^Max Pixel Value/,
+    ]
+    for (const label of labelled) {
+      expect(screen.getByLabelText(label)).toBeTruthy()
+    }
+  })
+
+  it('keeps every reading as a value plus a separate unit, never one string', () => {
+    const onChange = () => {}
+    render(<FraktalAnalysisForm onSubmit={onChange} simulations={[]} />)
+
+    // `Num` marks the value itself with `.num` and puts the unit in a sibling,
+    // which is what keeps a column of readings aligned. A reading written as
+    // one interpolated string has no such element.
+    const valueIn = (label: RegExp) => screen.getByText(label).querySelector('.num')
+
+    expect(valueIn(/^Filling Factor \(delta\)/)?.textContent).toBe('1.10')
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Analysis model' }), {
+      target: { value: 'voxel_2018' },
+    })
+    expect(valueIn(/^m Exponent/)?.textContent).toBe('1.00')
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Image source' }), {
+      target: { value: 'simulation_projection' },
+    })
+    expect(valueIn(/^Azimuth/)?.textContent).toBe('0')
+    expect(valueIn(/^Elevation/)?.textContent).toBe('0')
   })
 
   it('carries no palette literal: every colour comes from a token', async () => {
@@ -113,9 +159,14 @@ describe('<FraktalAnalysisForm /> — design-system kit', () => {
     expect(helper!.textContent).toContain('px/100nm')
     expect(helper!.textContent).toContain('1.000')
     expect(helper!.textContent).toContain('pixels per nm')
+    // It is the number a reader checks before launching, so it is the largest
+    // reading on the screen: `Num`'s `lg` size, not body text.
+    const value = helper!.querySelector('.num') as HTMLElement | null
+    expect(value).toBeTruthy()
+    expect(value!.className).toContain('text-[29px]')
   })
 
-  it('announces auto-calibration as an attention notice that owns its toggle', () => {
+  it('announces auto-calibration as an attention notice with a stable toggle name', () => {
     render(<FraktalAnalysisForm onSubmit={vi.fn()} simulations={[]} />)
 
     const box = screen
@@ -125,12 +176,25 @@ describe('<FraktalAnalysisForm /> — design-system kit', () => {
     expect(box).toBeTruthy()
     expect(box!.textContent).toContain('Automatically find optimal primary particle diameter')
 
-    // The toggle is the notice's action, and its state is spelled out in
-    // words rather than carried by the tint alone.
-    const toggle = within(box!).getByRole('button', { name: 'Disabled' })
+    // The name stays the same in both states and the state travels in
+    // `aria-pressed`: a button called "Enabled, pressed" says it twice.
+    const toggle = within(box!).getByRole('button', { name: 'Auto-calibrate dpo' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
     fireEvent.click(toggle)
-    expect(within(box!).getByRole('button', { name: 'Enabled' })).toBeTruthy()
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
     expect(box!.textContent).toContain('test multiple dpo values')
+  })
+
+  it('reports the 3D-correction switch through aria-pressed, under its label', () => {
+    render(<FraktalAnalysisForm onSubmit={vi.fn()} simulations={[]} />)
+
+    const toggle = screen.getByRole('button', { name: '3D Correction' })
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    // Clicking it again returns to the off state, not to a third one.
+    fireEvent.click(toggle)
+    expect(toggle.getAttribute('aria-pressed')).toBe('false')
   })
 })
 
@@ -198,12 +262,12 @@ describe('<FraktalAnalysisForm /> — behaviour that the migration must not chan
       />,
     )
 
-    // The source selector is the first combobox on the form; the simulation
-    // selector only exists once the projection branch is chosen.
-    fireEvent.change(screen.getAllByRole('combobox')[0], {
+    // Both selects are named: picking one by position would encode whichever
+    // order the form happens to render in.
+    fireEvent.change(screen.getByRole('combobox', { name: 'Image source' }), {
       target: { value: 'simulation_projection' },
     })
-    fireEvent.change(screen.getAllByRole('combobox')[1], {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Select Simulation' }), {
       target: { value: 'sim-1' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Run FRAKTAL Analysis' }))
@@ -231,7 +295,7 @@ describe('<FraktalAnalysisForm /> — behaviour that the migration must not chan
       }),
     )
     // On the upload branch the model selector is the second combobox.
-    fireEvent.change(screen.getAllByRole('combobox')[1], {
+    fireEvent.change(screen.getByRole('combobox', { name: 'Analysis model' }), {
       target: { value: 'voxel_2018' },
     })
     fireEvent.click(screen.getByRole('button', { name: 'Run FRAKTAL Analysis' }))
@@ -245,6 +309,83 @@ describe('<FraktalAnalysisForm /> — behaviour that the migration must not chan
     expect(payload.dpo).toBeUndefined()
     expect(payload.auto_calibrate).toBeUndefined()
     expect(payload.m_exponent).toBe(1)
+  })
+
+  it('falls back to 512 when the resolution field is left empty', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <FraktalAnalysisForm
+        onSubmit={onSubmit}
+        simulations={[
+          {
+            id: 'sim-1',
+            algorithm: 'tunable_cc',
+            status: 'completed',
+            created_at: '2026-10-02T10:00:00Z',
+          },
+        ]}
+      />,
+    )
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Image source' }), {
+      target: { value: 'simulation_projection' },
+    })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Select Simulation' }), {
+      target: { value: 'sim-1' },
+    })
+    // An empty box parses to NaN, and `parseInt(x) || 512` is what turns that
+    // into a resolution the engine accepts instead of a NaN on the wire.
+    fireEvent.change(screen.getByLabelText('Resolution (px)'), {
+      target: { value: '' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Run FRAKTAL Analysis' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    expect(onSubmit.mock.calls[0][0].projection_params).toEqual({
+      azimuth: 0,
+      elevation: 0,
+      resolution: 512,
+    })
+  })
+
+  it('sends no simulation id when the source returns to an upload', async () => {
+    const onSubmit = vi.fn()
+    render(
+      <FraktalAnalysisForm
+        onSubmit={onSubmit}
+        simulations={[
+          {
+            id: 'sim-1',
+            algorithm: 'tunable_cc',
+            status: 'completed',
+            created_at: '2026-10-02T10:00:00Z',
+          },
+        ]}
+      />,
+    )
+
+    const source = () => screen.getByRole('combobox', { name: 'Image source' })
+    fireEvent.change(source(), { target: { value: 'simulation_projection' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Select Simulation' }), {
+      target: { value: 'sim-1' },
+    })
+
+    // Back to an upload: the chosen simulation stays in state, and the upload
+    // branch is the only thing that decides what the request carries.
+    fireEvent.change(source(), { target: { value: 'uploaded_image' } })
+    selectFile(
+      new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47])], 'test.png', {
+        type: 'image/png',
+      }),
+    )
+    fireEvent.click(screen.getByRole('button', { name: 'Run FRAKTAL Analysis' }))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1))
+    const payload = onSubmit.mock.calls[0][0]
+
+    expect(payload.source_type).toBe('uploaded_image')
+    expect(payload.simulation_id).toBeUndefined()
+    expect(payload.projection_params).toBeUndefined()
   })
 })
 
