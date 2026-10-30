@@ -1,4 +1,5 @@
 """Tests for AI Assistant models."""
+
 import pytest
 from django.contrib.auth import get_user_model
 from django.db import IntegrityError
@@ -10,9 +11,12 @@ User = get_user_model()
 
 @pytest.fixture
 def user(db):
-    """Create a test user."""
+    """Create a test user.
+
+    The project's user model is identified by email: it has no `username`
+    field, so `create_user` only takes an email.
+    """
     return User.objects.create_user(
-        username="testuser",
         email="test@example.com",
         password="testpass123",
     )
@@ -22,7 +26,6 @@ def user(db):
 def another_user(db):
     """Create another test user."""
     return User.objects.create_user(
-        username="anotheruser",
         email="another@example.com",
         password="testpass123",
     )
@@ -55,7 +58,7 @@ class TestAIProviderConfig:
             api_key_encrypted="key",
             model_name="claude-sonnet-4-20250514",
         )
-        expected = f"{user.username} - Anthropic (Claude)"
+        expected = f"{user.email} - Anthropic (Claude)"
         assert str(config) == expected
 
     def test_unique_together_constraint(self, user):
@@ -133,9 +136,10 @@ class TestAIProviderConfig:
         )
 
         configs = list(AIProviderConfig.objects.filter(user=user))
-        # Default should come first
+        # Default should come first, the non-default one after it
         assert configs[0].is_default is True
         assert configs[0].id == config2.id
+        assert configs[1].id == config1.id
 
     def test_provider_choices(self):
         """Test provider choices."""

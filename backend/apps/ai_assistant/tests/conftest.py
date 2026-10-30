@@ -1,4 +1,5 @@
 """Shared test fixtures for AI Assistant tests."""
+
 import pytest
 from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
@@ -33,9 +34,12 @@ def api_client():
 
 @pytest.fixture
 def user(db):
-    """Create a test user."""
+    """Create a test user.
+
+    The project's user model is identified by email — it has no `username`
+    field — so `create_user` only accepts an email.
+    """
     return User.objects.create_user(
-        username="testuser",
         email="test@example.com",
         password="testpass123",
     )
@@ -45,7 +49,6 @@ def user(db):
 def staff_user(db):
     """Create a staff user."""
     return User.objects.create_user(
-        username="staffuser",
         email="staff@example.com",
         password="testpass123",
         is_staff=True,
