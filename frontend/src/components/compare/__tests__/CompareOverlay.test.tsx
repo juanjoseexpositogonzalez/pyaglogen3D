@@ -158,4 +158,29 @@ describe('<CompareOverlay />', () => {
       0,
     )
   })
+
+  it('sits the stage on the kit surface and the legend on a kit line', () => {
+    const sims: CompareSim[] = [makeSim('sim-a', 'Agg A', true)]
+    render(<CompareOverlay simulations={sims} colorMap={colorMap} />)
+
+    // The stage is the kit's visualisation canvas, whose token is dark in both
+    // themes by design. The assertion that can fail is the one about the
+    // surface it reads: page surface here would put near-black particles on a
+    // light box in one of the two themes.
+    const stage = screen.getByTestId('compare-overlay')
+    expect(stage.className).toMatch(/bg-visual\b/)
+    expect(stage.className).toMatch(/border-visual-border/)
+    expect(stage.className).not.toMatch(/bg-surface|bg-background|bg-card/)
+
+    // The legend floats over a dark canvas: a kit surface, a kit line and kit
+    // ink, so it survives both themes. The ink is an exact token, because
+    // `\btext-ink\b` also matches `text-ink-muted` and cannot tell the
+    // legend's text from the muted text around it.
+    const legend = screen.getByTestId('compare-overlay-legend')
+    expect(legend.className).toMatch(/bg-surface\b/)
+    expect(legend.className).toMatch(/border-line/)
+    expect(legend.className.split(/\s+/)).toContain('text-ink')
+    expect(legend.className).not.toMatch(/bg-background/)
+    expect(legend.className).not.toMatch(/shadow-sm/)
+  })
 })

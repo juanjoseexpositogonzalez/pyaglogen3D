@@ -61,6 +61,29 @@ interface CompareGridProps {
  * (rather than Tailwind utility classes) because `grid-cols-N` needs to
  * be dynamic across N ∈ [2..9] and Tailwind's JIT can't handle arbitrary
  * template-column counts without safelisting.
+ *
+ * The layout has no breakpoints, and this is the number that costs. At a 320px
+ * viewport the shell's `<main>` spends `px-10` (80px), leaving 240px; the kit
+ * `Panel` this grid sits in spends `p-[21px]` and a 1px border, leaving 196px.
+ * With `gap-3` (12px) that is ~92px per cell for two simulations and ~57px for
+ * three — thumbnails, not views:
+ *
+ *   - The corner label chip (border + `px-2` + the 8px colour dot + `gap-2`)
+ *     spends ~26px of that, so the name is truncated to `max-w-[150px]`→ the
+ *     remaining ~67px at two sims and ~32px at three, i.e. two or three
+ *     characters plus an ellipsis.
+ *   - `aspect-square` means the cell is as tall as it is wide (92px or 57px),
+ *     and `overflow-hidden` clips the rest: the "No geometry data" line is
+ *     `text-sm` (14px/20px) and needs three lines to wrap at 57px, so the
+ *     bottom of that message is cut off where it matters most — the cell whose
+ *     geometry is missing.
+ *   - With nine simulations the layout is 3×3, so each cell is the 57px case
+ *     with nine of them on one page.
+ *
+ * Documented rather than fixed on purpose: the issue asks for this degradation
+ * to be written down, and a compare grid on a phone is a different product,
+ * not a smaller one. Any fix (one column under `sm`, a horizontal scroller, a
+ * list fallback) is a design decision with its own slice.
  */
 function gridTemplateStyle(layout: CompareGridLayout): React.CSSProperties {
   return {
@@ -107,12 +130,15 @@ export function CompareGrid({
             data-sim-id={sim.id}
             data-color={color}
             className={cn(
-              'relative aspect-square overflow-hidden rounded-lg border-2',
+              'relative aspect-square overflow-hidden rounded-lg border-2 bg-surface',
             )}
+            // The palette colour is per-simulation data, not a surface: it is
+            // what tells one cell from another, and it is inline because it
+            // varies per cell. Everything around it comes from the kit.
             style={{ borderColor: color }}
           >
             {/* Corner label: color chip + sim name. */}
-            <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded bg-background/85 px-2 py-1 text-xs shadow-sm backdrop-blur-sm">
+            <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink backdrop-blur-sm">
               <span
                 aria-hidden="true"
                 className="inline-block h-2 w-2 rounded-full"
@@ -132,7 +158,7 @@ export function CompareGrid({
                 className="h-full w-full"
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-full w-full items-center justify-center text-sm text-ink-muted">
                 No geometry data
               </div>
             )}

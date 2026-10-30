@@ -116,4 +116,26 @@ describe('<CompareSettingsPanel />', () => {
     fireEvent.click(screen.getByTestId('compare-sync-toggle'))
     expect(onToggleSync).toHaveBeenCalledTimes(1)
   })
+
+  it('paints the toolbar on kit tokens instead of the legacy border and radius', () => {
+    render(
+      <CompareSettingsPanel
+        mode="grid"
+        onModeChange={() => {}}
+        synchronised={true}
+        onToggleSync={() => {}}
+      />,
+    )
+
+    const panel = screen.getByTestId('compare-settings-panel')
+    expect(panel.className).toMatch(/border-line/)
+    expect(panel.className).toMatch(/bg-surface/)
+    expect(panel.className).toMatch(/rounded-md/)
+    expect(panel.className).not.toMatch(/bg-border|border-border|bg-card/)
+
+    // The divider between the mode group and the sync toggle is a kit line.
+    const divider = panel.querySelector('.w-px')
+    expect(divider?.className).toMatch(/bg-line/)
+    expect(divider?.className).not.toMatch(/bg-border/)
+  })
 })
