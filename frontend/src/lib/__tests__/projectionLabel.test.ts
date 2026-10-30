@@ -46,3 +46,14 @@ describe('simulationLabel', () => {
     expect(simulationLabel({ n_particles: 60 }, GRID)).toContain('kf_distribution=—')
   })
 })
+
+describe('simulationLabel — a study that varies nothing', () => {
+  it('falls back to the child\'s parameters instead of naming the row "Sim "', () => {
+    // Reachable: the serializer defaults an absent grid to `{}` and the form
+    // lets every variation be removed. Sourcing only from the grid left the
+    // export row named "Sim " with no way to tell children apart.
+    const label = simulationLabel({ n_particles: 60, target_kf: 1.3 }, {})
+
+    expect(label).toBe('Sim n_particles=60, target_kf=1.3')
+  })
+})

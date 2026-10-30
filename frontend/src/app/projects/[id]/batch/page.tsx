@@ -360,9 +360,9 @@ export default function BatchSimulationsPage({
                       .filter((r) => r.status === 'completed')
                       .map((r) => ({
                         id: r.simulation_id,
-                        // #191: one line per varying parameter, and the value
-                    // rendered as a value rather than `[object Object]`.
-                    name: simulationLabel(r.parameters, studyResults.parameter_grid),
+                          // #191: one entry per varying parameter, and the value
+                      // rendered as a value rather than `[object Object]`.
+                      name: simulationLabel(r.parameters, studyResults.parameter_grid),
                         status: r.status,
                       }))}
                   />
