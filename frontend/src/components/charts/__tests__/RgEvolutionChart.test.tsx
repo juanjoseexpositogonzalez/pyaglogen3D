@@ -6,13 +6,16 @@
  *
  *   - `next/dynamic` returns the passed component synchronously (so the
  *     lazy Plot is exercised immediately).
- *   - `react-plotly.js` renders a stub that stringifies its `data` prop
- *     into `data-traces` — tests assert against this to verify trace
- *     count, series colors, and trace names.
+ *   - `react-plotly.js` renders a stub that stringifies its `data` and
+ *     `layout` props into `data-traces` / `data-layout` — tests assert
+ *     against those to verify trace count, series colours, trace names and
+ *     the theme the chart was actually drawn in.
  */
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
 import React from 'react'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+import { useThemeStore } from '@/stores/useThemeStore'
 
 // next/dynamic — synchronous passthrough so the Plot stub mounts
 // immediately in jsdom.
@@ -50,6 +53,7 @@ vi.mock('react-plotly.js', () => ({
         data-testid="plotly"
         data-trace-count={String(data.length)}
         data-traces={JSON.stringify(data)}
+        data-layout={JSON.stringify(props.layout ?? {})}
       />
     )
   },
@@ -67,6 +71,28 @@ async function flushMicrotasks() {
   await Promise.resolve()
   await Promise.resolve()
 }
+
+/** The layout Plotly was handed, as the component built it. */
+type SentLayout = {
+  paper_bgcolor?: string
+  plot_bgcolor?: string
+  font?: { color?: string }
+  xaxis?: { gridcolor?: string; title?: { text?: string } }
+  yaxis?: { gridcolor?: string; title?: { text?: string } }
+}
+
+type SentTrace = {
+  name?: string
+  mode?: string
+  line: { color: string; dash?: string }
+  marker: { color: string; symbol?: string }
+}
+
+const layoutSent = (): SentLayout =>
+  JSON.parse(screen.getByTestId('plotly').getAttribute('data-layout') ?? '{}') as SentLayout
+
+const tracesSent = (): SentTrace[] =>
+  JSON.parse(screen.getByTestId('plotly').getAttribute('data-traces') ?? '[]') as SentTrace[]
 
 describe('<RgEvolutionChart /> — single-series (legacy API)', () => {
   it('renders an empty-state message for an empty rgEvolution array', () => {
@@ -153,5 +179,129 @@ describe('<RgEvolutionChart /> — multi-series (T15)', () => {
   it('renders empty state for an empty series array', () => {
     render(<RgEvolutionChart series={[]} />)
     expect(screen.getByTestId('rg-chart-empty')).toBeTruthy()
+  })
+
+  it('separates series with dash and marker as well as colour', () => {
+    // Colour alone is unreadable in greyscale, which is how these plots end up
+    // in a paper: the kit's triple encoding puts a dash pattern and a marker
+    // glyph on each series, indexed by its position.
+    const series: RgSeries[] = [
+      { label: 'Sim A', color: '#4E79A7', rgEvolution: [1, 2, 4] },
+      { label: 'Sim B', color: '#F28E2B', rgEvolution: [1, 1.5, 3] },
+    ]
+    render(<RgEvolutionChart series={series} />)
+
+    return flushMicrotasks().then(() => {
+      const traces = tracesSent()
+      expect(traces[0].line.dash).toBeTruthy()
+      expect(traces[1].line.dash).toBeTruthy()
+      expect(traces[0].line.dash).not.toBe(traces[1].line.dash)
+      expect(traces[0].marker.symbol).toBeTruthy()
+      expect(traces[0].marker.symbol).not.toBe(traces[1].marker.symbol)
+    })
+  })
+})
+
+/**
+ * The theme witness for this screen (issue #175, slice 2).
+ *
+ * `lib/chart-theme.ts` exists so a chart draws with the tokens in force; until
+ * this witness existed nothing proved a chart used it, and a chart hand-painted
+ * in dark hex passed every test while sitting on light paper.
+ *
+ * What is asserted is what the plot **receives** — the `layout` handed to
+ * Plotly and the colours of its traces — never the classes on the frame around
+ * it: a themed wrapper over an unthemed plot is exactly the failure this test
+ * is here to catch.
+ *
+ * jsdom loads no stylesheet, so the tokens are injected. The values are the
+ * ones `src/app/globals.css` declares for each theme; they are written here
+ * rather than hard-coded in the component, which is the whole point.
+ */
+const LIGHT_TOKENS: Record<string, string> = {
+  '--ink': '#112c3d',
+  '--ink-muted': '#536a73',
+  '--visual-grid': '#d7e8ec',
+  '--series-1': '#1d858c',
+}
+
+const DARK_TOKENS: Record<string, string> = {
+  '--ink': '#e9f4f4',
+  '--ink-muted': '#a7c0c1',
+  '--visual-grid': '#1d3b47',
+  '--series-1': '#58c5c0',
+}
+
+function injectTokens(tokens: Record<string, string>): void {
+  Object.keys(tokens).forEach((name) => {
+    document.documentElement.style.setProperty(name, tokens[name])
+  })
+}
+
+function clearTokens(): void {
+  Object.keys(LIGHT_TOKENS).forEach((name) => {
+    document.documentElement.style.removeProperty(name)
+  })
+  delete document.documentElement.dataset.theme
+}
+
+const seriesA: RgSeries = { label: 'Sim A', color: '#4E79A7', rgEvolution: [1, 2, 4] }
+
+beforeEach(() => {
+  useThemeStore.setState({ resolved: 'light' })
+  injectTokens(LIGHT_TOKENS)
+})
+
+afterEach(clearTokens)
+
+describe('<RgEvolutionChart /> — the theme the plot is drawn in', () => {
+  it('draws its ink and plot grid from the tokens, on the panel\u2019s own paper', async () => {
+    render(<RgEvolutionChart series={[seriesA]} />)
+    await flushMicrotasks()
+
+    const layout = layoutSent()
+    expect(layout.font?.color).toBe(LIGHT_TOKENS['--ink'])
+    expect(layout.xaxis?.gridcolor).toBe(LIGHT_TOKENS['--visual-grid'])
+    expect(layout.yaxis?.gridcolor).toBe(LIGHT_TOKENS['--visual-grid'])
+    // No background of its own: the surface behind the chart is the panel the
+    // reader already sees, in whichever theme is active.
+    expect(layout.paper_bgcolor).toBe('transparent')
+    expect(layout.plot_bgcolor).toBe('transparent')
+  })
+
+  it('repaints grid and ink when the theme flips under the mounted chart', async () => {
+    render(<RgEvolutionChart series={[seriesA]} />)
+    await flushMicrotasks()
+
+    const before = layoutSent()
+
+    act(() => {
+      document.documentElement.dataset.theme = 'dark'
+      injectTokens(DARK_TOKENS)
+      useThemeStore.setState({ resolved: 'dark' })
+    })
+
+    const after = layoutSent()
+    expect(after.font?.color).toBe(DARK_TOKENS['--ink'])
+    expect(after.xaxis?.gridcolor).toBe(DARK_TOKENS['--visual-grid'])
+    // The point of the flip: the same mounted chart, other values. A chart that
+    // only re-rendered its frame would leave these identical.
+    expect(after.font?.color).not.toBe(before.font?.color)
+    expect(after.xaxis?.gridcolor).not.toBe(before.xaxis?.gridcolor)
+  })
+
+  it('draws a lone series in the ramp in force, and follows it across the theme', async () => {
+    render(<RgEvolutionChart rgEvolution={[1, 2, 4]} parameters={{}} />)
+    await flushMicrotasks()
+
+    expect(tracesSent()[0].line.color).toBe(LIGHT_TOKENS['--series-1'])
+
+    act(() => {
+      document.documentElement.dataset.theme = 'dark'
+      injectTokens(DARK_TOKENS)
+      useThemeStore.setState({ resolved: 'dark' })
+    })
+
+    expect(tracesSent()[0].line.color).toBe(DARK_TOKENS['--series-1'])
   })
 })
