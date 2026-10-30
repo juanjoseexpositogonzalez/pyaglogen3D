@@ -543,13 +543,53 @@ describe('the comparison zone', () => {
     expect(kitFrameOf(screen.getByText('compare overlay widget'))?.tagName).toBe('SECTION')
   })
 
-  it('still mounts the metrics table and the chart this slice does not own', () => {
+  it('frames the metrics table and the chart in kit panels of their own', () => {
     renderPage()
 
-    // Slice 2 migrates these two; until then they stay on the page, outside the
-    // comparison panel, and dropping one here would be an invisible regression.
-    expect(screen.getByText('compare metrics widget')).toBeTruthy()
-    expect(screen.getByText('rg evolution widget')).toBeTruthy()
-    expect(kitFrameOf(screen.getByText('compare metrics widget'))).toBeNull()
+    // Slice 1 left these two on the bare canvas; slice 2 gives each the surface
+    // the rest of the product reads on. Both must name what they hold, because
+    // the chart's own Plotly title is gone — a heading is the only name a
+    // reader gets before the plot.
+    const table = screen.getByText('compare metrics widget')
+    const tableFrame = kitFrameOf(table)
+    expect(tableFrame?.tagName).toBe('SECTION')
+    expect(tableFrame?.textContent).toMatch(/metrics/i)
+
+    const chart = screen.getByText('rg evolution widget')
+    const chartFrame = kitFrameOf(chart)
+    expect(chartFrame?.tagName).toBe('SECTION')
+    expect(chartFrame?.textContent).toMatch(/radius of gyration/i)
+
+    // One frame each: naming the pair under one heading would leave the chart
+    // outside the surface it is drawn on.
+    expect(tableFrame).not.toBe(chartFrame)
+  })
+
+  it('counts what is being compared and what is not, above the comparison', () => {
+    withSims('sim-a,sim-b,sim-c')
+    withQueries([
+      loadedQuery('sim-a', 'Agg A'),
+      loadedQuery('sim-b', 'Agg B'),
+      failedQuery(new ApiError('gone', 404)),
+    ])
+    renderPage()
+
+    const cards = screen.getAllByRole('article')
+    expect(cards).toHaveLength(2)
+
+    const compared = cards.find((c) => c.textContent?.includes('Simulations compared'))
+    expect(compared?.textContent).toMatch(/2/)
+
+    const missingFromComparison = cards.find((c) => c.textContent?.includes('Not in the comparison'))
+    expect(missingFromComparison?.textContent).toMatch(/1/)
+  })
+
+  it('keeps the counts off the screen when there is no comparison to count', () => {
+    withSims('')
+    withQueries([])
+    renderPage()
+
+    // Two cards reading zero above an empty state is noise describing nothing.
+    expect(screen.queryAllByRole('article')).toHaveLength(0)
   })
 })

@@ -1,7 +1,7 @@
 'use client'
 
 /**
- * Multi-aggregate Compare page — design-system kit, slice 1 (issue #175).
+ * Multi-aggregate Compare page — design-system kit, issue #175 slices 1 and 2.
  *
  * Reads `?sims=<csv>` from the URL, fetches each simulation's metadata
  * and geometry in parallel, partitions results into
@@ -72,11 +72,13 @@ import {
 } from '@/components/compare/CompareSettingsPanel'
 import { Callout } from '@/components/kit/Callout'
 import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
 import { PageHeader } from '@/components/kit/PageHeader'
 import { Panel } from '@/components/kit/Panel'
 import { buttonVariants } from '@/components/ui/button'
 import { useProject } from '@/hooks/useProjects'
 import { ApiError, simulationsApi } from '@/lib/api'
+import { series } from '@/lib/chart-theme'
 import {
   MAX_COMPARE_SIMS,
   deriveSimName,
@@ -355,12 +357,15 @@ export default function CompareSimulationsPage() {
   // under the plot as "no evolution data available".
   const rgSeries: RgSeries[] = useMemo(
     () =>
-      compareSims.map((sim) => {
+      compareSims.map((sim, index) => {
         const raw = loaded.find((l) => l.id === sim.id)?.result.simulation
           .metrics?.rg_evolution
         return {
           label: sim.name,
-          color: colorMap[sim.id] ?? '#999999',
+          // The palette colour is the simulation's identity, shared with its
+          // grid cell and its metrics column. An id the palette does not cover
+          // falls to the series ramp by position rather than to one grey.
+          color: colorMap[sim.id] ?? series(index),
           rgEvolution: Array.isArray(raw) ? raw : [],
           parameters: sim.parameters,
         }
@@ -562,16 +567,44 @@ export default function CompareSimulationsPage() {
       )}
 
       {canCompare && (
-        <div className="mt-4">
-          <CompareCameraProvider>
-            <CompareBody
-              simulations={compareSims}
-              gridSims={gridSims}
-              rgSeries={rgSeries}
-              colorMap={colorMap}
+        <>
+          {/*
+            Counts, not readings: how much of the requested set this comparison
+            is actually made of. `MetricCard`'s `exact` variant is the one that
+            demands no sigma and no estimator, because a count has neither. The
+            two cards only exist once there is something to count — above an
+            empty state they would be describing nothing.
+          */}
+          <div className="mt-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
+            <MetricCard
+              kind="exact"
+              tone="teal"
+              label="Simulations compared"
+              value={loaded.length}
+              digits={0}
+              detail="Each one drawn in its own colour, with its own metrics column and curve"
             />
-          </CompareCameraProvider>
-        </div>
+            <MetricCard
+              kind="exact"
+              tone="slate"
+              label="Not in the comparison"
+              value={ids.length - loaded.length}
+              digits={0}
+              detail="Requested but not drawn: still arriving, still computing, refused by the server, or unreachable"
+            />
+          </div>
+
+          <div className="mt-4">
+            <CompareCameraProvider>
+              <CompareBody
+                simulations={compareSims}
+                gridSims={gridSims}
+                rgSeries={rgSeries}
+                colorMap={colorMap}
+              />
+            </CompareCameraProvider>
+          </div>
+        </>
       )}
     </>
   )
@@ -582,8 +615,10 @@ export default function CompareSimulationsPage() {
  * panel and swaps between grid and overlay. Kept as a separate component
  * so `useCompareCamera()` can be called inside the provider.
  *
- * The metrics table and the Rg chart stay outside `Panel`: they are slice 2's
- * surfaces and keep their own frames until that slice migrates them.
+ * The metrics table and the Rg chart get a `Panel` each: they are this
+ * screen's two reading surfaces, and a surface is what a chart hands its ink
+ * and grid to. The chart's own Plotly title is gone in favour of the panel's
+ * heading, so one name is said once.
  */
 function CompareBody({
   simulations,
@@ -622,9 +657,18 @@ function CompareBody({
         )}
       </Panel>
 
-      <CompareMetricsTable simulations={simulations} colorMap={colorMap} />
+      <Panel title="Metrics">
+        {/* The table's own caption says what a column holds, so the panel only
+            names the surface. */}
+        <CompareMetricsTable simulations={simulations} colorMap={colorMap} />
+      </Panel>
 
-      <RgEvolutionChart series={rgSeries} />
+      <Panel
+        title="Radius of gyration evolution"
+        hint="log10 of Rg against log10 of N, one curve per simulation. The plot takes its ink and its grid from the theme in force, so it is readable on the paper it is drawn on in both themes."
+      >
+        <RgEvolutionChart series={rgSeries} />
+      </Panel>
     </div>
   )
 }
