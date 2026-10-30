@@ -172,7 +172,7 @@ def create_parametric_study_handler(
                 status=SimulationStatus.QUEUED,
             )
             simulations_created.append(sim)
-            # Linked as it is created, and dispatched only below: a child that
+            # Linked as it is created and dispatched only below: a child that
             # finished before its siblings were linked settled the study on a
             # partial set (#152).
             study.simulations.add(sim)
