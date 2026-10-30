@@ -144,4 +144,31 @@ describe('<CompareGrid />', () => {
     // The other cell shows the fallback text.
     expect(screen.getByText('No geometry data')).toBeTruthy()
   })
+
+  it('sits every cell on a kit surface, with the system radius and no legacy tokens', () => {
+    const sims: CompareSim[] = [
+      makeSim('sim-a', 'Agg A', true),
+      makeSim('sim-b', 'Agg B', false),
+    ]
+    render(wrap(<CompareGrid simulations={sims} colorMap={colorMap} />))
+
+    const cells = screen.getAllByTestId('compare-grid-cell')
+    for (const cell of cells) {
+      // The palette colour stays inline: it is per-simulation data, not a
+      // surface. Everything else comes from the kit.
+      expect(cell.className).toMatch(/rounded-lg/)
+      expect(cell.className).toMatch(/bg-surface/)
+      expect(cell.className).not.toMatch(/bg-background|bg-card/)
+    }
+
+    // The corner label is glass over a dark canvas: a kit surface and a kit
+    // line, rather than the retired `bg-background` and its bare shadow.
+    const chip = cells[0].querySelector('div')
+    expect(chip?.className).toMatch(/bg-surface/)
+    expect(chip?.className).toMatch(/border-line/)
+    expect(chip?.className).toMatch(/text-ink\b/)
+
+    // The degraded cell is muted ink, not `text-muted-foreground`.
+    expect(screen.getByText('No geometry data').className).toMatch(/text-ink-muted/)
+  })
 })

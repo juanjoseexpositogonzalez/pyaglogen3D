@@ -37,14 +37,14 @@ export function CompareSettingsPanel({
   return (
     <div
       data-testid="compare-settings-panel"
-      className="flex flex-wrap items-center gap-3 rounded-lg border p-3"
+      className="flex flex-wrap items-center gap-3 rounded-md border border-line bg-surface p-3"
     >
       <div
         role="group"
         aria-label="View mode"
         className="flex items-center gap-2"
       >
-        <Label className="text-sm font-medium">View:</Label>
+        <Label className="text-sm font-medium text-ink">View:</Label>
         <Button
           type="button"
           size="sm"
@@ -67,7 +67,7 @@ export function CompareSettingsPanel({
         </Button>
       </div>
 
-      <div className="h-6 w-px bg-border" />
+      <div className="h-6 w-px bg-line" />
 
       <Button
         type="button"

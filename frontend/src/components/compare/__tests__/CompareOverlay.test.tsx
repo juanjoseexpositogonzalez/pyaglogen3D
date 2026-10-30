@@ -158,4 +158,25 @@ describe('<CompareOverlay />', () => {
       0,
     )
   })
+
+  it('sits the stage on the kit surface and the legend on a kit line', () => {
+    const sims: CompareSim[] = [makeSim('sim-a', 'Agg A', true)]
+    render(<CompareOverlay simulations={sims} colorMap={colorMap} />)
+
+    // The scene is the dark stage the rest of the kit draws spatial views on,
+    // with the system radius — not the retired bare `border` + `bg-card`.
+    const stage = screen.getByTestId('compare-overlay')
+    expect(stage.className).toMatch(/rounded-lg/)
+    expect(stage.className).toMatch(/bg-visual/)
+    expect(stage.className).toMatch(/border-visual-border/)
+    expect(stage.className).not.toMatch(/bg-card|border-border/)
+
+    // The legend floats over a dark canvas: a kit surface, a kit line and kit
+    // ink, so it survives both themes.
+    const legend = screen.getByTestId('compare-overlay-legend')
+    expect(legend.className).toMatch(/bg-surface/)
+    expect(legend.className).toMatch(/border-line/)
+    expect(legend.className).toMatch(/text-ink\b/)
+    expect(legend.className).not.toMatch(/bg-background|bg-card/)
+  })
 })

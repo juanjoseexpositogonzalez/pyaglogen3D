@@ -107,12 +107,15 @@ export function CompareGrid({
             data-sim-id={sim.id}
             data-color={color}
             className={cn(
-              'relative aspect-square overflow-hidden rounded-lg border-2',
+              'relative aspect-square overflow-hidden rounded-lg border-2 bg-surface',
             )}
+            // The palette colour is per-simulation data, not a surface: it is
+            // what tells one cell from another, and it is inline because it
+            // varies per cell. Everything around it comes from the kit.
             style={{ borderColor: color }}
           >
             {/* Corner label: color chip + sim name. */}
-            <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded bg-background/85 px-2 py-1 text-xs shadow-sm backdrop-blur-sm">
+            <div className="absolute top-2 left-2 z-10 flex items-center gap-2 rounded-md border border-line bg-surface px-2 py-1 text-xs text-ink backdrop-blur-sm">
               <span
                 aria-hidden="true"
                 className="inline-block h-2 w-2 rounded-full"
@@ -132,7 +135,7 @@ export function CompareGrid({
                 className="h-full w-full"
               />
             ) : (
-              <div className="flex h-full w-full items-center justify-center text-sm text-muted-foreground">
+              <div className="flex h-full w-full items-center justify-center text-sm text-ink-muted">
                 No geometry data
               </div>
             )}
