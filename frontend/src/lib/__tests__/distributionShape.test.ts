@@ -25,13 +25,24 @@ describe('the std/mean cap follows the magnitude', () => {
     expect(error?.message).toContain(String(STD_OVER_MEAN_CAP))
   })
 
-  it('accepts exactly the cap, because R2 says <=', () => {
+  it('accepts exactly the cap and refuses a hair above it', () => {
+    // A judge measured that asserting only `null` here could not fail in the
+    // mode it claims to cover: with the cap block deleted the test stayed green.
+    // Both sides of the boundary are asserted now, so removing the block turns
+    // it red.
     expect(
       distributionValueError(
         { mode: 'normal', mean: 1.0, std: STD_OVER_MEAN_CAP },
         'particle_radius_config',
       ),
     ).toBeNull()
+
+    const over = distributionValueError(
+      { mode: 'normal', mean: 1.0, std: STD_OVER_MEAN_CAP + 0.0001 },
+      'particle_radius_config',
+    )
+    expect(over?.field).toBe('std')
+    expect(over?.message).toContain('exceeds cap')
   })
 
   it('does not cap the fractal prefactor', () => {
