@@ -30,7 +30,10 @@ from apps.projects.models import Project
 from apps.simulations.distribution_shape import STD_OVER_MEAN_CAP
 
 BACKEND = Path(__file__).resolve().parents[1]
-SERIALIZERS = BACKEND / "apps/simulations/serializers.py"
+SIMULATIONS = BACKEND / "apps/simulations"
+SERIALIZERS = SIMULATIONS / "serializers.py"
+#: The one module allowed to name the cap.
+DEFINES_THE_CAP = SIMULATIONS / "distribution_shape.py"
 
 
 def _float_literals(path: Path) -> list[float]:
@@ -42,18 +45,38 @@ def _float_literals(path: Path) -> list[float]:
     ]
 
 
-def test_the_literal_does_not_live_in_the_serializer() -> None:
+def _modules_that_could_hold_a_cap() -> list[Path]:
+    """Every non-test, non-migration module of the app.
+
+    A judge measured that guarding only `serializers.py` let a copy in
+    `services/distribution_validation.py` - the second live enforcement helper -
+    pass in silence, while this module's docstring claimed the property for the
+    repo.
+    """
+    return sorted(
+        path
+        for path in SIMULATIONS.rglob("*.py")
+        if "tests" not in path.parts
+        and "migrations" not in path.parts
+        and path != DEFINES_THE_CAP
+    )
+
+
+@pytest.mark.parametrize("module", _modules_that_could_hold_a_cap(), ids=lambda p: p.name)
+def test_only_one_module_names_the_cap(module: Path) -> None:
     """`3e-1` and `0.30` are the same cap, so the check reads values, not text."""
-    copies = [value for value in _float_literals(SERIALIZERS) if value == STD_OVER_MEAN_CAP]
+    copies = [value for value in _float_literals(module) if value == STD_OVER_MEAN_CAP]
     assert copies == [], (
-        "the cap is written again in serializers.py as a literal: use "
-        "STD_OVER_MEAN_CAP so the number has one home"
+        f"{module.name} writes the cap again as a literal: use STD_OVER_MEAN_CAP "
+        "from distribution_shape so the number has one home"
     )
 
 
 def test_an_unrelated_number_does_not_trip_the_guard() -> None:
     """The guard must not accuse a `10.3` or a comment, which the regex did."""
-    assert 10.3 not in [v for v in _float_literals(SERIALIZERS) if v == STD_OVER_MEAN_CAP]
+    assert 10.3 not in [
+        v for v in _float_literals(SERIALIZERS) if v == STD_OVER_MEAN_CAP
+    ]
     assert STD_OVER_MEAN_CAP not in (10.3, 20.3, 0.30 + 10)
 
 
@@ -124,7 +147,9 @@ def test_a_ratio_exactly_at_the_cap_is_accepted(
     response = _post(
         api_client,
         user,
-        parameter_grid={key: [{"mode": "normal", "mean": 1.0, "std": STD_OVER_MEAN_CAP}]},
+        parameter_grid={
+            key: [{"mode": "normal", "mean": 1.0, "std": STD_OVER_MEAN_CAP}]
+        },
     )
     assert response.status_code == 201, response.data
 
@@ -152,12 +177,16 @@ def test_the_cap_does_not_apply_to_the_fractal_prefactor(
     response = _post(
         api_client,
         user,
-        parameter_grid={"kf_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]},
+        parameter_grid={
+            "kf_distribution": [{"mode": "normal", "mean": 1.0, "std": 0.5}]
+        },
     )
     assert response.status_code == 201, response.data
 
 
-def test_the_legacy_spelling_still_gets_the_cap(api_client: APIClient, user: User) -> None:
+def test_the_legacy_spelling_still_gets_the_cap(
+    api_client: APIClient, user: User
+) -> None:
     """The legacy grid loop is the other consumer of the cap.
 
     It used to read the number from a class attribute, evaluated once at import;
