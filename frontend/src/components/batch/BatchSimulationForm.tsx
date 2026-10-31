@@ -594,6 +594,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                       value={variation.distributionValues}
                       onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
                       label={`${variation.name.replace(/_/g, ' ')} configurations`}
+                      parameterName={variation.name}
                     />
                   ) : variation.name === SEED_TYPE_PARAM ? (
                     /* Seed type multi-select chips */
