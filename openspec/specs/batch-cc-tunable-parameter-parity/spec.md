@@ -778,6 +778,14 @@ and `kf_mode="uniform", kf_min=2.0, kf_max=1.0` all raise a Rust `PanicException
 from `BaseException` and escapes the worker's only outer `except Exception`, leaving the
 simulation stuck in `RUNNING`.
 
+**Which keys a child keeps.** A child exposes the configured value for the keys it keeps, and
+R13.3 asserts that for the two parity keys. Two swept keys are deliberately not among them:
+`seed_type` travels in the child's own field, and `sintering_config` is translated into the flat keys
+the worker reads (`sintering_type`, `sintering_coeff`). A results column derived from
+`parameter_grid` therefore shows nothing for those two names; their values live in the field and in
+the flat keys, and this requirement does not add a column for them. Decided by the person on
+2026-10-31 (#204): the alternative was teaching the four views to render the translated value.
+
 #### Scenario R13.1 — The engine-named grid key is validated like the parity key
 
 - GIVEN `parameter_grid = {target_kf_distribution: [{mode:"lognormal", value:1.8}]}`
