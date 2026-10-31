@@ -17,6 +17,8 @@ interface Props {
   disabled?: boolean
   allowedTypes?: DistributionMode[]
   error?: string
+  /** The grid key this entry edits, so the mirror can apply R2's cap (#201). */
+  parameterName?: string
 }
 
 const modeOptions = [
@@ -32,7 +34,15 @@ const modeOptions = [
  * conditional numeric inputs for each mode. Used for dpo and target_kf
  * distribution configuration.
  */
-export function DistributionSelector({ label, value, onChange, disabled, allowedTypes, error }: Props) {
+export function DistributionSelector({
+  label,
+  value,
+  onChange,
+  disabled,
+  allowedTypes,
+  error,
+  parameterName,
+}: Props) {
   // R8.4: the field reports itself when it loses focus. Until then an empty or
   // half-typed number is not a mistake - `parseFloat('') || 0` makes every
   // intermediate state look invalid, and shouting at the user while they type
@@ -47,7 +57,8 @@ export function DistributionSelector({ label, value, onChange, disabled, allowed
   // position. Focusing a field releases it too, so the user is not shouted at
   // while correcting a value they already left once.
   const [blurredValue, setBlurredValue] = useState<DistributionValue | null>(null)
-  const local = blurredValue === value ? distributionValueError(value) : null
+  const local =
+    blurredValue === value ? distributionValueError(value, parameterName) : null
   const shown = error ?? local?.message
   // R8.4 asks for the border AND the message. A parent-provided message used to
   // suppress the border, which is half of what the scenario says; the field the

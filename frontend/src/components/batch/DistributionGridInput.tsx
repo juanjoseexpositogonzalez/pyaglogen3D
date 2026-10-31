@@ -13,6 +13,8 @@ interface DistributionGridInputProps {
   label: string
   allowedTypes?: DistributionMode[]
   minEntries?: number
+  /** The grid key these entries edit; forwarded so the mirror can cap it. */
+  parameterName?: string
 }
 
 const DEFAULT_ENTRY: DistributionValue = { mode: 'fixed', value: 1.0 }
@@ -26,6 +28,7 @@ export function DistributionGridInput({
   label,
   allowedTypes,
   minEntries = 1,
+  parameterName,
 }: DistributionGridInputProps) {
   // Rows used to be keyed by index, which made every bit of row state belong to
   // the POSITION: deleting a row handed its state to its neighbour. R8.4's
@@ -86,6 +89,7 @@ export function DistributionGridInput({
               value={entry}
               onChange={(newVal) => handleChildChange(index, newVal)}
               allowedTypes={allowedTypes}
+              parameterName={parameterName}
             />
           </div>
           {value.length > minEntries && (
