@@ -3,20 +3,42 @@
 /**
  * One FRAKTAL analysis, on the design-system kit (issue #176, slice 2 of 3).
  *
- * What this file shows is unchanged: the same fields in the same order, the
- * same arithmetic for the change column, the same download, the same polling
- * of the comparison run. What changed is who owns the presentation. Every
- * surface is a `Panel`, every reading goes through `Num` (value and unit as
- * siblings, never a concatenated string), the two tables are `DataTable`
- * instances with numeric headers right-aligned as the primitive prescribes,
- * and every state that used to be a coloured card is a `Callout` whose tone
- * never carries the meaning alone.
+ * What this file shows is the same: the same fields in the same order, the same
+ * arithmetic for the change column, the same download, the same polling of the
+ * comparison run. What changed is who owns the presentation — every surface is
+ * a `Panel`, every reading goes through `Num` (value and unit as siblings,
+ * never a concatenated string), the two tables are `DataTable` instances with
+ * numeric headers right-aligned as the primitive prescribes, and every state
+ * that used to be a coloured card is a `Callout` whose tone never carries the
+ * meaning alone.
  *
- * Three readings lost their compact suffix on the way here: `ap`, `volume`,
- * `surface_area` and `mass` used to be printed by a local `formatLargeNumber`
- * (45.00K). `Num` groups thousands instead (45,000.00), which is exact rather
- * than rounded, keeps the unit in its own element and is the same number the
- * record holds. No value and no arithmetic changed with it.
+ * Four presentation decisions came with it. Each is declared here rather than
+ * left to be discovered in review:
+ *
+ * 1. Four readings lost their compact suffix: `ap`, `volume`, `surface_area`
+ *    and `mass` used to be printed by a local `formatLargeNumber` (45.00K).
+ *    `Num` groups thousands instead (45,000.00), which is exact rather than
+ *    rounded, keeps the unit in its own element and is the same number the
+ *    record holds. No value and no arithmetic changed with it.
+ * 2. A ratio is printed at a fixed two decimals (`Ratio` below) instead of
+ *    through `Num`'s formatter, which sends anything under 0.001 to
+ *    `toExponential`: `8.0e-4 x` in the column that says how far the estimate
+ *    missed reads as a different kind of number. The sweep's table and the
+ *    mismatch notice now print the same precision; the notice used to print
+ *    one decimal for the same quantity, so `3.4x` became `3.40x`.
+ * 3. A panel's readings keep the emphasis the cards gave them — Rg, Ap, Jf,
+ *    Volume, Surface Area and Mass stay at the top of their panel, not at the
+ *    11px of the label that names them — while the parameters below stay at
+ *    13px, because a parameter is a setting and a reading is a result.
+ * 4. `Num` prints a missing or non-finite reading as an em dash, so readings
+ *    the old cards printed as `N/A` now read `—`, and the mismatch notice's
+ *    "current" dpo follows them instead of keeping a literal `N/A nm` beside
+ *    an em dash in the same callout. That is a deviation from #176 — the
+ *    contract says the result format does not change — approved explicitly by
+ *    the issue owner after review: the dash is the kit's convention, R6 sends
+ *    every number to `Num`, and one notice cannot speak two vocabularies. The
+ *    unit goes with it when there is no magnitude to qualify, which is what
+ *    `Num` already does for every other absent reading on the page.
  *
  * A local `Readout` carries the label/value pairs the cards used to hold:
  * `DetailList` would have been the kit's answer, but it is outside this
@@ -28,6 +50,7 @@ import type { ReactNode } from 'react'
 import { Download } from 'lucide-react'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 import { Callout } from '@/components/kit/Callout'
 import { DataTable, type Column } from '@/components/kit/DataTable'
 import { EmptyState } from '@/components/kit/EmptyState'
@@ -76,11 +99,29 @@ const signed = (diff: number, digits: number): string =>
  * own word and the reading next to it is always an element, so a number never
  * ends up glued to its unit in a single string.
  */
-function Readout({ label, children }: { label: ReactNode; children: ReactNode }) {
+function Readout({ label, children, scale = 'md' }: {
+  label: ReactNode
+  children: ReactNode
+  /**
+   * `lg` for a reading the researcher copies out, `md` for a parameter.
+   *
+   * The `dd` class is what a non-numeric value inherits; a `Num` inside
+   * declares its own size, so a call site that wants `lg` passes both — a
+   * reading rendered at its label's 11px stops reading as a reading.
+   */
+  scale?: 'md' | 'lg'
+}) {
   return (
     <div>
       <dt className="text-[11px] leading-relaxed text-ink-muted">{label}</dt>
-      <dd className="m-0 mt-1 text-[13px] font-semibold text-ink">{children}</dd>
+      <dd
+        className={cn(
+          'm-0 mt-1 font-semibold text-ink',
+          scale === 'lg' ? 'text-[24px] leading-tight' : 'text-[13px]',
+        )}
+      >
+        {children}
+      </dd>
     </div>
   )
 }
@@ -88,6 +129,50 @@ function Readout({ label, children }: { label: ReactNode; children: ReactNode })
 /** The grid every panel of readings uses. */
 const READOUT_GRID = 'grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-3'
 const READOUT_GRID_WIDE = 'grid grid-cols-2 gap-x-6 gap-y-4 md:grid-cols-4'
+
+/**
+ * A ratio, as the two places that print one.
+ *
+ * `Num` is the product's reading primitive, but its formatter sends any nonzero
+ * magnitude under 0.001 to `toExponential`, which is right for a measured
+ * length and wrong for a ratio: `8.0e-4 x` is exactly the case that means "the
+ * estimate is far off", and it should read as a small fixed-decimal multiplier
+ * next to rows showing 0.80 and 1.00. The digits are fixed at two in the
+ * sweep's table and in the mismatch notice alike — the notice used to print one
+ * decimal for the same quantity, so it now prints `3.40x` where it printed
+ * `3.4x` — and the unit keeps its own element, which is the rule `Num` exists to
+ * enforce.
+ */
+function Ratio({ value }: { value: number | null | undefined }) {
+  if (value === null || value === undefined || !Number.isFinite(value)) {
+    return <Num value={null} unit="x" size="sm" />
+  }
+  return (
+    <span className="inline-flex items-baseline gap-[0.28em]">
+      <span className="num text-[11px] text-ink">{value.toFixed(2)}</span>
+      <span className="num-unit">x</span>
+    </span>
+  )
+}
+
+/**
+ * The word the engine's pick carries, painted with the kit's positive tokens.
+ *
+ * `Badge variant="success"` — what both markers used — spells its colour as
+ * `bg-green-500 text-white`, which measures 2.28:1 on white in either theme. It
+ * also replaced a `green-600` chip that passed in the dark theme on the near
+ * black `--primary-foreground`, so the marker was a regression there rather
+ * than an inherited fault. `border-success text-success bg-success-soft` is the
+ * pair the kit already uses for a finished state: 5.03:1 on the light gold
+ * panel, 5.63:1 on the dark one, 5.21:1 and 5.34:1 on the plain surfaces.
+ */
+function BestMarker({ children }: { children: ReactNode }) {
+  return (
+    <Badge variant="outline" className="border-success bg-success-soft text-success">
+      {children}
+    </Badge>
+  )
+}
 
 /** One row of the side-by-side comparison against the re-run. */
 interface ComparisonRow {
@@ -246,7 +331,7 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
       render: (attempt) => (
         <span className="inline-flex items-center justify-end gap-2">
           <Num value={attempt.dpo} unit="nm" digits={1} size="sm" />
-          {isBestAttempt(attempt) && <Badge variant="success">Best</Badge>}
+          {isBestAttempt(attempt) && <BestMarker>Best</BestMarker>}
         </span>
       ),
     },
@@ -261,9 +346,7 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
       key: 'ratio',
       header: 'Ratio',
       numeric: true,
-      digits: 2,
-      unit: 'x',
-      value: (attempt) => attempt.npo_ratio,
+      render: (attempt) => <Ratio value={attempt.npo_ratio} />,
     },
     {
       key: 'aligned',
@@ -389,18 +472,22 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
             differs significantly from visual estimate (
             <Num value={results.npo_visual} digits={0} size="sm" />)
             {results.npo_ratio != null && results.npo_ratio > 0 && (
-              <> - ratio: <Num value={results.npo_ratio} digits={1} unit="x" size="sm" /></>
+              <> - ratio: <Ratio value={results.npo_ratio} /></>
             )}
           </p>
           {results.dpo_estimated != null && results.dpo_estimated > 0 && (
             <p className="font-medium">
               Suggested dpo: <Num value={results.dpo_estimated} digits={1} unit="nm" size="sm" />{' '}
               (current:{' '}
-              {analysis.dpo == null ? (
-                'N/A nm'
-              ) : (
-                <Num value={analysis.dpo} digits={digitsOf(analysis.dpo)} unit="nm" size="sm" />
-              )}
+              {/* A dpo the record does not carry is the kit's em dash, like every
+                  other absent reading; `Num` withholds the unit because there is
+                  no magnitude for it to qualify. */}
+              <Num
+                value={analysis.dpo ?? null}
+                digits={analysis.dpo == null ? 0 : digitsOf(analysis.dpo)}
+                unit="nm"
+                size="sm"
+              />
               )
             </p>
           )}
@@ -454,18 +541,19 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
             />
           </div>
 
-          {/* Geometry */}
+          {/* Geometry. These are readings, not parameters, so they keep the
+              emphasis the cards gave them (24px, and `lg` on the number). */}
           <Panel title="Geometry">
             <dl className={READOUT_GRID}>
-              <Readout label="Radius of Gyration (Rg)">
-                <Num value={results.rg ?? null} digits={2} unit="nm" size="sm" />
+              <Readout label="Radius of Gyration (Rg)" scale="lg">
+                <Num value={results.rg ?? null} digits={2} unit="nm" size="lg" />
               </Readout>
-              <Readout label="Projected Area (Ap)">
-                <Num value={results.ap ?? null} digits={2} unit="nm²" size="sm" />
+              <Readout label="Projected Area (Ap)" scale="lg">
+                <Num value={results.ap ?? null} digits={2} unit="nm²" size="lg" />
               </Readout>
               {results.jf !== null && (
-                <Readout label="Coordination Index (Jf)">
-                  <Num value={results.jf} digits={4} size="sm" />
+                <Readout label="Coordination Index (Jf)" scale="lg">
+                  <Num value={results.jf} digits={4} size="lg" />
                 </Readout>
               )}
             </dl>
@@ -474,15 +562,15 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
           {/* Physical properties */}
           <Panel title="Physical Properties">
             <dl className={READOUT_GRID}>
-              <Readout label="Volume">
-                <Num value={results.volume ?? null} digits={2} unit="nm³" size="sm" />
+              <Readout label="Volume" scale="lg">
+                <Num value={results.volume ?? null} digits={2} unit="nm³" size="lg" />
               </Readout>
-              <Readout label="Surface Area">
-                <Num value={results.surface_area ?? null} digits={2} unit="nm²" size="sm" />
+              <Readout label="Surface Area" scale="lg">
+                <Num value={results.surface_area ?? null} digits={2} unit="nm²" size="lg" />
               </Readout>
               {results.mass > 0 && (
-                <Readout label="Mass">
-                  <Num value={results.mass} digits={2} unit="fg" size="sm" />
+                <Readout label="Mass" scale="lg">
+                  <Num value={results.mass} digits={2} unit="fg" size="lg" />
                 </Readout>
               )}
             </dl>
@@ -540,7 +628,7 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
                 <div className="mb-4 flex flex-wrap items-center gap-4 rounded-md bg-surface-strong p-3">
                   <span className="text-[12px] font-semibold text-ink">Optimal dpo found:</span>
                   <Num value={results.best_dpo} digits={1} unit="nm" size="lg" />
-                  <Badge variant="success">Best Match</Badge>
+                  <BestMarker>Best Match</BestMarker>
                 </div>
               )}
               <DataTable
@@ -718,6 +806,7 @@ export function FraktalResultsView({ analysis, projectId, onComparisonCreated }:
                   },
                 ]}
                 rowKey={(row) => row.key}
+                caption="The original run and the re-run with the suggested dpo, metric by metric: what each produced and how far the second moved."
               />
 
               {comparisonAnalysis.results.npo_aligned && !results?.npo_aligned && (

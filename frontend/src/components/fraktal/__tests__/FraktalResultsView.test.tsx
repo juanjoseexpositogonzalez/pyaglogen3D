@@ -192,7 +192,26 @@ describe('<FraktalResultsView /> on the design-system kit (issue #176)', () => {
     const unit = reading!.querySelector('.num-unit')
     expect(number?.textContent).toBe('120.00')
     expect(unit?.textContent).toBe('nm')
-    expect(reading!.textContent).not.toContain('120.00 nm')
+
+    // The regression this guards is `${value}${unit}` interpolated into a
+    // single span: it leaves `.num-unit` empty and glues the unit into the
+    // number's own element. Comparing `textContent` to "120.00 nm" would not
+    // see it — the DOM never holds that space, the gap is CSS — so the guard
+    // has to read the number element on its own.
+    expect(number!.textContent).not.toContain('nm')
+  })
+
+  it('keeps a panel reading larger than the label that names it', () => {
+    render(<FraktalResultsView analysis={makeAnalysis()} projectId={PROJECT_ID} />)
+
+    // Rg, Ap, Volume, Surface Area and Mass are the figures a researcher
+    // copies out. Rendered at the label's own 11px they stop reading as
+    // readings, which is what `size="sm"` on every Readout produced.
+    const number = screen
+      .getByText('Radius of Gyration (Rg)')
+      .parentElement!.querySelector('.num')
+    expect(number!.className).not.toContain('text-[11px]')
+    expect(number!.className).toContain('text-[29px]')
   })
 
   it("states a failed run's own message as the alert body", () => {
@@ -225,9 +244,16 @@ describe('<FraktalResultsView /> on the design-system kit (issue #176)', () => {
     expect(rows).toHaveLength(4)
 
     // The winner is flagged in its own cell rather than by tinting the row:
-    // the marker survives greyscale, a background does not.
-    expect(within(table).getAllByText('Best')).toHaveLength(1)
+    // the marker survives greyscale, a background does not. It is painted with
+    // the kit's positive tokens, not `Badge variant="success"`: that variant
+    // spells `bg-green-500 text-white`, 2.28:1 on white, on the one word that
+    // says what the sweep returned.
+    const best = within(table).getAllByText('Best')
+    expect(best).toHaveLength(1)
     expect(within(rows[2]).getByText('Best')).toBeTruthy()
+    expect(best[0].className).toContain('text-success')
+    expect(best[0].className).toContain('bg-success-soft')
+    expect(best[0].className).not.toContain('bg-green-500')
 
     // Header cells of a numeric column sit on the right, as the primitive
     // prescribes.
@@ -240,6 +266,72 @@ describe('<FraktalResultsView /> on the design-system kit (issue #176)', () => {
     expect(within(rows[1]).getByText('40')).toBeTruthy()
     expect(within(rows[1]).getByText('0.80')).toBeTruthy()
     expect(within(rows[1]).getByText('x')).toBeTruthy()
+  })
+
+  it('paints the optimal-dpo marker with the kit tokens, not a palette literal', () => {
+    render(<FraktalResultsView analysis={calibratedAnalysis()} projectId={PROJECT_ID} />)
+
+    const marker = screen.getByText('Best Match')
+    expect(marker.className).toContain('text-success')
+    expect(marker.className).toContain('bg-success-soft')
+    expect(marker.className).not.toContain('bg-green-500')
+  })
+
+  it('writes an absent reading as the kit em dash, in a card and in a table cell', () => {
+    render(
+      <FraktalResultsView
+        analysis={makeAnalysis({
+          results: {
+            ...BASE_RESULTS,
+            // The wire can send null for a reading the engine could not
+            // produce; the type says number because the happy path is a number.
+            rg: null,
+            best_dpo: 25,
+            calibration_attempts: [
+              { dpo: 25, npo: null, npo_ratio: 1, npo_aligned: true },
+            ],
+          } as unknown as FraktalResults,
+        })}
+        projectId={PROJECT_ID}
+      />
+    )
+
+    // In a card: the glyph alone, and no unit for a magnitude that is not there.
+    const reading = screen
+      .getByText('Radius of Gyration (Rg)')
+      .parentElement!.querySelector('dd')!
+    expect(reading.querySelector('.num')!.textContent).toBe('—')
+    expect(reading.querySelector('.num-unit')).toBeNull()
+
+    // In a table cell: the sweep's particle count.
+    const table = screen.getByRole('table', {
+      name: /every dpo the auto-calibration tried/i,
+    })
+    const rows = within(table).getAllByRole('row')
+    expect(within(rows[1]).getByText('—')).toBeTruthy()
+  })
+
+  it('writes the absent current dpo as the same em dash as the rest of the notice', () => {
+    render(
+      <FraktalResultsView
+        analysis={makeAnalysis({
+          dpo: null,
+          results: {
+            ...BASE_RESULTS,
+            npo_aligned: false,
+            npo_visual: 60,
+            dpo_estimated: 44.4,
+          },
+        })}
+        projectId={PROJECT_ID}
+      />
+    )
+
+    // One vocabulary for "the record does not carry this", in the same callout
+    // that already renders "Calculated particles (…)" through `Num`.
+    const warning = screen.getByRole('note')
+    expect(warning.textContent).toContain('current: —')
+    expect(warning.textContent).not.toContain('N/A')
   })
 
   it('offers the re-run the mismatch calls for, at the suggested dpo', () => {
@@ -255,7 +347,73 @@ describe('<FraktalResultsView /> on the design-system kit (issue #176)', () => {
     ).toBeTruthy()
   })
 
-  it('compares the re-run against the original and marks the fixed alignment', async () => {
+  it('writes a failing alignment with its own sign and an absent value with a dash', async () => {
+    const blob = new Blob(['image'])
+    mockGetOriginalImage.mockResolvedValue(blob)
+    globalThis.URL.createObjectURL = vi.fn(() => 'blob:image')
+    globalThis.URL.revokeObjectURL = vi.fn()
+
+    mockCreate.mockResolvedValue({
+      ...makeAnalysis(),
+      id: 'analysis-rerun',
+      status: 'completed',
+      dpo: 44,
+      results: {
+        ...BASE_RESULTS,
+        // The re-run moves down and the alignment is still wrong.
+        df: 1.67,
+        npo: 46,
+        kf: 0,
+        npo_aligned: false,
+      },
+    })
+
+    render(<FraktalResultsView analysis={calibratedAnalysis()} projectId={PROJECT_ID} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Re-run with dpo = 44 nm' }))
+
+    await waitFor(() => {
+      expect(mockCreate).toHaveBeenCalledTimes(1)
+    })
+
+    const comparison = screen.getByRole('table', {
+      name: /The original run and the re-run/i,
+    })
+    const rows = within(comparison).getAllByRole('row')
+
+    // A fall keeps its own sign: `signed` only prefixes growth.
+    expect(within(comparison).getByText('-0.0500')).toBeTruthy()
+    expect(within(comparison).getByText('-2')).toBeTruthy()
+    expect(within(comparison).queryByText('+0.0500')).toBeNull()
+
+    // kf arrived as zero, so there is no difference to state: the cell holds
+    // the dash, not "+0.0000".
+    expect(within(rows[5]).getByText('-')).toBeTruthy()
+    expect(within(rows[5]).queryByText('+0.0000')).toBeNull()
+  })
+
+  it('prints a ratio at a fixed two decimals, never in exponential form', () => {
+    render(
+      <FraktalResultsView
+        analysis={makeAnalysis({
+          results: {
+            ...BASE_RESULTS,
+            npo_aligned: false,
+            npo_visual: 60,
+            // The far-off estimate: the case a ratio exists to show.
+            npo_ratio: 0.0008,
+            dpo_estimated: 44.4,
+          },
+        })}
+        projectId={PROJECT_ID}
+      />
+    )
+
+    const warning = screen.getByRole('note')
+    expect(warning.textContent).toContain('ratio: 0.00x')
+    expect(warning.textContent).not.toContain('e-4')
+  })
+
+  it('names the comparison table so it can be found without seeing it', async () => {
     const blob = new Blob(['image'])
     mockGetOriginalImage.mockResolvedValue(blob)
     globalThis.URL.createObjectURL = vi.fn(() => 'blob:image')
@@ -292,7 +450,14 @@ describe('<FraktalResultsView /> on the design-system kit (issue #176)', () => {
       .closest('section')
     expect(panel).toBeTruthy()
 
-    const comparison = within(panel as HTMLElement).getByRole('table')
+    // Found by the caption `DataTable` turns into the table's accessible name,
+    // not by its position among the tables on the page.
+    const comparison = screen.getByRole('table', {
+      name: /The original run and the re-run/i,
+    })
+    expect(within(panel as HTMLElement).getByRole('table', {
+      name: /The original run and the re-run/i,
+    })).toBe(comparison)
     const rows = within(comparison).getAllByRole('row')
     // Header plus the six metrics the side-by-side has always listed.
     expect(rows).toHaveLength(7)

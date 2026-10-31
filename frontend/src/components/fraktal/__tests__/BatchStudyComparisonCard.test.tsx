@@ -107,6 +107,19 @@ describe('BatchStudyComparisonCard', () => {
     )
   })
 
+  it('states the quantity the figures are, not an image size', () => {
+    render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
+
+    // "image dimensions" in a product where "dimension" already means fractal
+    // dimension reads as a pixel size, and the card shows none of those: it
+    // shows statistics of the images' Df.
+    const panel = screen
+      .getByRole('heading', { level: 2, name: 'Study Comparison' })
+      .closest('section')
+    expect(panel!.textContent).toContain('image Df')
+    expect(panel!.textContent).not.toContain('image dimensions')
+  })
+
   it('names itself with a section heading the page outline can follow', () => {
     render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
 

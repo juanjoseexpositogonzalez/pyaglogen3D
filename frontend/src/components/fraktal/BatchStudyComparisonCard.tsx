@@ -16,6 +16,17 @@
  * elements, and each `data-testid` stays on the wrapper that holds one: the
  * R12.3 tests, and the swap-point test that lives in FraktalBatchResultsView,
  * key off those ids rather than off the markup underneath them.
+ *
+ * Heading order is the one thing this card cannot fix from where it sits: it
+ * introduces an `h2` (the panel title) into a host page whose own headings are
+ * still `h3`, so the outline reads h1 → h3 → h3 → h2 → h3. The host
+ * (`FraktalBatchResultsView`) belongs to slice 3; until that lands, this card
+ * sits one level above its neighbours. Recorded here so the disorder reads as
+ * the price of migrating the card first, not as the intended outline.
+ *
+ * The hint names Df, because Df is what the card shows. "Image dimensions"
+ * would read as a pixel size in a product where dimension already means
+ * fractal dimension.
  */
 import { Callout } from '@/components/kit/Callout'
 import { MetricCard } from '@/components/kit/MetricCard'
@@ -42,7 +53,7 @@ export function BatchStudyComparisonCard({
   return (
     <Panel
       title="Study Comparison"
-      hint="The batch's image dimensions against the Df of the simulation it was linked to."
+      hint="The batch's image Df statistics against the Df of the simulation it was linked to."
     >
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
         {/* Contributing image values (converged + approximate, canonical R7) */}
