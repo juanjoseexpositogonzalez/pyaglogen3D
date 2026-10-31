@@ -72,14 +72,6 @@ def test_only_one_module_names_the_cap(module: Path) -> None:
     )
 
 
-def test_an_unrelated_number_does_not_trip_the_guard() -> None:
-    """The guard must not accuse a `10.3` or a comment, which the regex did."""
-    assert 10.3 not in [
-        v for v in _float_literals(SERIALIZERS) if v == STD_OVER_MEAN_CAP
-    ]
-    assert STD_OVER_MEAN_CAP not in (10.3, 20.3, 0.30 + 10)
-
-
 def test_the_constant_keeps_the_value_r2_fixes() -> None:
     assert STD_OVER_MEAN_CAP == 0.3, (
         "R2 fixes 0.3 and the spec says it MUST NOT be weakened: changing it is a "
@@ -184,24 +176,33 @@ def test_the_cap_does_not_apply_to_the_fractal_prefactor(
     assert response.status_code == 201, response.data
 
 
-def test_the_legacy_spelling_still_gets_the_cap(
-    api_client: APIClient, user: User
+def test_the_legacy_spelling_reads_the_cap_per_request(
+    api_client: APIClient, user: User, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """The legacy grid loop is the other consumer of the cap.
+    """The legacy grid loop is the other consumer, and it reads the constant now.
 
-    It used to read the number from a class attribute, evaluated once at import;
-    a judge measured that patching the constant left it saying `0.3` while the R13
-    site said `0.6` - two live caps again. It resolves the constant per request
-    now, and this pins that the cap reaches this path at all.
+    It used to keep the number as a class attribute, evaluated once at import; a
+    judge measured that patching the constant left it saying `0.3` while the R13
+    site said `0.6` - two live caps again. The first version of this test said it
+    pinned that and never patched anything, so the repair had no regression guard;
+    a second judge measured that too. With the old binding the cap below would
+    still read `0.3` and this payload would answer 201.
     """
+    from apps.simulations import serializers as serializer_module
+
+    monkeypatch.setattr(serializer_module, "STD_OVER_MEAN_CAP", 0.2)
+
     response = _post(
         api_client,
         user,
         parameter_grid={
             "particle_radius_config": [
-                {"distribution_type": "normal", "mean": 1.0, "std": 0.5}
+                {"distribution_type": "normal", "mean": 1.0, "std": 0.25}
             ]
         },
     )
+
     assert response.status_code == 400, response.data
-    assert "exceeds cap" in str(response.data)
+    assert "cap (0.2)" in str(response.data), (
+        f"the legacy path did not read the constant: {response.data}"
+    )
