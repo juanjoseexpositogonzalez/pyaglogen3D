@@ -223,3 +223,70 @@ describe('BatchSimulationForm — new parameter grid options', () => {
     expect(submitButton).toHaveProperty('disabled', true)
   })
 })
+
+// ---------------------------------------------------------------------------
+// #201 — the cap reaches the field through the rendered grid.
+//
+// This is the only user-visible effect of that change, and a judge measured
+// that deleting the prop from this form left the suite green: the field went
+// back to saying nothing about a spread the server will refuse, which is the
+// invisible 400 the issue exists for. So the assertion is here, through the
+// components, not on `distributionValueError` alone.
+// ---------------------------------------------------------------------------
+
+describe('BatchSimulationForm — R2 cap on the primary size', () => {
+  it('marks the spread and names the cap when the field loses focus', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    const algorithmSelect = screen.getAllByRole('combobox')[0]
+    fireEvent.change(algorithmSelect, { target: { value: 'tunable_cc' } })
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+
+    const variationSelects = screen.getAllByRole('combobox')
+    fireEvent.change(variationSelects[variationSelects.length - 1], {
+      target: { value: 'particle_radius_config' },
+    })
+
+    const afterParam = screen.getAllByRole('combobox')
+    const modeSelect = afterParam[afterParam.length - 1]
+    fireEvent.change(modeSelect, { target: { value: 'normal' } })
+
+    // By accessible name, not by position: the form renders its own numeric
+    // inputs (`n_particles` among them) and the first version of this test wrote
+    // a spread into the wrong field, so it proved nothing.
+    const mean = screen.getByLabelText('media') as HTMLInputElement
+    const std = screen.getByLabelText('desviación') as HTMLInputElement
+    fireEvent.change(mean, { target: { value: '1' } })
+    fireEvent.change(std, { target: { value: '0.5' } })
+    fireEvent.blur(std)
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('std/mean')
+    expect(alert.textContent).toContain('0.3')
+    expect(std.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('does not cap the fractal prefactor, which the engine accepts', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    const algorithmSelect = screen.getAllByRole('combobox')[0]
+    fireEvent.change(algorithmSelect, { target: { value: 'tunable_cc' } })
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+
+    const variationSelects = screen.getAllByRole('combobox')
+    fireEvent.change(variationSelects[variationSelects.length - 1], {
+      target: { value: 'kf_distribution' },
+    })
+
+    const afterParam = screen.getAllByRole('combobox')
+    fireEvent.change(afterParam[afterParam.length - 1], { target: { value: 'normal' } })
+
+    const mean = screen.getByLabelText('media') as HTMLInputElement
+    const std = screen.getByLabelText('desviación') as HTMLInputElement
+    fireEvent.change(mean, { target: { value: '1' } })
+    fireEvent.change(std, { target: { value: '0.5' } })
+    fireEvent.blur(std)
+
+    expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
