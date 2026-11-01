@@ -59,23 +59,17 @@ from `BaseException` and escapes the worker's only outer `except Exception`, lea
 simulation stuck in `RUNNING`.
 
 **Which keys a child keeps.** A child exposes the configured value for the keys it keeps, and
-R13.3 asserts that for the two parity keys. Two swept keys are deliberately not among them:
-`seed_type` travels in the child's own field, and `sintering_config` is translated into the flat keys
-the worker reads (`sintering_type`, `sintering_coeff`). A results column derived from
-`parameter_grid` therefore shows nothing for those two names; their values live in the field and in
-the flat keys, and this requirement does not add a column for them. Decided by the person on
-2026-10-31 (#204): the alternative was teaching the four views to render the translated value.
-
-**Which keys a child keeps.** A child exposes the configured value for the keys it keeps, and
 R13.3 asserts that for the two parity keys. Two swept keys are deliberately not among them. `seed_type`
-travels in the child's own field, as R4.3 requires; a child that keeps it in `parameters` instead is
-breaking R4.3, not this sentence. `sintering_config` is translated into the flat keys the worker reads,
-whose set and ranges R3 fixes. A view that keys its configurations on `parameter_grid` therefore carries
-no value under those two names, and the effect is worse than an empty cell: `fractal_analysis_summary`
-groups by exactly those keys, so two sweeps whose names read null collapse into one configuration with
-their statistics pooled. This requirement adds no column for them; what a view should show for a
-translated sweep is a separate change. Decided by the person on 2026-10-31 (#204): the alternative,
-teaching the four views to render the translated value, is registered in #115.
+is meant to travel in the child's own field, which is what R4.3 fixes for the grid path; a child that
+keeps it in `parameters` while the field holds the default is the defect registered as point 3 of #115,
+not a licence for this requirement to promise otherwise. `sintering_config` is translated into the flat
+keys the worker reads, whose set and ranges R3 fixes. A view that keys its configurations on
+`parameter_grid` therefore carries no value under those two names, and the effect is worse than an
+empty cell: `fractal_analysis_summary` groups by exactly those keys, so two sweeps whose names read
+null collapse into one configuration with their statistics pooled. This requirement adds no column for
+them; what a view should show for a translated sweep is a separate change. Decided by the person on
+2026-10-31 (#204), and the alternative - teaching the four views to render the translated value - is
+registered in #115.
 
 #### Scenario R13.1 — The engine-named grid key is validated like the parity key
 

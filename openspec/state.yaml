@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: 2026-10-31-r13-3-keeps-its-keys
+last_archived: 2026-11-01-r13-3-keeps-its-keys
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -38,7 +38,7 @@ archived_changes:
 # convenciones historicas (fecha al principio y fecha al final); no se renombran aqui
 # porque un rename rompe cualquier enlace existente a esas rutas. Issue #130.
   - 2026-10-29-distribution-grid-mode
-  - 2026-10-31-r13-3-keeps-its-keys
+  - 2026-11-01-r13-3-keeps-its-keys
 
 stack:
   rust:
