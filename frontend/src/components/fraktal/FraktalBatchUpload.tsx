@@ -1,22 +1,48 @@
 'use client'
 
-import { useCallback, useState, useRef } from 'react'
+/**
+ * Batch FRAKTAL upload form, on the design-system kit (issue #176, slice 3 of
+ * 3, part A).
+ *
+ * What it does is unchanged: the same file input, the same client-side
+ * metadata pre-parse, the same two calibration paths, the same two validation
+ * messages, the same request and the same `onSuccess` hand-off. What changed is
+ * who owns the presentation — the card is a `Panel`, the two notices that used
+ * to be `Alert`s are `Callout`s, the checkbox is the kit's `Checkbox`, and the
+ * progress counts go through `Num`.
+ *
+ * Three presentation decisions are worth stating rather than leaving to be
+ * found in review:
+ *
+ * 1. The two calibration notices keep their sentence as prose, not as `Num`.
+ *    `Num` renders a value and its unit as sibling elements so the number
+ *    carries the tabular styling and the unit does not pad it; that is right
+ *    for a reading in a value position and wrong for a number inside a
+ *    sentence. The sentence is also frozen by the contract ("same messages")
+ *    and pinned verbatim by this file's tests, so the number stays a run of
+ *    text inside the sentence. The progress counts are the opposite case: they
+ *    are readings, and they do go through `Num`.
+ * 2. A validation failure reads as `Callout tone="danger"` with the message
+ *    itself as the title, verbatim. Inventing a headline such as "Upload
+ *    failed" would add words the contract does not have and would put the
+ *    message the user needs one line further down.
+ * 3. The submit button keeps both of its labels ("Analyzing..." / "Analyze
+ *    batch") and its `disabled` gate, which is `canSubmit`.
+ */
+import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import JSZip from 'jszip'
-import { Upload, FileArchive, Sparkles } from 'lucide-react'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Upload, FileArchive } from 'lucide-react'
+
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Progress } from '@/components/ui/progress'
+import { Callout } from '@/components/kit/Callout'
+import { Num } from '@/components/kit/Num'
+import { Panel } from '@/components/kit/Panel'
 import {
   fraktalApi,
   ApiError,
@@ -192,144 +218,130 @@ export function FraktalBatchUpload({
     (!!manualScale || !!metadataDetected?.pixels_per_100nm)
 
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="flex items-center gap-2">
-          <FileArchive className="h-5 w-5" />
+    <Panel
+      title={
+        <span className="flex items-center gap-2">
+          <FileArchive className="h-5 w-5" aria-hidden="true" />
           Batch FRAKTAL Analysis
-        </CardTitle>
-        <CardDescription>
-          Upload a ZIP of projection images. If the ZIP was exported from
-          pyaglogen3D, calibration is automatic.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-4">
+        </span>
+      }
+      hint="Upload a ZIP of projection images. If the ZIP was exported from pyaglogen3D, calibration is automatic."
+      bodyClassName="space-y-4"
+    >
+      <div className="space-y-2">
+        <Label htmlFor="zip-upload">ZIP file</Label>
+        <Input
+          id="zip-upload"
+          type="file"
+          accept=".zip"
+          onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
+        />
+      </div>
+
+      {isSimOrigin && (
+        <Callout
+          tone="info"
+          title={`Using known dpo = ${simulation!.parameters.dpo_nm} nm from simulation. Override?`}
+        />
+      )}
+
+      {metadataDetected?.pixels_per_100nm && (
+        <Callout tone="info" title="Auto-calibrated from metadata">
+          {metadataDetected.pixels_per_100nm.toFixed(1)} px/100nm
+          {metadataDetected.mode && ` (${metadataDetected.mode} mode)`}
+        </Callout>
+      )}
+
+      {!metadataDetected?.pixels_per_100nm && file && (
         <div className="space-y-2">
-          <Label htmlFor="zip-upload">ZIP file</Label>
+          <Label htmlFor="manual-scale">Pixels per 100 nm (manual)</Label>
           <Input
-            id="zip-upload"
-            type="file"
-            accept=".zip"
-            onChange={(e) => handleFileSelect(e.target.files?.[0] ?? null)}
+            id="manual-scale"
+            type="number"
+            min="1"
+            step="0.1"
+            placeholder="e.g. 500"
+            value={manualScale}
+            onChange={(e) => setManualScale(e.target.value)}
           />
+          <p className="hint">Required for ZIPs without metadata.</p>
         </div>
+      )}
 
-        {isSimOrigin && (
-          <Alert>
-            <Sparkles className="h-4 w-4" />
-            <AlertDescription>
-              Using known dpo = {simulation!.parameters.dpo_nm} nm from simulation. Override?
-            </AlertDescription>
-          </Alert>
-        )}
+      <div className="space-y-2">
+        <Label htmlFor="algorithm">Algorithm</Label>
+        <Select
+          id="algorithm"
+          options={algorithmOptions}
+          value={algorithm}
+          onChange={(e) =>
+            setAlgorithm(e.target.value as FraktalBatchAlgorithm)
+          }
+        />
+      </div>
 
-        {metadataDetected?.pixels_per_100nm && (
-          <Alert>
-            <Sparkles className="h-4 w-4" />
-            <AlertDescription>
-              <strong>Auto-calibrated from metadata:</strong>{' '}
-              {metadataDetected.pixels_per_100nm.toFixed(1)} px/100nm
-              {metadataDetected.mode && ` (${metadataDetected.mode} mode)`}
-            </AlertDescription>
-          </Alert>
-        )}
+      <div className="flex items-center gap-2">
+        <Checkbox
+          id="autocalibrate"
+          checked={autocalibrateDpo}
+          onCheckedChange={setAutocalibrateDpo}
+        />
+        <Label htmlFor="autocalibrate" className="font-normal">
+          Auto-calibrate dpo from image 0
+        </Label>
+      </div>
 
-        {!metadataDetected?.pixels_per_100nm && file && (
-          <div className="space-y-2">
-            <Label htmlFor="manual-scale">Pixels per 100 nm (manual)</Label>
-            <Input
-              id="manual-scale"
-              type="number"
-              min="1"
-              step="0.1"
-              placeholder="e.g. 500"
-              value={manualScale}
-              onChange={(e) => setManualScale(e.target.value)}
-            />
-            <p className="text-xs text-muted-foreground">
-              Required for ZIPs without metadata.
-            </p>
-          </div>
-        )}
-
+      {!autocalibrateDpo && (
         <div className="space-y-2">
-          <Label htmlFor="algorithm">Algorithm</Label>
-          <Select
-            id="algorithm"
-            options={algorithmOptions}
-            value={algorithm}
-            onChange={(e) =>
-              setAlgorithm(e.target.value as FraktalBatchAlgorithm)
-            }
-          />
-        </div>
-
-        <div className="flex items-center gap-2">
-          <input
-            id="autocalibrate"
-            type="checkbox"
-            checked={autocalibrateDpo}
-            onChange={(e) => setAutocalibrateDpo(e.target.checked)}
-          />
-          <Label htmlFor="autocalibrate" className="font-normal">
-            Auto-calibrate dpo from image 0
-          </Label>
-        </div>
-
-        {!autocalibrateDpo && (
-          <div className="space-y-2">
-            <Label htmlFor="dpo-hint">dpo (nm)</Label>
-            <Input
-              id="dpo-hint"
-              type="number"
-              min="1"
-              step="0.1"
-              value={dpoHint}
-              onChange={(e) => setDpoHint(e.target.value)}
-            />
-          </div>
-        )}
-
-        <div className="space-y-2">
-          <Label htmlFor="manual-sim-id">
-            Simulation ID (optional — overrides filename detection)
-          </Label>
+          <Label htmlFor="dpo-hint">dpo (nm)</Label>
           <Input
-            id="manual-sim-id"
-            type="text"
-            placeholder="UUID"
-            value={manualSimId}
-            onChange={(e) => setManualSimId(e.target.value)}
+            id="dpo-hint"
+            type="number"
+            min="1"
+            step="0.1"
+            value={dpoHint}
+            onChange={(e) => setDpoHint(e.target.value)}
           />
         </div>
+      )}
 
-        {progress && (
-          <div>
-            <div className="flex justify-between text-xs text-muted-foreground mb-1">
-              <span>Stage: {progress.stage}</span>
-              <span>
-                {progress.current} / {progress.total}
-              </span>
-            </div>
-            <Progress value={progress.progress * 100} />
+      <div className="space-y-2">
+        <Label htmlFor="manual-sim-id">
+          Simulation ID (optional — overrides filename detection)
+        </Label>
+        <Input
+          id="manual-sim-id"
+          type="text"
+          placeholder="UUID"
+          value={manualSimId}
+          onChange={(e) => setManualSimId(e.target.value)}
+        />
+      </div>
+
+      {progress && (
+        <div>
+          <div className="mb-1 flex justify-between text-[11px] text-ink-muted">
+            <span>Stage: {progress.stage}</span>
+            <span>
+              <Num value={progress.current} digits={0} size="sm" />
+              {' / '}
+              <Num value={progress.total} digits={0} size="sm" />
+            </span>
           </div>
-        )}
+          <Progress value={progress.progress * 100} />
+        </div>
+      )}
 
-        {error && (
-          <Alert variant="destructive" role="alert">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+      {error && <Callout tone="danger" title={error} />}
 
-        <Button
-          onClick={handleSubmit}
-          disabled={!canSubmit}
-          className="w-full"
-        >
-          <Upload className="h-4 w-4 mr-2" />
-          {isSubmitting ? 'Analyzing...' : 'Analyze batch'}
-        </Button>
-      </CardContent>
-    </Card>
+      <Button
+        onClick={handleSubmit}
+        disabled={!canSubmit}
+        className="w-full"
+      >
+        <Upload className="h-4 w-4 mr-2" />
+        {isSubmitting ? 'Analyzing...' : 'Analyze batch'}
+      </Button>
+    </Panel>
   )
 }

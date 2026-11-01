@@ -8,6 +8,28 @@
  *
  * This component is used by the route page at
  * `app/projects/[id]/fraktal/batch/[batchId]/page.tsx`.
+ *
+ * On the design-system kit (issue #176, slice 3 of 3, part A). What it does is
+ * unchanged: one request on mount, cancelled on unmount, the same three states
+ * and the same hand-off to `FraktalBatchResultsView` and
+ * `FraktalBatchDistributions`. What changed:
+ *
+ * 1. `PageHeader` names the page instead of a bare `h1`. The eyebrow says which
+ *    part of the product this belongs to; the title is the same two words.
+ * 2. A failed load is a `Callout tone="danger"` instead of a card with a
+ *    destructive border, so the failure is announced (`role="alert"`) and the
+ *    server's own reason is kept beside the sentence that says what failed.
+ * 3. The distributions block is a `Panel` inside the `<section>` that names it.
+ *    The section keeps its `aria-label` because the label is the landmark's
+ *    name, not decoration; the panel's `h2` is the visible heading. The two
+ *    are deliberately not merged: `Panel` renders its own `<section>`, which
+ *    without a name is not a landmark at all.
+ * 4. The loading placeholder keeps its two skeleton blocks, now drawn with
+ *    `bg-surface-strong` instead of the legacy `bg-muted`, because a skeleton
+ *    reserves the layout the result will occupy and a spinner does not.
+ *
+ * The column is capped at 1024px, the measure the page always had. The shell
+ * owns the padding and the outer 1440px frame.
  */
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -16,7 +38,9 @@ import { useRouter } from 'next/navigation'
 
 import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent } from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
 import { FraktalBatchResultsView } from './FraktalBatchResultsView'
 import { FraktalBatchDistributions } from './FraktalBatchDistributions'
 
@@ -60,11 +84,11 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
   // --- Loading state ---
   if (loading) {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <p className="text-muted-foreground">Loading batch summary...</p>
+      <div className="mx-auto w-full max-w-5xl">
+        <p className="text-ink-muted">Loading batch summary...</p>
         <div className="mt-4 space-y-4">
-          <div className="h-32 bg-muted animate-pulse rounded-lg" />
-          <div className="h-64 bg-muted animate-pulse rounded-lg" />
+          <div className="h-32 animate-pulse rounded-lg bg-surface-strong" />
+          <div className="h-64 animate-pulse rounded-lg bg-surface-strong" />
         </div>
       </div>
     )
@@ -73,49 +97,48 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
   // --- Error state ---
   if (error || !data) {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <Card className="border-destructive">
-          <CardContent className="p-6">
-            <p className="text-destructive">
-              Failed to load batch. {error}
-            </p>
-            <Link
-              href={`/projects/${projectId}`}
-              className="mt-4 inline-block"
-            >
+      <div className="mx-auto w-full max-w-5xl">
+        <Callout
+          tone="danger"
+          title="Failed to load batch"
+          action={
+            <Link href={`/projects/${projectId}`}>
               <Button variant="outline" aria-label="Back to project">
                 Back to project
               </Button>
             </Link>
-          </CardContent>
-        </Card>
+          }
+        >
+          {error}
+        </Callout>
       </div>
     )
   }
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
+    <div className="mx-auto w-full max-w-5xl">
       <Link
         href={`/projects/${projectId}`}
-        className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        aria-label="Back to project"
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
       >
-        <ArrowLeft className="h-4 w-4 mr-2" />
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Back to project
       </Link>
 
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold">Batch Summary</h1>
-      </div>
+      <PageHeader eyebrow="FRAKTAL" title="Batch Summary" />
 
       {/* Frente 9: persistent distributions for Df/kf/Rg/npo. */}
-      <section className="mb-8" aria-label="Metric distributions">
-        <h2 className="text-lg font-semibold mb-3">Distributions</h2>
-        <FraktalBatchDistributions
-          images={data.images}
-          stats={data.stats}
-          studyComparison={data.study_comparison ?? null}
-        />
+      <section className="mb-6" aria-label="Metric distributions">
+        <Panel
+          title="Distributions"
+          hint="Df, kf, Rg and particle count across the images of this batch."
+        >
+          <FraktalBatchDistributions
+            images={data.images}
+            stats={data.stats}
+            studyComparison={data.study_comparison ?? null}
+          />
+        </Panel>
       </section>
 
       <FraktalBatchResultsView
