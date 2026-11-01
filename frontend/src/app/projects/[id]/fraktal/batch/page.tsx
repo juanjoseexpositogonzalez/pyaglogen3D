@@ -39,7 +39,6 @@ import { ArrowLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Callout } from '@/components/kit/Callout'
 import { PageHeader } from '@/components/kit/PageHeader'
-import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { FraktalBatchUpload } from '@/components/fraktal/FraktalBatchUpload'
 import { FraktalBatchResultsView } from '@/components/fraktal/FraktalBatchResultsView'
 import { simulationsApi, type FraktalBatchResult } from '@/lib/api'
@@ -133,7 +132,15 @@ export default function FraktalBatchPage({
 
       {!result ? (
         simLoading ? (
-          <LoadingScreen message="Loading simulation context..." />
+          // A plain line, not `LoadingScreen` for a context that usually
+          // resolves in a tick. `LoadingScreen` centres a spinner in a 400px
+          // box, so the page would jump down and back up for a state the user
+          // barely sees; it is also still on the pre-kit `text-muted-foreground`,
+          // and a page that declares itself migrated cannot mount a component
+          // that is not.
+          <p className="text-[12px] text-ink-muted">
+            Loading simulation context...
+          </p>
         ) : (
           <>
             {simError && (

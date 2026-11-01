@@ -14,20 +14,28 @@
  * Three presentation decisions are worth stating rather than leaving to be
  * found in review:
  *
- * 1. The two calibration notices keep their sentence as prose, not as `Num`.
- *    `Num` renders a value and its unit as sibling elements so the number
- *    carries the tabular styling and the unit does not pad it; that is right
- *    for a reading in a value position and wrong for a number inside a
- *    sentence. The sentence is also frozen by the contract ("same messages")
- *    and pinned verbatim by this file's tests, so the number stays a run of
- *    text inside the sentence. The progress counts are the opposite case: they
- *    are readings, and they do go through `Num`.
- * 2. A validation failure reads as `Callout tone="danger"` with the message
+ * 1. The calibration figure the researcher has to check against what they
+ *    expected — `pixels_per_100nm` — goes through `Num`, so the value keeps the
+ *    monospace tabular styling in its own element and the unit sits beside it
+ *    as a sibling that does not pad the number. `Num` changes no word of the
+ *    notice: it changes which element carries the digits.
+ * 2. Two numbers stay prose instead, and now for a reason that holds: the dpo
+ *    in "Using known dpo = 25 nm …" sits in the middle of a sentence, where
+ *    splitting value and unit into two elements reads as a different sentence,
+ *    and the progress stage is a word (`analyzing`), not a quantity. Everything
+ *    else that is a number in a value position is a `Num`.
+ * 3. A validation failure reads as `Callout tone="danger"` with the message
  *    itself as the title, verbatim. Inventing a headline such as "Upload
  *    failed" would add words the contract does not have and would put the
  *    message the user needs one line further down.
- * 3. The submit button keeps both of its labels ("Analyzing..." / "Analyze
- *    batch") and its `disabled` gate, which is `canSubmit`.
+ *
+ * One copy decision is a restoration, not a deviation: the notice keeps its
+ * trailing colon ("Auto-calibrated from metadata:") even though it now ends a
+ * callout title rather than introducing an inline value, because the message is
+ * frozen and a trailing colon is cheaper than a contract change.
+ *
+ * The submit button keeps both of its labels ("Analyzing..." / "Analyze
+ * batch") and its `disabled` gate, which is `canSubmit`.
  */
 import { useCallback, useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
@@ -246,8 +254,12 @@ export function FraktalBatchUpload({
       )}
 
       {metadataDetected?.pixels_per_100nm && (
-        <Callout tone="info" title="Auto-calibrated from metadata">
-          {metadataDetected.pixels_per_100nm.toFixed(1)} px/100nm
+        <Callout tone="info" title="Auto-calibrated from metadata:">
+          <Num
+            value={metadataDetected.pixels_per_100nm}
+            digits={1}
+            unit="px/100nm"
+          />
           {metadataDetected.mode && ` (${metadataDetected.mode} mode)`}
         </Callout>
       )}

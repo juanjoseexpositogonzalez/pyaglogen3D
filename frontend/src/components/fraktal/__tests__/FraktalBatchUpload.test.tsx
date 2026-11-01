@@ -83,9 +83,19 @@ describe('<FraktalBatchUpload />', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {
-      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+      // The exact string, colon included: this notice's copy is frozen by the
+      // contract, and a tolerant regex let the punctuation drift once already.
+      expect(screen.getByText('Auto-calibrated from metadata:')).toBeTruthy()
     })
-    expect(screen.getByText(/500\.0 px\/100nm/)).toBeTruthy()
+    // The calibration figure is the one reading on this screen the researcher
+    // has to check against what they expected, so it goes through `Num`: the
+    // value keeps the monospace tabular styling in its own element and the unit
+    // is a sibling that does not pad it.
+    const reading = screen.getByText('500.0')
+    expect(reading.className.split(' ')).toContain('num')
+    expect(reading.textContent).toBe('500.0')
+    expect(reading.parentElement?.textContent).toBe('500.0px/100nm')
+    expect(screen.getByText(/\(grid mode\)/)).toBeTruthy()
   })
 
   it('shows the manual scale input when the ZIP has no metadata.json', async () => {
@@ -555,7 +565,11 @@ describe('<FraktalBatchUpload /> — design-system kit presentation', () => {
       },
     )
 
-    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
+    // `onSuccess` is the witness that the upload actually resolved, not just
+    // that the request started: `mockAnalyzeBatch` has already been called by
+    // the time the progress line paints, so counting its calls proves nothing.
+    const onSuccess = vi.fn()
+    render(<FraktalBatchUpload onSuccess={onSuccess} />, { wrapper })
 
     fireEvent.change(screen.getByLabelText(/ZIP file/i), {
       target: { files: [file] },
@@ -572,10 +586,13 @@ describe('<FraktalBatchUpload /> — design-system kit presentation', () => {
     // "3 / 12" string.
     expect(screen.getByText('3')).toBeTruthy()
     expect(screen.getByText('12')).toBeTruthy()
+    // The upload has not finished: the counts above are the in-flight snapshot,
+    // and `onSuccess` is the witness that waits for the resolution below.
+    expect(onSuccess).not.toHaveBeenCalled()
 
     finish?.(emptyResult)
     await waitFor(() => {
-      expect(mockAnalyzeBatch).toHaveBeenCalledTimes(1)
+      expect(onSuccess).toHaveBeenCalledWith(emptyResult)
     })
   })
 })

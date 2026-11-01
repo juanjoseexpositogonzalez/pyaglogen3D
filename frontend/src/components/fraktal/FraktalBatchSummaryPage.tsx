@@ -19,14 +19,21 @@
  * 2. A failed load is a `Callout tone="danger"` instead of a card with a
  *    destructive border, so the failure is announced (`role="alert"`) and the
  *    server's own reason is kept beside the sentence that says what failed.
+ *    The sentence keeps the period it always had ("Failed to load batch."),
+ *    which reads oddly at the end of a callout title and is not mine to change.
  * 3. The distributions block is a `Panel` inside the `<section>` that names it.
- *    The section keeps its `aria-label` because the label is the landmark's
- *    name, not decoration; the panel's `h2` is the visible heading. The two
- *    are deliberately not merged: `Panel` renders its own `<section>`, which
+ *    The section's `aria-label` is "Distributions" — the same words as the
+ *    panel's visible `h2`, because a landmark whose name the page never shows
+ *    cannot be reached by anyone speaking the words on the screen. The two are
+ *    deliberately not merged: `Panel` renders its own `<section>`, which
  *    without a name is not a landmark at all.
  * 4. The loading placeholder keeps its two skeleton blocks, now drawn with
  *    `bg-surface-strong` instead of the legacy `bg-muted`, because a skeleton
  *    reserves the layout the result will occupy and a spinner does not.
+ *
+ * The error state's only way out is a bare `Link` wearing `buttonVariants()`,
+ * not a `Link` wrapping a `Button`: an <a> around a <button> is invalid nesting
+ * and gives one destination two tab stops. Same pattern as the compare screen.
  *
  * The column is capped at 1024px, the measure the page always had. The shell
  * owns the padding and the outer 1440px frame.
@@ -37,7 +44,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 import { fraktalApi, type FraktalBatchResult } from '@/lib/api'
-import { Button } from '@/components/ui/button'
+import { buttonVariants } from '@/components/ui/button'
 import { Callout } from '@/components/kit/Callout'
 import { PageHeader } from '@/components/kit/PageHeader'
 import { Panel } from '@/components/kit/Panel'
@@ -100,12 +107,13 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
       <div className="mx-auto w-full max-w-5xl">
         <Callout
           tone="danger"
-          title="Failed to load batch"
+          title="Failed to load batch."
           action={
-            <Link href={`/projects/${projectId}`}>
-              <Button variant="outline" aria-label="Back to project">
-                Back to project
-              </Button>
+            <Link
+              href={`/projects/${projectId}`}
+              className={buttonVariants({ variant: 'outline' })}
+            >
+              Back to project
             </Link>
           }
         >
@@ -128,7 +136,7 @@ export function FraktalBatchSummaryPage({ projectId, batchId }: Props) {
       <PageHeader eyebrow="FRAKTAL" title="Batch Summary" />
 
       {/* Frente 9: persistent distributions for Df/kf/Rg/npo. */}
-      <section className="mb-6" aria-label="Metric distributions">
+      <section className="mb-6" aria-label="Distributions">
         <Panel
           title="Distributions"
           hint="Df, kf, Rg and particle count across the images of this batch."

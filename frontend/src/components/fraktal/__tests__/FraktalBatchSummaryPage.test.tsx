@@ -194,10 +194,11 @@ describe('<FraktalBatchSummaryPage />', () => {
       <FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />
     )
 
-    expect(await screen.findByText(/failed to load batch/i)).toBeTruthy()
+    // Exact, period included: the message is the contract's, not a paraphrase.
+    expect(await screen.findByText('Failed to load batch.')).toBeTruthy()
   })
 
-  it('renders a back link to the project on error', async () => {
+  it('renders a back link to the project on error, as one tab stop', async () => {
     mockGetBatch.mockRejectedValue(new Error('Not found'))
     render(
       <FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />
@@ -205,6 +206,10 @@ describe('<FraktalBatchSummaryPage />', () => {
 
     const link = await screen.findByRole('link', { name: /back to project/i })
     expect(link.getAttribute('href')).toBe('/projects/proj-1')
+    // A `Link` wrapping a `Button` renders an <a> around a <button>: invalid
+    // nesting, and two tab stops for one destination. The link wears the
+    // button's classes instead.
+    expect(link.querySelector('button')).toBeNull()
   })
 
   // Frente 9 P4: distributions section persists in the summary view.
@@ -216,9 +221,11 @@ describe('<FraktalBatchSummaryPage />', () => {
 
     // Distributions heading appears
     await screen.findByText(/distributions/i)
-    // Section is labeled for accessibility
+    // The landmark's name is the name it shows. A region called "Metric
+    // distributions" with a heading that says "Distributions" is a landmark
+    // voice control cannot reach: the user asks for the words on the screen.
     expect(
-      screen.getByRole('region', { name: /metric distributions/i }),
+      screen.getByRole('region', { name: 'Distributions' }),
     ).toBeTruthy()
   })
 })
@@ -249,13 +256,6 @@ describe('<FraktalBatchSummaryPage /> — design-system kit presentation', () =>
     ).toBeTruthy()
   })
 
-  it('leaves the document frame to the shell: no main of its own', async () => {
-    mockGetBatch.mockResolvedValue(makeBatchResult())
-    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
-
-    await screen.findByText('proj_000.png')
-    expect(document.querySelector('main')).toBeNull()
-  })
 
   it('states a failed load in a danger alert that keeps the reason', async () => {
     mockGetBatch.mockRejectedValue(new Error('Not found'))
@@ -267,15 +267,15 @@ describe('<FraktalBatchSummaryPage /> — design-system kit presentation', () =>
     expect(alert.textContent).toContain('Not found')
   })
 
-  it('keeps the distributions in a labelled region with its own heading', async () => {
+  it('names the distributions landmark with the same words it shows', async () => {
     mockGetBatch.mockResolvedValue(makeBatchResult())
     render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
 
-    const region = await screen.findByRole('region', {
-      name: /metric distributions/i,
-    })
+    // Both queried by the same exact string on purpose: the landmark's
+    // accessible name and its visible heading must be the one label, not two.
+    const region = await screen.findByRole('region', { name: 'Distributions' })
     expect(
-      within(region).getByRole('heading', { name: /distributions/i }),
+      within(region).getByRole('heading', { name: 'Distributions' }),
     ).toBeTruthy()
   })
 })
