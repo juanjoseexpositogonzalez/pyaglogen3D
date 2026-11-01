@@ -10,7 +10,7 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import type { FraktalBatchResult } from '@/lib/api'
 
 // Hoist mocks
@@ -219,6 +219,63 @@ describe('<FraktalBatchSummaryPage />', () => {
     // Section is labeled for accessibility
     expect(
       screen.getByRole('region', { name: /metric distributions/i }),
+    ).toBeTruthy()
+  })
+})
+
+// ---- Issue #176, slice 3A: the summary on the design-system kit ----
+//
+// The component keeps fetching the batch and keeps handing it to the same
+// results view. What changes is the frame it puts around it: a `PageHeader`
+// instead of a bare `h1`, a `Callout` instead of a hand-built error card, and
+// the distributions block inside a `Panel`.
+
+describe('<FraktalBatchSummaryPage /> — design-system kit presentation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('names the page with a PageHeader carrying the FRAKTAL eyebrow', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    expect(await screen.findByText('FRAKTAL')).toBeTruthy()
+    expect(
+      screen.getByRole('heading', { level: 1, name: /batch summary/i }),
+    ).toBeTruthy()
+  })
+
+  it('leaves the document frame to the shell: no main of its own', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    await screen.findByText('proj_000.png')
+    expect(document.querySelector('main')).toBeNull()
+  })
+
+  it('states a failed load in a danger alert that keeps the reason', async () => {
+    mockGetBatch.mockRejectedValue(new Error('Not found'))
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Failed to load batch')
+    // The server's own reason survives: a 404 and a 500 must not read alike.
+    expect(alert.textContent).toContain('Not found')
+  })
+
+  it('keeps the distributions in a labelled region with its own heading', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    const region = await screen.findByRole('region', {
+      name: /metric distributions/i,
+    })
+    expect(
+      within(region).getByRole('heading', { name: /distributions/i }),
     ).toBeTruthy()
   })
 })

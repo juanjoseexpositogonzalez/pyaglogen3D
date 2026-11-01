@@ -15,6 +15,21 @@
  * component so autocalibrate defaults to OFF with the known dpo. Falls
  * back gracefully to external mode if the sim 404s or query params are
  * missing/malformed.
+ *
+ * On the design-system kit (issue #176, slice 3 of 3, part A): the page names
+ * itself with `PageHeader` and stops drawing the document frame. `Header` and
+ * a `<main>` used to be mounted here to cover the sessions the shell leaves
+ * chromeless. `showChrome` is `!chromeless && isAuthenticated && !isLoading`,
+ * while the middleware only checks that a session cookie exists — so a stale
+ * cookie with a rejected token paints this route with no rail and no top bar,
+ * and `Header` was the one way out of it. Dropping both is the migration's
+ * deliberate trade (navigation is the shell's job, not this page's), not a
+ * claim that the two are equivalent. The column keeps the 1024px measure the
+ * page always had, because the results view it hosts is wide.
+ *
+ * The two notices on the screen are not the same kind of thing: a simulation
+ * that could not be fetched is a recoverable fallback and reads as a warning,
+ * with the page carrying on in external mode. Neither text changed.
  */
 import { useEffect, useState } from 'react'
 import Link from 'next/link'
@@ -22,7 +37,9 @@ import { useSearchParams } from 'next/navigation'
 import { ArrowLeft } from 'lucide-react'
 
 import { Button } from '@/components/ui/button'
-import { Header } from '@/components/layout/Header'
+import { Callout } from '@/components/kit/Callout'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { FraktalBatchUpload } from '@/components/fraktal/FraktalBatchUpload'
 import { FraktalBatchResultsView } from '@/components/fraktal/FraktalBatchResultsView'
 import { simulationsApi, type FraktalBatchResult } from '@/lib/api'
@@ -70,6 +87,11 @@ export default function FraktalBatchPage({
         if (cancelled) return
         // Sim parameters can use either v2 (`primary_particle_diameter_nm`)
         // or v1 (`primary_particle_radius_nm`); the helper resolves both.
+        // SAFETY: `parameters` is a JSON object on the wire whose keys depend
+        // on the schema version the run was created under, so its declared
+        // type says nothing the resolver can use. `getPrimaryParticleDiameterNm`
+        // probes both key spellings and returns without a diameter when neither
+        // is present, so no assumption about the shape survives this call.
         const dpo_nm = getPrimaryParticleDiameterNm(
           sim.parameters as unknown as Record<string, unknown>,
         )
@@ -93,70 +115,64 @@ export default function FraktalBatchPage({
   }, [id, simIdParam, isSimOriginRequested])
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <div className="mx-auto w-full max-w-5xl">
+      {/* Breadcrumb back to single-image FRAKTAL */}
+      <Link
+        href={`/projects/${id}/fraktal/new`}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to single-image FRAKTAL
+      </Link>
 
-      <main className="container mx-auto px-4 py-8 max-w-5xl">
-        {/* Breadcrumb back to single-image FRAKTAL */}
-        <Link
-          href={`/projects/${id}/fraktal/new`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to single-image FRAKTAL
-        </Link>
+      <PageHeader
+        eyebrow="FRAKTAL"
+        title="Batch FRAKTAL Analysis"
+        description="Upload a ZIP of projection images. Auto-calibration is applied when the ZIP carries metadata from a pyaglogen3D export; otherwise provide pixels per 100 nm manually."
+      />
 
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Batch FRAKTAL Analysis</h1>
-          <p className="text-muted-foreground mt-2">
-            Upload a ZIP of projection images. Auto-calibration is applied when
-            the ZIP carries metadata from a pyaglogen3D export; otherwise
-            provide pixels per 100 nm manually.
-          </p>
-        </div>
-
-        {!result ? (
-          simLoading ? (
-            <p className="text-muted-foreground">
-              Loading simulation context...
-            </p>
-          ) : (
-            <>
-              {simError && (
-                <p
-                  className="mb-4 text-sm text-muted-foreground"
-                  data-testid="sim-fetch-warning"
-                >
-                  Simulation context unavailable — proceeding with manual upload.
-                </p>
-              )}
-              <FraktalBatchUpload
-                projectId={id}
-                onSuccess={setResult}
-                origin={simRef ? 'simulation' : 'external'}
-                simulation={simRef ?? undefined}
-              />
-            </>
-          )
+      {!result ? (
+        simLoading ? (
+          <LoadingScreen message="Loading simulation context..." />
         ) : (
-          <div className="space-y-4">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setResult(null)}
-            >
-              Analyze another batch
-            </Button>
-            <FraktalBatchResultsView
-              result={result}
+          <>
+            {simError && (
+              // `data-testid` on the wrapper: `Callout` takes no arbitrary
+              // attributes, and the fallback notice is what the page's own
+              // regression test pins.
+              <div className="mb-4" data-testid="sim-fetch-warning">
+                <Callout
+                  tone="warning"
+                  title="Simulation context unavailable — proceeding with manual upload."
+                />
+              </div>
+            )}
+            <FraktalBatchUpload
               projectId={id}
-              batchId={result.batch_id ?? ''}
-              onDeleted={() => setResult(null)}
-              onResultUpdate={setResult}
+              onSuccess={setResult}
+              origin={simRef ? 'simulation' : 'external'}
+              simulation={simRef ?? undefined}
             />
-          </div>
-        )}
-      </main>
+          </>
+        )
+      ) : (
+        <div className="space-y-4">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setResult(null)}
+          >
+            Analyze another batch
+          </Button>
+          <FraktalBatchResultsView
+            result={result}
+            projectId={id}
+            batchId={result.batch_id ?? ''}
+            onDeleted={() => setResult(null)}
+            onResultUpdate={setResult}
+          />
+        </div>
+      )}
     </div>
   )
 }

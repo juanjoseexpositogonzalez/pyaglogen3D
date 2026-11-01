@@ -63,11 +63,6 @@ vi.mock('@/components/fraktal/FraktalBatchUpload', () => ({
   ),
 }))
 
-// Header is unrelated noise for these tests.
-vi.mock('@/components/layout/Header', () => ({
-  Header: () => null,
-}))
-
 // ---- Imports AFTER mocks ----
 
 import FraktalBatchPage from '../page'
@@ -163,5 +158,82 @@ describe('FraktalBatchPage — frente 9 P5 sim-origin entry', () => {
     const stub = await screen.findByTestId('batch-upload-stub')
     expect(stub.getAttribute('data-origin')).toBe('external')
     expect(mockSimGet).not.toHaveBeenCalled()
+  })
+})
+
+// ---- Issue #176, slice 3A: the page on the design-system kit ----
+//
+// The migration does not change what the researcher uploads or what happens
+// to it. These tests pin the two things it does change: the page names itself
+// with `PageHeader` (eyebrow, one `h1`) and stops drawing the document frame
+// the shell already draws, and every notice keeps its exact wording.
+
+describe('FraktalBatchPage — design-system kit presentation', () => {
+  beforeEach(() => {
+    mockSearchParams.clear()
+    mockSimGet.mockReset()
+  })
+
+  afterEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('names the page in a PageHeader with a FRAKTAL eyebrow', async () => {
+    render(<FraktalBatchPage params={{ id: 'proj-1' }} />)
+    await screen.findByTestId('batch-upload-stub')
+
+    expect(screen.getByText('FRAKTAL')).toBeTruthy()
+    expect(
+      screen.getByRole('heading', { level: 1, name: /batch fraktal analysis/i }),
+    ).toBeTruthy()
+  })
+
+  it('leaves the document frame to the shell: no main of its own', async () => {
+    render(<FraktalBatchPage params={{ id: 'proj-1' }} />)
+    await screen.findByTestId('batch-upload-stub')
+
+    // The shell renders the only <main>. A page that mounts its own nests one
+    // landmark inside another and every screen reader hears two.
+    expect(document.querySelector('main')).toBeNull()
+  })
+
+  it('keeps the breadcrumb back to single-image FRAKTAL', async () => {
+    render(<FraktalBatchPage params={{ id: 'proj-1' }} />)
+    await screen.findByTestId('batch-upload-stub')
+
+    const link = screen.getByRole('link', {
+      name: /back to single-image fraktal/i,
+    })
+    expect(link.getAttribute('href')).toBe('/projects/proj-1/fraktal/new')
+  })
+
+  it('states the sim-fetch fallback with the same sentence, as a note not an alert', async () => {
+    mockSearchParams.set('origin', 'simulation')
+    mockSearchParams.set('sim_id', 'sim-missing')
+    mockSimGet.mockRejectedValue(new Error('Not found'))
+
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    render(<FraktalBatchPage params={{ id: 'proj-1' }} />)
+
+    const warning = await screen.findByTestId('sim-fetch-warning')
+    expect(warning.textContent).toContain(
+      'Simulation context unavailable — proceeding with manual upload.',
+    )
+    // The upload still works, so this is a recoverable fallback: it informs and
+    // must not shout. Only an unrecoverable failure gets role="alert".
+    expect(warning.querySelector('[role="alert"]')).toBeNull()
+
+    warnSpy.mockRestore()
+  })
+
+  it('keeps the loading sentence while the simulation context resolves', () => {
+    mockSearchParams.set('origin', 'simulation')
+    mockSearchParams.set('sim_id', 'sim-abc-123')
+    mockSimGet.mockReturnValue(new Promise(() => {}))
+
+    render(<FraktalBatchPage params={{ id: 'proj-1' }} />)
+
+    expect(screen.getByText(/loading simulation context/i)).toBeTruthy()
   })
 })
