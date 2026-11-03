@@ -778,6 +778,19 @@ and `kf_mode="uniform", kf_min=2.0, kf_max=1.0` all raise a Rust `PanicException
 from `BaseException` and escapes the worker's only outer `except Exception`, leaving the
 simulation stuck in `RUNNING`.
 
+**Which keys a child keeps.** A child exposes the configured value for the keys it keeps, and
+R13.3 asserts that for the two parity keys. Two swept keys are deliberately not among them. `seed_type`
+is meant to travel in the child's own field, which is what R4.3 fixes for the grid path; a child that
+keeps it in `parameters` while the field holds the default is the defect registered as point 3 of #115,
+not a licence for this requirement to promise otherwise. `sintering_config` is translated into the flat
+keys the worker reads, whose set and ranges R3 fixes. A view that keys its configurations on
+`parameter_grid` therefore carries no value under those two names, and the effect is worse than an
+empty cell: `fractal_analysis_summary` groups by exactly those keys, so two sweeps whose names read
+null collapse into one configuration with their statistics pooled. This requirement adds no column for
+them; what a view should show for a translated sweep is a separate change. Decided by the person on
+2026-10-31 (#204), and the alternative - teaching the four views to render the translated value - is
+registered in #115.
+
 #### Scenario R13.1 — The engine-named grid key is validated like the parity key
 
 - GIVEN `parameter_grid = {target_kf_distribution: [{mode:"lognormal", value:1.8}]}`
