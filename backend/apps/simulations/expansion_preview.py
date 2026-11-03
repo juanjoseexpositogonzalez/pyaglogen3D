@@ -160,6 +160,11 @@ def preview_children(
                 # child keeps the flat coefficient of its own extreme
                 # (the sintering-extremes block in `perform_create`).
                 for _t, _d, params in extreme_cases:
+                    # The real path pops `seed_type` into the child's field
+                    # (R4.3), so the preview must not hand it back in the
+                    # parameters: a judge measured the two sides disagreeing
+                    # here (#115, point 3).
+                    params.pop("seed_type", None)
                     _cast_integers(params, guarded=False)
                     # Mirror `views.py`: the real extremal children get the same
                     # translation, so a parity key declared in base_parameters

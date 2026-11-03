@@ -1880,6 +1880,16 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             sim_params[param_name] = int(sim_params[param_name])
                     sim_params = complete_distribution_aliases(sim_params)
 
+                    # R4.3: the child's seed_type lives in its own field,
+                    # not in `parameters`. This block copied base_parameters
+                    # whole, so the blob kept a seed_type the run ignored
+                    # while the field held the model default - a child
+                    # running with monomers and saying dimers (#115, point 3).
+                    extreme_seed_type = sim_params.pop(
+                        "seed_type",
+                        study.base_parameters.get("seed_type", "monomers"),
+                    )
+
                     for seed_idx in range(study.seeds_per_combination):
                         seed = random.randint(0, 2**31 - 1)
                         suffix = f"({case_type}: {description})"
@@ -1895,6 +1905,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             name=auto_name,
                             status=SimulationStatus.QUEUED,
                             is_batch=True,
+                            seed_type=extreme_seed_type,
                         )
                         simulations_created.append(sim)
                         study.simulations.add(sim)

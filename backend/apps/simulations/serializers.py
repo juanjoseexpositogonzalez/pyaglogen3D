@@ -791,6 +791,29 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                         }
                     )
 
+        # `base_parameters.seed_type` travels into the child's own field, so it
+        # takes the same allow-list the grid key takes: an unknown value reaches
+        # `parse_seed_type` in the binding and fails every child of the study
+        # (#115, point 3). Only when the request carries it, so a stored value
+        # is not re-judged on every update.
+        incoming_base = data.get("base_parameters") or {}
+        if "seed_type" in incoming_base:
+            base_seed_type = incoming_base["seed_type"]
+            # Not a `str` at all - a list, a number, `None` - used to reach
+            # the set membership and raise `TypeError` (unhashable), which
+            # is the 500 this issue records as point 4.
+            if not isinstance(base_seed_type, str) or (
+                base_seed_type not in valid_seed_types
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "base_parameters.seed_type": (
+                            f"'{base_seed_type}' is not a valid seed_type. "
+                            f"Choose from: {sorted(valid_seed_types)}."
+                        )
+                    }
+                )
+
         # --- Batch size projection ---
         seeds_per = data.get("seeds_per_combination", 1)
         grid_sizes = [len(v) for v in grid.values() if isinstance(v, list)]
