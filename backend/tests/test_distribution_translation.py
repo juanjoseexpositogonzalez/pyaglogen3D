@@ -38,7 +38,14 @@ from apps.simulations.expansion_preview import preview_children
 from apps.simulations.models import ParametricStudy, Simulation
 from apps.simulations.tasks import expand_distribution_kwargs
 
-BASE: dict[str, Any] = {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3}
+BASE: dict[str, Any] = {
+    "n_particles": 60,
+    "target_df": 2.0,
+    "target_kf": 1.3,
+    # Present so the preview/real parity also covers the key that travels in
+    # the child's field instead of its parameters (#115, point 3).
+    "seed_type": "dimers",
+}
 
 #: One value per name so a mixed-up child is visible: whichever value reaches
 #: the engine says which carrier won.
