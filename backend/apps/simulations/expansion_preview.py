@@ -55,24 +55,47 @@ class GridShapeError(ExpansionPreviewError):
     """A `parameter_grid` value that is not a list of values."""
 
 
-#: `create_simulation` casts these before storing them.
-INTEGER_PARAMS = ("n_particles",)
+#: `create_simulation` casts these before storing them, and this module mirrors
+#: it. The engine binding takes a real number, never a string: a study that
+#: swept `"1.5"` stored a string, and `run_tunable_cc` answered `TypeError:
+#: argument 'target_df': must be real number, not str` - while the worker's own
+#: range checks (`0.1 <= target_kf <= 2.7`) raised the same TypeError before the
+#: binding was even reached (#115, point 2).
+NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
+    ("n_particles", int),
+    ("target_df", float),
+    ("target_kf", float),
+    ("particle_radius", float),
+)
 
 
-def _cast_integers(sim_params: dict[str, Any], *, guarded: bool) -> None:
-    """Mirror the int() cast of the real path, including its asymmetry.
+def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
+    """Cast the numeric parameters, or name the one that cannot be cast.
 
     `create_simulation` skips dicts; the inline sintering-extremes block in
-    `perform_create` does not. Both are
-    reproduced, because a cast that raises here costs nothing, while the same
-    cast raising during expansion costs a study row and its queued tasks.
+    `perform_create` does not. Both are reproduced, because a cast that raises
+    here costs nothing, while the same cast raising during expansion costs a
+    study row and its queued tasks.
+
+    A value that cannot be cast becomes a `ValueError` naming the key, which the
+    serializer turns into a 400 before anything is written. Storing it instead
+    is what left the engine to reject the child later, with a TypeError nobody
+    could attribute to the payload that caused it.
     """
-    for name in INTEGER_PARAMS:
+    for name, cast in NUMERIC_CASTS:
         if name not in sim_params:
             continue
         if guarded and isinstance(sim_params[name], dict):
             continue
-        sim_params[name] = int(sim_params[name])
+        value = sim_params[name]
+        try:
+            sim_params[name] = cast(value)
+        except (TypeError, ValueError):
+            kind = "a whole number" if cast is int else "a real number"
+            raise ValueError(
+                f"'{name}' must be {kind}, got {value!r}. The engine cannot run "
+                "that value, so the study is refused instead of storing it."
+            ) from None
 
 
 def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[str, Any]:
@@ -86,7 +109,7 @@ def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[st
     else:
         sim_params = apply_sintering_config(sim_params, study_sintering_config)
 
-    _cast_integers(sim_params, guarded=True)
+    cast_numeric_params(sim_params, guarded=True)
     # Mirror `create_simulation`: a parity key declared anywhere on the request
     # reaches the engine under the name the worker reads (R13.10), and the grid
     # key stays for the four result views.
@@ -141,7 +164,9 @@ def preview_children(
         for combo in itertools.product(*param_values):
             params = dict(base_parameters)
             for index, name in enumerate(param_names):
-                set_distribution_parameter(params, name, combo[index], declared=param_names)
+                set_distribution_parameter(
+                    params, name, combo[index], declared=param_names
+                )
             children.append(_as_child(params, study_sintering_config))
 
         if include_limiting_cases:
@@ -165,7 +190,7 @@ def preview_children(
                     # parameters: a judge measured the two sides disagreeing
                     # here (#115, point 3).
                     params.pop("seed_type", None)
-                    _cast_integers(params, guarded=False)
+                    cast_numeric_params(params, guarded=False)
                     # Mirror `views.py`: the real extremal children get the same
                     # translation, so a parity key declared in base_parameters
                     # reaches the engine from this path too (R13.10).
@@ -184,7 +209,6 @@ def preview_children(
         raise ExpansionPreviewError(
             f"this study cannot be expanded as configured: {exc}"
         ) from exc
-
 
     return children
 

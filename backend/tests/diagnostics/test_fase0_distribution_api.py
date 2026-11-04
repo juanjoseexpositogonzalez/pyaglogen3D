@@ -104,9 +104,7 @@ def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -
     resp = _post(
         api_client,
         project,
-        parameter_grid={
-            "kf_distribution": [{"mode": "fixed", "value": 1.5}]
-        },
+        parameter_grid={"kf_distribution": [{"mode": "fixed", "value": 1.5}]},
     )
     _report("D1 kf_distribution {mode}", resp, 201)
     if resp.status_code == 201:
@@ -145,13 +143,13 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
 
 
 def test_p115_2_mixed_type_grid_list(api_client: APIClient, project: Project) -> None:
+    # Closed by the numeric cast (#115 point 2): the 201 used to store "abc" as
+    # `target_df` and the engine refused the child. The status is asserted and
+    # the old "which value got stored" block is gone: with the 400 asserted
+    # above it could never run, and unreachable code that claims to measure
+    # something is the shape this file's own lessons are about.
     resp = _post(api_client, project, parameter_grid={"target_df": [1.8, "abc"]})
-    _report("#115.2 grid de tipos mezclados", resp, 201)
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        print(
-            f"    valores: {[c.parameters.get('target_df') for c in study.simulations.all()]}"
-        )
+    _report("#115.2 grid de tipos mezclados", resp, 400)
 
 
 # --- #115 punto 4: 500 con valor inhashable --------------------------------

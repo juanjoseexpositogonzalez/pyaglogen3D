@@ -19,6 +19,7 @@ from rest_framework.response import Response
 
 from apps.accounts.permissions import IsProjectOwnerOrShared
 
+from .expansion_preview import cast_numeric_params
 from .models import ParametricStudy, Simulation, SimulationStatus
 from .serializers import (
     BatchProjectionExportRequestSerializer,
@@ -1778,8 +1779,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Create all combinations
         combinations = list(itertools.product(*param_values))
 
-        # Parameters that must be integers
-        integer_params = {"n_particles"}
+        # Numeric parameters the engine reads as numbers. The map lives in
+        # expansion_preview, so the child the preview validates and the child
+        # stored here cannot disagree (#115, point 2).
 
         simulations_created = []
 
@@ -1809,12 +1811,8 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             else:
                 sim_params = apply_sintering_config(sim_params, study.sintering_config)
 
-            # Ensure integer parameters are properly typed (guard: skip dicts)
-            for param_name in integer_params:
-                if param_name in sim_params and not isinstance(
-                    sim_params[param_name], dict
-                ):
-                    sim_params[param_name] = int(sim_params[param_name])
+            # Cast the numeric parameters (guard: skip dicts).
+            cast_numeric_params(sim_params, guarded=True)
 
             # R13.10: a parity key declared anywhere reaches the engine under
             # the name the worker reads, and the grid key stays for the views.
@@ -1875,9 +1873,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     # Don't apply the study's sintering config for extreme cases
                     # since they define their own sintering
                     sim_params = dict(params)
-                    for param_name in integer_params:
-                        if param_name in sim_params:
-                            sim_params[param_name] = int(sim_params[param_name])
+                    cast_numeric_params(sim_params, guarded=False)
                     sim_params = complete_distribution_aliases(sim_params)
 
                     # R4.3: the child's seed_type lives in its own field,
