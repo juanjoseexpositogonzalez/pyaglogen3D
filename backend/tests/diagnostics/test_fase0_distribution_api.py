@@ -104,7 +104,9 @@ def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -
     resp = _post(
         api_client,
         project,
-        parameter_grid={"kf_distribution": [{"mode": "fixed", "value": 1.5}]},
+        parameter_grid={
+            "kf_distribution": [{"mode": "fixed", "value": 1.5}]
+        },
     )
     _report("D1 kf_distribution {mode}", resp, 201)
     if resp.status_code == 201:

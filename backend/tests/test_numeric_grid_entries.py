@@ -9,9 +9,8 @@ Measured on develop before this change, with the same payloads:
     particle_radius [1.0, "1.5"]   201   child stores '1.5'   (str)
     n_particles [60, "80"]         201   child stores 80      (int)   <- this one casted
 
-`create_simulation` casts `n_particles` through `integer_params` and nothing
-else, so every float parameter reached the engine binding as whatever the client
-sent. `run_tunable_cc` answers `TypeError: argument 'target_df': must be real
+`create_simulation` cast `n_particles` and nothing else, so every float
+parameter reached the engine binding as whatever the client sent. `run_tunable_cc` answers `TypeError: argument 'target_df': must be real
 number, not str`, and the worker's own range checks (`0.1 <= target_kf <= 2.7`)
 raise the same TypeError before the binding is even reached.
 
@@ -75,6 +74,17 @@ def _stored(study_id: Any, key: str) -> list[Any]:
         ("target_df", None),
         ("target_kf", "x"),
         ("particle_radius", "abc"),
+        # `float()` accepts these and a JSONField cannot hold them: casting them
+        # wrote the study row and then answered 500 with a `running` study and
+        # no children (JD-B-001 on PR #221).
+        ("target_df", "nan"),
+        ("target_df", "inf"),
+        ("target_df", "-inf"),
+        ("target_df", "1e400"),
+        # `True` would store as 1.0, the same rule `_coerce_positive_finite`
+        # follows in `services/params.py`.
+        ("target_df", True),
+        ("n_particles", True),
     ],
 )
 def test_a_value_that_is_not_a_number_is_refused(
@@ -132,3 +142,24 @@ def test_the_mixed_list_from_the_issue_no_longer_stores_a_string(
 
     assert response.status_code == 400, response.data
     assert ParametricStudy.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_the_refusal_names_the_key_the_value_and_the_surface(
+    api_client: APIClient, project: Project
+) -> None:
+    """A 400 a client cannot act on is only half the guard.
+
+    Measured by JD-B-008 on PR #221: dropping the message left every test green,
+    because they all asserted the status alone.
+
+    The key is `non_field_errors` and that is deliberate: an existing test pins
+    a shape fault under `parameter_grid` and a cast fault under this one, as a
+    client-visible contract.
+    """
+    response = _post(api_client, project, target_df=["abc"])
+
+    assert response.status_code == 400, response.data
+    message = str(response.data["non_field_errors"])
+    assert "target_df" in message, message
+    assert "abc" in message, message
