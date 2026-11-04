@@ -124,7 +124,9 @@ def test_a_numeric_string_is_cast_before_it_is_stored(
 
     assert response.status_code == 201, response.data
     stored = _stored(response.data["id"], key)
-    assert stored == [expected], f"{key} was stored as {stored!r}, expected {expected!r}"
+    assert stored == [expected], (
+        f"{key} was stored as {stored!r}, expected {expected!r}"
+    )
     assert isinstance(stored[0], expected_type), (
         f"{key} was stored as {type(stored[0]).__name__}, the engine binding "
         f"needs a {expected_type.__name__}"
