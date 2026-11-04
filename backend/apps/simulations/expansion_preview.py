@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Mapping
-from math import prod
+from math import isfinite, prod
 from typing import Any
 
 from .sintering_shape import check_flat_keys, check_flat_required
@@ -55,24 +55,71 @@ class GridShapeError(ExpansionPreviewError):
     """A `parameter_grid` value that is not a list of values."""
 
 
-#: `create_simulation` casts these before storing them.
-INTEGER_PARAMS = ("n_particles",)
+#: `create_simulation` casts these before storing them, and this module mirrors
+#: it. The engine binding takes a real number, never a string: a study that
+#: swept `"1.5"` stored a string, and `run_tunable_cc` answered `TypeError:
+#: argument 'target_df': must be real number, not str` - while the worker's own
+#: range checks (`0.1 <= target_kf <= 2.7`) raised the same TypeError before the
+#: binding was even reached (#115, point 2).
+NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
+    ("n_particles", int),
+    ("target_df", float),
+    ("target_kf", float),
+    ("particle_radius", float),
+)
 
 
-def _cast_integers(sim_params: dict[str, Any], *, guarded: bool) -> None:
-    """Mirror the int() cast of the real path, including its asymmetry.
+def _not_a_number(name: str, cast: type, value: Any) -> str:
+    kind = "a whole number" if cast is int else "a real number"
+    return (
+        f"'{name}' must be {kind}, got {value!r}. The engine cannot run that "
+        "value, so the study is refused instead of storing it."
+    )
+
+
+def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
+    """Cast the numeric parameters, or name the one that cannot be cast.
 
     `create_simulation` skips dicts; the inline sintering-extremes block in
-    `perform_create` does not. Both are
-    reproduced, because a cast that raises here costs nothing, while the same
-    cast raising during expansion costs a study row and its queued tasks.
+    `perform_create` does not. Both are reproduced, because a cast that raises
+    here costs nothing, while the same cast raising during expansion costs a
+    study row and its queued tasks.
+
+    A value that cannot be cast raises a `ValueError` naming the key and the
+    value, which the serializer answers as a 400 before anything is written.
+    Storing it instead left the engine to reject the child later, with a
+    TypeError nobody could attribute to the payload that caused it.
+
+    The error is filed under `non_field_errors`, and that key is pinned:
+    `test_r12_a_grid_fault_names_the_grid_and_the_rest_does_not_claim_a_field`
+    asserts that a *shape* fault names `parameter_grid` while a cast fault does
+    not, and moving one into the other changes a client-visible contract. The
+    reason the batch page shows nothing for a 400 is that it has no `onError`
+    at all, whatever the key says.
+
+    Two values cast cleanly and are still refused, both measured on PR #221:
+
+    - a `bool`, because `True` would store as `1.0` - the same rule
+      `_coerce_positive_finite` follows in `services/params.py`;
+    - a non-finite float, because `float("nan")` succeeds and a `JSONField`
+      cannot hold it. The study row was already written when the insert failed,
+      so the request answered 500 and left a `running` study with no children.
     """
-    for name in INTEGER_PARAMS:
+    for name, cast in NUMERIC_CASTS:
         if name not in sim_params:
             continue
         if guarded and isinstance(sim_params[name], dict):
             continue
-        sim_params[name] = int(sim_params[name])
+        value = sim_params[name]
+        if isinstance(value, bool):
+            raise ValueError(_not_a_number(name, cast, value))
+        try:
+            casted = cast(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(_not_a_number(name, cast, value)) from None
+        if cast is float and not isfinite(casted):
+            raise ValueError(_not_a_number(name, cast, value))
+        sim_params[name] = casted
 
 
 def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[str, Any]:
@@ -86,7 +133,7 @@ def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[st
     else:
         sim_params = apply_sintering_config(sim_params, study_sintering_config)
 
-    _cast_integers(sim_params, guarded=True)
+    cast_numeric_params(sim_params, guarded=True)
     # Mirror `create_simulation`: a parity key declared anywhere on the request
     # reaches the engine under the name the worker reads (R13.10), and the grid
     # key stays for the four result views.
@@ -165,7 +212,7 @@ def preview_children(
                     # parameters: a judge measured the two sides disagreeing
                     # here (#115, point 3).
                     params.pop("seed_type", None)
-                    _cast_integers(params, guarded=False)
+                    cast_numeric_params(params, guarded=False)
                     # Mirror `views.py`: the real extremal children get the same
                     # translation, so a parity key declared in base_parameters
                     # reaches the engine from this path too (R13.10).
