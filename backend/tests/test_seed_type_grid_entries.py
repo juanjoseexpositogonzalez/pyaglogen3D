@@ -39,7 +39,17 @@ def api_client(user: User) -> APIClient:
 
 #: Every one of these is unhashable, or not a string at all, or a string the
 #: model does not offer - and none of them may reach the membership test raw.
-BAD_ENTRIES: list[Any] = [["monomers"], {"a": 1}, 7, None, "quadrimers"]
+#: The nested shapes are here because a list inside a list is what a client
+#: sends when it means "this dimension has two values, not one".
+BAD_ENTRIES: list[Any] = [
+    ["monomers"],
+    {"a": 1},
+    [[["monomers"]]],
+    [{"b": {"c": 1}}],
+    7,
+    None,
+    "quadrimers",
+]
 
 
 @pytest.mark.django_db
@@ -66,7 +76,13 @@ def test_a_non_string_entry_is_refused_with_400(
         f"{entry!r} was not refused with a 400: {response.status_code} {getattr(response, 'data', '')}"
     )
     assert ParametricStudy.objects.count() == before, "a refused study was written"
-    assert "seed_type" in str(response.data)
+    # The exact key, not a substring of the body: a 400 filed under
+    # `base_parameters.seed_type` for a `parameter_grid` payload is the defect
+    # #115 point 5 records, and a substring assertion cannot see it (measured
+    # by JD-A-002 on PR #219: rewriting the key left all eight green).
+    assert response.data["parameter_grid.seed_type"], (
+        f"the 400 did not name parameter_grid.seed_type: {response.data}"
+    )
 
 
 @pytest.mark.django_db

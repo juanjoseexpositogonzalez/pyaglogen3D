@@ -158,11 +158,12 @@ def test_p115_2_mixed_type_grid_list(api_client: APIClient, project: Project) ->
 
 
 def test_p115_4_unhashable_seed_type(api_client: APIClient, project: Project) -> None:
-    try:
-        resp = _post(api_client, project, parameter_grid={"seed_type": [["monomers"]]})
-        _report("#115.4 seed_type inhashable", resp)
-    except Exception as exc:  # noqa: BLE001 - that is the measurement
-        print(f"\n[#115.4 seed_type inhashable] EXCEPCION {type(exc).__name__}: {exc}")
+    # No try/except: a re-introduced 500 has to fail here. The earlier version
+    # swallowed the exception and printed it, so the diagnostic stayed green in
+    # both worlds and could never witness the closure (measured by JD-A-001 on
+    # PR #219: reverting the guard left this file green).
+    resp = _post(api_client, project, parameter_grid={"seed_type": [["monomers"]]})
+    _report("#115.4 seed_type inhashable", resp, 400)
 
 
 # --- D7: casos limite + dicts -> sorted() sobre dicts ----------------------
