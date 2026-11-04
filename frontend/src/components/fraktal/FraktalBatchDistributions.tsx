@@ -1,7 +1,8 @@
 'use client'
 
 /**
- * FraktalBatchDistributions — 4 histograms (Df, kf, Rg, npo) in a 2×2 grid.
+ * FraktalBatchDistributions — 4 histograms (Df, kf, Rg, npo) in a 2×2 grid
+ * (frente 9; re-skinned on the design-system kit by issue #176, slice 3B).
  *
  * Rendered in the batch summary view so that distributions are persistent
  * (visible whenever the user navigates back to a batch, not only "fresh"
@@ -15,11 +16,31 @@
  *  - n_successful = 0 globally → single "No data — all images failed" message
  *  - All values identical (zero variance) → Plotly renders a single bar
  *  - Stats block missing on response (legacy server) → compute inline as fallback
+ *
+ * What the kit changed, and what it deliberately did not:
+ *
+ * - Every histogram is a `Panel`. The panel's title is the metric and its hint
+ *   says how many images carry a value, which is why the plot no longer paints
+ *   a title of its own: two titles for one box is one title too many.
+ * - The traces take their colour from `lib/chart-theme`, so the bars follow the
+ *   active theme rather than two Tailwind palette constants (`blue-500` and
+ *   `yellow-500`) painted once. Converged and approximate keep their distinct
+ *   colours and their legend words: quality is never colour alone.
+ * - The layout comes from `chart-theme.layout()`, so grid, ink and hover labels
+ *   are the kit's.
+ * - No data went: the bucket rule, the quality split, the dual mean, the
+ *   quality counts and the Sim-Df reference marker are all unchanged.
  */
 import dynamic from 'next/dynamic'
 import { useMemo, useState } from 'react'
 import type { PlotParams } from 'react-plotly.js'
 
+import { Callout } from '@/components/kit/Callout'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { Num } from '@/components/kit/Num'
+import { Panel } from '@/components/kit/Panel'
+import { layout as chartLayout, series } from '@/lib/chart-theme'
+import { useThemeStore } from '@/stores/useThemeStore'
 import type {
   FraktalBatchImageResult,
   FraktalBatchStats,
@@ -103,6 +124,17 @@ const METRICS: MetricSpec[] = [
 
 const MIN_N_SUCCESSFUL = 5
 
+/**
+ * Series positions of the two Df traces and of the Sim-Df marker.
+ *
+ * Index, not colour: `series()` resolves the position against the ramp in
+ * force, so the traces repaint with the theme instead of pinning a Tailwind
+ * palette value into the plot.
+ */
+const SERIES_CONVERGED = 0
+const SERIES_APPROXIMATE = 1
+const SERIES_SIM_MARKER = 2
+
 /** Compute mean/std/median/min/max from a non-empty array of numbers. */
 function computeMetricStats(values: number[]): FraktalMetricStats {
   if (values.length === 0) {
@@ -137,12 +169,15 @@ export function FraktalBatchDistributions({
   studyComparison,
   className,
 }: FraktalBatchDistributionsProps) {
+  // Repaint the plots with the ramp in force after a theme flip.
+  useThemeStore((state) => state.resolved)
+
   // Pluck successful values per metric. "Successful" = error == null AND
   // metric value is not null. Each metric is filtered independently because
   // a row may succeed overall but lack a specific field (defensive).
   //
   // For Df specifically: split by quality (converged vs approximate) so the
-  // histogram can render a yellow overlay for approximate values (T5.4).
+  // histogram can render an overlay for approximate values (T5.4).
   const perMetric = useMemo(() => {
     return METRICS.map((spec) => {
       const successful = images.filter((img) => img.error == null)
@@ -177,23 +212,21 @@ export function FraktalBatchDistributions({
   if (overallSuccessful === 0) {
     return (
       <div
-        className={
-          'rounded border border-dashed border-muted-foreground/40 ' +
-          'p-6 text-center text-sm text-muted-foreground ' +
-          (className ?? '')
-        }
+        className={className}
         data-testid="fraktal-batch-distributions-empty"
       >
-        No data — all {totalImages} images failed analysis.
+        <EmptyState
+          headingLevel={3}
+          title="No distributions to draw"
+          description={`No data — all ${totalImages} images failed analysis.`}
+        />
       </div>
     )
   }
 
   return (
     <div
-      className={
-        'grid grid-cols-1 gap-4 md:grid-cols-2 ' + (className ?? '')
-      }
+      className={'grid grid-cols-1 gap-4 md:grid-cols-2 ' + (className ?? '')}
       data-testid="fraktal-batch-distributions"
     >
       {perMetric.map(({ spec, values, stats: metricStats, convergedValues, approximateValues }) => (
@@ -214,7 +247,7 @@ export function FraktalBatchDistributions({
 }
 
 // ---------------------------------------------------------------------------
-// Inner: a single histogram card.
+// Inner: a single histogram panel.
 // ---------------------------------------------------------------------------
 
 interface DistributionCardProps {
@@ -222,9 +255,9 @@ interface DistributionCardProps {
   values: number[]
   stats: FraktalMetricStats
   totalImages: number
-  /** Df-only: converged values for blue primary trace. */
+  /** Df-only: converged values for the primary trace. */
   convergedValues?: number[]
-  /** Df-only: approximate values for yellow overlay trace. */
+  /** Df-only: approximate values for the overlay trace. */
   approximateValues?: number[]
   /** Batch-level stats for mean_df_inclusive dual-display. */
   batchStats?: FraktalBatchStats
@@ -233,11 +266,6 @@ interface DistributionCardProps {
    *  marker source). Null for every other metric. */
   studyComparison?: FraktalStudyComparison | null
 }
-
-/** Primary trace color (blue-500). */
-const COLOR_CONVERGED = '#3b82f6'
-/** Overlay trace color (yellow-500). */
-const COLOR_APPROXIMATE = '#eab308'
 
 function DistributionCard({
   spec,
@@ -250,7 +278,7 @@ function DistributionCard({
   studyComparison = null,
 }: DistributionCardProps) {
   const nSucc = values.length
-  const title = `${spec.label} (${nSucc} succ / ${totalImages} total)`
+  const hint = `${nSucc} of ${totalImages} images carry a value for this metric · at least ${MIN_N_SUCCESSFUL} are needed to draw it`
 
   // R-DELTA-C2: per-batch toggle, component-local state, default ON, NOT
   // persisted (the component has no persistence and this change adds none).
@@ -263,25 +291,43 @@ function DistributionCard({
   const simMarkerValue =
     spec.key === 'df' && studyComparison ? studyComparison.sim_df.value : null
 
+  const markerToggle =
+    spec.key === 'df' && studyComparison ? (
+      <div className="flex items-center gap-2">
+        <input
+          type="checkbox"
+          id={`sim-marker-toggle-${spec.key}`}
+          checked={simMarkerEnabled}
+          onChange={(e) => setSimMarkerEnabled(e.target.checked)}
+          data-testid="sim-marker-toggle"
+          className="h-3 w-3"
+        />
+        <label
+          htmlFor={`sim-marker-toggle-${spec.key}`}
+          className="cursor-pointer select-none text-[11px] text-ink-muted"
+        >
+          Show Sim Df marker
+        </label>
+      </div>
+    ) : undefined
+
   if (nSucc < MIN_N_SUCCESSFUL) {
     return (
-      <div
-        className="rounded border border-dashed border-muted-foreground/40 p-4"
-        data-testid={`distribution-${spec.key}-not-enough`}
-      >
-        <div className="text-sm font-medium">{title}</div>
-        <div className="mt-2 text-xs text-muted-foreground">
-          Not enough data: only {nSucc} image(s) succeeded out of{' '}
-          {totalImages}. Minimum is {MIN_N_SUCCESSFUL}.
+      <Panel title={spec.label} hint={hint} action={markerToggle}>
+        <div data-testid={`distribution-${spec.key}-not-enough`}>
+          <Callout tone="info" title="Not enough data">
+            Only {nSucc} image(s) succeeded out of {totalImages}. A distribution needs at
+            least {MIN_N_SUCCESSFUL}.
+          </Callout>
         </div>
-      </div>
+      </Panel>
     )
   }
 
   const nBuckets = sturgesBuckets(nSucc)
 
-  // Build traces. For Df with quality data: split into converged (blue) +
-  // approximate (yellow) overlay. For all other metrics: single trace.
+  // Build traces. For Df with quality data: split into converged + approximate
+  // overlay. For all other metrics: single trace.
   const hasDfQualitySplit =
     spec.key === 'df' &&
     convergedValues !== undefined &&
@@ -299,7 +345,7 @@ function DistributionCard({
         type: 'histogram',
         // @ts-expect-error nbinsx valid but missing from @types/plotly.js
         nbinsx: nBuckets,
-        marker: { color: COLOR_CONVERGED, line: { color: '#1e40af', width: 1 } },
+        marker: { color: series(SERIES_CONVERGED) },
         name: 'Converged',
       })
     }
@@ -309,7 +355,7 @@ function DistributionCard({
         type: 'histogram',
         // @ts-expect-error nbinsx valid but missing from @types/plotly.js
         nbinsx: nBuckets,
-        marker: { color: COLOR_APPROXIMATE, line: { color: '#a16207', width: 1 } },
+        marker: { color: series(SERIES_APPROXIMATE) },
         name: 'Approximate',
         opacity: 0.7,
       })
@@ -323,21 +369,28 @@ function DistributionCard({
         type: 'histogram',
         // @ts-expect-error nbinsx valid but missing from @types/plotly.js
         nbinsx: nBuckets,
-        marker: { color: COLOR_CONVERGED, line: { color: '#1e40af', width: 1 } },
+        marker: { color: series(SERIES_CONVERGED) },
       },
     ]
   }
 
-  const layout: PlotParams['layout'] = {
-    autosize: true,
-    margin: { l: 50, r: 20, t: 36, b: 40 },
-    height: 260,
-    title: { text: title, font: { size: 13 } },
-    xaxis: { title: { text: spec.axisTitle } },
-    yaxis: { title: { text: 'count' } },
+  // The plot's layout is the kit's: paper ink, grid and hover label follow the
+  // theme. Only the two axis titles are this panel's.
+  const base = chartLayout({
     showlegend: hasDfQualitySplit && data.length > 1,
     ...(useOverlay ? { barmode: 'overlay' as const } : {}),
-  }
+  })
+  const baseX = base.xaxis as Record<string, unknown>
+  const baseY = base.yaxis as Record<string, unknown>
+  const layout = {
+    ...base,
+    height: 260,
+    // No title inside the plot, so no band for one. The marker branch below
+    // re-opens the top margin for its own annotation.
+    margin: { l: 50, r: 20, t: 16, b: 40 },
+    xaxis: { ...baseX, title: { text: spec.axisTitle } },
+    yaxis: { ...baseY, title: { text: 'count' } },
+  } as Record<string, unknown>
 
   // R-DELTA-C2 marker: dashed vertical line at x = study_comparison.
   // sim_df.value + a chip label near the top. PURELY ADDITIVE to the
@@ -362,9 +415,13 @@ function DistributionCard({
     const hi = Math.max(dataMax, simMarkerValue)
     const pad = (hi - lo) * 0.05 || Math.abs(hi) * 0.05 || 0.05
     layout.xaxis = {
-      ...layout.xaxis,
+      ...(layout.xaxis as Record<string, unknown>),
       range: [lo - pad, hi + pad],
     }
+    // The label sits above the plot area (`yref: 'paper'`, y = 1), so the top
+    // margin has to hold it.
+    layout.margin = { l: 50, r: 20, t: 36, b: 40 }
+    const markerColour = series(SERIES_SIM_MARKER)
     layout.shapes = [
       {
         type: 'line',
@@ -373,7 +430,7 @@ function DistributionCard({
         y0: 0,
         y1: 1,
         yref: 'paper',
-        line: { color: '#dc2626', width: 1.5, dash: 'dash' },
+        line: { color: markerColour, width: 1.5, dash: 'dash' },
       },
     ]
     layout.annotations = [
@@ -384,82 +441,87 @@ function DistributionCard({
         yanchor: 'bottom',
         showarrow: false,
         text: `Sim Df: ${simMarkerValue.toFixed(2)}`,
-        font: { size: 11, color: '#dc2626' },
+        font: { size: 11, color: markerColour },
         hovertext:
           targetDf != null
             ? `Sim Df: ${simMarkerValue.toFixed(2)} (target: ${targetDf.toFixed(2)})`
             : `Sim Df: ${simMarkerValue.toFixed(2)}`,
-        // @ts-expect-error hoverinfo exists at runtime but is missing from
-        // @types/plotly.js Annotations (same idiom as nbinsx above).
+        // `hoverinfo` exists at runtime but is missing from @types/plotly.js
+        // Annotations; the layout is a plain record here, so it needs no cast.
         hoverinfo: 'text',
       },
     ]
   }
 
+  // SAFETY: `chart-theme.layout()` and the additions above are a plain record,
+  // not Plotly's own `Layout`, whose surface is far larger than this panel
+  // uses. Grid, ink and hover colours are already in it; the two axis titles,
+  // the marker shape and the marker annotation are ours.
+  const plotLayout = layout as unknown as NonNullable<PlotParams['layout']>
+
   return (
-    <div
-      className="rounded border bg-card p-2"
-      data-testid={`distribution-${spec.key}`}
-    >
-      {spec.key === 'df' && studyComparison && (
-        <div className="px-2 pt-1 flex items-center gap-2">
-          <input
-            type="checkbox"
-            id={`sim-marker-toggle-${spec.key}`}
-            checked={simMarkerEnabled}
-            onChange={(e) => setSimMarkerEnabled(e.target.checked)}
-            data-testid="sim-marker-toggle"
-            className="h-3 w-3"
-          />
-          <label
-            htmlFor={`sim-marker-toggle-${spec.key}`}
-            className="text-xs text-muted-foreground select-none"
+    <Panel title={spec.label} hint={hint} action={markerToggle}>
+      <div data-testid={`distribution-${spec.key}`}>
+        <Plot
+          data={data}
+          layout={plotLayout}
+          config={{ responsive: true, displayModeBar: false }}
+          style={{ width: '100%' }}
+          useResizeHandler
+        />
+        {stats.mean != null && (
+          // The separators are real spaces, not gaps alone: this line survives
+          // a copy, and `m e a n 1.80` is not the same sentence as `mean1.80`.
+          <p
+            className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-muted"
+            data-testid={`distribution-${spec.key}-stats`}
           >
-            Show Sim Df marker
-          </label>
-        </div>
-      )}
-      <Plot
-        data={data}
-        layout={layout}
-        config={{ responsive: true, displayModeBar: false }}
-        style={{ width: '100%' }}
-        useResizeHandler
-      />
-      {stats.mean != null && (
-        <div
-          className="px-2 pb-1 text-xs text-muted-foreground"
-          data-testid={`distribution-${spec.key}-stats`}
-        >
-          mean={stats.mean.toFixed(2)} ± {(stats.std ?? 0).toFixed(2)} ·
-          median={stats.median?.toFixed(2)} · min=
-          {stats.min?.toFixed(2)} · max={stats.max?.toFixed(2)}
-        </div>
-      )}
-      {/* Mean dual-display (T5.5): show inclusive mean when it differs from primary */}
-      {spec.key === 'df' &&
-        batchStats?.mean_df_inclusive != null &&
-        batchStats?.mean_df != null &&
-        batchStats.mean_df_inclusive !== batchStats.mean_df && (
-          <div
-            className="px-2 pb-1 text-xs text-muted-foreground/70"
-            data-testid={`distribution-${spec.key}-inclusive`}
-          >
-            (inclusive: {batchStats.mean_df_inclusive.toFixed(2)})
-          </div>
+            <span>mean</span>{' '}
+            <Num value={stats.mean} digits={2} size="sm" />{' '}
+            <span>±</span>{' '}
+            <Num value={stats.std ?? 0} digits={2} size="sm" />{' '}
+            <span>· median</span>{' '}
+            <Num value={stats.median} digits={2} size="sm" />{' '}
+            <span>· min</span>{' '}
+            <Num value={stats.min} digits={2} size="sm" />{' '}
+            <span>· max</span>{' '}
+            <Num value={stats.max} digits={2} size="sm" />
+          </p>
         )}
-      {/* Quality count subtitle (T5.6): overall breakdown for Df */}
-      {spec.key === 'df' && batchStats?.n_converged != null && (
-        <div
-          className="px-2 pb-1 text-xs text-muted-foreground/60"
-          data-testid={`distribution-${spec.key}-quality-counts`}
-        >
-          {batchStats.n_converged} converged
-          {(batchStats.n_approximate ?? 0) > 0 &&
-            ` · ${batchStats.n_approximate} approximate`}
-        </div>
-      )}
-    </div>
+        {/* Mean dual-display (T5.5): show inclusive mean when it differs from primary */}
+        {spec.key === 'df' &&
+          batchStats?.mean_df_inclusive != null &&
+          batchStats?.mean_df != null &&
+          batchStats.mean_df_inclusive !== batchStats.mean_df && (
+            <p
+              className="m-0 mt-1 flex items-baseline gap-1 text-[11px] text-ink-faint"
+              data-testid={`distribution-${spec.key}-inclusive`}
+            >
+              <span>(inclusive:</span>{' '}
+              <Num value={batchStats.mean_df_inclusive} digits={2} size="sm" />
+              <span>)</span>
+            </p>
+          )}
+        {/* Quality count subtitle (T5.6): overall breakdown for Df */}
+        {spec.key === 'df' && batchStats?.n_converged != null && (
+          <p
+            className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-faint"
+            data-testid={`distribution-${spec.key}-quality-counts`}
+          >
+            <Num value={batchStats.n_converged} digits={0} size="sm" />{' '}
+            <span>converged</span>
+            {(batchStats.n_approximate ?? 0) > 0 && (
+              <>
+                {' '}
+                <span>·</span>{' '}
+                <Num value={batchStats.n_approximate} digits={0} size="sm" />{' '}
+                <span>approximate</span>
+              </>
+            )}
+          </p>
+        )}
+      </div>
+    </Panel>
   )
 }
 

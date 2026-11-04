@@ -29,8 +29,8 @@ vi.mock('react-plotly.js', () => ({
     const data = (props.data as Array<{ marker?: { color?: string } }>) || []
     const layout =
       (props.layout as {
-        title?: { text?: string }
         barmode?: string
+        xaxis?: { title?: { text?: string } }
       } | undefined) ?? {}
     // Expose trace marker colors so tests can assert overlay traces
     const traceColors = data.map((t) => t.marker?.color ?? '').join(',')
@@ -38,7 +38,10 @@ vi.mock('react-plotly.js', () => ({
       <div
         data-testid="plotly"
         data-trace-count={String(data.length)}
-        data-title={layout.title?.text ?? ''}
+        // The panel owns the title (issue #176 slice 3B), so the plot is
+        // identified by the axis it measures rather than by a title it no
+        // longer paints.
+        data-xaxis-title={layout.xaxis?.title?.text ?? ''}
         data-trace-colors={traceColors}
         data-barmode={layout.barmode ?? ''}
       />
@@ -51,6 +54,7 @@ import {
   FraktalBatchDistributions,
   sturgesBuckets,
 } from '../FraktalBatchDistributions'
+import { series } from '@/lib/chart-theme'
 import type { FraktalBatchImageResult, FraktalBatchStats } from '@/lib/api'
 
 // ---------------------------------------------------------------------------
@@ -131,20 +135,15 @@ describe('<FraktalBatchDistributions>', () => {
       expect(plots).toHaveLength(4)
     })
 
-    it('plot titles include "(N succ / M total)" format', () => {
+    it('each plot measures its own metric on the x axis', () => {
       const images = makeBatch(8, 2)
       render(<FraktalBatchDistributions images={images} />)
-      const plots = screen.getAllByTestId('plotly')
-      // All 4 plot titles should contain "8 succ / 10 total"
-      const titles = plots.map((p) => p.getAttribute('data-title') ?? '')
-      titles.forEach((t) => {
-        expect(t).toContain('8 succ / 10 total')
-      })
-      // And each metric label is present in exactly one title
-      expect(titles.some((t) => t.includes('Df'))).toBe(true)
-      expect(titles.some((t) => t.includes('kf'))).toBe(true)
-      expect(titles.some((t) => t.includes('Rg'))).toBe(true)
-      expect(titles.some((t) => t.includes('npo'))).toBe(true)
+      const axes = screen
+        .getAllByTestId('plotly')
+        .map((p) => p.getAttribute('data-xaxis-title') ?? '')
+      // The panel title names the metric and the hint carries the counts (see
+      // "distributions on the kit"); the plot itself only needs its axis.
+      expect(axes).toEqual(['Df', 'kf', 'Rg (nm)', 'npo'])
     })
 
     it('renders the 2x2 grid container', () => {
@@ -220,7 +219,7 @@ describe('<FraktalBatchDistributions>', () => {
       // kf, rg, npo have 3 each (below 5) → not enough
       const plots = screen.getAllByTestId('plotly')
       expect(plots).toHaveLength(1)
-      expect(plots[0].getAttribute('data-title')).toContain('Df')
+      expect(plots[0].getAttribute('data-xaxis-title')).toBe('Df')
     })
   })
 
@@ -242,15 +241,15 @@ describe('<FraktalBatchDistributions>', () => {
       const plots = screen.getAllByTestId('plotly')
       // Find the Df plot
       const dfPlot = plots.find((p) =>
-        (p.getAttribute('data-title') ?? '').includes('Df'),
+        p.getAttribute('data-xaxis-title') === 'Df',
       )
       expect(dfPlot).toBeTruthy()
       // Df should have 2 traces (converged + approximate)
       expect(dfPlot!.getAttribute('data-trace-count')).toBe('2')
-      // Trace colors: first blue (#3b82f6), second yellow (#eab308)
+      // Trace colours come from the kit's series ramp, not Tailwind's palette
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
-      expect(colors).toContain('#3b82f6')
-      expect(colors).toContain('#eab308')
+      expect(colors).toContain(series(0))
+      expect(colors).toContain(series(1))
       // barmode overlay
       expect(dfPlot!.getAttribute('data-barmode')).toBe('overlay')
     })
@@ -263,17 +262,17 @@ describe('<FraktalBatchDistributions>', () => {
       render(<FraktalBatchDistributions images={images} />)
       const plots = screen.getAllByTestId('plotly')
       const dfPlot = plots.find((p) =>
-        (p.getAttribute('data-title') ?? '').includes('Df'),
+        p.getAttribute('data-xaxis-title') === 'Df',
       )
       expect(dfPlot).toBeTruthy()
       expect(dfPlot!.getAttribute('data-trace-count')).toBe('1')
-      // Only blue trace
+      // Only the converged trace
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
-      expect(colors).toContain('#3b82f6')
-      expect(colors).not.toContain('#eab308')
+      expect(colors).toContain(series(0))
+      expect(colors).not.toContain(series(1))
     })
 
-    it('all-approximate batch: Df histogram has 1 trace (yellow only)', () => {
+    it('all-approximate batch: Df histogram has 1 trace (approximate only)', () => {
       const images: FraktalBatchImageResult[] = Array.from(
         { length: 6 },
         (_, i) =>
@@ -285,14 +284,14 @@ describe('<FraktalBatchDistributions>', () => {
       render(<FraktalBatchDistributions images={images} />)
       const plots = screen.getAllByTestId('plotly')
       const dfPlot = plots.find((p) =>
-        (p.getAttribute('data-title') ?? '').includes('Df'),
+        p.getAttribute('data-xaxis-title') === 'Df',
       )
       expect(dfPlot).toBeTruthy()
       expect(dfPlot!.getAttribute('data-trace-count')).toBe('1')
-      // Only yellow trace, no blue
+      // Only the approximate trace
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
-      expect(colors).toContain('#eab308')
-      expect(colors).not.toContain('#3b82f6')
+      expect(colors).toContain(series(1))
+      expect(colors).not.toContain(series(0))
     })
 
     it('excluded/failed images omitted from Df overlay (only converged+approximate)', () => {
@@ -308,7 +307,7 @@ describe('<FraktalBatchDistributions>', () => {
       render(<FraktalBatchDistributions images={images} />)
       const plots = screen.getAllByTestId('plotly')
       const dfPlot = plots.find((p) =>
-        (p.getAttribute('data-title') ?? '').includes('Df'),
+        p.getAttribute('data-xaxis-title') === 'Df',
       )
       expect(dfPlot).toBeTruthy()
       // 2 traces: converged (5 values) + approximate (1 value)
@@ -331,7 +330,7 @@ describe('<FraktalBatchDistributions>', () => {
       const plots = screen.getAllByTestId('plotly')
       // kf, rg, npo should each have 1 trace
       const nonDfPlots = plots.filter(
-        (p) => !(p.getAttribute('data-title') ?? '').includes('Df'),
+        (p) => p.getAttribute('data-xaxis-title') !== 'Df',
       )
       expect(nonDfPlots.length).toBe(3)
       nonDfPlots.forEach((p) => {
@@ -373,7 +372,7 @@ describe('<FraktalBatchDistributions>', () => {
       )
       // Primary mean should be visible
       const dfStats = screen.getByTestId('distribution-df-stats')
-      expect(dfStats.textContent).toContain('mean=1.80')
+      expect(dfStats.textContent).toContain('mean 1.80')
       // No inclusive line (values are equal)
       expect(screen.queryByTestId('distribution-df-inclusive')).toBeNull()
     })
@@ -418,7 +417,7 @@ describe('<FraktalBatchDistributions>', () => {
       )
       // Primary mean visible
       const dfStats = screen.getByTestId('distribution-df-stats')
-      expect(dfStats.textContent).toContain('mean=1.80')
+      expect(dfStats.textContent).toContain('mean 1.80')
       // Inclusive line visible with different value
       const inclusive = screen.getByTestId('distribution-df-inclusive')
       expect(inclusive.textContent).toContain('1.74')
@@ -571,6 +570,54 @@ describe('<FraktalBatchDistributions>', () => {
       expect(
         screen.queryByTestId('distribution-df-quality-counts'),
       ).toBeNull()
+    })
+  })
+
+  // --- Issue #176 slice 3B: each distribution is a kit panel ---------------
+  describe('distributions on the kit (issue #176 3B)', () => {
+    it('gives every distribution its own titled panel', () => {
+      render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
+      const headings = screen
+        .getAllByRole('heading', { level: 2 })
+        .map((h) => h.textContent)
+      expect(headings).toEqual([
+        'Df (fractal dimension)',
+        'kf (prefactor)',
+        'Rg (radius of gyration)',
+        'npo (primary count)',
+      ])
+    })
+
+    it('states how many images carry a value in each panel hint', () => {
+      render(<FraktalBatchDistributions images={makeBatch(8, 2)} />)
+      expect(screen.getAllByText(/8 of 10 images/).length).toBe(4)
+    })
+
+    it('keeps the per-metric empty state inside its own panel', () => {
+      render(<FraktalBatchDistributions images={makeBatch(4, 1)} />)
+      const empty = screen.getByTestId('distribution-df-not-enough')
+      expect(empty.closest('section')).toBeTruthy()
+      expect(empty.textContent).toContain('4')
+    })
+
+    it('replaces the whole grid with one empty state when nothing was measured', () => {
+      render(<FraktalBatchDistributions images={makeBatch(0, 5)} />)
+      const empty = screen.getByTestId('fraktal-batch-distributions-empty')
+      expect(empty.textContent).toContain('all 5 images failed')
+      expect(screen.queryAllByTestId('plotly')).toHaveLength(0)
+    })
+
+    it('draws the bars from the kit series ramp, never from the Tailwind palette', () => {
+      render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
+      const colors = screen
+        .getAllByTestId('plotly')
+        .map((p) => p.getAttribute('data-trace-colors') ?? '')
+        .join(',')
+      expect(colors).toContain(series(0))
+      // The palette the pre-migration component reached for.
+      expect(colors).not.toContain('#3b82f6')
+      expect(colors).not.toContain('#eab308')
+      expect(colors).not.toContain('#1e40af')
     })
   })
 })

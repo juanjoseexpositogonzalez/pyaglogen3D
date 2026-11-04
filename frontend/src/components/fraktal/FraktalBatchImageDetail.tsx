@@ -2,19 +2,44 @@
 
 /**
  * FraktalBatchImageDetail — drill-down view for a single image in a batch
- * (T5.3 + T5.4 + T5.5, change: fraktal-drilldown-and-csv).
+ * (T5.3 + T5.4 + T5.5, change: fraktal-drilldown-and-csv; re-skinned on the
+ * design-system kit by issue #176, slice 3B).
  *
- * Renders:
- *   - PNG image via getBatchImagePngUrl (URL for <img src>)
- *   - Per-image metrics (Df, kf, R², n_particles, dpo_used)
- *   - Error banner if the image analysis failed
- *   - Prev/Next navigation (links + ArrowLeft/ArrowRight keyboard shortcuts)
- *   - Loading skeleton during fetch
- *   - Error banner on fetch failure (404, 403)
- *   - Back link to batch results
- *   - Re-analyze button placeholder (wiring is Phase 6)
+ * What it renders has not changed: the PNG fetched with the bearer token and
+ * shown through a blob URL, the per-image readings (Df, kf, R², particles,
+ * dpo), the quality-aware error states, prev/next navigation with the arrow
+ * keys, the Presentation/Scientific variant switch, the authenticated PNG
+ * download, the re-analyze button and the back link. What changed is who owns
+ * the presentation: `PageHeader` names the plate, each state is a `Callout`
+ * whose tone never carries the meaning alone, every reading goes through `Num`
+ * (value and unit as siblings, never one concatenated string), the Df is a
+ * `MetricCard` because a dimension without its fit quality is a number without
+ * a claim, and the two failure states are `EmptyState`s.
+ *
+ * Why the micrograph is not on `VisualPanel`
+ * ------------------------------------------
+ * `VisualPanel` keeps its stage near-black in both themes, and that is right
+ * for a point cloud: geometry is abstract and a dark stage makes it stand out
+ * from the light chrome. A micrograph is not abstract. It is a real image with
+ * its own tones, and it is read rather than merely recognised, so the surface
+ * behind it must not shift the tones it is judged by. Issue #176 puts it in its
+ * acceptance test: images and their overlays are looked at in both themes, and
+ * a dark background behind a micrograph is not neutral.
+ *
+ * So the image hangs on a `Panel` — the theme's own surface, which frames it —
+ * around a plate whose colour is declared inline and is therefore identical in
+ * both themes. `MICROGRAPH_PLATE` and `OVERLAY_*` below carry the reasoning and
+ * the measured contrasts for that decision.
+ *
+ * One deviation from #176 is declared rather than left to review: `StatusChip`
+ * is not used anywhere in this slice. The payload of a batch image has no job
+ * status — a finished batch has no per-image status, only a `quality` — and
+ * `QualityBadge` is the chip the kit provides for exactly that union. Mapping a
+ * quality onto `SimulationStatus` to get the other chip would be the "job
+ * finished" / "number usable" conflation the kit warns about.
  */
 import { useCallback, useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -22,18 +47,88 @@ import {
   ChevronLeft,
   ChevronRight,
   Download,
+  ImageOff,
   RefreshCw,
 } from 'lucide-react'
 
 import { fraktalApi, type FraktalBatchImageDetail as ImageDetailData } from '@/lib/api'
-import { QualityBadge } from '@/components/common/QualityBadge'
+import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { Callout } from '@/components/kit/Callout'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { QualityBadge } from '@/components/kit/QualityBadge'
 
 interface Props {
   projectId: string
   batchId: string
   index: number
+}
+
+// ---------------------------------------------------------------------------
+// The plate, and the pair drawn over it
+// ---------------------------------------------------------------------------
+
+/**
+ * The surface the micrograph is read on: sRGB mid-grey.
+ *
+ * It is declared inline — not as a utility class and not as a token — for one
+ * reason: it must not follow `[data-theme]`. Every neutral the kit owns is a
+ * token that swaps with the theme by design, and `globals.css` is outside this
+ * slice's editable surface, so the value is stated here with the measurements
+ * that chose it:
+ *
+ *   - Neutral in the literal sense (R = G = B). The kit's neutrals are
+ *     teal-tinted (`--canvas`, the ink ramp); a tinted surround would colour
+ *     the greyscale image it frames.
+ *   - Mid-tone: 50% sRGB, relative luminance 0.216. A 50% grey surround is the
+ *     classic surround for monochrome image reading (DICOM/AAPM TG18): a light
+ *     surround darkens the perceived image, a dark one lightens it, so holding
+ *     the surround fixed is what makes the two themes comparable.
+ *   - Both poles of a binary (scientific) micrograph stay distinguishable from
+ *     it — white measures 3.95:1 and black 5.32:1 against #808080 — so the
+ *     image's own extent never dissolves into the plate. A white plate would
+ *     measure 1:1 against the white pixels of that same image.
+ *   - It reads as a surface rather than a hole in both themes: 3.95:1 against
+ *     `--surface-strong` in light, 3.91:1 against it in dark.
+ */
+const MICROGRAPH_PLATE = '#808080'
+
+/**
+ * The pair the caption over the image is drawn with.
+ *
+ * A mark drawn over a micrograph has the image behind it, not the interface, so
+ * neither member is an ink token: `--ink` is near-black on light paper and
+ * near-white on dark paper, and a caption that flipped with the theme would
+ * vanish over whichever half of the images happened to match it.
+ *
+ * The scrim is not decoration. It is what gives the ink a background of its
+ * own, so the ratio does not depend on what the image holds at that corner.
+ * Measured: over pure white (the worst case for a light micrograph) the scrim
+ * composites to #343e46, where the ink measures 10.4:1; over pure black it
+ * composites to #061018 and 18.2:1. The ink on the bare plate would be 3.75:1,
+ * under AA for 11px text, which is exactly the job the scrim does.
+ */
+const OVERLAY_INK = '#f5fafa'
+const OVERLAY_SCRIM = 'rgba(7, 20, 29, 0.82)'
+
+/**
+ * What the plate shows while the authenticated PNG is on its way.
+ *
+ * A translucent white from the same fixed family as the overlay, for the same
+ * reason: it is drawn on the plate, so a themed surface token would be a
+ * rectangle of interface colour sitting on top of an image.
+ */
+const PLATE_PLACEHOLDER = 'rgba(255, 255, 255, 0.18)'
+
+/** The caption's two members, applied together wherever the overlay is drawn. */
+const PLATE_CAPTION = {
+  color: OVERLAY_INK,
+  backgroundColor: OVERLAY_SCRIM,
 }
 
 export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
@@ -147,85 +242,96 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
 
   // --- Loading state ---
   if (loading) {
-    return (
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <p className="text-muted-foreground">Loading image detail...</p>
-        <div className="mt-4 space-y-4">
-          <div className="h-64 bg-muted animate-pulse rounded-lg" />
-          <div className="h-8 bg-muted animate-pulse rounded w-1/3" />
-          <div className="h-8 bg-muted animate-pulse rounded w-1/2" />
-        </div>
-      </div>
-    )
+    return <LoadingScreen message="Loading image detail..." />
   }
 
   // --- Error state (metadata fetch failed or no data) ---
   if (error || !data) {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <Card className="border-destructive">
-          <CardContent className="p-6">
-            <p className="text-destructive">
-              Failed to load image detail. {error}
-            </p>
-            <Link
-              href={batchUrl}
-              className="mt-4 inline-block"
-            >
-              <Button variant="outline" aria-label="Back to batch results">
-                Back to batch results
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+      <EmptyState
+        icon={ImageOff}
+        headingLevel={2}
+        title="Failed to load image detail"
+        description={error ?? 'This image has no readable record.'}
+        action={
+          <Link href={batchUrl}>
+            <Button variant="outline" aria-label="Back to batch results">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to batch results
+            </Button>
+          </Link>
+        }
+      />
     )
   }
 
   // --- Image fetch error (PNG auth failed, e.g. 401/404) ---
   if (imageError) {
     return (
-      <div className="container mx-auto px-4 py-8 max-w-5xl">
-        <Card className="border-destructive">
-          <CardContent className="p-6">
-            <p className="text-destructive">
-              Failed to load image. {imageError}
-            </p>
-            <Link
-              href={batchUrl}
-              className="mt-4 inline-block"
-            >
-              <Button variant="outline" aria-label="Back to batch results">
-                Back to batch results
-              </Button>
-            </Link>
-          </CardContent>
-        </Card>
-      </div>
+      <EmptyState
+        icon={ImageOff}
+        headingLevel={2}
+        title="Failed to load image"
+        description={imageError}
+        action={
+          <Link href={batchUrl}>
+            <Button variant="outline" aria-label="Back to batch results">
+              <ArrowLeft className="h-4 w-4 mr-2" />
+              Back to batch results
+            </Button>
+          </Link>
+        }
+      />
     )
   }
 
   const pngUrl = fraktalApi.getBatchImagePngUrl(projectId, batchId, index)
+  const variantLabel = currentVariant === 'scientific' ? 'Scientific (binary)' : 'Presentation'
 
   return (
-    <div className="container mx-auto px-4 py-8 max-w-5xl">
-        {/* Back link */}
-        <Link
-          href={batchUrl}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-          aria-label="Back to batch results"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to batch results
-        </Link>
+    <>
+      <Link
+        href={batchUrl}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+        aria-label="Back to batch results"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to batch results
+      </Link>
 
-        {/* Title + navigation */}
-        <div className="flex items-center justify-between mb-6">
-          <h1 className="text-2xl font-bold">
-            Image {data.index} — {data.filename}
-          </h1>
-
-          <div className="flex gap-2">
+      <PageHeader
+        eyebrow="FRAKTAL · BATCH IMAGE"
+        title={`Image ${data.index}`}
+        description={<span className="num">{data.filename}</span>}
+        meta={
+          <>
+            {/*
+              Only the converged state carries a chip up here. The other three
+              are stated — and explained — by the `Callout` immediately below,
+              whose title and icon are the state; repeating it in a chip would
+              also repeat the failure message in the badge's sr-only reason.
+            */}
+            {data.quality === 'converged' && <QualityBadge quality="converged" />}
+            {data.analysis_input_variant && (
+              <Badge variant="outline">
+                {`Analysis input: ${
+                  data.analysis_input_variant === 'scientific'
+                    ? 'Scientific (binary)'
+                    : 'Presentation'
+                }`}
+              </Badge>
+            )}
+            {data.batch_origin && (
+              <Badge variant="outline">
+                {`Origin: ${
+                  data.batch_origin === 'simulation' ? 'From Simulation' : 'External upload'
+                }`}
+              </Badge>
+            )}
+          </>
+        }
+        actions={
+          <>
             {/* T6.6: Download PNG */}
             <a
               href={pngUrl}
@@ -244,130 +350,125 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
               disabled={reanalyzing}
               aria-label="Re-analyze"
             >
-              <RefreshCw className="h-4 w-4 mr-2" />
+              <RefreshCw className={`h-4 w-4 mr-2 ${reanalyzing ? 'animate-spin' : ''}`} />
               {reanalyzing ? 'Re-analyzing...' : 'Re-analyze'}
             </Button>
-          </div>
-        </div>
+          </>
+        }
+      />
 
-        {/* Prev / Next navigation */}
-        <div className="flex items-center justify-between mb-6">
-          {data.prev_index !== null ? (
-            <Link
-              href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.prev_index}`}
-              aria-label="Previous image"
-            >
-              <Button variant="outline" size="sm">
-                <ChevronLeft className="h-4 w-4 mr-1" />
-                Previous
-              </Button>
-            </Link>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              aria-label="Previous image"
-            >
+      {/* Prev / Next navigation */}
+      <div className="mb-5 flex items-center justify-between gap-3">
+        {data.prev_index !== null ? (
+          <Link
+            href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.prev_index}`}
+            aria-label="Previous image"
+          >
+            <Button variant="outline" size="sm">
               <ChevronLeft className="h-4 w-4 mr-1" />
               Previous
             </Button>
-          )}
+          </Link>
+        ) : (
+          <Button variant="outline" size="sm" disabled aria-label="Previous image">
+            <ChevronLeft className="h-4 w-4 mr-1" />
+            Previous
+          </Button>
+        )}
 
-          <span className="text-muted-foreground text-sm">
-            Image {data.index} of batch
-          </span>
+        <span className="text-[12px] text-ink-muted">Image {data.index} of batch</span>
 
-          {data.next_index !== null ? (
-            <Link
-              href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.next_index}`}
-              aria-label="Next image"
-            >
-              <Button variant="outline" size="sm">
-                Next
-                <ChevronRight className="h-4 w-4 ml-1" />
-              </Button>
-            </Link>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              disabled
-              aria-label="Next image"
-            >
+        {data.next_index !== null ? (
+          <Link
+            href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.next_index}`}
+            aria-label="Next image"
+          >
+            <Button variant="outline" size="sm">
               Next
               <ChevronRight className="h-4 w-4 ml-1" />
             </Button>
-          )}
-        </div>
-
-        {/* Analysis input variant badge + batch origin (T5.5 + T5.6) */}
-        <div className="flex items-center gap-2 mb-4">
-          {data.analysis_input_variant && (
-            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-muted-foreground/20">
-              Analysis input:{' '}
-              {data.analysis_input_variant === 'scientific'
-                ? 'Scientific (binary)'
-                : 'Presentation'}
-            </span>
-          )}
-          {data.batch_origin && (
-            <span className="inline-flex items-center rounded-md bg-muted px-2 py-1 text-xs font-medium text-muted-foreground ring-1 ring-inset ring-muted-foreground/20">
-              Origin: {data.batch_origin === 'simulation' ? 'From Simulation' : 'External upload'}
-            </span>
-          )}
-        </div>
-
-        {/* Variant toggle: Presentation / Scientific */}
-        <div className="flex items-center gap-2 mb-4">
-          <Button
-            variant={currentVariant === 'presentation' ? 'default' : 'outline'}
-            size="sm"
-            aria-pressed={currentVariant === 'presentation'}
-            data-active={currentVariant === 'presentation'}
-            onClick={() => setCurrentVariant('presentation')}
-          >
-            Presentation
+          </Link>
+        ) : (
+          <Button variant="outline" size="sm" disabled aria-label="Next image">
+            Next
+            <ChevronRight className="h-4 w-4 ml-1" />
           </Button>
-          <Button
-            variant={currentVariant === 'scientific' ? 'default' : 'outline'}
-            size="sm"
-            aria-pressed={currentVariant === 'scientific'}
-            data-active={currentVariant === 'scientific'}
-            disabled={!data.has_scientific_png}
-            onClick={() => {
-              if (data.has_scientific_png) {
-                setCurrentVariant('scientific')
-              }
-            }}
-            title={!data.has_scientific_png ? 'No scientific PNG available' : undefined}
+        )}
+      </div>
+
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+        {/* The micrograph: a real image on a plate that does not follow the
+            theme — see MICROGRAPH_PLATE and OVERLAY_* above. */}
+        <Panel
+          title="Micrograph"
+          hint="The image the analysis was run on. Presentation is the source image; Scientific is the binary-thresholded input the engine can be fed instead."
+          action={
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
+                variant={currentVariant === 'presentation' ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={currentVariant === 'presentation'}
+                data-active={currentVariant === 'presentation'}
+                onClick={() => setCurrentVariant('presentation')}
+              >
+                Presentation
+              </Button>
+              <Button
+                variant={currentVariant === 'scientific' ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={currentVariant === 'scientific'}
+                data-active={currentVariant === 'scientific'}
+                disabled={!data.has_scientific_png}
+                onClick={() => {
+                  if (data.has_scientific_png) {
+                    setCurrentVariant('scientific')
+                  }
+                }}
+                title={!data.has_scientific_png ? 'No scientific PNG available' : undefined}
+              >
+                Scientific
+              </Button>
+            </div>
+          }
+        >
+          <div
+            data-testid="micrograph-plate"
+            className="relative flex min-h-[240px] items-center justify-center overflow-hidden rounded-md p-3"
+            style={{ backgroundColor: MICROGRAPH_PLATE }}
           >
-            Scientific
-          </Button>
-        </div>
+            {blobUrl ? (
+              <img
+                src={blobUrl}
+                alt={`Batch image ${data.index}: ${data.filename}`}
+                className="max-h-[520px] w-full rounded-md object-contain"
+              />
+            ) : (
+              <div
+                className="h-56 w-full animate-pulse rounded-md"
+                style={{ backgroundColor: PLATE_PLACEHOLDER }}
+              />
+            )}
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* PNG image (fetched with auth, displayed via blob URL) */}
-          <Card>
-            <CardContent className="p-4">
-              {blobUrl ? (
-                <img
-                  src={blobUrl}
-                  alt={`Batch image ${data.index}: ${data.filename}`}
-                  className="w-full rounded-lg"
-                />
-              ) : (
-                <div className="h-64 bg-muted animate-pulse rounded-lg" />
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Metrics or Error — distinguished by quality when available */}
-          <div className="space-y-4">
-            <ImageDetailPanel data={data} />
+            {/* Figure caption, drawn over the image in the fixed pair. */}
+            <div
+              data-testid="micrograph-caption"
+              className="pointer-events-none absolute inset-x-3 bottom-3 flex items-baseline justify-between gap-3 rounded-md px-2.5 py-1.5"
+              style={PLATE_CAPTION}
+            >
+              <span className="num text-[11px]">{`Image ${data.index}`}</span>
+              <span className="text-[10px] font-extrabold uppercase tracking-[0.08em]">
+                {variantLabel}
+              </span>
+            </div>
           </div>
+        </Panel>
+
+        {/* Readings, or the state of the analysis that produced them. */}
+        <div className="grid gap-4">
+          <ImageDetailPanel data={data} />
         </div>
       </div>
+    </>
   )
 }
 
@@ -382,6 +483,22 @@ const FAILURE_MESSAGES: Record<string, string> = {
   iteration_limit:
     'No convergió (ruido o calidad de imagen).',
   kf_negative: 'Resultado no físico (kf < 0).',
+}
+
+/**
+ * One label/reading pair of a panel.
+ *
+ * `DetailList` would be the kit's answer, but it is outside this slice's
+ * surface; a `<div>` grouping one `<dt>`/`<dd>` inside a `<dl>` is the same
+ * shape (HTML5 allows the grouping element) without reaching for it.
+ */
+function Readout({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="flex items-baseline justify-between gap-4 border-b border-line py-2 last:border-b-0">
+      <dt className="text-[11px] text-ink-muted">{label}</dt>
+      <dd className="m-0 text-[13px] text-ink">{children}</dd>
+    </div>
+  )
 }
 
 function ImageDetailPanel({ data }: { data: ImageDetailData }) {
@@ -403,35 +520,20 @@ function ImageDetailPanel({ data }: { data: ImageDetailData }) {
     case 'approximate':
       return (
         <>
-          {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
-          <Card className="border-yellow-300 bg-yellow-50">
-            <CardHeader>
-              <CardTitle className="text-yellow-800">Approximate Result</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-                <dt className="text-muted-foreground">Df aproximado</dt>
-                <dd className="font-mono">
-                  {data.df_estimate !== null && data.df_estimate !== undefined
-                    ? data.df_estimate.toFixed(3)
-                    : '—'}
-                </dd>
-                <dt className="text-muted-foreground">Residual</dt>
-                <dd className="font-mono">
-                  {data.bisection_residual !== null && data.bisection_residual !== undefined
-                    ? data.bisection_residual.toFixed(3)
-                    : '—'}
-                </dd>
-              </dl>
-              <p className="mt-3 text-sm text-yellow-800">
-                Df aproximado, residual{' '}
-                {data.bisection_residual !== null && data.bisection_residual !== undefined
-                  ? data.bisection_residual.toFixed(3)
-                  : '?'}
-                . Resultado de calidad limitada.
-              </p>
-            </CardContent>
-          </Card>
+          <Callout tone="warning" title="Approximate result">
+            <dl className="m-0">
+              <Readout label="Df aproximado">
+                <Num value={data.df_estimate} digits={3} />
+              </Readout>
+              <Readout label="Residual">
+                <Num value={data.bisection_residual} digits={3} />
+              </Readout>
+            </dl>
+            <p className="mt-2 mb-0">
+              The bisection settled between two bounds instead of on a sign change. The
+              dimension is usable with that caveat, not as a converged measurement.
+            </p>
+          </Callout>
           <DiagnosticInfoCard data={data} />
         </>
       )
@@ -439,19 +541,14 @@ function ImageDetailPanel({ data }: { data: ImageDetailData }) {
     case 'excluded':
       return (
         <>
-          {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
-          <Card className="border-gray-300 bg-gray-50">
-            <CardHeader>
-              <CardTitle className="text-gray-700">Excluded</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-gray-700">
-                {data.failure_reason
-                  ? FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason
-                  : 'Image excluded from analysis.'}
-              </p>
-            </CardContent>
-          </Card>
+          {/* The failure reason is the whole message: a generic "excluded"
+              hides whether the geometry was out of the model's domain or the
+              exposure was too noisy to threshold. */}
+          <Callout tone="info" title="Excluded">
+            {data.failure_reason
+              ? FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason
+              : 'Image excluded from analysis.'}
+          </Callout>
           <DiagnosticInfoCard data={data} />
         </>
       )
@@ -461,22 +558,17 @@ function ImageDetailPanel({ data }: { data: ImageDetailData }) {
       if (data.failure_reason && data.failure_reason !== null) {
         return (
           <>
-            {data.quality && <QualityBadge quality={data.quality} className="mb-2" />}
-            <Card className="border-destructive">
-              <CardHeader>
-                <CardTitle className="text-destructive">Analysis Failed</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-destructive">
-                  {FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason}
+            <Callout tone="danger" title="Analysis Failed">
+              <p className="m-0">
+                {FAILURE_MESSAGES[data.failure_reason] ?? data.failure_reason}
+              </p>
+              {data.df_estimate !== null && data.df_estimate !== undefined && (
+                <p className="mt-2 mb-0 flex items-baseline gap-1.5">
+                  <span>Best Df estimate:</span>
+                  <Num value={data.df_estimate} digits={3} size="sm" />
                 </p>
-                {data.df_estimate !== null && data.df_estimate !== undefined && (
-                  <p className="mt-2 text-sm text-muted-foreground">
-                    Best Df estimate: {data.df_estimate.toFixed(3)}
-                  </p>
-                )}
-              </CardContent>
-            </Card>
+              )}
+            </Callout>
             <DiagnosticInfoCard data={data} />
           </>
         )
@@ -492,48 +584,40 @@ function ImageDetailPanel({ data }: { data: ImageDetailData }) {
 function ConvergedMetricsPanel({ data }: { data: ImageDetailData }) {
   return (
     <>
-      <Card>
-        <CardHeader>
-          <CardTitle>Fractal Metrics</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">Df</dt>
-            <dd className="font-mono">
-              {data.fractal_dimension !== null
-                ? data.fractal_dimension.toFixed(3)
-                : '—'}
-            </dd>
+      {/* The headline reading. Its detail is the estimator that produced it:
+          a dimension on its own says nothing about how well it was fitted. */}
+      <MetricCard
+        kind="measured"
+        label="Df (fractal dimension)"
+        value={data.fractal_dimension}
+        digits={3}
+        sigma={null}
+        detail={
+          <>
+            box counting · R²{' '}
+            <Num value={data.r_squared} digits={3} size="sm" />
+          </>
+        }
+      />
 
-            <dt className="text-muted-foreground">kf</dt>
-            <dd className="font-mono">
-              {data.prefactor !== null ? data.prefactor.toFixed(3) : '—'}
-            </dd>
+      <Panel title="Fractal Metrics">
+        <dl className="m-0">
+          <Readout label="kf">
+            <Num value={data.prefactor} digits={3} />
+          </Readout>
+          <Readout label="Particles">
+            <Num value={data.n_particles_counted} digits={0} />
+          </Readout>
+        </dl>
+      </Panel>
 
-            <dt className="text-muted-foreground">R²</dt>
-            <dd className="font-mono">
-              {data.r_squared !== null ? data.r_squared.toFixed(3) : '—'}
-            </dd>
-
-            <dt className="text-muted-foreground">Particles</dt>
-            <dd className="font-mono">
-              {data.n_particles_counted ?? '—'}
-            </dd>
-          </dl>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Calibration</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-            <dt className="text-muted-foreground">DPO Used</dt>
-            <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
-          </dl>
-        </CardContent>
-      </Card>
+      <Panel title="Calibration">
+        <dl className="m-0">
+          <Readout label="DPO Used">
+            <Num value={data.dpo_used} digits={1} unit="nm" />
+          </Readout>
+        </dl>
+      </Panel>
     </>
   )
 }
@@ -541,14 +625,9 @@ function ConvergedMetricsPanel({ data }: { data: ImageDetailData }) {
 function LegacyErrorPanel({ data }: { data: ImageDetailData }) {
   return (
     <>
-      <Card className="border-destructive">
-        <CardHeader>
-          <CardTitle className="text-destructive">Analysis Error</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-destructive">{data.error}</p>
-        </CardContent>
-      </Card>
+      <Callout tone="danger" title="Analysis Error">
+        {data.error}
+      </Callout>
       <DiagnosticInfoCard data={data} />
     </>
   )
@@ -556,32 +635,24 @@ function LegacyErrorPanel({ data }: { data: ImageDetailData }) {
 
 function DiagnosticInfoCard({ data }: { data: ImageDetailData }) {
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Diagnostic Info</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm">
-          <dt className="text-muted-foreground">DPO Used</dt>
-          <dd className="font-mono">{data.dpo_used.toFixed(1)}</dd>
-
-          <dt className="text-muted-foreground">Azimuth</dt>
-          <dd className="font-mono">
-            {data.azimuth !== null ? data.azimuth.toFixed(1) : '—'}
-          </dd>
-
-          <dt className="text-muted-foreground">Elevation</dt>
-          <dd className="font-mono">
-            {data.elevation !== null ? data.elevation.toFixed(1) : '—'}
-          </dd>
-
-          <dt className="text-muted-foreground">px/100nm</dt>
-          <dd className="font-mono">{data.pixels_per_100nm.toFixed(1)}</dd>
-
-          <dt className="text-muted-foreground">Autocalibrate</dt>
-          <dd className="font-mono">{data.autocalibrate_source ?? '—'}</dd>
-        </dl>
-      </CardContent>
-    </Card>
+    <Panel title="Diagnostic Info">
+      <dl className="m-0">
+        <Readout label="DPO Used">
+          <Num value={data.dpo_used} digits={1} unit="nm" />
+        </Readout>
+        <Readout label="Azimuth">
+          <Num value={data.azimuth} digits={1} unit="°" />
+        </Readout>
+        <Readout label="Elevation">
+          <Num value={data.elevation} digits={1} unit="°" />
+        </Readout>
+        <Readout label="px/100nm">
+          <Num value={data.pixels_per_100nm} digits={1} />
+        </Readout>
+        <Readout label="Autocalibrate">
+          <span className="num text-[12px]">{data.autocalibrate_source ?? '—'}</span>
+        </Readout>
+      </dl>
+    </Panel>
   )
 }

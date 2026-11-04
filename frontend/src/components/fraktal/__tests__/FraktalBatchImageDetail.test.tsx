@@ -879,4 +879,116 @@ describe('<FraktalBatchImageDetail />', () => {
       ).toBeTruthy()
     })
   })
+
+  // --- Issue #176 slice 3B: a micrograph is read on a neutral plate ---------
+  //
+  // "A dark background behind a micrograph is not neutral." The dark
+  // visualisation stage is calibrated for abstract geometry; a real image is
+  // read against a plate that does not change with the theme, and the marks
+  // drawn over it are chosen against the image rather than the interface.
+  describe('micrograph plate (issue #176 3B)', () => {
+    /** The plate's declared background, as three sRGB channels. */
+    function plateChannels(): number[] {
+      const plate = screen.getByTestId('micrograph-plate')
+      const declared = plate.style.backgroundColor
+      const hex = declared.match(/^#([0-9a-f]{6})$/i)
+      if (hex) {
+        const n = parseInt(hex[1], 16)
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      }
+      const rgb = declared.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+      if (!rgb) {
+        throw new Error(`the plate declares no plain background: "${declared}"`)
+      }
+      return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+    }
+
+    /** WCAG relative luminance of three sRGB channels. */
+    function luminance([r, g, b]: number[]): number {
+      const linear = [r, g, b].map((channel) => {
+        const c = channel / 255
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+      })
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    }
+
+    afterEach(() => {
+      delete document.documentElement.dataset.theme
+    })
+
+    it('declares the plate colour inline, so no theme token can repaint it', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const plate = screen.getByTestId('micrograph-plate')
+      // An inline colour cannot follow `[data-theme]`; a `bg-surface` utility
+      // would, which is exactly what the plate exists to avoid.
+      expect(plate.getAttribute('style')).toMatch(/background/)
+      expect(plate.className).not.toMatch(/\bbg-(surface|surface-strong|surface-soft|canvas|panel-)/)
+    })
+
+    it('keeps the same plate in both themes', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      const { rerender } = renderComponent()
+      await screen.findByRole('img')
+      const light = screen.getByTestId('micrograph-plate').getAttribute('style')
+
+      document.documentElement.dataset.theme = 'dark'
+      rerender(
+        <FraktalBatchImageDetail
+          projectId={PROJECT_ID}
+          batchId={BATCH_ID}
+          index={2}
+        />
+      )
+      expect(screen.getByTestId('micrograph-plate').getAttribute('style')).toBe(light)
+    })
+
+    it('keeps the plate neutral and mid-toned', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const channels = plateChannels()
+      // Neutral: a tinted plate would colour the greyscale image it frames.
+      expect(Math.max(...channels) - Math.min(...channels)).toBeLessThanOrEqual(2)
+      // Mid-tone: both extremes of a binary micrograph stay visible against it,
+      // which a white plate cannot promise for the white pixels.
+      const l = luminance(channels)
+      expect(l).toBeGreaterThan(0.15)
+      expect(l).toBeLessThan(0.35)
+    })
+
+    it('does not put the micrograph on the dark visualisation stage', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      expect(document.querySelector('.bg-visual')).toBeNull()
+      expect(screen.getByTestId('micrograph-plate').className).not.toContain('bg-visual')
+    })
+
+    it('draws the caption over the image in a fixed pair, not the theme ink', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const caption = screen.getByTestId('micrograph-caption')
+      // Both members of the pair are declared inline for the same reason as
+      // the plate: the caption sits on the image, not on the interface.
+      expect(caption.getAttribute('style')).toMatch(/color/)
+      expect(caption.getAttribute('style')).toMatch(/background/)
+      expect(caption.className).not.toMatch(/\btext-ink(-muted|-faint)?\b/)
+    })
+
+    it('names the micrograph in the panel the image sits on', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const headings = screen.getAllByRole('heading', { level: 2 })
+      expect(headings.map((h) => h.textContent)).toContain('Micrograph')
+    })
+  })
 })
