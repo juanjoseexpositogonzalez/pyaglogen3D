@@ -781,7 +781,10 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {"parameter_grid.seed_type": "Must be a list of seed_type values."}
                 )
             for entry in seed_type_entries:
-                if entry not in valid_seed_types:
+                # The type check comes first: a list or a dict is not hashable, so
+                # asking for membership in a set raises TypeError and answers 500
+                # instead of naming the offending entry (#115, point 4).
+                if not isinstance(entry, str) or entry not in valid_seed_types:
                     raise serializers.ValidationError(
                         {
                             "parameter_grid.seed_type": (
