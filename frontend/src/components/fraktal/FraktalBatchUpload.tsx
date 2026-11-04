@@ -8,8 +8,15 @@
  * metadata pre-parse, the same two calibration paths, the same two validation
  * messages, the same request and the same `onSuccess` hand-off. What changed is
  * who owns the presentation — the card is a `Panel`, the two notices that used
- * to be `Alert`s are `Callout`s, the checkbox is the kit's `Checkbox`, and the
- * progress counts go through `Num`.
+ * to be `Alert`s are `Callout`s, and the progress counts go through `Num`.
+ *
+ * The auto-calibrate checkbox is the one control that did **not** move, and an
+ * earlier version of this paragraph claimed it had. It is still
+ * `components/ui/checkbox`, whose classes predate the kit (`border-primary`,
+ * `ring-ring`, `ring-offset-background`), because `components/kit/` has no
+ * `Checkbox` to move it to. It is named here as a remainder of the migration
+ * rather than described as something it is not; giving it a kit home is its own
+ * change, with its own editable surface.
  *
  * Three presentation decisions are worth stating rather than leaving to be
  * found in review:
