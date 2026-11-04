@@ -22,23 +22,47 @@
  * - Every histogram is a `Panel`. The panel's title is the metric and its hint
  *   says how many images carry a value, which is why the plot no longer paints
  *   a title of its own: two titles for one box is one title too many.
- * - The traces take their colour from `lib/chart-theme`, so the bars follow the
- *   active theme rather than two Tailwind palette constants (`blue-500` and
- *   `yellow-500`) painted once. Converged and approximate keep their distinct
- *   colours and their legend words: quality is never colour alone.
+ * - The main bars take their colour from `lib/chart-theme`, so they follow the
+ *   active theme rather than a Tailwind palette constant painted once.
  * - The layout comes from `chart-theme.layout()`, so grid, ink and hover labels
  *   are the kit's.
  * - No data went: the bucket rule, the quality split, the dual mean, the
  *   quality counts and the Sim-Df reference marker are all unchanged.
+ *
+ * Two things a review put back, because the canonical spec had not changed:
+ *
+ * 1. The approximate overlay is **yellow** and the main bars are the kit's main
+ *    series colour. Canonical `fraktal-batch-distributions` R3 names the colour
+ *    ("rendered with a yellow overlay", "in yellow only"), the kit's series ramp
+ *    has no yellow, and `--warning` is an ink for text rather than a bar fill —
+ *    so `APPROXIMATE_YELLOW` is the one colour literal here, and it is the
+ *    contract's, not a palette choice. Moving it to a ramp position is a spec
+ *    delta and needs the owner's approval, not a test edited next to the code.
+ * 2. Each panel carries the metadata label in the contract's own wording —
+ *    `N successful of M total` — instead of a paraphrase. It is the panel's
+ *    `hint`, which is above the chart, which R3 allows ("below or above each
+ *    histogram panel").
+ *
+ * The buckets are computed here and handed to Plotly as explicit `xbins`, so
+ * the chart and the values table cannot disagree: both are read off the same
+ * `equalBins` result. Plotly's own autobinning rounds the edges to "nice"
+ * numbers, which R2 does not ask for — R2 says the boundaries span [min, max]
+ * evenly — so the explicit bins are also the rule the spec states.
+ *
+ * Every histogram is wrapped in `ShowValues` (R7 of `design-system-foundation`):
+ * the control sits in the panel header and the table takes the chart's place,
+ * one row per bucket and one column per series.
  */
 import dynamic from 'next/dynamic'
 import { useMemo, useState } from 'react'
 import type { PlotParams } from 'react-plotly.js'
 
 import { Callout } from '@/components/kit/Callout'
+import { type Column } from '@/components/kit/DataTable'
 import { EmptyState } from '@/components/kit/EmptyState'
 import { Num } from '@/components/kit/Num'
 import { Panel } from '@/components/kit/Panel'
+import { ShowValues } from '@/components/kit/ShowValues'
 import { layout as chartLayout, series } from '@/lib/chart-theme'
 import { useThemeStore } from '@/stores/useThemeStore'
 import type {
@@ -125,15 +149,26 @@ const METRICS: MetricSpec[] = [
 const MIN_N_SUCCESSFUL = 5
 
 /**
- * Series positions of the two Df traces and of the Sim-Df marker.
+ * Series positions of the main trace and of the Sim-Df marker.
  *
  * Index, not colour: `series()` resolves the position against the ramp in
  * force, so the traces repaint with the theme instead of pinning a Tailwind
  * palette value into the plot.
  */
-const SERIES_CONVERGED = 0
-const SERIES_APPROXIMATE = 1
+const SERIES_MAIN = 0
 const SERIES_SIM_MARKER = 2
+
+/**
+ * The approximate overlay's fill.
+ *
+ * Canonical R3 names it twice — "a yellow sub-bar for the approximate values"
+ * and "in yellow only" — so it is contract, not taste. The kit's ramp carries
+ * teal, orange, violet, olive, magenta and slate and no yellow; `--warning` is
+ * the semantic *ink* for text and its value would read as brown as a fill.
+ * Declared here, with the pre-migration value, and changed only by a spec
+ * delta.
+ */
+const APPROXIMATE_YELLOW = '#eab308'
 
 /** Compute mean/std/median/min/max from a non-empty array of numbers. */
 function computeMetricStats(values: number[]): FraktalMetricStats {
@@ -157,6 +192,59 @@ function computeMetricStats(values: number[]): FraktalMetricStats {
     min: sorted[0],
     max: sorted[n - 1],
   }
+}
+
+/**
+ * One histogram's binning: the edges, and the width between them.
+ *
+ * Equal-width buckets spanning [min, max], which is what canonical R2 states.
+ * A zero-variance series collapses to a single bucket of width zero, which the
+ * chart renders as one bar (R5) and the table as one row.
+ */
+interface Bins {
+  start: number
+  end: number
+  /** Zero when every value is identical. */
+  size: number
+  edges: number[]
+}
+
+function equalBins(values: number[], k: number): Bins {
+  const finite = values.filter((v) => Number.isFinite(v))
+  if (finite.length === 0) return { start: 0, end: 0, size: 0, edges: [0, 0] }
+  const min = Math.min(...finite)
+  const max = Math.max(...finite)
+  if (!(max > min)) return { start: min, end: min, size: 0, edges: [min, min] }
+  const size = (max - min) / k
+  const edges = Array.from({ length: k + 1 }, (_, i) => min + size * i)
+  // The last edge is the maximum itself, not the maximum plus a float error.
+  edges[k] = max
+  return { start: min, end: max, size, edges }
+}
+
+/** How many of `values` fall in each bucket; the last bucket takes the maximum. */
+function countsInto(values: number[], bins: Bins): number[] {
+  const k = Math.max(1, bins.edges.length - 1)
+  const counts = Array.from({ length: k }, () => 0)
+  for (const value of values) {
+    if (!Number.isFinite(value)) continue
+    if (bins.size === 0) {
+      counts[0] += 1
+      continue
+    }
+    const index = Math.min(k - 1, Math.max(0, Math.floor((value - bins.start) / bins.size)))
+    counts[index] += 1
+  }
+  return counts
+}
+
+/** One row of the table behind a histogram: a bucket and its counts. */
+interface BucketRow {
+  from: number | null
+  to: number | null
+  converged: number | null
+  approximate: number | null
+  count: number | null
 }
 
 // ---------------------------------------------------------------------------
@@ -278,7 +366,9 @@ function DistributionCard({
   studyComparison = null,
 }: DistributionCardProps) {
   const nSucc = values.length
-  const hint = `${nSucc} of ${totalImages} images carry a value for this metric · at least ${MIN_N_SUCCESSFUL} are needed to draw it`
+  // Canonical R3 fixes this wording verbatim; the panel's hint sits above the
+  // chart, which is one of the two places R3 allows.
+  const label = `${nSucc} successful of ${totalImages} total`
 
   // R-DELTA-C2: per-batch toggle, component-local state, default ON, NOT
   // persisted (the component has no persistence and this change adds none).
@@ -291,6 +381,11 @@ function DistributionCard({
   const simMarkerValue =
     spec.key === 'df' && studyComparison ? studyComparison.sim_df.value : null
 
+  /**
+   * The marker's switch. Only built where a chart or a values table exists: a
+   * checkbox that changes nothing visible is a control that lies about what it
+   * does, and the "Not enough data" branch has nothing for it to mark.
+   */
   const markerToggle =
     spec.key === 'df' && studyComparison ? (
       <div className="flex items-center gap-2">
@@ -309,11 +404,11 @@ function DistributionCard({
           Show Sim Df marker
         </label>
       </div>
-    ) : undefined
+    ) : null
 
   if (nSucc < MIN_N_SUCCESSFUL) {
     return (
-      <Panel title={spec.label} hint={hint} action={markerToggle}>
+      <Panel title={spec.label} hint={label}>
         <div data-testid={`distribution-${spec.key}-not-enough`}>
           <Callout tone="info" title="Not enough data">
             Only {nSucc} image(s) succeeded out of {totalImages}. A distribution needs at
@@ -326,38 +421,92 @@ function DistributionCard({
 
   const nBuckets = sturgesBuckets(nSucc)
 
-  // Build traces. For Df with quality data: split into converged + approximate
-  // overlay. For all other metrics: single trace.
+  // Quality-split for Df only (bisection-specific overlay, canonical R3).
   const hasDfQualitySplit =
     spec.key === 'df' &&
     convergedValues !== undefined &&
     approximateValues !== undefined &&
     (convergedValues.length > 0 || approximateValues.length > 0)
 
+  // The values this panel actually draws — one series, or the two quality
+  // halves — so the binning covers exactly what the reader sees.
+  const convergedDrawn = hasDfQualitySplit ? convergedValues ?? [] : values
+  const approximateDrawn = hasDfQualitySplit ? approximateValues ?? [] : []
+  const bins = equalBins([...convergedDrawn, ...approximateDrawn], nBuckets)
+  const convergedCounts = countsInto(convergedDrawn, bins)
+  const approximateCounts = hasDfQualitySplit ? countsInto(approximateDrawn, bins) : []
+
+  // One row per bucket, one column per series: the table is the chart's own
+  // binning read back, not a second computation of it.
+  const rows: BucketRow[] = bins.edges.slice(0, -1).map((from, i) => ({
+    from,
+    to: bins.edges[i + 1],
+    converged: hasDfQualitySplit ? convergedCounts[i] : null,
+    approximate: hasDfQualitySplit ? approximateCounts[i] : null,
+    count: hasDfQualitySplit ? null : convergedCounts[i],
+  }))
+
+  const columns: Column<BucketRow>[] = [
+    { key: 'from', header: 'From', numeric: true, digits: 3, value: (row) => row.from },
+    { key: 'to', header: 'To', numeric: true, digits: 3, value: (row) => row.to },
+    ...(hasDfQualitySplit
+      ? [
+          {
+            key: 'converged',
+            header: 'Converged',
+            numeric: true,
+            digits: 0,
+            value: (row: BucketRow) => row.converged,
+          },
+          {
+            key: 'approximate',
+            header: 'Approximate',
+            numeric: true,
+            digits: 0,
+            value: (row: BucketRow) => row.approximate,
+          },
+        ]
+      : [
+          {
+            key: 'count',
+            header: 'Count',
+            numeric: true,
+            digits: 0,
+            value: (row: BucketRow) => row.count,
+          },
+        ]),
+  ]
+
+  // Explicit bins: Plotly honours these instead of autobinning, which is what
+  // keeps the chart and the table in step. A zero-variance series has no width
+  // to hand over, so the trace falls back to Plotly's degenerate single bar.
+  const xbins =
+    bins.size > 0 ? { start: bins.start, end: bins.end, size: bins.size } : undefined
+
+  // Build traces. For Df with quality data: split into the main series + the
+  // yellow approximate overlay. For all other metrics: single trace.
   let data: PlotParams['data']
   let useOverlay = false
 
   if (hasDfQualitySplit) {
     const traces: PlotParams['data'] = []
-    if (convergedValues!.length > 0) {
+    if (convergedDrawn.length > 0) {
       traces.push({
-        x: convergedValues!,
+        x: convergedDrawn,
         type: 'histogram',
-        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
-        nbinsx: nBuckets,
-        marker: { color: series(SERIES_CONVERGED) },
+        marker: { color: series(SERIES_MAIN) },
         name: 'Converged',
+        ...(xbins ? { xbins } : {}),
       })
     }
-    if (approximateValues!.length > 0) {
+    if (approximateDrawn.length > 0) {
       traces.push({
-        x: approximateValues!,
+        x: approximateDrawn,
         type: 'histogram',
-        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
-        nbinsx: nBuckets,
-        marker: { color: series(SERIES_APPROXIMATE) },
+        marker: { color: APPROXIMATE_YELLOW },
         name: 'Approximate',
         opacity: 0.7,
+        ...(xbins ? { xbins } : {}),
       })
     }
     data = traces
@@ -367,9 +516,8 @@ function DistributionCard({
       {
         x: values,
         type: 'histogram',
-        // @ts-expect-error nbinsx valid but missing from @types/plotly.js
-        nbinsx: nBuckets,
-        marker: { color: series(SERIES_CONVERGED) },
+        marker: { color: series(SERIES_MAIN) },
+        ...(xbins ? { xbins } : {}),
       },
     ]
   }
@@ -395,8 +543,10 @@ function DistributionCard({
   // R-DELTA-C2 marker: dashed vertical line at x = study_comparison.
   // sim_df.value + a chip label near the top. PURELY ADDITIVE to the
   // layout — bucket computation (R2), degenerate rendering (R5), tooltip
-  // breakdowns (R-DELTA-M), the "N successful of M total" label and the
-  // no-data gates are untouched.
+  // breakdowns (R-DELTA-M), the "N successful of M total" label this panel
+  // carries in its hint, and the global/per-metric no-data gates are untouched
+  // by it. The bucket edges above are the table's and the chart's shared
+  // source; nothing here writes to them.
   const targetDf = studyComparison?.sim_df.target_df ?? null
   if (simMarkerValue != null && simMarkerEnabled) {
     // Fix round F9 (judgment-day): Plotly autoranges on the histogram bars
@@ -460,68 +610,95 @@ function DistributionCard({
   const plotLayout = layout as unknown as NonNullable<PlotParams['layout']>
 
   return (
-    <Panel title={spec.label} hint={hint} action={markerToggle}>
-      <div data-testid={`distribution-${spec.key}`}>
-        <Plot
-          data={data}
-          layout={plotLayout}
-          config={{ responsive: true, displayModeBar: false }}
-          style={{ width: '100%' }}
-          useResizeHandler
-        />
-        {stats.mean != null && (
-          // The separators are real spaces, not gaps alone: this line survives
-          // a copy, and `m e a n 1.80` is not the same sentence as `mean1.80`.
-          <p
-            className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-muted"
-            data-testid={`distribution-${spec.key}-stats`}
-          >
-            <span>mean</span>{' '}
-            <Num value={stats.mean} digits={2} size="sm" />{' '}
-            <span>±</span>{' '}
-            <Num value={stats.std ?? 0} digits={2} size="sm" />{' '}
-            <span>· median</span>{' '}
-            <Num value={stats.median} digits={2} size="sm" />{' '}
-            <span>· min</span>{' '}
-            <Num value={stats.min} digits={2} size="sm" />{' '}
-            <span>· max</span>{' '}
-            <Num value={stats.max} digits={2} size="sm" />
-          </p>
-        )}
-        {/* Mean dual-display (T5.5): show inclusive mean when it differs from primary */}
-        {spec.key === 'df' &&
-          batchStats?.mean_df_inclusive != null &&
-          batchStats?.mean_df != null &&
-          batchStats.mean_df_inclusive !== batchStats.mean_df && (
-            <p
-              className="m-0 mt-1 flex items-baseline gap-1 text-[11px] text-ink-faint"
-              data-testid={`distribution-${spec.key}-inclusive`}
-            >
-              <span>(inclusive:</span>{' '}
-              <Num value={batchStats.mean_df_inclusive} digits={2} size="sm" />
-              <span>)</span>
-            </p>
-          )}
-        {/* Quality count subtitle (T5.6): overall breakdown for Df */}
-        {spec.key === 'df' && batchStats?.n_converged != null && (
-          <p
-            className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-faint"
-            data-testid={`distribution-${spec.key}-quality-counts`}
-          >
-            <Num value={batchStats.n_converged} digits={0} size="sm" />{' '}
-            <span>converged</span>
-            {(batchStats.n_approximate ?? 0) > 0 && (
-              <>
-                {' '}
-                <span>·</span>{' '}
-                <Num value={batchStats.n_approximate} digits={0} size="sm" />{' '}
-                <span>approximate</span>
-              </>
+    // R7: the control lives in the panel header and the table takes the chart's
+    // place, one row per bucket and one column per series, so nothing moves
+    // except the thing being inspected.
+    <ShowValues
+      columns={columns}
+      rows={rows}
+      caption={`The ${rows.length} buckets this chart draws, and how many values fall in each.`}
+      maxHeight={260}
+    >
+      {({ toggle, table }) => (
+        <Panel
+          title={spec.label}
+          hint={label}
+          action={
+            markerToggle ? (
+              <div className="flex flex-wrap items-center gap-3">
+                {markerToggle}
+                {toggle}
+              </div>
+            ) : (
+              toggle
+            )
+          }
+        >
+          <div data-testid={`distribution-${spec.key}`}>
+            {table ?? (
+              <Plot
+                data={data}
+                layout={plotLayout}
+                config={{ responsive: true, displayModeBar: false }}
+                style={{ width: '100%' }}
+                useResizeHandler
+              />
             )}
-          </p>
-        )}
-      </div>
-    </Panel>
+            {stats.mean != null && (
+              // The separators are real spaces, not gaps alone: this line
+              // survives a copy, and `m e a n 1.80` is not the same sentence.
+              <p
+                className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-muted"
+                data-testid={`distribution-${spec.key}-stats`}
+              >
+                <span>mean</span>{' '}
+                <Num value={stats.mean} digits={2} size="sm" />{' '}
+                <span>±</span>{' '}
+                <Num value={stats.std ?? 0} digits={2} size="sm" />{' '}
+                <span>· median</span>{' '}
+                <Num value={stats.median} digits={2} size="sm" />{' '}
+                <span>· min</span>{' '}
+                <Num value={stats.min} digits={2} size="sm" />{' '}
+                <span>· max</span>{' '}
+                <Num value={stats.max} digits={2} size="sm" />
+              </p>
+            )}
+            {/* Mean dual-display (T5.5): inclusive mean when it differs */}
+            {spec.key === 'df' &&
+              batchStats?.mean_df_inclusive != null &&
+              batchStats?.mean_df != null &&
+              batchStats.mean_df_inclusive !== batchStats.mean_df && (
+                <p
+                  className="m-0 mt-1 flex items-baseline gap-1 text-[11px] text-ink-faint"
+                  data-testid={`distribution-${spec.key}-inclusive`}
+                >
+                  <span>(inclusive:</span>{' '}
+                  <Num value={batchStats.mean_df_inclusive} digits={2} size="sm" />
+                  <span>)</span>
+                </p>
+              )}
+            {/* Quality count subtitle (T5.6): overall breakdown for Df */}
+            {spec.key === 'df' && batchStats?.n_converged != null && (
+              <p
+                className="m-0 mt-1 flex flex-wrap items-baseline gap-x-1.5 text-[11px] text-ink-faint"
+                data-testid={`distribution-${spec.key}-quality-counts`}
+              >
+                <Num value={batchStats.n_converged} digits={0} size="sm" />{' '}
+                <span>converged</span>
+                {(batchStats.n_approximate ?? 0) > 0 && (
+                  <>
+                    {' '}
+                    <span>·</span>{' '}
+                    <Num value={batchStats.n_approximate} digits={0} size="sm" />{' '}
+                    <span>approximate</span>
+                  </>
+                )}
+              </p>
+            )}
+          </div>
+        </Panel>
+      )}
+    </ShowValues>
   )
 }
 

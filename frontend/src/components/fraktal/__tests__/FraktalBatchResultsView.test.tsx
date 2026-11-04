@@ -393,10 +393,21 @@ describe('<FraktalBatchResultsView />', () => {
       expect(screen.getByText('±0.050')).toBeTruthy()
     })
 
-    it('renders the headline statistics as kit metric cards', () => {
+    it('renders the headline statistics as cards that carry their own claim', () => {
       renderView()
-      // `MetricCard` is an <article>; a plain card was a <div>.
-      expect(document.querySelectorAll('article').length).toBeGreaterThanOrEqual(2)
+
+      // Not "there are two <article> elements": that is true of any card. A
+      // `MetricCard` holds one labelled reading together with what qualifies it
+      // — the mean's sigma and the sentence saying which estimator produced it.
+      const mean = screen.getByText('Mean Df').closest('article')
+      expect(mean).toBeTruthy()
+      expect(mean?.textContent).toContain('±0.050')
+      expect(mean?.textContent).toContain('mean of the per-image dimensions')
+
+      const median = screen.getByText('Median Df').closest('article')
+      expect(median).toBeTruthy()
+      expect(median?.textContent).toContain('1.750')
+      expect(median).not.toBe(mean)
     })
 
     it('sorts through a named header control that says the direction', () => {
@@ -425,6 +436,88 @@ describe('<FraktalBatchResultsView />', () => {
         .getByText(/Some images failed to analyze/i)
         .closest('[role="note"]')
       expect(notice).toBeTruthy()
+    })
+  })
+
+  // --- R7 (design-system-foundation): the values behind the histogram -------
+  describe('Show values on the Df histogram (R7)', () => {
+    const HISTOGRAM = {
+      bin_edges: [1.6, 1.7, 1.8, 1.9],
+      counts: [1, 5, 2],
+      rule_used: 'sturges' as const,
+    }
+
+    it('offers the control in the histogram panel header', async () => {
+      renderView({ histogram: HISTOGRAM })
+      await flushMicrotasks()
+
+      const toggle = screen.getByRole('button', { name: /show values/i })
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      // In the header of the panel that holds the chart, beside its title.
+      expect(toggle.closest('section')?.querySelector('h2')?.textContent).toBe(
+        'Df Distribution (sturges)',
+      )
+    })
+
+    it('replaces the chart with its bins and counts in the same panel', async () => {
+      renderView({ histogram: HISTOGRAM })
+      await flushMicrotasks()
+      expect(screen.getByTestId('plot')).toBeTruthy()
+
+      const panel = screen.getByRole('button', { name: /show values/i }).closest('section')
+      expect(panel).toBeTruthy()
+      if (!panel) return
+      fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+      // The chart is gone, the panel frame stayed, a table took its place.
+      expect(screen.queryByTestId('plot')).toBeNull()
+      expect(panel.querySelector('table')).toBeTruthy()
+
+      const headers = Array.from(panel.querySelectorAll('thead th')).map((th) => th.textContent)
+      expect(headers).toEqual(['From', 'To', 'Count'])
+      const rows = Array.from(panel.querySelectorAll('tbody tr')).map((row) =>
+        Array.from(row.querySelectorAll('td')).map((td) => td.textContent),
+      )
+      // The bins the backend returned, to the precision the chart plots.
+      expect(rows).toEqual([
+        ['1.600', '1.700', '1'],
+        ['1.700', '1.800', '5'],
+        ['1.800', '1.900', '2'],
+      ])
+      expect(screen.getByRole('button', { name: /show chart/i })).toBeTruthy()
+    })
+
+    it('offers no control when the backend produced no histogram', () => {
+      renderView()
+      expect(screen.queryAllByRole('button', { name: /show values/i })).toHaveLength(0)
+    })
+  })
+
+  // --- Every table has a name ---------------------------------------------
+  describe('table names (issue #176 3B)', () => {
+    it('gives the per-image table an accessible name', () => {
+      renderView()
+      // `DataTable` takes its accessible name from the caption, and this page
+      // renders more than one table: position is not a name.
+      const table = screen.getByRole('table', {
+        name: /every image the batch carried/i,
+      })
+      expect(table).toBeTruthy()
+    })
+  })
+
+  // --- The quality chip's reason is the state's, not the payload's silence --
+  describe('quality chip reason', () => {
+    it('explains an approximate image whose payload carries no error', () => {
+      const result = makeResult()
+      result.images[1].quality = 'approximate'
+      result.images[1].error = null
+      renderView({ images: result.images })
+
+      // The reason exists; it simply does not travel in the payload. Saying it
+      // is "not recorded" is a false statement read aloud by a screen reader.
+      expect(screen.queryByText(/No failure reason recorded/i)).toBeNull()
+      expect(screen.getByText(/the bisection settled between bounds/i)).toBeTruthy()
     })
   })
 })

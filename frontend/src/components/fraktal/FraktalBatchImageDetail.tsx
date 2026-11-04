@@ -37,9 +37,29 @@
  * `QualityBadge` is the chip the kit provides for exactly that union. Mapping a
  * quality onto `SimulationStatus` to get the other chip would be the "job
  * finished" / "number usable" conflation the kit warns about.
+ *
+ * What a review asked for, and what the screen now does:
+ *
+ * 1. The `h1` carries the file name again (`Image 2 — proj_002.png`). It had
+ *    lost it to the description line; the title is what a reader scans for the
+ *    file they came to look at.
+ * 2. The figure caption sits in its own row of the plate instead of a veil over
+ *    the bottom edge of the image, and it no longer repeats the identity the
+ *    header gives: it carries the variant on screen and the scale it is read at.
+ * 3. The readings are `DetailList`, the kit's own label/value list, instead of a
+ *    private copy of it in this file.
+ * 4. The loading state is skeleton blocks that reserve the plate and the
+ *    readings, not `LoadingScreen`: a spinner does not hold the layout, so the
+ *    page jumped when the image arrived.
+ *
+ * One copy change is declared rather than passed over: the sentence added to the
+ * approximate-result callout is English, while the two labels inside it — "Df
+ * aproximado" and "Residual" — and the failure messages in `FAILURE_MESSAGES`
+ * are Spanish. Those strings are the engine's vocabulary, they predate this
+ * slice and its tests pin them verbatim; unifying the panel's language is a copy
+ * change that needs its own decision, not a silent rewrite inside a re-skin.
  */
 import { useCallback, useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import {
@@ -53,9 +73,9 @@ import {
 
 import { fraktalApi, type FraktalBatchImageDetail as ImageDetailData } from '@/lib/api'
 import { Badge } from '@/components/ui/badge'
-import { Button } from '@/components/ui/button'
-import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Callout } from '@/components/kit/Callout'
+import { DetailList } from '@/components/kit/DetailList'
 import { EmptyState } from '@/components/kit/EmptyState'
 import { MetricCard } from '@/components/kit/MetricCard'
 import { Num } from '@/components/kit/Num'
@@ -99,19 +119,18 @@ interface Props {
 const MICROGRAPH_PLATE = '#808080'
 
 /**
- * The pair the caption over the image is drawn with.
+ * The pair the figure caption is drawn with.
  *
- * A mark drawn over a micrograph has the image behind it, not the interface, so
- * neither member is an ink token: `--ink` is near-black on light paper and
- * near-white on dark paper, and a caption that flipped with the theme would
- * vanish over whichever half of the images happened to match it.
+ * Neither member is an ink token. The caption is part of the plate, and the
+ * plate is deliberately theme-invariant, so an ink that flipped with the theme
+ * would be the one thing on that surface that did: `--ink` is near-black on
+ * light paper and near-white on dark paper, and against a fixed 50% grey one of
+ * the two would be unreadable.
  *
- * The scrim is not decoration. It is what gives the ink a background of its
- * own, so the ratio does not depend on what the image holds at that corner.
- * Measured: over pure white (the worst case for a light micrograph) the scrim
- * composites to #343e46, where the ink measures 10.4:1; over pure black it
- * composites to #061018 and 18.2:1. The ink on the bare plate would be 3.75:1,
- * under AA for 11px text, which is exactly the job the scrim does.
+ * The scrim is not decoration: it is what gives the ink a background of its own
+ * instead of leaving the ratio to the plate alone. Measured over the plate it
+ * composites to #1d272f, where the ink measures 14.4:1; on the bare plate the
+ * same ink would measure 3.75:1, under AA for 11px text.
  */
 const OVERLAY_INK = '#f5fafa'
 const OVERLAY_SCRIM = 'rgba(7, 20, 29, 0.82)'
@@ -241,47 +260,71 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const batchUrl = `/projects/${projectId}/fraktal/batch/${batchId}`
 
   // --- Loading state ---
+  // A spinner says that something is happening; it does not say how much room
+  // the answer takes, so the page jumps when the image arrives. These blocks
+  // reserve the plate and the readings. Same shape as the batch summary route,
+  // which settled this in part A of the slice.
   if (loading) {
-    return <LoadingScreen message="Loading image detail..." />
+    return (
+      <div className="mx-auto w-full max-w-5xl">
+        <p className="text-ink-muted">Loading image detail...</p>
+        <div className="mt-4 grid grid-cols-1 gap-4 md:grid-cols-2">
+          <div className="h-[340px] animate-pulse rounded-lg bg-surface-strong" />
+          <div className="grid gap-4">
+            <div className="h-32 animate-pulse rounded-lg bg-surface-strong" />
+            <div className="h-32 animate-pulse rounded-lg bg-surface-strong" />
+          </div>
+        </div>
+      </div>
+    )
   }
 
   // --- Error state (metadata fetch failed or no data) ---
   if (error || !data) {
     return (
-      <EmptyState
-        icon={ImageOff}
-        headingLevel={2}
-        title="Failed to load image detail"
-        description={error ?? 'This image has no readable record.'}
-        action={
-          <Link href={batchUrl}>
-            <Button variant="outline" aria-label="Back to batch results">
-              <ArrowLeft className="h-4 w-4 mr-2" />
+      <div className="mx-auto w-full max-w-5xl">
+        <EmptyState
+          icon={ImageOff}
+          headingLevel={2}
+          title="Failed to load image detail"
+          description={error ?? 'This image has no readable record.'}
+          action={
+            // A link wearing the button's clothes, not a button inside a link:
+            // an <a> around a <button> is invalid nesting and gives one
+            // destination two tab stops. Same shape as the batch summary route.
+            <Link
+              href={batchUrl}
+              className={buttonVariants({ variant: 'outline' })}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
               Back to batch results
-            </Button>
-          </Link>
-        }
-      />
+            </Link>
+          }
+        />
+      </div>
     )
   }
 
   // --- Image fetch error (PNG auth failed, e.g. 401/404) ---
   if (imageError) {
     return (
-      <EmptyState
-        icon={ImageOff}
-        headingLevel={2}
-        title="Failed to load image"
-        description={imageError}
-        action={
-          <Link href={batchUrl}>
-            <Button variant="outline" aria-label="Back to batch results">
-              <ArrowLeft className="h-4 w-4 mr-2" />
+      <div className="mx-auto w-full max-w-5xl">
+        <EmptyState
+          icon={ImageOff}
+          headingLevel={2}
+          title="Failed to load image"
+          description={imageError}
+          action={
+            <Link
+              href={batchUrl}
+              className={buttonVariants({ variant: 'outline' })}
+            >
+              <ArrowLeft className="h-4 w-4 mr-2" aria-hidden="true" />
               Back to batch results
-            </Button>
-          </Link>
-        }
-      />
+            </Link>
+          }
+        />
+      </div>
     )
   }
 
@@ -289,11 +332,13 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
   const variantLabel = currentVariant === 'scientific' ? 'Scientific (binary)' : 'Presentation'
 
   return (
-    <>
+    // 1024px, the measure this page always had and the one the sibling batch
+    // route keeps. The shell frames at 1440; a two-column reading layout does
+    // not want that much line length, and the plate stretched with it.
+    <div className="mx-auto w-full max-w-5xl">
       <Link
         href={batchUrl}
         className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
-        aria-label="Back to batch results"
       >
         <ArrowLeft className="h-4 w-4" aria-hidden="true" />
         Back to batch results
@@ -301,8 +346,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
 
       <PageHeader
         eyebrow="FRAKTAL · BATCH IMAGE"
-        title={`Image ${data.index}`}
-        description={<span className="num">{data.filename}</span>}
+        title={`Image ${data.index} — ${data.filename}`}
         meta={
           <>
             {/*
@@ -336,12 +380,10 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
             <a
               href={pngUrl}
               download={`batch-${batchId}-image-${data.index}.png`}
-              aria-label="Download PNG"
+              className={buttonVariants({ variant: 'outline' })}
             >
-              <Button variant="outline" type="button">
-                <Download className="h-4 w-4 mr-2" />
-                Download PNG
-              </Button>
+              <Download className="h-4 w-4 mr-2" aria-hidden="true" />
+              Download PNG
             </a>
             {/* T6.5: Re-analyze button */}
             <Button
@@ -362,12 +404,10 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
         {data.prev_index !== null ? (
           <Link
             href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.prev_index}`}
-            aria-label="Previous image"
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
           >
-            <Button variant="outline" size="sm">
-              <ChevronLeft className="h-4 w-4 mr-1" />
-              Previous
-            </Button>
+            <ChevronLeft className="h-4 w-4 mr-1" aria-hidden="true" />
+            Previous
           </Link>
         ) : (
           <Button variant="outline" size="sm" disabled aria-label="Previous image">
@@ -381,12 +421,10 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
         {data.next_index !== null ? (
           <Link
             href={`/projects/${projectId}/fraktal/batch/${batchId}/image/${data.next_index}`}
-            aria-label="Next image"
+            className={buttonVariants({ variant: 'outline', size: 'sm' })}
           >
-            <Button variant="outline" size="sm">
-              Next
-              <ChevronRight className="h-4 w-4 ml-1" />
-            </Button>
+            Next
+            <ChevronRight className="h-4 w-4 ml-1" aria-hidden="true" />
           </Link>
         ) : (
           <Button variant="outline" size="sm" disabled aria-label="Next image">
@@ -431,36 +469,48 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
             </div>
           }
         >
-          <div
+          <figure
             data-testid="micrograph-plate"
-            className="relative flex min-h-[240px] items-center justify-center overflow-hidden rounded-md p-3"
+            className="m-0 flex min-h-[240px] flex-col overflow-hidden rounded-md"
             style={{ backgroundColor: MICROGRAPH_PLATE }}
           >
-            {blobUrl ? (
-              <img
-                src={blobUrl}
-                alt={`Batch image ${data.index}: ${data.filename}`}
-                className="max-h-[520px] w-full rounded-md object-contain"
-              />
-            ) : (
-              <div
-                className="h-56 w-full animate-pulse rounded-md"
-                style={{ backgroundColor: PLATE_PLACEHOLDER }}
-              />
-            )}
+            <div className="flex flex-1 items-center justify-center p-3">
+              {blobUrl ? (
+                <img
+                  src={blobUrl}
+                  alt={`Batch image ${data.index}: ${data.filename}`}
+                  className="max-h-[520px] w-full rounded-md object-contain"
+                />
+              ) : (
+                <div
+                  className="h-56 w-full animate-pulse rounded-md"
+                  style={{ backgroundColor: PLATE_PLACEHOLDER }}
+                />
+              )}
+            </div>
 
-            {/* Figure caption, drawn over the image in the fixed pair. */}
-            <div
+            {/*
+              The figure caption sits in its own row of the plate instead of
+              floating over the image: a veil at the bottom edge eats the part of
+              the micrograph a reader is most likely to be looking at, and there
+              was no way to dismiss it. It carries the two facts the plate cannot
+              say by itself — which variant is on screen, and the scale it is read
+              at — and none of the identity the page header already gives.
+
+              One string, not `Num` siblings: this is a figure annotation, and
+              the readings below stay the `Num` ones.
+            */}
+            <figcaption
               data-testid="micrograph-caption"
-              className="pointer-events-none absolute inset-x-3 bottom-3 flex items-baseline justify-between gap-3 rounded-md px-2.5 py-1.5"
+              className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 px-3 py-1.5"
               style={PLATE_CAPTION}
             >
-              <span className="num text-[11px]">{`Image ${data.index}`}</span>
               <span className="text-[10px] font-extrabold uppercase tracking-[0.08em]">
                 {variantLabel}
               </span>
-            </div>
-          </div>
+              <span className="num text-[11px]">{`${data.pixels_per_100nm.toFixed(1)} px/100nm · dpo ${data.dpo_used.toFixed(1)} nm`}</span>
+            </figcaption>
+          </figure>
         </Panel>
 
         {/* Readings, or the state of the analysis that produced them. */}
@@ -468,7 +518,7 @@ export function FraktalBatchImageDetail({ projectId, batchId, index }: Props) {
           <ImageDetailPanel data={data} />
         </div>
       </div>
-    </>
+    </div>
   )
 }
 
@@ -483,22 +533,6 @@ const FAILURE_MESSAGES: Record<string, string> = {
   iteration_limit:
     'No convergió (ruido o calidad de imagen).',
   kf_negative: 'Resultado no físico (kf < 0).',
-}
-
-/**
- * One label/reading pair of a panel.
- *
- * `DetailList` would be the kit's answer, but it is outside this slice's
- * surface; a `<div>` grouping one `<dt>`/`<dd>` inside a `<dl>` is the same
- * shape (HTML5 allows the grouping element) without reaching for it.
- */
-function Readout({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-line py-2 last:border-b-0">
-      <dt className="text-[11px] text-ink-muted">{label}</dt>
-      <dd className="m-0 text-[13px] text-ink">{children}</dd>
-    </div>
-  )
 }
 
 function ImageDetailPanel({ data }: { data: ImageDetailData }) {
@@ -521,14 +555,12 @@ function ImageDetailPanel({ data }: { data: ImageDetailData }) {
       return (
         <>
           <Callout tone="warning" title="Approximate result">
-            <dl className="m-0">
-              <Readout label="Df aproximado">
-                <Num value={data.df_estimate} digits={3} />
-              </Readout>
-              <Readout label="Residual">
-                <Num value={data.bisection_residual} digits={3} />
-              </Readout>
-            </dl>
+            <DetailList
+              items={[
+                { label: 'Df aproximado', value: data.df_estimate, digits: 3 },
+                { label: 'Residual', value: data.bisection_residual, digits: 3 },
+              ]}
+            />
             <p className="mt-2 mb-0">
               The bisection settled between two bounds instead of on a sign change. The
               dimension is usable with that caveat, not as a converged measurement.
@@ -601,22 +633,18 @@ function ConvergedMetricsPanel({ data }: { data: ImageDetailData }) {
       />
 
       <Panel title="Fractal Metrics">
-        <dl className="m-0">
-          <Readout label="kf">
-            <Num value={data.prefactor} digits={3} />
-          </Readout>
-          <Readout label="Particles">
-            <Num value={data.n_particles_counted} digits={0} />
-          </Readout>
-        </dl>
+        <DetailList
+          items={[
+            { label: 'kf', value: data.prefactor, digits: 3 },
+            { label: 'Particles', value: data.n_particles_counted, digits: 0 },
+          ]}
+        />
       </Panel>
 
       <Panel title="Calibration">
-        <dl className="m-0">
-          <Readout label="DPO Used">
-            <Num value={data.dpo_used} digits={1} unit="nm" />
-          </Readout>
-        </dl>
+        <DetailList
+          items={[{ label: 'DPO Used', value: data.dpo_used, digits: 1, unit: 'nm' }]}
+        />
       </Panel>
     </>
   )
@@ -636,23 +664,18 @@ function LegacyErrorPanel({ data }: { data: ImageDetailData }) {
 function DiagnosticInfoCard({ data }: { data: ImageDetailData }) {
   return (
     <Panel title="Diagnostic Info">
-      <dl className="m-0">
-        <Readout label="DPO Used">
-          <Num value={data.dpo_used} digits={1} unit="nm" />
-        </Readout>
-        <Readout label="Azimuth">
-          <Num value={data.azimuth} digits={1} unit="°" />
-        </Readout>
-        <Readout label="Elevation">
-          <Num value={data.elevation} digits={1} unit="°" />
-        </Readout>
-        <Readout label="px/100nm">
-          <Num value={data.pixels_per_100nm} digits={1} />
-        </Readout>
-        <Readout label="Autocalibrate">
-          <span className="num text-[12px]">{data.autocalibrate_source ?? '—'}</span>
-        </Readout>
-      </dl>
+      <DetailList
+        items={[
+          { label: 'DPO Used', value: data.dpo_used, digits: 1, unit: 'nm' },
+          { label: 'Azimuth', value: data.azimuth, digits: 1, unit: '°' },
+          { label: 'Elevation', value: data.elevation, digits: 1, unit: '°' },
+          { label: 'px/100nm', value: data.pixels_per_100nm, digits: 1 },
+          {
+            label: 'Autocalibrate',
+            value: <span className="num text-[12px]">{data.autocalibrate_source ?? '—'}</span>,
+          },
+        ]}
+      />
     </Panel>
   )
 }

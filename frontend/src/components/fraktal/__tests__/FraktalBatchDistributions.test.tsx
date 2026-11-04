@@ -5,7 +5,7 @@
  * `RgEvolutionChart.test.tsx` so the component renders synchronously
  * under jsdom without WebGL.
  */
-import { render, screen } from '@testing-library/react'
+import { fireEvent, render, screen } from '@testing-library/react'
 import React from 'react'
 import { describe, expect, it, vi } from 'vitest'
 
@@ -26,7 +26,12 @@ vi.mock('next/dynamic', () => ({
 
 vi.mock('react-plotly.js', () => ({
   default: (props: Record<string, unknown>) => {
-    const data = (props.data as Array<{ marker?: { color?: string } }>) || []
+    const data =
+      (props.data as Array<{
+        marker?: { color?: string }
+        x?: number[]
+        xbins?: { start: number; end: number; size: number }
+      }>) || []
     const layout =
       (props.layout as {
         barmode?: string
@@ -34,6 +39,10 @@ vi.mock('react-plotly.js', () => ({
       } | undefined) ?? {}
     // Expose trace marker colors so tests can assert overlay traces
     const traceColors = data.map((t) => t.marker?.color ?? '').join(',')
+    // The plot's own inputs, so a test can check the values table against the
+    // data the chart received rather than against a second computation of it.
+    const values = data.map((t) => t.x ?? [])
+    const bins = data[0]?.xbins ?? null
     return (
       <div
         data-testid="plotly"
@@ -44,6 +53,8 @@ vi.mock('react-plotly.js', () => ({
         data-xaxis-title={layout.xaxis?.title?.text ?? ''}
         data-trace-colors={traceColors}
         data-barmode={layout.barmode ?? ''}
+        data-series-values={JSON.stringify(values)}
+        data-xbins={JSON.stringify(bins)}
       />
     )
   },
@@ -79,6 +90,13 @@ function makeImage(
     ...overrides,
   }
 }
+
+/**
+ * The approximate overlay's yellow. Canonical `fraktal-batch-distributions` R3
+ * names it ("yellow sub-bar", "in yellow only"), and the kit's series ramp has
+ * no yellow, so this value is the contract's, not a palette choice.
+ */
+const APPROXIMATE_YELLOW = '#eab308'
 
 function makeBatch(nSucc: number, nFailed: number): FraktalBatchImageResult[] {
   const succ = Array.from({ length: nSucc }, (_, i) => makeImage(i))
@@ -246,10 +264,11 @@ describe('<FraktalBatchDistributions>', () => {
       expect(dfPlot).toBeTruthy()
       // Df should have 2 traces (converged + approximate)
       expect(dfPlot!.getAttribute('data-trace-count')).toBe('2')
-      // Trace colours come from the kit's series ramp, not Tailwind's palette
+      // The main bars take the kit's series ramp; the approximate overlay is
+      // yellow, which canonical R3 fixes by name ("yellow sub-bar").
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
       expect(colors).toContain(series(0))
-      expect(colors).toContain(series(1))
+      expect(colors).toContain(APPROXIMATE_YELLOW)
       // barmode overlay
       expect(dfPlot!.getAttribute('data-barmode')).toBe('overlay')
     })
@@ -269,7 +288,7 @@ describe('<FraktalBatchDistributions>', () => {
       // Only the converged trace
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
       expect(colors).toContain(series(0))
-      expect(colors).not.toContain(series(1))
+      expect(colors).not.toContain(APPROXIMATE_YELLOW)
     })
 
     it('all-approximate batch: Df histogram has 1 trace (approximate only)', () => {
@@ -288,9 +307,9 @@ describe('<FraktalBatchDistributions>', () => {
       )
       expect(dfPlot).toBeTruthy()
       expect(dfPlot!.getAttribute('data-trace-count')).toBe('1')
-      // Only the approximate trace
+      // Only the approximate trace, and it is yellow (canonical R3)
       const colors = dfPlot!.getAttribute('data-trace-colors') ?? ''
-      expect(colors).toContain(series(1))
+      expect(colors).toContain(APPROXIMATE_YELLOW)
       expect(colors).not.toContain(series(0))
     })
 
@@ -588,9 +607,11 @@ describe('<FraktalBatchDistributions>', () => {
       ])
     })
 
-    it('states how many images carry a value in each panel hint', () => {
+    it('labels every panel "N successful of M total" (canonical R3)', () => {
       render(<FraktalBatchDistributions images={makeBatch(8, 2)} />)
-      expect(screen.getAllByText(/8 of 10 images/).length).toBe(4)
+      // `fraktal-batch-distributions` R3 fixes this wording verbatim: the
+      // panel must say "8 successful of 10 total", not a paraphrase.
+      expect(screen.getAllByText('8 successful of 10 total').length).toBe(4)
     })
 
     it('keeps the per-metric empty state inside its own panel', () => {
@@ -607,17 +628,170 @@ describe('<FraktalBatchDistributions>', () => {
       expect(screen.queryAllByTestId('plotly')).toHaveLength(0)
     })
 
-    it('draws the bars from the kit series ramp, never from the Tailwind palette', () => {
+    it('draws the main bars from the kit series ramp, never from the Tailwind palette', () => {
       render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
       const colors = screen
         .getAllByTestId('plotly')
         .map((p) => p.getAttribute('data-trace-colors') ?? '')
         .join(',')
       expect(colors).toContain(series(0))
-      // The palette the pre-migration component reached for.
+      // The palette the pre-migration component reached for. Yellow is the one
+      // value the contract keeps, and only for the approximate overlay, which
+      // this fixture has none of.
       expect(colors).not.toContain('#3b82f6')
-      expect(colors).not.toContain('#eab308')
       expect(colors).not.toContain('#1e40af')
+      expect(colors).not.toContain(APPROXIMATE_YELLOW)
+    })
+  })
+
+  // --- R7 (design-system-foundation): the values behind every histogram -----
+  describe('Show values on every histogram (R7)', () => {
+    /** Bins one trace's values exactly as the chart's own `xbins` prescribe. */
+    function countsFor(
+      values: number[],
+      bins: { start: number; end: number; size: number },
+    ): number[] {
+      const k = Math.max(1, Math.round((bins.end - bins.start) / bins.size))
+      const counts = Array.from({ length: k }, () => 0)
+      for (const v of values) {
+        const index = Math.min(k - 1, Math.floor((v - bins.start) / bins.size))
+        if (index >= 0) counts[index] += 1
+      }
+      return counts
+    }
+
+    /** The numeric cells of one table column, read off the rendered rows. */
+    function columnValues(columnIndex: number): number[] {
+      const rows = Array.from(document.querySelectorAll('tbody tr'))
+      return rows.map((row) => {
+        const cells = row.querySelectorAll('td')
+        return Number((cells[columnIndex].textContent ?? '').replace(/,/g, ''))
+      })
+    }
+
+    it('puts the control in every panel header', () => {
+      render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
+      const toggles = screen.getAllByRole('button', { name: /show values/i })
+      expect(toggles).toHaveLength(4)
+      toggles.forEach((toggle) => {
+        const panel = toggle.closest('section')
+        expect(panel?.querySelector('h2')).toBeTruthy()
+        expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      })
+    })
+
+    it('replaces the chart with the table in the same panel frame', () => {
+      render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
+      expect(screen.getAllByTestId('plotly')).toHaveLength(4)
+
+      fireEvent.click(screen.getAllByRole('button', { name: /show values/i })[0])
+
+      // Three charts left; the Df chart is gone and a table took its place.
+      expect(screen.getAllByTestId('plotly')).toHaveLength(3)
+      const tables = screen.getAllByRole('table')
+      expect(tables).toHaveLength(1)
+      // Same frame: the table sits inside the panel that held the chart.
+      const panel = tables[0].closest('section')
+      expect(panel?.querySelector('h2')?.textContent).toBe('Df (fractal dimension)')
+      // And the control now offers the chart back.
+      const toggle = screen.getByRole('button', { name: /show chart/i })
+      expect(toggle.getAttribute('aria-pressed')).toBe('true')
+    })
+
+    it('tabulates the buckets the chart is actually given', () => {
+      render(<FraktalBatchDistributions images={makeBatch(10, 0)} />)
+      const dfPlot = screen
+        .getAllByTestId('plotly')
+        .find((p) => p.getAttribute('data-xaxis-title') === 'Df')
+      expect(dfPlot).toBeTruthy()
+      const bins = JSON.parse(dfPlot?.getAttribute('data-xbins') ?? 'null')
+      const values = JSON.parse(dfPlot?.getAttribute('data-series-values') ?? '[]')[0]
+      expect(bins).toBeTruthy()
+
+      fireEvent.click(screen.getAllByRole('button', { name: /show values/i })[0])
+
+      // The bucket boundaries are the chart's own, not a second computation.
+      const headers = Array.from(document.querySelectorAll('thead th')).map(
+        (th) => th.textContent,
+      )
+      expect(headers).toEqual(['From', 'To', 'Count'])
+      const from = columnValues(0)
+      const to = columnValues(1)
+      const counts = columnValues(2)
+      expect(from).toHaveLength(countsFor(values, bins).length)
+      expect(from[0]).toBeCloseTo(bins.start, 3)
+      expect(to[to.length - 1]).toBeCloseTo(bins.end, 3)
+      expect(counts).toEqual(countsFor(values, bins))
+      // Every value the chart draws is accounted for exactly once.
+      expect(counts.reduce((a, b) => a + b, 0)).toBe(values.length)
+    })
+
+    it('tabulates both series of the Df overlay', () => {
+      const images: FraktalBatchImageResult[] = [
+        ...Array.from({ length: 5 }, (_, i) => makeImage(i, { quality: 'converged' })),
+        ...Array.from({ length: 3 }, (_, i) =>
+          makeImage(5 + i, {
+            quality: 'approximate',
+            fractal_dimension: 1.95 + i * 0.01,
+          }),
+        ),
+      ]
+      render(<FraktalBatchDistributions images={images} />)
+      const dfPlot = screen
+        .getAllByTestId('plotly')
+        .find((p) => p.getAttribute('data-xaxis-title') === 'Df')
+      expect(dfPlot).toBeTruthy()
+      const bins = JSON.parse(dfPlot?.getAttribute('data-xbins') ?? 'null')
+      const seriesValues = JSON.parse(dfPlot?.getAttribute('data-series-values') ?? '[]')
+
+      fireEvent.click(screen.getAllByRole('button', { name: /show values/i })[0])
+
+      const headers = Array.from(document.querySelectorAll('thead th')).map(
+        (th) => th.textContent,
+      )
+      expect(headers).toEqual(['From', 'To', 'Converged', 'Approximate'])
+      expect(columnValues(2)).toEqual(countsFor(seriesValues[0], bins))
+      expect(columnValues(3)).toEqual(countsFor(seriesValues[1], bins))
+    })
+
+    it('does not offer a table where there is no chart', () => {
+      render(<FraktalBatchDistributions images={makeBatch(4, 1)} />)
+      // Every metric is below the minimum: four panels, no charts, no toggles.
+      expect(screen.queryAllByTestId('plotly')).toHaveLength(0)
+      expect(screen.queryAllByRole('button', { name: /show values/i })).toHaveLength(0)
+    })
+  })
+
+  // --- The Sim-Df marker never appears over a plotless panel ----------------
+  describe('Sim Df marker without a chart', () => {
+    it('renders no marker control in the "Not enough data" state', () => {
+      render(
+        <FraktalBatchDistributions
+          images={makeBatch(4, 1)}
+          studyComparison={
+            {
+              sim_id: 'sim-1',
+              images_with_df: 4,
+              images_without_df: 0,
+              image_df: {
+                n: 4,
+                mean: 1.8,
+                median: 1.8,
+                min: 1.78,
+                max: 1.82,
+                n_converged: 4,
+                n_approximate: 0,
+              },
+              sim_df: { value: 2.42, target_df: 2.3 },
+              mean_delta: -0.62,
+              deltas: [],
+              show_sorensen_note: true,
+            }
+          }
+        />,
+      )
+      // A checkbox that changes nothing is a control that lies.
+      expect(screen.queryByTestId('sim-marker-toggle')).toBeNull()
     })
   })
 })

@@ -40,6 +40,36 @@
  * header cell is not focusable and carries no role, so the only way to sort
  * was with a mouse. The `button` says the column and the direction it will
  * apply, and the row order it produces is the same order as before.
+ *
+ * What a review asked for, and what the screen now does:
+ *
+ * 1. The Df histogram is wrapped in `ShowValues` (R7 of
+ *    `design-system-foundation`): the control sits in the panel header and the
+ *    table of bins takes the chart's place. The rows are the backend's own
+ *    `bin_edges` and `counts`, so the table cannot drift from the bars.
+ * 2. The quality chip's reason is the state's meaning (`QUALITY_REASONS`), not
+ *    `img.error`: an `approximate` image has no error, and the chip used to
+ *    announce "no failure reason recorded" over a state whose reason is known.
+ *    The engine's own message, where there is one, stays in the row's hover
+ *    title.
+ * 3. The summary's readings are `DetailList`, the kit's own label/value list,
+ *    instead of a private copy of it in this file.
+ * 4. The per-image table has a caption, and therefore an accessible name: the
+ *    page renders more than one table, and `DataTable` takes the name from the
+ *    caption alone, so the three were distinguishable only by position.
+ *
+ * Two copy changes are declared rather than passed over, because both are
+ * visible and neither is a rename of the same words:
+ *
+ * - The delete confirmation now reads `Delete this batch?` / "This action
+ *   cannot be undone: the images and their analyses are removed with the
+ *   batch." The old body was "Are you sure you want to delete this batch? This
+ *   action cannot be undone." The destructive button and its `aria-label` are
+ *   unchanged.
+ * - The histogram is announced with the backend's bucketing rule and the bins
+ *   it returned; the notice shown instead of it keeps its original sentence
+ *   ("Histogram not shown (fewer than 5 successful images)") as the callout's
+ *   title so no reader loses the phrase they were used to.
  */
 import { useCallback, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
@@ -59,13 +89,21 @@ import { Button } from '@/components/ui/button'
 import { BatchStudyComparisonCard } from './BatchStudyComparisonCard'
 import { Callout } from '@/components/kit/Callout'
 import { DataTable, type Column } from '@/components/kit/DataTable'
+import { DetailList, type DetailItem } from '@/components/kit/DetailList'
 import { MetricCard } from '@/components/kit/MetricCard'
 import { Num } from '@/components/kit/Num'
 import { Panel } from '@/components/kit/Panel'
 import { QualityBadge } from '@/components/kit/QualityBadge'
+import { ShowValues } from '@/components/kit/ShowValues'
 import { layout as chartLayout, series } from '@/lib/chart-theme'
 import { useThemeStore } from '@/stores/useThemeStore'
-import { fraktalApi, type FraktalBatchImageResult, type FraktalBatchResult } from '@/lib/api'
+import {
+  fraktalApi,
+  type AnalysisQuality,
+  type FraktalBatchHistogram,
+  type FraktalBatchImageResult,
+  type FraktalBatchResult,
+} from '@/lib/api'
 
 const Plot = dynamic(() => import('react-plotly.js'), { ssr: false })
 
@@ -103,14 +141,21 @@ function Ratio({ successful, total }: { successful: number; total: number }) {
   return <span className="num text-[13px] text-ink">{`${successful} / ${total}`}</span>
 }
 
-/** One label/reading pair of a panel. `DetailList` is outside this slice. */
-function Readout({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-4 border-b border-line py-2 last:border-b-0">
-      <dt className="text-[11px] text-ink-muted">{label}</dt>
-      <dd className="m-0 text-[13px] text-ink">{children}</dd>
-    </div>
-  )
+/**
+ * What each quality state means, for the chip's spoken reason.
+ *
+ * The reason cannot be `img.error`: an `approximate` image has no error, and a
+ * chip that announces "no failure reason recorded" over a state whose reason is
+ * known — it is the *state* — tells a screen-reader user something false. The
+ * engine's own message, when there is one, stays in the row's hover title.
+ */
+const QUALITY_REASONS: Record<AnalysisQuality, string> = {
+  converged: 'The fit converged on a sign change.',
+  approximate:
+    'The bisection settled between bounds instead of finding a sign change, so the dimension is less certain than a converged one.',
+  excluded:
+    'Outside the model domain, or too noisy to threshold, so it is excluded from the batch statistics.',
+  failed: 'The engine produced no usable dimension for this image.',
 }
 
 export function FraktalBatchResultsView({
@@ -286,10 +331,7 @@ export function FraktalBatchResultsView({
             img.quality === 'converged' ? (
               <QualityBadge quality="converged" />
             ) : (
-              <QualityBadge
-                quality={img.quality}
-                reason={img.error ?? 'No failure reason recorded for this image.'}
-              />
+              <QualityBadge quality={img.quality} reason={QUALITY_REASONS[img.quality]} />
             )
           ) : (
             <span>—</span>
@@ -421,26 +463,25 @@ export function FraktalBatchResultsView({
           />
         </div>
 
-        <dl className="m-0 mt-4">
-          <Readout label="Images">
-            <Ratio successful={result.stats.n_successful} total={result.stats.n_images} />
-          </Readout>
-          <Readout label="Std Df">
-            <Num value={result.stats.std_df} digits={3} />
-          </Readout>
-          <Readout label="Q1 Df">
-            <Num value={result.stats.q1_df} digits={3} />
-          </Readout>
-          <Readout label="Q3 Df">
-            <Num value={result.stats.q3_df} digits={3} />
-          </Readout>
-          <Readout label="Min Df">
-            <Num value={result.stats.min_df} digits={3} />
-          </Readout>
-          <Readout label="Max Df">
-            <Num value={result.stats.max_df} digits={3} />
-          </Readout>
-        </dl>
+        <DetailList
+          className="mt-4"
+          items={[
+            {
+              label: 'Images',
+              value: (
+                <Ratio
+                  successful={result.stats.n_successful}
+                  total={result.stats.n_images}
+                />
+              ),
+            },
+            { label: 'Std Df', value: result.stats.std_df, digits: 3 },
+            { label: 'Q1 Df', value: result.stats.q1_df, digits: 3 },
+            { label: 'Q3 Df', value: result.stats.q3_df, digits: 3 },
+            { label: 'Min Df', value: result.stats.min_df, digits: 3 },
+            { label: 'Max Df', value: result.stats.max_df, digits: 3 },
+          ] satisfies DetailItem[]}
+        />
 
         <p className="m-0 mt-4 border-t border-line pt-3 text-[11px] text-ink-muted">
           <span className="font-bold text-ink">Calibration:</span>{' '}
@@ -461,15 +502,10 @@ export function FraktalBatchResultsView({
         </p>
       </Panel>
 
-      {/* Histogram — only shown when backend produced one (≥5 successful, R7) */}
-      {result.histogram && (
-        <Panel
-          title={`Df Distribution (${result.histogram.rule_used})`}
-          hint="How the batch's dimensions are spread. The bucketing rule is the backend's; this view plots the bins it returns."
-        >
-          <Histogram result={result} />
-        </Panel>
-      )}
+      {/* Histogram — only shown when backend produced one (≥5 successful, R7).
+          The panel is built by `HistogramPanel` so the values toggle can sit in
+          its header: `ShowValues` hands back the control and the table. */}
+      {result.histogram && <HistogramPanel histogram={result.histogram} />}
 
       {!result.histogram && result.stats.n_successful < 5 && (
         <Callout tone="info" title="Histogram not shown (fewer than 5 successful images)">
@@ -502,6 +538,9 @@ export function FraktalBatchResultsView({
           columns={columns}
           rows={sortedImages}
           rowKey={(row) => String(row.index)}
+          // `DataTable` takes its accessible name from the caption, and this
+          // page shows more than one table: a position is not a name.
+          caption="Every image the batch carried: index, file, angles, dimension, quality, prefactor, radius of gyration, fit quality and particle count."
           emptyMessage="The batch returned no images."
         />
         {hasAnyError && (
@@ -514,18 +553,62 @@ export function FraktalBatchResultsView({
   )
 }
 
+/** One row of the table behind the histogram: a bin the backend returned. */
+interface HistogramBinRow {
+  from: number | null
+  to: number | null
+  count: number | null
+}
+
+/** The columns of that table: the edges, and the count in the bin. */
+const HISTOGRAM_COLUMNS: Column<HistogramBinRow>[] = [
+  { key: 'from', header: 'From', numeric: true, digits: 3, value: (row) => row.from },
+  { key: 'to', header: 'To', numeric: true, digits: 3, value: (row) => row.to },
+  { key: 'count', header: 'Count', numeric: true, digits: 0, value: (row) => row.count },
+]
+
 /**
- * The Df histogram.
+ * The Df histogram, its values table, and the panel that frames both.
  *
  * The bars take their colour from the kit's series ramp rather than Tailwind's
  * palette, and the layout comes from `chart-theme`, so the grid, the ink and
  * the hover label follow the active theme instead of being painted once for
  * light paper and left there.
+ *
+ * R7 of `design-system-foundation` binds here the moment the panel adopted the
+ * kit: the table carries the bins the backend returned — the same `bin_edges`
+ * and `counts` the bars are drawn from — so the reader can have the numbers
+ * without re-deriving them from the picture.
  */
-function Histogram({ result }: { result: FraktalBatchResult }) {
-  const histogram = result.histogram
-  if (!histogram) return null
+function HistogramPanel({ histogram }: { histogram: FraktalBatchHistogram }) {
+  const rows: HistogramBinRow[] = histogram.bin_edges.slice(0, -1).map((from, i) => ({
+    from,
+    to: histogram.bin_edges[i + 1],
+    count: histogram.counts[i],
+  }))
 
+  return (
+    <ShowValues
+      columns={HISTOGRAM_COLUMNS}
+      rows={rows}
+      caption={`The ${rows.length} bins behind the histogram, with the count in each.`}
+      maxHeight={300}
+    >
+      {({ toggle, table }) => (
+        <Panel
+          title={`Df Distribution (${histogram.rule_used})`}
+          hint="How the batch's dimensions are spread. The bucketing rule is the backend's; this view plots the bins it returns."
+          action={toggle}
+        >
+          {table ?? <HistogramChart histogram={histogram} />}
+        </Panel>
+      )}
+    </ShowValues>
+  )
+}
+
+/** The bars. Kept apart from the panel so the table can take its place. */
+function HistogramChart({ histogram }: { histogram: FraktalBatchHistogram }) {
   const base = chartLayout()
   const xaxis = base.xaxis as Record<string, unknown>
   const yaxis = base.yaxis as Record<string, unknown>
