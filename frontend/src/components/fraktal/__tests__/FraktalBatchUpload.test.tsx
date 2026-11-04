@@ -83,9 +83,19 @@ describe('<FraktalBatchUpload />', () => {
     fireEvent.change(input, { target: { files: [file] } })
 
     await waitFor(() => {
-      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+      // The exact string, colon included: this notice's copy is frozen by the
+      // contract, and a tolerant regex let the punctuation drift once already.
+      expect(screen.getByText('Auto-calibrated from metadata:')).toBeTruthy()
     })
-    expect(screen.getByText(/500\.0 px\/100nm/)).toBeTruthy()
+    // The calibration figure is the one reading on this screen the researcher
+    // has to check against what they expected, so it goes through `Num`: the
+    // value keeps the monospace tabular styling in its own element and the unit
+    // is a sibling that does not pad it.
+    const reading = screen.getByText('500.0')
+    expect(reading.className.split(' ')).toContain('num')
+    expect(reading.textContent).toBe('500.0')
+    expect(reading.parentElement?.textContent).toBe('500.0px/100nm')
+    expect(screen.getByText(/\(grid mode\)/)).toBeTruthy()
   })
 
   it('shows the manual scale input when the ZIP has no metadata.json', async () => {
@@ -434,6 +444,155 @@ describe('<FraktalBatchUpload />', () => {
 
       // No sim-origin banner
       expect(screen.queryByText(/Using known dpo/i)).toBeNull()
+    })
+  })
+})
+
+// ---- Issue #176, slice 3A: the component on the design-system kit ----
+//
+// The migration swaps the card and the two alerts for `Panel` and `Callout`
+// and sends the progress counts through `Num`. What it must not touch is the
+// validation: the same two messages, still announced as an alert, still before
+// any request leaves the browser.
+
+/** A ZIP whose metadata.json the client can pre-parse, so submit is enabled. */
+async function metadataZip(): Promise<File> {
+  const zip = new JSZip()
+  zip.file('proj_000.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+  zip.file(
+    'metadata.json',
+    JSON.stringify({ mode: 'grid', parameters: { pixels_per_100nm: 500.0 } }),
+  )
+  const blob = await zip.generateAsync({ type: 'blob' })
+  return new File([blob], 'test.zip', { type: 'application/zip' })
+}
+
+const emptyResult = {
+  images: [],
+  stats: {
+    n_images: 0,
+    n_successful: 0,
+    mean_df: null,
+    std_df: null,
+    median_df: null,
+    q1_df: null,
+    q3_df: null,
+    min_df: null,
+    max_df: null,
+  },
+  histogram: null,
+  comparison: null,
+  calibration: {
+    source: 'metadata',
+    pixels_per_100nm: 500,
+    dpo_used: 25,
+    autocalibrate_image: null,
+  },
+}
+
+describe('<FraktalBatchUpload /> — design-system kit presentation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+  })
+
+  it('keeps the card title as the panel heading', () => {
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
+
+    expect(
+      screen.getByRole('heading', { name: /batch fraktal analysis/i }),
+    ).toBeTruthy()
+  })
+
+  it('reports the dpo validation error as an alert with the same message', async () => {
+    const file = await metadataZip()
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
+
+    fireEvent.change(screen.getByLabelText(/ZIP file/i), {
+      target: { files: [file] },
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+    })
+
+    fireEvent.change(screen.getByLabelText(/dpo \(nm\)/i), {
+      target: { value: '-3' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Analyze batch/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('dpo_hint must be positive')
+    // Rejected before the request: the guard still runs client-side.
+    expect(mockAnalyzeBatch).not.toHaveBeenCalled()
+  })
+
+  it('reports the manual scale validation error as an alert with the same message', async () => {
+    const zip = new JSZip()
+    zip.file('img.png', new Uint8Array([0x89, 0x50, 0x4e, 0x47]))
+    const blob = await zip.generateAsync({ type: 'blob' })
+    const file = new File([blob], 'nometadata.zip', { type: 'application/zip' })
+
+    render(<FraktalBatchUpload onSuccess={vi.fn()} />, { wrapper })
+
+    fireEvent.change(screen.getByLabelText(/ZIP file/i), {
+      target: { files: [file] },
+    })
+    const scale = await screen.findByLabelText(/Pixels per 100 nm \(manual\)/i)
+    fireEvent.change(scale, { target: { value: '-1' } })
+    fireEvent.click(screen.getByRole('button', { name: /Analyze batch/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Invalid pixels_per_100nm value')
+    expect(mockAnalyzeBatch).not.toHaveBeenCalled()
+  })
+
+  it('reports upload progress with the stage and both image counts', async () => {
+    const file = await metadataZip()
+    let finish: ((result: unknown) => void) | undefined
+    mockAnalyzeBatch.mockImplementation(
+      (_request: unknown, options: { onProgress?: (p: unknown) => void }) => {
+        options.onProgress?.({
+          progress: 0.25,
+          current: 3,
+          total: 12,
+          stage: 'analyzing',
+        })
+        return new Promise((resolve) => {
+          finish = resolve
+        })
+      },
+    )
+
+    // `onSuccess` is the witness that the upload actually resolved, not just
+    // that the request started: `mockAnalyzeBatch` has already been called by
+    // the time the progress line paints, so counting its calls proves nothing.
+    const onSuccess = vi.fn()
+    render(<FraktalBatchUpload onSuccess={onSuccess} />, { wrapper })
+
+    fireEvent.change(screen.getByLabelText(/ZIP file/i), {
+      target: { files: [file] },
+    })
+    await waitFor(() => {
+      expect(screen.getByText(/Auto-calibrated from metadata/i)).toBeTruthy()
+    })
+    fireEvent.click(screen.getByRole('button', { name: /Analyze batch/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/Stage: analyzing/)).toBeTruthy()
+    })
+    // The counts are readings, so each one is its own element, not half of a
+    // "3 / 12" string.
+    expect(screen.getByText('3')).toBeTruthy()
+    expect(screen.getByText('12')).toBeTruthy()
+    // The upload has not finished: the counts above are the in-flight snapshot,
+    // and `onSuccess` is the witness that waits for the resolution below.
+    expect(onSuccess).not.toHaveBeenCalled()
+
+    finish?.(emptyResult)
+    await waitFor(() => {
+      expect(onSuccess).toHaveBeenCalledWith(emptyResult)
     })
   })
 })
