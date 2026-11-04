@@ -879,4 +879,210 @@ describe('<FraktalBatchImageDetail />', () => {
       ).toBeTruthy()
     })
   })
+
+  // --- Issue #176 slice 3B: a micrograph is read on a neutral plate ---------
+  //
+  // "A dark background behind a micrograph is not neutral." The dark
+  // visualisation stage is calibrated for abstract geometry; a real image is
+  // read against a plate that does not change with the theme, and the marks
+  // drawn over it are chosen against the image rather than the interface.
+  describe('micrograph plate (issue #176 3B)', () => {
+    /** The plate's declared background, as three sRGB channels. */
+    function plateChannels(): number[] {
+      const plate = screen.getByTestId('micrograph-plate')
+      const declared = plate.style.backgroundColor
+      const hex = declared.match(/^#([0-9a-f]{6})$/i)
+      if (hex) {
+        const n = parseInt(hex[1], 16)
+        return [(n >> 16) & 255, (n >> 8) & 255, n & 255]
+      }
+      const rgb = declared.match(/rgba?\((\d+),\s*(\d+),\s*(\d+)/)
+      if (!rgb) {
+        throw new Error(`the plate declares no plain background: "${declared}"`)
+      }
+      return [Number(rgb[1]), Number(rgb[2]), Number(rgb[3])]
+    }
+
+    /** WCAG relative luminance of three sRGB channels. */
+    function luminance([r, g, b]: number[]): number {
+      const linear = [r, g, b].map((channel) => {
+        const c = channel / 255
+        return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4)
+      })
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    }
+
+    afterEach(() => {
+      delete document.documentElement.dataset.theme
+    })
+
+    it('declares the plate colour inline, so no theme token can repaint it', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const plate = screen.getByTestId('micrograph-plate')
+      // An inline colour cannot follow `[data-theme]`; a `bg-surface` utility
+      // would, which is exactly what the plate exists to avoid.
+      expect(plate.getAttribute('style')).toMatch(/background/)
+      expect(plate.className).not.toMatch(/\bbg-(surface|surface-strong|surface-soft|canvas|panel-)/)
+    })
+
+    it('keeps the same plate in both themes', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      const { rerender } = renderComponent()
+      await screen.findByRole('img')
+      const light = screen.getByTestId('micrograph-plate').style.backgroundColor
+      // The plate must *have* a colour of its own: a themed utility class would
+      // leave the inline background empty in both themes, and an equality check
+      // alone would compare `''` with `''` and stay green.
+      expect(light).toBeTruthy()
+
+      document.documentElement.dataset.theme = 'dark'
+      rerender(
+        <FraktalBatchImageDetail
+          projectId={PROJECT_ID}
+          batchId={BATCH_ID}
+          index={2}
+        />
+      )
+      const dark = screen.getByTestId('micrograph-plate').style.backgroundColor
+      expect(dark).toBeTruthy()
+      expect(dark).toBe(light)
+    })
+
+    it('keeps the plate neutral and mid-toned', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const channels = plateChannels()
+      // Neutral: a tinted plate would colour the greyscale image it frames.
+      expect(Math.max(...channels) - Math.min(...channels)).toBeLessThanOrEqual(2)
+      // Mid-tone: both extremes of a binary micrograph stay visible against it,
+      // which a white plate cannot promise for the white pixels.
+      const l = luminance(channels)
+      expect(l).toBeGreaterThan(0.15)
+      expect(l).toBeLessThan(0.35)
+    })
+
+    it('does not put the micrograph on the dark visualisation stage', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      expect(document.querySelector('.bg-visual')).toBeNull()
+      expect(screen.getByTestId('micrograph-plate').className).not.toContain('bg-visual')
+    })
+
+    it('draws the caption over the image in a fixed pair, not the theme ink', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const caption = screen.getByTestId('micrograph-caption')
+      // Both members of the pair are declared inline for the same reason as
+      // the plate: the caption sits on the image, not on the interface.
+      expect(caption.getAttribute('style')).toMatch(/color/)
+      expect(caption.getAttribute('style')).toMatch(/background/)
+      expect(caption.className).not.toMatch(/\btext-ink(-muted|-faint)?\b/)
+    })
+
+    it('names the micrograph in the panel the image sits on', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const headings = screen.getAllByRole('heading', { level: 2 })
+      expect(headings.map((h) => h.textContent)).toContain('Micrograph')
+    })
+
+    it('keeps the figure caption below the image instead of covering it', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const caption = screen.getByTestId('micrograph-caption')
+      // An absolutely positioned veil eats the bottom edge of the image, and a
+      // micrograph is looked at: the caption sits in its own row of the plate,
+      // which reserves the height it needs.
+      expect(caption.className).not.toMatch(/\babsolute\b|\binset-/)
+
+      // And it does not repeat what the page header already says.
+      expect(caption.textContent).not.toContain('proj_002.png')
+      expect(caption.textContent).not.toMatch(/Image 2\b/)
+      // What it does carry is the scale the plate is read at.
+      expect(caption.textContent).toContain('500.0')
+      expect(caption.textContent).toContain('px/100nm')
+    })
+  })
+
+  // --- No interactive element inside another one ----------------------------
+  describe('link and button nesting (issue #176 3B)', () => {
+    it('never wraps a button in a link', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      // An <a> around a <button> is invalid nesting and gives one destination
+      // two tab stops. Every link paints its own affordance instead.
+      const links = Array.from(document.querySelectorAll('a'))
+      expect(links.length).toBeGreaterThan(0)
+      links.forEach((link) => {
+        expect(link.querySelector('button')).toBeNull()
+      })
+    })
+
+    it('never wraps a button in a link in the error state either', async () => {
+      mockGetBatchImage.mockRejectedValue(new Error('Not found'))
+      renderComponent()
+      await screen.findByText(/failed to load/i)
+
+      const links = Array.from(document.querySelectorAll('a'))
+      expect(links.length).toBeGreaterThan(0)
+      links.forEach((link) => {
+        expect(link.querySelector('button')).toBeNull()
+      })
+    })
+  })
+
+  // --- The column keeps the measure it always had ---------------------------
+  describe('column measure (issue #176 3B)', () => {
+    it('caps the two-column grid at the 1024px measure, not the shell 1440', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const heading = screen.getByRole('heading', { level: 1 })
+      // The sibling batch route keeps this measure; the drill-down lost it when
+      // the page stopped drawing its own container.
+      expect(heading.closest('.max-w-5xl')).toBeTruthy()
+    })
+  })
+
+  // --- The drill-down names the image the way it always did -----------------
+  describe('page header (issue #176 3B)', () => {
+    it('keeps the file name in the h1', async () => {
+      mockGetBatchImage.mockResolvedValue(makeImageDetail())
+      renderComponent()
+      await screen.findByRole('img')
+
+      const heading = screen.getByRole('heading', { level: 1 })
+      expect(heading.textContent).toContain('Image 2')
+      expect(heading.textContent).toContain('proj_002.png')
+    })
+  })
+
+  // --- Loading reserves the layout the image will occupy --------------------
+  describe('loading state (issue #176 3B)', () => {
+    it('reserves the plate with skeleton blocks instead of a bare spinner', () => {
+      mockGetBatchImage.mockReturnValue(new Promise(() => {}))
+      renderComponent()
+
+      expect(screen.getByText(/loading/i)).toBeTruthy()
+      // A spinner states that something is happening; it does not say how much
+      // room the answer takes, so the page jumps when it arrives.
+      expect(document.querySelectorAll('.animate-pulse').length).toBeGreaterThanOrEqual(2)
+    })
+  })
 })

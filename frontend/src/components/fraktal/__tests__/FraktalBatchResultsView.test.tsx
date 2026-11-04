@@ -164,7 +164,10 @@ describe('<FraktalBatchResultsView />', () => {
   it('includes the calibration summary line with source and px/100nm', () => {
     renderView()
     expect(screen.getByText(/metadata/)).toBeTruthy()
-    expect(screen.getByText(/500\.0 px\/100nm/)).toBeTruthy()
+    // The scale is a reading: `Num` prints the value and its unit as
+    // siblings, never as one string.
+    expect(screen.getByText('500.0')).toBeTruthy()
+    expect(screen.getByText('px/100nm')).toBeTruthy()
   })
 
   it('hides the histogram when n_successful < 5 and shows the N<5 notice', () => {
@@ -188,21 +191,19 @@ describe('<FraktalBatchResultsView />', () => {
     expect(screen.getByText(/Df Distribution \(sturges\)/i)).toBeTruthy()
   })
 
-  it('sorts the per-image table by Df ascending then descending when the Df header is clicked', () => {
+  it('sorts the per-image table by Df ascending then descending when the Df header control is clicked', () => {
     renderView()
-    const headers = screen.getAllByRole('columnheader')
-    const dfHeader = headers.find(
-      (h) => (h.textContent ?? '').trim().startsWith('Df')
-    )
-    expect(dfHeader).toBeTruthy()
-    if (!dfHeader) return
 
-    fireEvent.click(dfHeader)
+    // A header cell is not focusable and carries no role, so the sort lives
+    // on a control inside it (issue #176 slice 3B).
+    const dfSort = screen.getByRole('button', { name: /sort by df/i })
+
+    fireEvent.click(dfSort)
     const rowsAsc = document.querySelectorAll('tbody tr')
     expect(rowsAsc[0].textContent).toContain('1.700')
     expect(rowsAsc[rowsAsc.length - 1].textContent).toContain('1.800')
 
-    fireEvent.click(dfHeader)
+    fireEvent.click(dfSort)
     const rowsDesc = document.querySelectorAll('tbody tr')
     expect(rowsDesc[0].textContent).toContain('1.800')
     expect(rowsDesc[rowsDesc.length - 1].textContent).toContain('1.700')
@@ -325,29 +326,24 @@ describe('<FraktalBatchResultsView />', () => {
       renderView({ images: result.images })
       expect(screen.getByText('Converged')).toBeTruthy()
       expect(screen.getByText('Approximate')).toBeTruthy()
-      expect(screen.getByText('Failed')).toBeTruthy()
+      // The kit's chip says "Unusable" for `failed`: in a FRAKTAL row a status
+      // chip may also say "Failed", and the two must not read as one thing.
+      expect(screen.getByText('Unusable')).toBeTruthy()
     })
 
-    it('sorts by quality column when the Quality header is clicked', () => {
+    it('sorts by quality column when the Quality header control is clicked', () => {
       const result = makeResult()
       result.images[0].quality = 'failed'
       result.images[1].quality = 'approximate'
       result.images[2].quality = 'converged'
       renderView({ images: result.images })
 
-      const headers = screen.getAllByRole('columnheader')
-      const qualityHeader = headers.find(
-        (h) => (h.textContent ?? '').trim().startsWith('Quality')
-      )
-      expect(qualityHeader).toBeTruthy()
-      if (!qualityHeader) return
-
-      fireEvent.click(qualityHeader)
+      fireEvent.click(screen.getByRole('button', { name: /sort by quality/i }))
       const rows = document.querySelectorAll('tbody tr')
       // ascending alphabetical: approximate → converged → failed
       expect(rows[0].textContent).toContain('Approximate')
       expect(rows[1].textContent).toContain('Converged')
-      expect(rows[2].textContent).toContain('Failed')
+      expect(rows[2].textContent).toContain('Unusable')
     })
   })
 
@@ -385,6 +381,143 @@ describe('<FraktalBatchResultsView />', () => {
       // (e.g., R² is null in the fixture). At least one is the Rg cell.
       const dashes = screen.getAllByText('—')
       expect(dashes.length).toBeGreaterThan(0)
+    })
+  })
+
+  // --- Issue #176 slice 3B: the summary on the kit --------------------------
+  describe('batch summary on the kit (issue #176 3B)', () => {
+    it('states the mean Df together with the batch spread it was measured with', () => {
+      renderView()
+      // A fractal dimension without its dispersion is a number without a
+      // claim: the flat "Std Df" cell became the mean's own sigma.
+      expect(screen.getByText('±0.050')).toBeTruthy()
+    })
+
+    it('renders the headline statistics as cards that carry their own claim', () => {
+      renderView()
+
+      // Not "there are two <article> elements": that is true of any card. A
+      // `MetricCard` holds one labelled reading together with what qualifies it
+      // — the mean's sigma and the sentence saying which estimator produced it.
+      const mean = screen.getByText('Mean Df').closest('article')
+      expect(mean).toBeTruthy()
+      expect(mean?.textContent).toContain('±0.050')
+      expect(mean?.textContent).toContain('mean of the per-image dimensions')
+
+      const median = screen.getByText('Median Df').closest('article')
+      expect(median).toBeTruthy()
+      expect(median?.textContent).toContain('1.750')
+      expect(median).not.toBe(mean)
+    })
+
+    it('sorts through a named header control that says the direction', () => {
+      renderView()
+      const control = screen.getByRole('button', { name: /sort by df/i })
+      expect(control.getAttribute('aria-label')).toMatch(/ascending/i)
+
+      fireEvent.click(control)
+      const rowsAsc = document.querySelectorAll('tbody tr')
+      expect(rowsAsc[0].textContent).toContain('1.700')
+      expect(
+        screen.getByRole('button', { name: /sort by df/i }).getAttribute('aria-label')
+      ).toMatch(/descending/i)
+
+      fireEvent.click(screen.getByRole('button', { name: /sort by df/i }))
+      const rowsDesc = document.querySelectorAll('tbody tr')
+      expect(rowsDesc[0].textContent).toContain('1.800')
+    })
+
+    it('reports the failed-image notice as a callout, not a bare alert', () => {
+      const result = makeResult()
+      result.images[0].error = 'Bisection failed'
+      renderView({ images: result.images })
+
+      const notice = screen
+        .getByText(/Some images failed to analyze/i)
+        .closest('[role="note"]')
+      expect(notice).toBeTruthy()
+    })
+  })
+
+  // --- R7 (design-system-foundation): the values behind the histogram -------
+  describe('Show values on the Df histogram (R7)', () => {
+    const HISTOGRAM = {
+      bin_edges: [1.6, 1.7, 1.8, 1.9],
+      counts: [1, 5, 2],
+      rule_used: 'sturges' as const,
+    }
+
+    it('offers the control in the histogram panel header', async () => {
+      renderView({ histogram: HISTOGRAM })
+      await flushMicrotasks()
+
+      const toggle = screen.getByRole('button', { name: /show values/i })
+      expect(toggle.getAttribute('aria-pressed')).toBe('false')
+      // In the header of the panel that holds the chart, beside its title.
+      expect(toggle.closest('section')?.querySelector('h2')?.textContent).toBe(
+        'Df Distribution (sturges)',
+      )
+    })
+
+    it('replaces the chart with its bins and counts in the same panel', async () => {
+      renderView({ histogram: HISTOGRAM })
+      await flushMicrotasks()
+      expect(screen.getByTestId('plot')).toBeTruthy()
+
+      const panel = screen.getByRole('button', { name: /show values/i }).closest('section')
+      expect(panel).toBeTruthy()
+      if (!panel) return
+      fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+      // The chart is gone, the panel frame stayed, a table took its place.
+      expect(screen.queryByTestId('plot')).toBeNull()
+      expect(panel.querySelector('table')).toBeTruthy()
+
+      const headers = Array.from(panel.querySelectorAll('thead th')).map((th) => th.textContent)
+      expect(headers).toEqual(['From', 'To', 'Count'])
+      const rows = Array.from(panel.querySelectorAll('tbody tr')).map((row) =>
+        Array.from(row.querySelectorAll('td')).map((td) => td.textContent),
+      )
+      // The bins the backend returned, to the precision the chart plots.
+      expect(rows).toEqual([
+        ['1.600', '1.700', '1'],
+        ['1.700', '1.800', '5'],
+        ['1.800', '1.900', '2'],
+      ])
+      expect(screen.getByRole('button', { name: /show chart/i })).toBeTruthy()
+    })
+
+    it('offers no control when the backend produced no histogram', () => {
+      renderView()
+      expect(screen.queryAllByRole('button', { name: /show values/i })).toHaveLength(0)
+    })
+  })
+
+  // --- Every table has a name ---------------------------------------------
+  describe('table names (issue #176 3B)', () => {
+    it('gives the per-image table an accessible name', () => {
+      renderView()
+      // `DataTable` takes its accessible name from the caption, and this page
+      // renders more than one table: position is not a name.
+      const table = screen.getByRole('table', {
+        name: /every image the batch carried/i,
+      })
+      expect(table).toBeTruthy()
+    })
+  })
+
+  // --- The quality chip's reason is the state's, not the payload's silence --
+  describe('quality chip reason', () => {
+    it('explains an approximate image whose payload carries no error', () => {
+      const result = makeResult()
+      result.images[1].quality = 'approximate'
+      result.images[1].error = null
+      renderView({ images: result.images })
+
+      // The reason exists; it simply does not travel in the payload. Saying it
+      // is "not recorded" is a false statement read aloud by a screen reader.
+      expect(screen.queryByText(/No failure reason recorded/i)).toBeNull()
+      expect(screen.getByText(/the bisection settled between bounds/i)).toBeTruthy()
     })
   })
 })
