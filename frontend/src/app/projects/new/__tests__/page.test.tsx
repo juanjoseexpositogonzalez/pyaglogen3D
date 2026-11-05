@@ -12,6 +12,13 @@
  * empty string, a whitespace-only name never reaches the API, and a successful
  * create lands on the project it made.
  *
+ * Two witnesses here do not describe behaviour this migration wanted; they pin
+ * behaviour it found and was not allowed to change, so that a later slice has
+ * to invert them on purpose rather than by accident:
+ *   - a rejected create navigates nowhere and says nothing (the `catch` only
+ *     writes to the console);
+ *   - the Cancel control is one link, not a button inside a link.
+ *
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
@@ -20,8 +27,10 @@ import React from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockMutateAsync = vi.fn()
-const mockUseCreateProject = vi.fn()
 const mockPush = vi.fn()
+// First-render state for the mocked mutation, so the pending branch is reachable
+// without weakening the stateful mock below.
+let mockInitialPending = false
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
@@ -32,8 +41,32 @@ vi.mock('next/link', () => ({
     React.createElement('a', { href }, children),
 }))
 
+// Mirrors `useMutation`, including the part that matters to a failure witness:
+// the request settling flips `isPending`/`isError` and re-renders the page. A
+// static return value would keep `isError` undefined forever, so a page that
+// grew an error banner would pass this file without ever showing it.
 vi.mock('@/hooks/useProjects', () => ({
-  useCreateProject: () => mockUseCreateProject(),
+  useCreateProject: () => {
+    const [state, setState] = React.useState({
+      isPending: mockInitialPending,
+      isError: false,
+    })
+    return {
+      isPending: state.isPending,
+      isError: state.isError,
+      mutateAsync: async (input: unknown) => {
+        setState({ isPending: true, isError: false })
+        try {
+          const created = await mockMutateAsync(input)
+          setState({ isPending: false, isError: false })
+          return created
+        } catch (error) {
+          setState({ isPending: false, isError: true })
+          throw error
+        }
+      },
+    }
+  },
 }))
 
 // The deprecated header still exists and eighteen pages import it; this stub
@@ -56,15 +89,13 @@ const submit = async () => {
 }
 
 beforeEach(() => {
+  mockInitialPending = false
   mockMutateAsync.mockResolvedValue({ id: 'p9', name: 'Soot study' })
-  mockUseCreateProject.mockReturnValue({
-    mutateAsync: mockMutateAsync,
-    isPending: false,
-  })
 })
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('new-project page', () => {
@@ -77,21 +108,29 @@ describe('new-project page', () => {
     expect(screen.queryByTestId('deprecated-header')).toBeNull()
   })
 
-  it('keeps its column at the width the other creation screens use, and draws no main of its own', () => {
+  it('keeps title and form inside one capped column, and draws no main of its own', () => {
     const { container } = renderPage()
 
     // The shell owns `<main>`. A second one on the route gives the document two
     // main landmarks and makes the skip link land on the inner one.
     expect(container.querySelector('main')).toBeNull()
 
-    // Without a cap the form stretches to the shell's 1440px and a single field
-    // grows to ~650px. 672px is the measure the migrated FRAKTAL screens use.
-    const column = container.querySelector('.max-w-2xl')
-    expect(column).toBeTruthy()
-    expect(column!.contains(form())).toBe(true)
-    // The heading belongs to the same column as the form: a title that spans
+    const column = container.firstElementChild as HTMLElement
+    const tokens = column.className.split(/\s+/)
+    // 672px, the measure the migrated FRAKTAL screens use.
+    expect(tokens).toContain('max-w-2xl')
+    expect(tokens).toContain('mx-auto')
+    // Not the legacy `container px-4 py-8`: the shell already owns the page
+    // gutter, and both together pad the screen twice. This is the part the old
+    // wrapper got wrong, so the assertion has to name it.
+    expect(tokens).not.toContain('container')
+    expect(tokens).not.toContain('px-4')
+    expect(tokens).not.toContain('py-8')
+
+    // The cap applies to the title and the form together: a heading that spans
     // the shell over a capped form reads as two screens.
-    expect(column!.textContent).toContain('Create New Project')
+    expect(column.contains(screen.getByRole('heading', { level: 1 }))).toBe(true)
+    expect(column.contains(form())).toBe(true)
   })
 
   it('names the screen in the kit page header, after the way back to the list', () => {
@@ -110,19 +149,25 @@ describe('new-project page', () => {
     expect(back.closest('a')?.getAttribute('href')).toBe('/projects')
   })
 
-  it('puts the form in a panel and labels both fields', () => {
+  it('names the surface that holds the form, and labels both its fields', () => {
     const { container } = renderPage()
 
-    // A titled surface around the form, not a bare run of inputs.
-    expect(container.querySelector('section')).toBeTruthy()
+    const surface = container.querySelector('section') as HTMLElement
+    expect(surface).toBeTruthy()
+    // A titled surface, not a bare run of inputs: the heading is what tells a
+    // reader moving by headings that the fields belong to the page title above.
+    expect(surface.contains(form())).toBe(true)
+    const name = screen.getByRole('heading', { level: 2 })
+    expect(name.textContent).toBe('Project details')
+    expect(surface.contains(name)).toBe(true)
 
-    // A `<select>` and a bare input have no accessible name by default; these
-    // two get theirs from the `Label`/`id` pair, and this is what proves it.
-    const name = screen.getByLabelText(/Project Name/) as HTMLInputElement
-    expect(name.tagName).toBe('INPUT')
-    expect(name.getAttribute('placeholder')).toBe('e.g., DLA Sticking Probability Study')
-    expect(name.hasAttribute('required')).toBe(true)
-    expect(name.value).toBe('')
+    // An input and a textarea have no accessible name by default; these two get
+    // theirs from the `Label`/`id` pair, and this is what proves it.
+    const nameField = screen.getByLabelText(/Project Name/) as HTMLInputElement
+    expect(nameField.tagName).toBe('INPUT')
+    expect(nameField.getAttribute('placeholder')).toBe('e.g., DLA Sticking Probability Study')
+    expect(nameField.hasAttribute('required')).toBe(true)
+    expect(nameField.value).toBe('')
 
     const description = screen.getByLabelText(/Description \(optional\)/) as HTMLTextAreaElement
     expect(description.tagName).toBe('TEXTAREA')
@@ -192,10 +237,7 @@ describe('new-project page', () => {
   })
 
   it('says it is creating while the request is in flight', () => {
-    mockUseCreateProject.mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: true,
-    })
+    mockInitialPending = true
 
     renderPage()
 
@@ -205,10 +247,43 @@ describe('new-project page', () => {
     expect(button.disabled).toBe(true)
   })
 
-  it('offers a cancel route back to the project list', () => {
+  it('stays silent when the create is rejected: nowhere to go, nothing said', async () => {
+    // Pins today's defect on purpose. A rejected create leaves the screen
+    // exactly as it was — no message, no navigation — and the console is the
+    // only trace. When a later slice shows the server's reason, this test is
+    // the one to invert, not to delete.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockMutateAsync.mockRejectedValue(new Error('duplicate name'))
+
     renderPage()
 
-    const cancel = screen.getByText('Cancel')
-    expect(cancel.closest('a')?.getAttribute('href')).toBe('/projects')
+    fireEvent.change(screen.getByLabelText(/Project Name/), { target: { value: 'Soot study' } })
+    await submit()
+
+    expect(mockPush).not.toHaveBeenCalled()
+    // Both roles the kit's Callout can carry: a failure reads `alert`, a note
+    // reads `note`. Neither may appear yet — and the mock above does flip
+    // `isError`, so a page that renders on it would be caught here.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('note')).toBeNull()
+    expect(console.error).toHaveBeenCalled()
+    // The form is still there and still usable: the rejection is not a dead end.
+    expect(form()).toBeTruthy()
+  })
+
+  it('offers Cancel as one link, not a button nested inside a link', () => {
+    renderPage()
+
+    const cancel = screen.getByRole('link', { name: 'Cancel' })
+    expect(cancel.getAttribute('href')).toBe('/projects')
+
+    // `<a><button>Cancel</button></a>` is invalid HTML with two tab stops for a
+    // single destination, and the inner button fires nothing. `Button` declares
+    // `asChild` but does not destructure it, so it lands on the DOM `<button>`
+    // as an unknown attribute instead of merging the two elements: the look has
+    // to come from `buttonVariants()` on the link.
+    expect(cancel.querySelector('button')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Cancel' })).toBeNull()
+    expect(cancel.getAttribute('aschild')).toBeNull()
   })
 })

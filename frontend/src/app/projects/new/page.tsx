@@ -7,7 +7,7 @@ import { ArrowLeft } from 'lucide-react'
 import { useCreateProject } from '@/hooks/useProjects'
 import { PageHeader } from '@/components/kit/PageHeader'
 import { Panel } from '@/components/kit/Panel'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
@@ -15,14 +15,31 @@ import { Textarea } from '@/components/ui/textarea'
 /**
  * Where a project starts: a name, an optional description, and nothing else.
  *
- * The shell draws the navigation, so this file does not. `Header` was mounted
- * here to cover the sessions the shell leaves chromeless; dropping it is the
- * migration's deliberate trade (navigation is the shell's job, not this
- * page's), not a claim that the two components are equivalent.
+ * The shell draws the navigation, so this file does not. What that costs is
+ * worth stating plainly, and it is more than a tidy-up: `Header` was mounted
+ * here to cover the sessions the shell leaves chromeless. `showChrome` is
+ * `!chromeless && isAuthenticated && !isLoading`, while the middleware only
+ * checks that a session cookie exists — so a stale cookie with a rejected
+ * token painted this route with no rail, no top bar and no account link, and
+ * `Header` was the only sign-in affordance on the screen. What this page gives
+ * up is that fallback chrome, and with it the way back in. It is not a claim
+ * that the two components are equivalent, and the navigation is not unchanged.
+ *
+ * Below the frame nothing moves: the fields, their defaults, the guard on a
+ * blank name, the payload and the landing page after a successful create stay
+ * exactly as they were.
  *
  * The column is capped at 672px, the measure the migrated FRAKTAL creation
  * screens use. Left to itself the form stretches to the shell's full 1440px
- * and each field grows to a ~650px reading line.
+ * and each field grows to a ~650px reading line. The cap is `mx-auto w-full`,
+ * not the legacy `container px-4 py-8`: the shell already owns the page
+ * gutter, and both together pad the screen twice.
+ *
+ * The form sits in a titled panel so that a reader moving by headings meets an
+ * `h2` between the page title and the fields. `Panel` renders a plain
+ * `<section>`, which takes no accessible name from a child heading, so an
+ * untitled one is neither a landmark nor a step in the outline: the `h1` would
+ * stand alone and the fields would hang off nothing.
  *
  * The payload keeps its shape: the name is trimmed, and a description that is
  * only whitespace travels as `undefined` rather than as an empty string — the
@@ -66,7 +83,7 @@ export default function NewProjectPage() {
         description="Projects help you organize simulations and analyses for a specific research goal."
       />
 
-      <Panel>
+      <Panel title="Project details">
         <form onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-2">
             <Label htmlFor="name">Project Name *</Label>
@@ -97,10 +114,17 @@ export default function NewProjectPage() {
             >
               {createProject.isPending ? 'Creating...' : 'Create Project'}
             </Button>
-            <Link href="/projects">
-              <Button type="button" variant="outline">
-                Cancel
-              </Button>
+            {/*
+              The look comes from the variant's classes, not from wrapping a
+              `Button` in the link. `Button` declares `asChild` in
+              `ButtonProps` but never destructures it, so it does not merge the
+              two elements: it reaches the DOM `<button>` as an unknown
+              `aschild` attribute, leaving `<a><button></a>` — invalid HTML,
+              two tab stops for one destination, and an inner button that
+              fires nothing.
+            */}
+            <Link href="/projects" className={buttonVariants({ variant: 'outline' })}>
+              Cancel
             </Link>
           </div>
         </form>

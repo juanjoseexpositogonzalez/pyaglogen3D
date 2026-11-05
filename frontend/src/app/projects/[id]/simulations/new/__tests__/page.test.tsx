@@ -10,6 +10,10 @@
  * stubbed here, recording the props the page hands it, so a failure in this
  * file is about the page and never about the form.
  *
+ * One witness pins behaviour this migration found and was not allowed to
+ * change: a rejected create navigates nowhere and says nothing. A later slice
+ * inverts it on purpose rather than by accident.
+ *
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
  */
@@ -19,9 +23,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockUseProject = vi.fn()
 const mockMutateAsync = vi.fn()
-const mockUseCreateSimulation = vi.fn()
 const mockPush = vi.fn()
 const mockFormProps: Array<Record<string, unknown>> = []
+// First-render state for the mocked mutation, so the pending branch is reachable
+// without weakening the stateful mock below.
+let mockInitialPending = false
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
@@ -36,8 +42,32 @@ vi.mock('@/hooks/useProjects', () => ({
   useProject: () => mockUseProject(),
 }))
 
+// Mirrors `useMutation`, including the part that matters to a failure witness:
+// the request settling flips `isPending`/`isError` and re-renders the page. A
+// static return value would keep `isError` undefined forever, so a page that
+// grew an error banner would pass this file without ever showing it.
 vi.mock('@/hooks/useSimulations', () => ({
-  useCreateSimulation: () => mockUseCreateSimulation(),
+  useCreateSimulation: () => {
+    const [state, setState] = React.useState({
+      isPending: mockInitialPending,
+      isError: false,
+    })
+    return {
+      isPending: state.isPending,
+      isError: state.isError,
+      mutateAsync: async (input: unknown) => {
+        setState({ isPending: true, isError: false })
+        try {
+          const created = await mockMutateAsync(input)
+          setState({ isPending: false, isError: false })
+          return created
+        } catch (error) {
+          setState({ isPending: false, isError: true })
+          throw error
+        }
+      },
+    }
+  },
 }))
 
 // The deprecated header still exists and eighteen pages import it; this stub
@@ -87,17 +117,15 @@ const project = (overrides: Record<string, unknown> = {}) => ({
 const renderPage = () => render(<NewSimulationPage params={{ id: 'p1' }} />)
 
 beforeEach(() => {
+  mockInitialPending = false
+  mockFormProps.length = 0
   mockUseProject.mockReturnValue({ data: project(), isLoading: false })
   mockMutateAsync.mockResolvedValue({ id: 'sim-42' })
-  mockUseCreateSimulation.mockReturnValue({
-    mutateAsync: mockMutateAsync,
-    isPending: false,
-  })
-  mockFormProps.length = 0
 })
 
 afterEach(() => {
   vi.clearAllMocks()
+  vi.restoreAllMocks()
 })
 
 describe('new-simulation page', () => {
@@ -107,19 +135,29 @@ describe('new-simulation page', () => {
     expect(screen.queryByTestId('deprecated-header')).toBeNull()
   })
 
-  it('keeps its column at the width the other creation screens use, and draws no main of its own', () => {
+  it('keeps title and form inside one capped column, and draws no main of its own', () => {
     const { container } = renderPage()
 
     // The shell owns `<main>`. A second one on the route gives the document two
     // main landmarks and makes the skip link land on the inner one.
     expect(container.querySelector('main')).toBeNull()
 
-    const column = container.querySelector('.max-w-2xl')
-    expect(column).toBeTruthy()
-    expect(column!.contains(screen.getByTestId('simulation-form'))).toBe(true)
-    // The heading belongs to the same column as the form: a title that spans
+    const column = container.firstElementChild as HTMLElement
+    const tokens = column.className.split(/\s+/)
+    // 672px, the measure the migrated FRAKTAL screens use; the form's
+    // two-column rows would otherwise grow to ~650px per cell.
+    expect(tokens).toContain('max-w-2xl')
+    expect(tokens).toContain('mx-auto')
+    // Not the legacy `container px-4 py-8`: the shell already owns the page
+    // gutter, and both together pad the screen twice.
+    expect(tokens).not.toContain('container')
+    expect(tokens).not.toContain('px-4')
+    expect(tokens).not.toContain('py-8')
+
+    // The cap applies to the title and the form together: a heading that spans
     // the shell over a capped form reads as two screens.
-    expect(column!.textContent).toContain('New Simulation')
+    expect(column.contains(screen.getByRole('heading', { level: 1 }))).toBe(true)
+    expect(column.contains(screen.getByTestId('simulation-form'))).toBe(true)
   })
 
   it('names the screen in the kit page header and heads back to its project', () => {
@@ -162,10 +200,7 @@ describe('new-simulation page', () => {
   })
 
   it('hands the form the pending state of the create request', () => {
-    mockUseCreateSimulation.mockReturnValue({
-      mutateAsync: mockMutateAsync,
-      isPending: true,
-    })
+    mockInitialPending = true
 
     renderPage()
 
@@ -187,5 +222,30 @@ describe('new-simulation page', () => {
       n_particles: 20000,
     })
     expect(mockPush).toHaveBeenCalledWith('/projects/p1/simulations/sim-42')
+  })
+
+  it('stays silent when the create is rejected: nowhere to go, nothing said', async () => {
+    // Pins today's defect on purpose. A rejected create leaves the screen
+    // exactly as it was — no message, no navigation — and the console is the
+    // only trace. When a later slice shows the server's reason, this test is
+    // the one to invert, not to delete.
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+    mockMutateAsync.mockRejectedValue(new Error('n_particles out of range'))
+
+    renderPage()
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole('button', { name: 'Submit simulation' }))
+    })
+
+    expect(mockPush).not.toHaveBeenCalled()
+    // Both roles the kit's Callout can carry: a failure reads `alert`, a note
+    // reads `note`. Neither may appear yet — and the mock above does flip
+    // `isError`, so a page that renders on it would be caught here.
+    expect(screen.queryByRole('alert')).toBeNull()
+    expect(screen.queryByRole('note')).toBeNull()
+    expect(console.error).toHaveBeenCalled()
+    // The form is still mounted and still usable: the rejection is not a dead end.
+    expect(screen.getByTestId('simulation-form')).toBeTruthy()
   })
 })
