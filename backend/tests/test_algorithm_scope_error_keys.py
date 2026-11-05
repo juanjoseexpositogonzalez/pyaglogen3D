@@ -10,6 +10,13 @@ sintering at all:
 The third is right; the first two are not: a client reading `sintering_config` on
 a payload that carries no such field cannot tell which field to fix.
 
+On a partial update the surfaces judged are *effective*: a row that already
+carries a setting is refused when the request changes the algorithm, and the key
+then names the surface where the setting really lives, which may be one the
+request did not carry. That is R11.6 working as specified, and it is still better
+than a fixed key that may name a field the row does not even have - but this file
+asserts what a refusal names, not that the field was sent.
+
 This covers the **allow-list** family only. The shape family is out of this
 point's scope and is not uniformly actionable: `parameter_grid={"sintering_type":
 ["fixed"]}` answers under `non_field_errors`, because the required-key check runs
@@ -202,3 +209,117 @@ def test_the_three_scope_sets_cover_the_model(db: None) -> None:
     assert not (
         SINTERING_ALGORITHMS & NO_SINTERING_ALGORITHMS
     ), "an algorithm is both allowed and denied sintering"
+
+
+# --- the dict surfaces: revert any of their labels and these go red ---------
+
+
+@pytest.mark.django_db
+def test_a_grid_dict_names_the_grid(api_client: APIClient, project: Project) -> None:
+    response = _post(
+        api_client,
+        project,
+        parameter_grid={
+            "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.5}]
+        },
+    )
+
+    assert response.status_code == 400, response.data
+    assert "parameter_grid.sintering_config" in response.data, response.data
+
+
+@pytest.mark.django_db
+def test_a_base_dict_names_base_parameters(
+    api_client: APIClient, project: Project
+) -> None:
+    response = _post(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 60,
+            "target_df": 2.0,
+            "target_kf": 1.3,
+            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.5},
+        },
+    )
+
+    assert response.status_code == 400, response.data
+    assert "base_parameters.sintering_config" in response.data, response.data
+
+
+# --- the two other refusal kinds, on `limiting`, which nothing exercised ----
+
+
+def _post_limiting(api_client: APIClient, project: Project, **overrides: Any) -> Any:
+    payload: dict[str, Any] = {
+        "name": "limiting",
+        "base_algorithm": "limiting",
+        "base_parameters": {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    payload.update(overrides)
+    return api_client.post(
+        f"/api/v1/projects/{project.id}/studies/", data=payload, format="json"
+    )
+
+
+@pytest.mark.django_db
+def test_a_non_fixed_dict_names_its_surface(
+    api_client: APIClient, project: Project
+) -> None:
+    """`limiting` accepts the fixed shape only (R11.5)."""
+    response = _post_limiting(
+        api_client,
+        project,
+        parameter_grid={
+            "sintering_config": [
+                {"distribution_type": "normal", "mean": 0.8, "std": 0.05}
+            ]
+        },
+    )
+
+    assert response.status_code == 400, response.data
+    assert "parameter_grid.sintering_config" in response.data, response.data
+    assert "fixed" in str(response.data).lower(), response.data
+
+
+@pytest.mark.django_db
+def test_a_non_fixed_flat_names_its_key(api_client: APIClient, project: Project) -> None:
+    response = _post_limiting(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 60,
+            "target_df": 2.0,
+            "target_kf": 1.3,
+            "sintering_type": "normal",
+            "sintering_coeff": 0.8,
+            "sintering_std": 0.05,
+        },
+    )
+
+    assert response.status_code == 400, response.data
+    assert "base_parameters.sintering_type" in response.data, response.data
+
+
+@pytest.mark.django_db
+def test_a_shape_only_key_names_that_key(
+    api_client: APIClient, project: Project
+) -> None:
+    """`limiting` ignores type, min, max and std: naming the key says which."""
+    response = _post_limiting(
+        api_client,
+        project,
+        base_parameters={
+            "n_particles": 60,
+            "target_df": 2.0,
+            "target_kf": 1.3,
+            "sintering_type": "fixed",
+            "sintering_coeff": 0.8,
+            "sintering_std": 0.05,
+        },
+    )
+
+    assert response.status_code == 400, response.data
+    assert "base_parameters.sintering_std" in response.data, response.data
