@@ -1786,9 +1786,31 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         simulations_created = []
 
         def create_simulation(
-            params: dict, case_type: str = "grid", case_label: str = ""
+            params: dict,
+            case_type: str = "grid",
+            case_label: str = "",
+            *,
+            guarded_cast: bool = True,
+            study_sintering: bool = True,
         ) -> None:
             """Create a single simulation with all configurations applied.
+
+            The grid, the limiting cases and the range boundaries all come
+            through here with their combination. The sintering extremes differ in
+            exactly two ways and are the reason for the two flags: they define
+            their own settings, so the study's config is not applied
+            (`study_sintering=False`), and their block has never skipped dicts
+            before the numeric cast (`guarded_cast=False`).
+
+            `study_sintering` is pinned: forgetting it makes the extremes inherit
+            the study's config and several tests say so. `guarded_cast` is not,
+            and cannot be: the pre-write preview refuses a dict under a numeric
+            key before this runs, so no payload reaches the unguarded branch. It
+            stays because `expansion_preview` still casts those children
+            unguarded, and the two sides are meant to describe the same work -
+            deleting it here would leave the mirror claiming a difference that
+            only one side makes. A reader who finds it unexamined should read
+            this paragraph rather than assume coverage.
 
             Handles:
             - seed_type: popped from params → set as model field (fix #634)
@@ -1805,14 +1827,22 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             )
 
             # --- sintering: grid-level overrides study-level ---
+            # Popped either way. The pop is unobservable today - the generator
+            # already removes the key (utils.py) - so this is defence in depth,
+            # not a behaviour: it keeps a stray `sintering_config` out of the
+            # child's parameters if that generator ever stops.
             combo_sintering = sim_params.pop("sintering_config", None)
-            if combo_sintering is not None:
-                sim_params = apply_sintering_config(sim_params, combo_sintering)
-            else:
-                sim_params = apply_sintering_config(sim_params, study.sintering_config)
+            if study_sintering:
+                if combo_sintering is not None:
+                    sim_params = apply_sintering_config(sim_params, combo_sintering)
+                else:
+                    sim_params = apply_sintering_config(
+                        sim_params, study.sintering_config
+                    )
 
-            # Cast the numeric parameters (guard: skip dicts).
-            cast_numeric_params(sim_params, guarded=True)
+            # Cast the numeric parameters (guard: skip dicts on the paths whose
+            # block always did; the extremes block never did).
+            cast_numeric_params(sim_params, guarded=guarded_cast)
 
             # R13.10: a parity key declared anywhere reaches the engine under
             # the name the worker reads, and the grid key stays for the views.
@@ -1870,41 +1900,19 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     study.base_parameters
                 )
                 for case_type, description, params in sintering_cases:
-                    # Don't apply the study's sintering config for extreme cases
-                    # since they define their own sintering
-                    sim_params = dict(params)
-                    cast_numeric_params(sim_params, guarded=False)
-                    sim_params = complete_distribution_aliases(sim_params)
-
-                    # R4.3: the child's seed_type lives in its own field,
-                    # not in `parameters`. This block copied base_parameters
-                    # whole, so the blob kept a seed_type the run ignored
-                    # while the field held the model default - a child
-                    # running with monomers and saying dimers (#115, point 3).
-                    extreme_seed_type = sim_params.pop(
-                        "seed_type",
-                        study.base_parameters.get("seed_type", "monomers"),
+                    # The extremes define their own sintering, so the study's
+                    # config is not applied, and their block has never skipped
+                    # dicts before the cast. Everything else - the seed_type
+                    # field, the cast, the aliases, the name, the row - is the
+                    # same work the grid does, and now it is the same code
+                    # (#115, point 7).
+                    create_simulation(
+                        params,
+                        case_type,
+                        description,
+                        guarded_cast=False,
+                        study_sintering=False,
                     )
-
-                    for seed_idx in range(study.seeds_per_combination):
-                        seed = random.randint(0, 2**31 - 1)
-                        suffix = f"({case_type}: {description})"
-                        auto_name = generate_simulation_name(
-                            study.base_algorithm, suffix=suffix
-                        )
-
-                        sim = Simulation.objects.create(
-                            project_id=project_id,
-                            algorithm=study.base_algorithm,
-                            parameters=sim_params,
-                            seed=seed,
-                            name=auto_name,
-                            status=SimulationStatus.QUEUED,
-                            is_batch=True,
-                            seed_type=extreme_seed_type,
-                        )
-                        simulations_created.append(sim)
-                        study.simulations.add(sim)
 
         # Dispatch only once every child exists and is linked. The study settles
         # when its last child finishes, and dispatching per child let the first
