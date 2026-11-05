@@ -80,8 +80,8 @@ def _not_a_number(name: str, cast: type, value: Any) -> str:
 def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
     """Cast the numeric parameters, or name the one that cannot be cast.
 
-    `create_simulation` skips dicts; the inline sintering-extremes block in
-    `perform_create` does not. Both are reproduced, because a cast that raises
+    `create_simulation` skips dicts on the paths that always did; the branch
+    that builds the sintering extremes does not. Both are reproduced, because
     here costs nothing, while the same cast raising during expansion costs a
     study row and its queued tasks.
 
@@ -205,7 +205,7 @@ def preview_children(
                 extreme_cases = generate_sintering_extreme_cases(dict(base_parameters))
                 # This path deliberately does not apply the study's dict: each
                 # child keeps the flat coefficient of its own extreme
-                # (the sintering-extremes block in `perform_create`).
+                # (`perform_create` builds them through `create_simulation`).
                 for _t, _d, params in extreme_cases:
                     # The real path pops `seed_type` into the child's field
                     # (R4.3), so the preview must not hand it back in the

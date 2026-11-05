@@ -1800,8 +1800,17 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             exactly two ways and are the reason for the two flags: they define
             their own settings, so the study's config is not applied
             (`study_sintering=False`), and their block has never skipped dicts
-            before the numeric cast (`guarded_cast=False`). Both differences are
-            deliberate and pinned by `test_child_creation_paths.py`.
+            before the numeric cast (`guarded_cast=False`).
+
+            `study_sintering` is pinned: forgetting it makes the extremes inherit
+            the study's config and several tests say so. `guarded_cast` is not,
+            and cannot be: the pre-write preview refuses a dict under a numeric
+            key before this runs, so no payload reaches the unguarded branch. It
+            stays because `expansion_preview` still casts those children
+            unguarded, and the two sides are meant to describe the same work -
+            deleting it here would leave the mirror claiming a difference that
+            only one side makes. A reader who finds it unexamined should read
+            this paragraph rather than assume coverage.
 
             Handles:
             - seed_type: popped from params → set as model field (fix #634)

@@ -76,6 +76,7 @@ def children(api_client: APIClient) -> list[Simulation]:
 
 
 def _suffix(child: Simulation) -> str:
+    assert "(" in child.name, f"no case suffix in the name of {child.name!r}"
     return child.name[child.name.index("(") :]
 
 
@@ -106,8 +107,7 @@ def test_every_path_casts_the_numeric_parameters(children: list[Simulation]) -> 
 def test_every_path_names_its_case(children: list[Simulation]) -> None:
     for child in children:
         suffix = _suffix(child)
-        assert suffix.startswith("("), child.name
-        assert ":" in suffix, child.name
+        assert ":" in suffix, f"no case label in {child.name!r}"
 
 
 def test_only_the_sintering_extremes_carry_their_own_coefficient(
