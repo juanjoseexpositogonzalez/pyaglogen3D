@@ -255,9 +255,13 @@ def check_algorithm_scope(
             settings.extend((field, entry) for entry in config if entry)
         else:
             settings.append((field, config))
-    flat_hits: list[tuple[str, str]] = sorted(
+    # Caller order, which is R3's documented precedence (grid, then
+    # `base_parameters`, then the study field), not alphabetical: two different
+    # orderings in one rule meant the named surface contradicted the precedence
+    # written a few lines above (JD-B-004 on PR #222).
+    flat_hits: list[tuple[str, str]] = [
         (field, key) for field, mapping in flats for key in mapping if key in FLAT_KEYS
-    )
+    ]
     if not settings and not flat_hits:
         return  # absent means no sintering: nothing to scope
 
@@ -307,7 +311,14 @@ def check_algorithm_scope(
         return
 
     if algorithm not in SINTERING_ALGORITHMS:
-        raise ValueError(f"unknown algorithm '{algorithm}' for a sintering setting")
+        # The actionable field is the algorithm itself: a row written outside the
+        # serializer can hold "" or a value the model no longer offers, and the
+        # client fixes it by sending `base_algorithm`, not by touching sintering
+        # (JD-B-002 on PR #222).
+        raise AlgorithmScopeError(
+            f"unknown algorithm '{algorithm}' for a sintering setting",
+            surface="base_algorithm",
+        )
 
 
 def _swept_values(value: Any) -> list[Any]:

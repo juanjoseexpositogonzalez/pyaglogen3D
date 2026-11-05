@@ -729,9 +729,11 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                             eff_extremes.get("sintering_config"),
                         ),
                     ),
+                    # R3's documented precedence: the grid first, then the
+                    # study field, then the swept extremes.
                     flats=(
-                        ("base_parameters", eff_base),
                         ("parameter_grid", eff_grid),
+                        ("base_parameters", eff_base),
                         ("limiting_cases_config.theoretical_extremes", eff_extremes),
                     ),
                 )

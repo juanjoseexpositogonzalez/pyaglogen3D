@@ -7,13 +7,15 @@ sintering at all:
     parameter_grid.sintering_type       -> 400 {"sintering_config": [...]}
     sintering_config                    -> 400 {"sintering_config": [...]}
 
-The third is right; the first two are not. Every surface of R3 reports under the
-key it came from everywhere else (`parameter_grid.sintering_config`,
-`base_parameters.sintering_config`), so a client reading `sintering_config` on a
-payload that carries no such field cannot tell which field to fix.
+The third is right; the first two are not: a client reading `sintering_config` on
+a payload that carries no such field cannot tell which field to fix.
 
-The requirement does not choose the key; what it requires is that a client can
-point at the offending field.
+This covers the **allow-list** family only. The shape family is out of this
+point's scope and is not uniformly actionable: `parameter_grid={"sintering_type":
+["fixed"]}` answers under `non_field_errors`, because the required-key check runs
+on the child projection rather than on a surface. Saying "every surface of R3
+reports under the key it came from" would be false; a judge measured exactly
+that (JD-B-003 on PR #222) and it is declared in #115 instead.
 """
 
 from __future__ import annotations
@@ -120,3 +122,83 @@ def test_the_top_level_setting_keeps_its_own_key(
     assert response.status_code == 400, response.data
     assert "sintering_config" in response.data, response.data
     assert ParametricStudy.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_an_update_names_the_surface_it_touched(
+    api_client: APIClient, project: Project
+) -> None:
+    """R11.6 and R11.8 guard the update path, and nothing pinned it.
+
+    JD-B-005 on PR #222: every PATCH case had to be measured by hand. A study
+    created before the allow-list existed carries no sintering; adding it in a
+    PATCH is the bypass #97 closed, and the refusal must name what the request
+    carried.
+    """
+    created = _post(api_client, project)
+    assert created.status_code == 201, created.data
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{created.data['id']}/",
+        data={
+            "base_parameters": {
+                "n_particles": 60,
+                "target_df": 2.0,
+                "target_kf": 1.3,
+                "sintering_coeff": 0.5,
+            }
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert "base_parameters" in response.data, response.data
+
+
+@pytest.mark.django_db
+def test_a_stored_unknown_algorithm_names_the_algorithm(
+    api_client: APIClient, project: Project
+) -> None:
+    """The row was written outside the serializer, so `base_algorithm` is empty.
+
+    JD-B-002 on PR #222: this branch answered under `sintering_config` while the
+    only field the client can change is `base_algorithm`.
+    """
+    created = _post(api_client, project)
+    assert created.status_code == 201, created.data
+    study = ParametricStudy.objects.get(id=created.data["id"])
+    # The admin and the AI assistant tool both write these JSON fields directly.
+    ParametricStudy.objects.filter(id=study.id).update(base_algorithm="")
+    study.refresh_from_db()
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"base_parameters": {**study.base_parameters, "sintering_coeff": 0.8}},
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert "base_algorithm" in response.data, response.data
+
+
+def test_the_three_scope_sets_cover_the_model(db: None) -> None:
+    """The residual branch is only unreachable while this union is complete.
+
+    Nothing pinned it: a twelfth algorithm added to the model without touching
+    `sintering_shape.py` would reopen the misfiling silently (JD-B-002).
+    """
+    from apps.simulations.models import SimulationAlgorithm
+    from apps.simulations.sintering_shape import (
+        FIXED_ONLY_ALGORITHMS,
+        NO_SINTERING_ALGORITHMS,
+        SINTERING_ALGORITHMS,
+    )
+
+    covered = SINTERING_ALGORITHMS | FIXED_ONLY_ALGORITHMS | NO_SINTERING_ALGORITHMS
+    assert covered == set(SimulationAlgorithm.values), (
+        "the scope sets no longer cover the model: "
+        f"{sorted(set(SimulationAlgorithm.values) - covered)} uncovered"
+    )
+    assert not (
+        SINTERING_ALGORITHMS & NO_SINTERING_ALGORITHMS
+    ), "an algorithm is both allowed and denied sintering"
