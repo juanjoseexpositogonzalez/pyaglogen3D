@@ -1,13 +1,12 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Play } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
@@ -18,6 +17,8 @@ import {
   toSinteringConfig,
 } from '@/lib/sinteringShape'
 import { Callout } from '@/components/kit/Callout'
+import { Num } from '@/components/kit/Num'
+import { Panel } from '@/components/kit/Panel'
 
 const limitingGeometryOptions = [
   { value: 'chain', label: 'Linear Chain (Df=1)' },
@@ -204,6 +205,46 @@ function formatValuesPreview(values: (number | string)[], maxShow: number = 8): 
   return `${shown.join(', ')}, ... (${values.length} total)`
 }
 
+/**
+ * The create-batch-study form, on the design-system kit (issue #181, slice 2).
+ *
+ * One `Panel` per block, in the order the study is built: what it is called,
+ * the base parameters every run shares, the variations swept over them, the
+ * optional box-counting pass, and the projected load with its two thresholds.
+ * Each panel is a `<section>` headed by an `h2`, which is what puts the five of
+ * them in the heading outline under the page's only `h1`.
+ *
+ * They are not landmarks. A `<section>` without an accessible name is not one,
+ * and `Panel` does not name its own, so this file makes no claim about regions:
+ * the guarantee on offer is the heading outline.
+ *
+ * The two run-count thresholds used to be coloured paragraphs - amber above 200
+ * and red above 1000 - and they are `Callout`s now, which is the difference
+ * between a tint and a state: each carries an icon and a title, so the refusal
+ * survives greyscale and colour blindness. The dropped-variation notice (R10.6)
+ * keeps its live region and moved inside the panel whose control drops it.
+ *
+ * Every count on screen goes through `Num` - the projected total, the
+ * per-variation tally and the seed/combination breakdown - so a reading can be
+ * aligned down a column and read apart from its unit.
+ *
+ * Nothing about what the form *does* changed with the port. Same fields, same
+ * defaults, same coercions, same payload: the tests pin the serialised request,
+ * key order included.
+ *
+ * Two behaviours were found while porting and deliberately left alone, because
+ * they are behaviour and not presentation:
+ *
+ * - An unparseable numeric token travels raw. `parseFloat('abc')` is `NaN`, and
+ *   `JSON.stringify` serialises that as `null`, so `sticking_probability` or
+ *   `n_particles` leaves the form as null and the API answers 400 on a value
+ *   the user did type. Clearing the field does the same.
+ * - `parseInt(seedsPerCombo) || 1` and `parseInt(boxCountingPointsPerSphere)
+ *   || 100` silently substitute a default, so an emptied field submits a number
+ *   the user never typed.
+ *
+ * Both deserve their own issue; neither is a presentation defect.
+ */
 export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationFormProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
@@ -382,125 +423,83 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setAlgorithm(next)
   }
 
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Create Batch Simulation</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Study Name */}
-          <div className="space-y-2">
-            <Label htmlFor="name">Study Name</Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., N-particles sweep"
-            />
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* What the study is called */}
+      <Panel title="Study" bodyClassName="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="name">Study Name</Label>
+          <Input
+            id="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., N-particles sweep"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="description">Description</Label>
+          <Textarea
+            id="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional study description..."
+            rows={2}
+          />
+        </div>
+      </Panel>
+
+      {/* Base parameters - conditional on the algorithm */}
+      <Panel title="Base Parameters" bodyClassName="space-y-4">
+        {/* Named: the panel title is not the control's label, and there are
+            several comboboxes in this form. */}
+        <div className="space-y-2">
+          <Label htmlFor="algorithm">Algorithm</Label>
+          <Select
+            id="algorithm"
+            value={algorithm}
+            onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
+            options={batchSimulationAlgorithmOptions}
+          />
+        </div>
+
+        {/* R10.6: clearing a variation silently would satisfy the payload half
+            of the rule and fail its sentence - the form must not submit
+            something the backend rejects "without telling the user why". */}
+        {droppedVariations.length > 0 && (
+          <div role="status" aria-live="polite">
+            <Callout tone="warning" title="A variation no longer applies">
+              {droppedVariations.length === 1
+                ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
+                : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
+            </Callout>
           </div>
+        )}
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional study description..."
-              rows={2}
-            />
-          </div>
-
-          {/* Algorithm */}
-          <div className="space-y-2">
-            <Label>Algorithm</Label>
-            <Select
-              value={algorithm}
-              onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
-              options={batchSimulationAlgorithmOptions}
-            />
-          </div>
-
-          {/* R10.6: clearing a variation silently would satisfy the payload
-              half of the rule and fail its sentence - the form must not submit
-              something the backend rejects "without telling the user why". */}
-          {droppedVariations.length > 0 && (
-            <div role="status" aria-live="polite">
-              <Callout tone="warning" title="A variation no longer applies">
-                {droppedVariations.length === 1
-                  ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
-                  : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
-              </Callout>
-            </div>
-          )}
-
-          {/* Base Parameters - conditional based on algorithm */}
-          {algorithm === 'limiting' ? (
-            /* Limiting case parameters */
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Base Geometry</Label>
-                  <Select
-                    value={baseGeometry}
-                    onChange={(e) => handleGeometryChange(e.target.value)}
-                    options={limitingGeometryOptions}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Configuration</Label>
-                  <Select
-                    value={baseConfiguration}
-                    onChange={(e) => setBaseConfiguration(e.target.value)}
-                    options={getConfigOptionsForGeometry(baseGeometry)}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="nParticles">Base N Particles</Label>
-                  <Input
-                    id="nParticles"
-                    type="number"
-                    value={nParticles}
-                    onChange={(e) => setNParticles(e.target.value)}
-                    min={1}
-                    max={10000}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Packing</Label>
-                  <Select
-                    value={basePacking}
-                    onChange={(e) => setBasePacking(e.target.value)}
-                    options={packingOptions}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Affects plane & sphere geometries
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sintering">Base Sintering Coeff.</Label>
-                  <Input
-                    id="sintering"
-                    type="number"
-                    value={baseSintering}
-                    onChange={(e) => setBaseSintering(e.target.value)}
-                    min={0.5}
-                    max={1}
-                    step={0.05}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    1.0 = touching, 0.5 = 50% overlap
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Standard algorithm parameters */
+        {algorithm === 'limiting' ? (
+          /* Limiting case parameters */
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="baseGeometry">Base Geometry</Label>
+                <Select
+                  id="baseGeometry"
+                  value={baseGeometry}
+                  onChange={(e) => handleGeometryChange(e.target.value)}
+                  options={limitingGeometryOptions}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="baseConfiguration">Configuration</Label>
+                <Select
+                  id="baseConfiguration"
+                  value={baseConfiguration}
+                  onChange={(e) => setBaseConfiguration(e.target.value)}
+                  options={getConfigOptionsForGeometry(baseGeometry)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="nParticles">Base N Particles</Label>
                 <Input
@@ -508,311 +507,366 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                   type="number"
                   value={nParticles}
                   onChange={(e) => setNParticles(e.target.value)}
-                  min={10}
-                  max={100000}
+                  min={1}
+                  max={10000}
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="sticking">Base Sticking Prob.</Label>
-                <Input
-                  id="sticking"
-                  type="number"
-                  value={stickingProbability}
-                  onChange={(e) => setStickingProbability(e.target.value)}
-                  min={0}
-                  max={1}
-                  step={0.1}
+                <Label htmlFor="basePacking">Packing</Label>
+                <Select
+                  id="basePacking"
+                  value={basePacking}
+                  onChange={(e) => setBasePacking(e.target.value)}
+                  options={packingOptions}
                 />
+                <p className="hint">Affects plane &amp; sphere geometries</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sintering">Base Sintering Coeff.</Label>
+                <Input
+                  id="sintering"
+                  type="number"
+                  value={baseSintering}
+                  onChange={(e) => setBaseSintering(e.target.value)}
+                  min={0.5}
+                  max={1}
+                  step={0.05}
+                />
+                <p className="hint">1.0 = touching, 0.5 = 50% overlap</p>
               </div>
             </div>
-          )}
-
-          {/* Seeds per combination - not needed for limiting (deterministic) */}
-          {algorithm !== 'limiting' && (
+          </div>
+        ) : (
+          /* Standard algorithm parameters */
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="seeds">Seeds per Combination</Label>
+              <Label htmlFor="nParticles">Base N Particles</Label>
               <Input
-                id="seeds"
+                id="nParticles"
                 type="number"
-                value={seedsPerCombo}
-                onChange={(e) => setSeedsPerCombo(e.target.value)}
-                min={1}
-                max={10}
+                value={nParticles}
+                onChange={(e) => setNParticles(e.target.value)}
+                min={10}
+                max={100000}
               />
-              <p className="text-xs text-muted-foreground">
-                Run multiple simulations per parameter combination with different random seeds
-              </p>
             </div>
-          )}
+            <div className="space-y-2">
+              <Label htmlFor="sticking">Base Sticking Prob.</Label>
+              <Input
+                id="sticking"
+                type="number"
+                value={stickingProbability}
+                onChange={(e) => setStickingProbability(e.target.value)}
+                min={0}
+                max={1}
+                step={0.1}
+              />
+            </div>
+          </div>
+        )}
 
-          {/* Parameter Variations */}
+        {/* Seeds per combination - not needed for limiting (deterministic) */}
+        {algorithm !== 'limiting' && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Parameter Variations</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addVariation}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Variation
-              </Button>
-            </div>
+            <Label htmlFor="seeds">Seeds per Combination</Label>
+            <Input
+              id="seeds"
+              type="number"
+              value={seedsPerCombo}
+              onChange={(e) => setSeedsPerCombo(e.target.value)}
+              min={1}
+              max={10}
+            />
+            <p className="hint">
+              Run multiple simulations per parameter combination with different random seeds
+            </p>
+          </div>
+        )}
+      </Panel>
 
-            {variations.length === 0 && (
-              <p className="text-sm text-muted-foreground py-2">
-                Add parameters to vary across simulations
-              </p>
-            )}
+      {/* Parameter Variations */}
+      <Panel
+        title="Parameter Variations"
+        action={
+          <Button type="button" variant="outline" size="sm" onClick={addVariation}>
+            <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
+            Add Variation
+          </Button>
+        }
+        bodyClassName="space-y-3"
+      >
+        {variations.length === 0 && (
+          <p className="hint py-2">Add parameters to vary across simulations</p>
+        )}
 
-            {variations.map((variation, index) => {
-              const isInteger = integerParams.has(variation.name)
-              const { values, count } = variationCounts[index] || { values: [], count: 0 }
+        {variations.map((variation, index) => {
+          const isInteger = integerParams.has(variation.name)
+          const { values, count } = variationCounts[index] || { values: [], count: 0 }
 
-              return (
-                <div key={index} className="p-3 border rounded-lg bg-muted/30 space-y-3">
-                  {/* Parameter Selection & Delete */}
-                  <div className="flex gap-2 items-end">
-                    <div className="flex-1 space-y-1">
-                      <Label className="text-xs">Parameter</Label>
-                      <Select
-                        value={variation.name}
-                        onChange={(e) => updateVariation(index, 'name', e.target.value)}
-                        options={parameterOptions}
-                      />
-                    </div>
+          return (
+            <div
+              key={index}
+              className="min-w-0 space-y-3 rounded-md border border-line bg-surface-soft p-3"
+            >
+              {/* Parameter Selection & Delete */}
+              <div className="flex gap-2 items-end">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <Label className="text-[11px]">Parameter</Label>
+                  <Select
+                    aria-label={`Parameter for variation ${index + 1}`}
+                    value={variation.name}
+                    onChange={(e) => updateVariation(index, 'name', e.target.value)}
+                    options={parameterOptions}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove variation ${index + 1}`}
+                  onClick={() => removeVariation(index)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+
+              {/* Conditional value input based on parameter type */}
+              {DISTRIBUTION_PARAMS.has(variation.name) ? (
+                /* Distribution grid input for kf_distribution, particle_radius, sintering */
+                <DistributionGridInput
+                  value={variation.distributionValues}
+                  onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
+                  label={`${variation.name.replace(/_/g, ' ')} configurations`}
+                  parameterName={variation.name}
+                />
+              ) : variation.name === SEED_TYPE_PARAM ? (
+                /* Seed type multi-select chips */
+                <div className="space-y-2">
+                  <Label className="text-[11px]">Select seed types</Label>
+                  <div className="flex gap-2">
+                    {SEED_TYPE_OPTIONS.map((st) => {
+                      const isSelected = variation.seedTypeValues.includes(st)
+                      return (
+                        <Button
+                          key={st}
+                          type="button"
+                          variant={isSelected ? 'default' : 'outline'}
+                          size="sm"
+                          className="flex-1 capitalize"
+                          onClick={() => {
+                            const newValues = isSelected
+                              ? variation.seedTypeValues.filter((v) => v !== st)
+                              : [...variation.seedTypeValues, st]
+                            // Enforce min 1
+                            if (newValues.length > 0) {
+                              updateVariation(index, 'seedTypeValues', newValues)
+                            }
+                          }}
+                        >
+                          {st}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  {/* The count is a `Num`, so the number and the word that
+                      qualifies it are separate nodes. */}
+                  <p className="hint">
+                    <Num value={variation.seedTypeValues.length} digits={0} size="sm" /> selected
+                  </p>
+                </div>
+              ) : (
+                /* Standard scalar variation: discrete or range */
+                <>
+                  {/* Input Mode Toggle */}
+                  <div className="flex gap-2">
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeVariation(index)}
+                      variant={variation.inputMode === 'range' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'range')}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      Range (Start → End)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'discrete')}
+                    >
+                      Discrete Values
                     </Button>
                   </div>
 
-                  {/* Conditional value input based on parameter type */}
-                  {DISTRIBUTION_PARAMS.has(variation.name) ? (
-                    /* Distribution grid input for kf_distribution, particle_radius, sintering */
-                    <DistributionGridInput
-                      value={variation.distributionValues}
-                      onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
-                      label={`${variation.name.replace(/_/g, ' ')} configurations`}
-                      parameterName={variation.name}
-                    />
-                  ) : variation.name === SEED_TYPE_PARAM ? (
-                    /* Seed type multi-select chips */
-                    <div className="space-y-2">
-                      <Label className="text-xs">Select seed types</Label>
-                      <div className="flex gap-2">
-                        {SEED_TYPE_OPTIONS.map((st) => {
-                          const isSelected = variation.seedTypeValues.includes(st)
-                          return (
-                            <Button
-                              key={st}
-                              type="button"
-                              variant={isSelected ? 'default' : 'outline'}
-                              size="sm"
-                              className="flex-1 capitalize"
-                              onClick={() => {
-                                const newValues = isSelected
-                                  ? variation.seedTypeValues.filter((v) => v !== st)
-                                  : [...variation.seedTypeValues, st]
-                                // Enforce min 1
-                                if (newValues.length > 0) {
-                                  updateVariation(index, 'seedTypeValues', newValues)
-                                }
-                              }}
-                            >
-                              {st}
-                            </Button>
-                          )
-                        })}
+                  {/* Range Mode Inputs */}
+                  {variation.inputMode === 'range' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-start`} className="text-[11px]">
+                          Start
+                        </Label>
+                        <Input
+                          id={`variation-${index}-start`}
+                          type="number"
+                          value={variation.start}
+                          onChange={(e) => updateVariation(index, 'start', e.target.value)}
+                          placeholder="100"
+                          step={isInteger ? 1 : 0.1}
+                        />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {variation.seedTypeValues.length} selected
-                      </p>
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-end`} className="text-[11px]">
+                          End
+                        </Label>
+                        <Input
+                          id={`variation-${index}-end`}
+                          type="number"
+                          value={variation.end}
+                          onChange={(e) => updateVariation(index, 'end', e.target.value)}
+                          placeholder="1000"
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-step`} className="text-[11px]">
+                          Step
+                        </Label>
+                        <Input
+                          id={`variation-${index}-step`}
+                          type="number"
+                          value={variation.step}
+                          onChange={(e) => updateVariation(index, 'step', e.target.value)}
+                          placeholder="100"
+                          min={isInteger ? 1 : 0.01}
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    /* Standard scalar variation: discrete or range */
-                    <>
-                      {/* Input Mode Toggle */}
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant={variation.inputMode === 'range' ? 'default' : 'outline'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => updateVariation(index, 'inputMode', 'range')}
-                        >
-                          Range (Start → End)
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => updateVariation(index, 'inputMode', 'discrete')}
-                        >
-                          Discrete Values
-                        </Button>
-                      </div>
-
-                      {/* Range Mode Inputs */}
-                      {variation.inputMode === 'range' && (
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Start</Label>
-                            <Input
-                              type="number"
-                              value={variation.start}
-                              onChange={(e) => updateVariation(index, 'start', e.target.value)}
-                              placeholder="100"
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">End</Label>
-                            <Input
-                              type="number"
-                              value={variation.end}
-                              onChange={(e) => updateVariation(index, 'end', e.target.value)}
-                              placeholder="1000"
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Step</Label>
-                            <Input
-                              type="number"
-                              value={variation.step}
-                              onChange={(e) => updateVariation(index, 'step', e.target.value)}
-                              placeholder="100"
-                              min={isInteger ? 1 : 0.01}
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Discrete Mode Input */}
-                      {variation.inputMode === 'discrete' && (
-                        <div className="space-y-1">
-                          <Label className="text-xs">Values (comma-separated)</Label>
-                          <Input
-                            value={variation.values}
-                            onChange={(e) => updateVariation(index, 'values', e.target.value)}
-                            placeholder="e.g., 100, 200, 500, 1000"
-                          />
-                        </div>
-                      )}
-
-                      {/* Preview */}
-                      <div className="p-2 bg-primary/5 rounded text-sm space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Generated values:</span>
-                          <span className="font-mono font-medium">{count} values</span>
-                        </div>
-                        <p className="text-xs font-mono text-muted-foreground truncate">
-                          {formatValuesPreview(values)}
-                        </p>
-                      </div>
-                    </>
                   )}
-                </div>
-              )
-            })}
-          </div>
 
-          {/* Box-Counting Analysis Option */}
-          <div className="space-y-3 p-3 border rounded-lg">
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="includeBoxCounting"
-                checked={includeBoxCounting}
-                onChange={(e) => setIncludeBoxCounting(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              <div>
-                <Label htmlFor="includeBoxCounting" className="cursor-pointer">
-                  Run Box-Counting Analysis
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Compute fractal dimension (Df) using 3D box-counting algorithm
-                </p>
-              </div>
+                  {/* Discrete Mode Input */}
+                  {variation.inputMode === 'discrete' && (
+                    <div className="space-y-1">
+                      <Label htmlFor={`variation-${index}-values`} className="text-[11px]">
+                        Values (comma-separated)
+                      </Label>
+                      <Input
+                        id={`variation-${index}-values`}
+                        value={variation.values}
+                        onChange={(e) => updateVariation(index, 'values', e.target.value)}
+                        placeholder="e.g., 100, 200, 500, 1000"
+                      />
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  <div className="space-y-1 rounded-md border border-line bg-surface-strong p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="hint">Generated values:</span>
+                      <Num value={count} digits={0} unit="values" size="sm" />
+                    </div>
+                    <p className="num truncate text-[11px] text-ink-muted">
+                      {formatValuesPreview(values)}
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
+          )
+        })}
+      </Panel>
 
-            {includeBoxCounting && (
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Points per Sphere</Label>
-                  <Input
-                    type="number"
-                    value={boxCountingPointsPerSphere}
-                    onChange={(e) => setBoxCountingPointsPerSphere(e.target.value)}
-                    min={10}
-                    max={1000}
-                    placeholder="100"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Surface sampling density (higher = more accurate)
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Precision (bits)</Label>
-                  <Input
-                    type="number"
-                    value={boxCountingPrecision}
-                    onChange={(e) => setBoxCountingPrecision(e.target.value)}
-                    min={8}
-                    max={24}
-                    placeholder="18"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Morton code precision (18 recommended)
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Summary */}
-          <div className="p-3 bg-primary/10 rounded-lg space-y-2">
-            <p className="text-sm">
-              <span className="font-medium">Total simulations:</span>{' '}
-              <span className="font-mono">{totalSimulations}</span>
-              {variations.length > 0 && (
-                <span className="text-muted-foreground">
-                  {' '}({totalCombinations} combinations × {effectiveSeeds} seeds)
-                </span>
-              )}
-              {includeBoxCounting && (
-                <span className="text-muted-foreground ml-2">
-                  + box-counting
-                </span>
-              )}
+      {/* Box-Counting Analysis Option */}
+      <Panel title="Box-Counting Analysis" bodyClassName="space-y-3">
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="includeBoxCounting"
+            checked={includeBoxCounting}
+            onChange={(e) => setIncludeBoxCounting(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-line-strong"
+          />
+          <div>
+            <Label htmlFor="includeBoxCounting" className="cursor-pointer">
+              Run Box-Counting Analysis
+            </Label>
+            <p className="hint">
+              Compute fractal dimension (Df) using 3D box-counting algorithm
             </p>
-
-            {totalSimulations > 200 && totalSimulations <= 1000 && (
-              <p className="text-sm text-yellow-600 flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" />
-                Batch contains {totalSimulations} simulations — this may take a while.
-              </p>
-            )}
-
-            {totalSimulations > 1000 && (
-              <p className="text-sm text-destructive font-medium flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" />
-                Batch exceeds 1000 simulations ({totalSimulations}). The server will reject this request.
-              </p>
-            )}
           </div>
+        </div>
 
-          {/* Submit */}
-          <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
-            <Play className="h-4 w-4 mr-2" />
-            {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+        {includeBoxCounting && (
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="space-y-1">
+              <Label htmlFor="boxCountingPointsPerSphere" className="text-[11px]">
+                Points per Sphere
+              </Label>
+              <Input
+                id="boxCountingPointsPerSphere"
+                type="number"
+                value={boxCountingPointsPerSphere}
+                onChange={(e) => setBoxCountingPointsPerSphere(e.target.value)}
+                min={10}
+                max={1000}
+                placeholder="100"
+              />
+              <p className="hint">Surface sampling density (higher = more accurate)</p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="boxCountingPrecision" className="text-[11px]">
+                Precision (bits)
+              </Label>
+              <Input
+                id="boxCountingPrecision"
+                type="number"
+                value={boxCountingPrecision}
+                onChange={(e) => setBoxCountingPrecision(e.target.value)}
+                min={8}
+                max={24}
+                placeholder="18"
+              />
+              <p className="hint">Morton code precision (18 recommended)</p>
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      {/* Projected load */}
+      <Panel title="Total simulations" bodyClassName="space-y-3">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <Num value={totalSimulations} digits={0} size="lg" />
+          {variations.length > 0 && (
+            <span className="hint">
+              (<Num value={totalCombinations} digits={0} unit="combinations" size="sm" /> ×{' '}
+              <Num value={effectiveSeeds} digits={0} unit="seeds" size="sm" />)
+            </span>
+          )}
+          {includeBoxCounting && (
+            <span className="hint">+ box-counting</span>
+          )}
+        </div>
+
+        {totalSimulations > 200 && totalSimulations <= 1000 && (
+          <Callout tone="warning" title="This may take a while">
+            Batch contains <Num value={totalSimulations} digits={0} /> simulations.
+          </Callout>
+        )}
+
+        {totalSimulations > 1000 && (
+          <Callout tone="danger" title="Batch exceeds 1000 simulations">
+            <Num value={totalSimulations} digits={0} /> runs requested. The server
+            will reject this request.
+          </Callout>
+        )}
+      </Panel>
+
+      {/* Submit */}
+      <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
+        <Play className="h-4 w-4 mr-2" aria-hidden="true" />
+        {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}
+      </Button>
+    </form>
   )
 }
