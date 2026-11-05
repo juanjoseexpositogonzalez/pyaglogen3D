@@ -39,6 +39,11 @@ export default function BatchSimulationsPage({
   // no onError and the API threw the field name away, so the page showed
   // nothing at all (#115, point 6).
   const [createError, setCreateError] = useState<string | null>(null)
+  // Two identical refusals set the same string, React bails out, and an
+  // `aria-live` region says nothing when neither its insertion nor its content
+  // changes. Someone who clicks again because "nothing happened" is exactly the
+  // person this banner exists for, so each refusal gets a new key.
+  const [createErrorAttempt, setCreateErrorAttempt] = useState(0)
 
   // Fetch studies list (polls while any study has running simulations)
   const { data: studiesData, isLoading: isLoadingStudies } = useQuery({
@@ -79,6 +84,7 @@ export default function BatchSimulationsPage({
     },
     onError: (error: unknown) => {
       setCreateError(formatApiError(error))
+      setCreateErrorAttempt((attempt) => attempt + 1)
     },
   })
 
@@ -167,8 +173,10 @@ export default function BatchSimulationsPage({
    * published conclusions from it may need.
    *
    * The configuration arrives already normalised and validated — re-sending
-   * what is stored is rejected in almost every shape, and this page has no
-   * error handling, so a rejected request would be an invisible dead button.
+   * what is stored is rejected in almost every shape. The page does show a
+   * refusal now (#115, point 6), but the normalisation stays: it turns a 400
+   * into a working relaunch instead of a message asking the reader to go and
+   * fix a field that was never theirs.
    */
   const handleRelaunch = (sintering_config: SinteringConfig) => {
     if (!selectedStudy) return
@@ -203,7 +211,12 @@ export default function BatchSimulationsPage({
             </p>
           </div>
           {!showForm && (
-            <Button onClick={() => setShowForm(true)}>
+            <Button
+              onClick={() => {
+                setCreateError(null)
+                setShowForm(true)
+              }}
+            >
               <Plus className="h-4 w-4 mr-2" />
               New Batch Study
             </Button>
@@ -211,7 +224,7 @@ export default function BatchSimulationsPage({
         </div>
 
         {createError && (
-          <Alert variant="destructive" className="mb-6">
+          <Alert key={createErrorAttempt} variant="destructive" className="mb-6">
             <AlertTriangle className="h-4 w-4" />
             <AlertDescription className="whitespace-pre-line">
               {createError}
@@ -225,13 +238,19 @@ export default function BatchSimulationsPage({
             {showForm ? (
               <div className="space-y-4">
                 <BatchSimulationForm
-                  onSubmit={(data) => createStudy.mutate(data)}
+                  onSubmit={(data) => {
+                    setCreateError(null)
+                    createStudy.mutate(data)
+                  }}
                   isLoading={createStudy.isPending}
                 />
                 <Button
                   variant="outline"
                   className="w-full"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => {
+                    setCreateError(null)
+                    setShowForm(false)
+                  }}
                 >
                   Cancel
                 </Button>

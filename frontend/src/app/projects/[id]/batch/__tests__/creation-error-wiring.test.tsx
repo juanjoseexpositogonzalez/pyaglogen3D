@@ -94,7 +94,52 @@ describe('a refused creation is visible', () => {
       handlers.onError[0](error)
     })
 
-    expect(screen.getByText(/parameter_grid/)).toBeTruthy()
-    expect(screen.getByText(/target_df/)).toBeTruthy()
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toContain('parameter_grid')
+    expect(alert.textContent).toContain('target_df')
+  })
+
+  it('announces a repeated identical refusal', async () => {
+    render(<BatchPage params={{ id: 'p1' }} />)
+    const { act } = await import('react')
+    const error = new ApiError('Request failed: 400', 400, {
+      parameter_grid: ['bad'],
+    })
+
+    act(() => {
+      handlers.onError[0](error)
+    })
+    const first = screen.getByRole('alert')
+
+    act(() => {
+      handlers.onError[0](error)
+    })
+    const second = screen.getByRole('alert')
+
+    // Same text, different node: an `aria-live` region only speaks when its
+    // insertion or its content changes, and someone clicking again because
+    // "nothing happened" is the person this banner exists for.
+    expect(second).not.toBe(first)
+    expect(second.textContent).toContain('bad')
+  })
+
+  it('clears the banner when the form is cancelled', async () => {
+    render(<BatchPage params={{ id: 'p1' }} />)
+    const { act } = await import('react')
+    act(() => {
+      handlers.onError[0](new ApiError('x', 400, { parameter_grid: ['bad'] }))
+    })
+    expect(screen.queryByRole('alert')).not.toBeNull()
+
+    act(() => {
+      screen.getByRole('button', { name: /new batch study/i }).click()
+    })
+    act(() => {
+      screen.getByRole('button', { name: /cancel/i }).click()
+    })
+
+    // A blank form for a new study must not carry the previous refusal: it
+    // describes a payload that is no longer on screen.
+    expect(screen.queryByRole('alert')).toBeNull()
   })
 })

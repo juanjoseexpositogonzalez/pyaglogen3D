@@ -62,4 +62,31 @@ describe('a refused request keeps the fields the server named', () => {
   it('leaves an ordinary message alone', () => {
     expect(formatApiError(new Error('boom'))).toBe('boom')
   })
+
+  it('does not print the wire key for a refusal that belongs to no field', () => {
+    // The numeric-cast refusal (#115 point 5) is filed under `non_field_errors`,
+    // and the sentence a person reads must not begin with a serializer key.
+    const error = new ApiError('Request failed: 400', 400, {
+      non_field_errors: ["'target_df' must be a real number, got 'abc'."],
+    })
+
+    const message = formatApiError(error)
+    expect(message).toContain('target_df')
+    expect(message).not.toContain('non_field_errors')
+  })
+
+  it('survives a details value the wire format does not promise', () => {
+    // Joining a non-array would throw inside `onError`, and a throw there leaves
+    // the screen empty - the defect this module removes.
+    const asString = new ApiError('x', 400, {
+      parameter_grid: "not an array" as unknown as string[],
+    })
+    const withNoise = new ApiError('x', 400, {
+      parameter_grid: [42 as unknown as string, 'real message'],
+    })
+
+    expect(() => formatApiError(asString)).not.toThrow()
+    expect(formatApiError(withNoise)).toContain('real message')
+    expect(formatApiError(withNoise)).not.toContain('42')
+  })
 })
