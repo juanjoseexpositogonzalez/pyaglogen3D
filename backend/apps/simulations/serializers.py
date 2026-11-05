@@ -31,6 +31,7 @@ from .services.params import (
     SCHEMA_VERSION_CURRENT,
 )
 from .sintering_shape import (
+    AlgorithmScopeError,
     check_algorithm_scope,
     check_flat_keys,
     validate_dict_shape,
@@ -707,15 +708,39 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 check_algorithm_scope(
                     algorithm,
                     dicts=(
-                        eff_grid.get("sintering_config"),
-                        _as_mapping(
-                            _effective("sintering_config", data.get("sintering_config"))
+                        (
+                            "parameter_grid.sintering_config",
+                            eff_grid.get("sintering_config"),
                         ),
-                        eff_base.get("sintering_config"),
-                        eff_extremes.get("sintering_config"),
+                        (
+                            "sintering_config",
+                            _as_mapping(
+                                _effective(
+                                    "sintering_config", data.get("sintering_config")
+                                )
+                            ),
+                        ),
+                        (
+                            "base_parameters.sintering_config",
+                            eff_base.get("sintering_config"),
+                        ),
+                        (
+                            "limiting_cases_config.theoretical_extremes.sintering_config",
+                            eff_extremes.get("sintering_config"),
+                        ),
                     ),
-                    flats=(eff_base, eff_grid, eff_extremes),
+                    flats=(
+                        ("base_parameters", eff_base),
+                        ("parameter_grid", eff_grid),
+                        ("limiting_cases_config.theoretical_extremes", eff_extremes),
+                    ),
                 )
+        except AlgorithmScopeError as exc:
+            # The refusal names the field the request carries, not a fixed key:
+            # every surface of R3 reports under its own, and a client reading
+            # `sintering_config` for a payload that never sent one cannot tell
+            # which field to fix (#115, point 5).
+            raise serializers.ValidationError({exc.field: str(exc)}) from exc
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
 

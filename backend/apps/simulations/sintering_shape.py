@@ -212,54 +212,85 @@ def check_flat_required(merged: Mapping[str, Any]) -> None:
             )
 
 
+class AlgorithmScopeError(ValueError):
+    """A sintering setting the algorithm cannot consume.
+
+    Carries the surface holding the offending setting, so the serializer can
+    file the refusal under a key a client can act on. Every surface used to
+    report under `sintering_config`, which a payload carrying no such field
+    cannot point at (#115, point 5).
+    """
+
+    def __init__(self, message: str, *, surface: str, key: str | None = None) -> None:
+        super().__init__(message)
+        self.surface = surface
+        self.key = key
+
+    @property
+    def field(self) -> str:
+        """The request field the refusal belongs to."""
+        return f"{self.surface}.{self.key}" if self.key else self.surface
+
+
 def check_algorithm_scope(
     algorithm: str | None,
     *,
-    dicts: Iterable[Any],
-    flats: Iterable[Mapping[str, Any]],
+    dicts: Iterable[tuple[str, Any]],
+    flats: Iterable[tuple[str, Mapping[str, Any]]],
 ) -> None:
     """Allow-list by algorithm, over every surface at once (R11, R11.4-R11.6).
 
-    `dicts` are the `sintering_config` settings found on any surface and
-    `flats` the mappings that may carry flat `sintering_*` keys. The caller
-    passes the algorithm to evaluate against: on a partial update that omits
-    `base_algorithm`, that is the instance's stored one (R11.6).
+    `dicts` are `(field, sintering_config)` pairs found on any surface and
+    `flats` are `(field, mapping)` pairs that may carry flat `sintering_*` keys.
+    The field name is what a refusal is filed under: every surface of R3 reports
+    under the key it came from, so a client can point at the offending setting
+    (#115, point 5). The caller passes the algorithm to evaluate against: on a
+    partial update that omits `base_algorithm`, that is the stored one (R11.6).
     """
-    settings: list[Any] = []
-    for config in dicts:
+    settings: list[tuple[str, Any]] = []
+    for field, config in dicts:
         if not config:
             continue
         if isinstance(config, list):
-            settings.extend(entry for entry in config if entry)
+            settings.extend((field, entry) for entry in config if entry)
         else:
-            settings.append(config)
-    flat_keys = sorted(
-        {key for mapping in flats for key in mapping if key in FLAT_KEYS}
+            settings.append((field, config))
+    flat_hits: list[tuple[str, str]] = sorted(
+        (field, key) for field, mapping in flats for key in mapping if key in FLAT_KEYS
     )
-    if not settings and not flat_keys:
+    if not settings and not flat_hits:
         return  # absent means no sintering: nothing to scope
 
     if algorithm in NO_SINTERING_ALGORITHMS:
-        raise ValueError(
+        message = (
             f"algorithm '{algorithm}' does not consume sintering, so it must not "
             "be configured for it"
         )
+        # The whole surface is what is wrong, not one key inside it: naming a
+        # single flat key here would let a client remove only that one and be
+        # refused again for its sibling on the next request.
+        if settings:
+            raise AlgorithmScopeError(message, surface=settings[0][0])
+        raise AlgorithmScopeError(message, surface=flat_hits[0][0])
 
     if algorithm in FIXED_ONLY_ALGORITHMS:
-        for config in settings:
+        for field, config in settings:
             if not isinstance(config, Mapping):
                 continue
             if config.get("distribution_type") != "fixed":
-                raise ValueError(
+                raise AlgorithmScopeError(
                     f"algorithm '{algorithm}' accepts the fixed sintering shape "
-                    f"only, got '{config.get('distribution_type')}'"
+                    f"only, got '{config.get('distribution_type')}'",
+                    surface=field,
                 )
-        for mapping in flats:
+        for field, mapping in flats:
             for value in _swept_values(mapping.get("sintering_type")):
                 if value != "fixed":
-                    raise ValueError(
+                    raise AlgorithmScopeError(
                         f"algorithm '{algorithm}' accepts the fixed sintering "
-                        f"shape only, got sintering_type '{value}'"
+                        f"shape only, got sintering_type '{value}'",
+                        surface=field,
+                        key="sintering_type",
                     )
             shape_only = sorted(
                 key
@@ -267,9 +298,11 @@ def check_algorithm_scope(
                 if key in {"sintering_min", "sintering_max", "sintering_std"}
             )
             if shape_only:
-                raise ValueError(
+                raise AlgorithmScopeError(
                     f"algorithm '{algorithm}' ignores {', '.join(shape_only)}: it "
-                    "accepts the fixed sintering shape only"
+                    "accepts the fixed sintering shape only",
+                    surface=field,
+                    key=shape_only[0],
                 )
         return
 
