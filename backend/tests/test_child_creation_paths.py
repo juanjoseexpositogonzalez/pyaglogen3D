@@ -79,10 +79,15 @@ def _suffix(child: Simulation) -> str:
     return child.name[child.name.index("(") :]
 
 
-def test_every_path_keeps_seed_type_out_of_the_parameters(children: list[Simulation]) -> None:
+def test_every_path_keeps_seed_type_out_of_the_parameters(
+    children: list[Simulation],
+) -> None:
     assert children, "the study created no children at all"
     for child in children:
-        assert "seed_type" not in child.parameters, (child.name, child.parameters.keys())
+        assert "seed_type" not in child.parameters, (
+            child.name,
+            child.parameters.keys(),
+        )
         assert child.seed_type == "dimers", (child.name, child.seed_type)
 
 
@@ -136,10 +141,39 @@ def test_the_cast_keeps_the_shape_the_extremes_block_relies_on() -> None:
     """
     from apps.simulations.expansion_preview import cast_numeric_params
 
-    unguarded = {"n_particles": {}}
+    unguarded: dict[str, Any] = {"n_particles": {}}
     with pytest.raises(ValueError):
         cast_numeric_params(unguarded, guarded=False)
 
-    guarded = {"n_particles": {}}
+    guarded: dict[str, Any] = {"n_particles": {}}
     cast_numeric_params(guarded, guarded=True)
     assert guarded["n_particles"] == {}
+
+
+def test_a_study_without_a_grid_gets_no_case_suffix(api_client: APIClient) -> None:
+    """The other branch of the suffix conditional, which nothing pinned.
+
+    Measured by a judge on PR #225: emitting the suffix unconditionally renames
+    every child of a gridless study to `... (: )` and no test noticed. The line
+    predates this refactor, but the characterisation net is the right place to
+    close it.
+    """
+    user = User.objects.get(email__startswith="childpaths-")
+    project = Project.objects.create(name="no grid", owner=user)
+
+    response = api_client.post(
+        f"/api/v1/projects/{project.id}/studies/",
+        data={
+            "name": "no grid",
+            "base_algorithm": "tunable_cc",
+            "base_parameters": {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
+            "parameter_grid": {},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    study = ParametricStudy.objects.get(id=response.data["id"])
+    for child in study.simulations.all():
+        assert "(" not in child.name, child.name

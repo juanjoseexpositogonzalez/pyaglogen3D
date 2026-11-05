@@ -1818,8 +1818,10 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             )
 
             # --- sintering: grid-level overrides study-level ---
-            # Popped either way: an extreme carries its own settings, so a stray
-            # `sintering_config` key must not reach the child's parameters.
+            # Popped either way. The pop is unobservable today - the generator
+            # already removes the key (utils.py) - so this is defence in depth,
+            # not a behaviour: it keeps a stray `sintering_config` out of the
+            # child's parameters if that generator ever stops.
             combo_sintering = sim_params.pop("sintering_config", None)
             if study_sintering:
                 if combo_sintering is not None:
