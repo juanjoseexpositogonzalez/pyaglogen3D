@@ -95,11 +95,27 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    const error = await res.json().catch(() => ({}))
+    const error = (await res.json().catch(() => ({}))) as {
+      message?: string
+      detail?: string
+      details?: Record<string, string[]>
+      [field: string]: unknown
+    }
+    // DRF reports a refused payload as `{field: ["message", ...]}`: no
+    // `message`, no `detail`, no `details`. Reading only those three threw the
+    // field name away and left every validation error as `Request failed: 400`,
+    // so a caller could not say which field to fix (#115, point 6).
+    const fieldErrors = Object.fromEntries(
+      Object.entries(error)
+        .filter(([, value]) => Array.isArray(value))
+        .map(([field, value]) => [field, value as string[]])
+    )
+    const details =
+      error.details ?? (Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined)
     throw new ApiError(
       error.message || error.detail || `Request failed: ${res.status}`,
       res.status,
-      error.details
+      details
     )
   }
 

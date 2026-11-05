@@ -13,6 +13,8 @@ import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { simulationLabel } from '@/lib/projectionLabel'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { formatApiError } from '@/lib/formatApiError'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { AlertTriangle, ArrowLeft, Plus, Trash2 } from 'lucide-react'
@@ -33,6 +35,10 @@ export default function BatchSimulationsPage({
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   // Dedicated Fractal Analysis tab (P3, spec R7) — additive to the existing Results view.
   const [activeTab, setActiveTab] = useState<'results' | 'fractal'>('results')
+  // A refused creation used to be an invisible dead button: the mutation had
+  // no onError and the API threw the field name away, so the page showed
+  // nothing at all (#115, point 6).
+  const [createError, setCreateError] = useState<string | null>(null)
 
   // Fetch studies list (polls while any study has running simulations)
   const { data: studiesData, isLoading: isLoadingStudies } = useQuery({
@@ -66,9 +72,13 @@ export default function BatchSimulationsPage({
   const createStudy = useMutation({
     mutationFn: (data: CreateParametricStudyInput) => studiesApi.create(id, data),
     onSuccess: (newStudy) => {
+      setCreateError(null)
       queryClient.invalidateQueries({ queryKey: ['studies', id] })
       setShowForm(false)
       setSelectedStudyId(newStudy.id)
+    },
+    onError: (error: unknown) => {
+      setCreateError(formatApiError(error))
     },
   })
 
@@ -199,6 +209,15 @@ export default function BatchSimulationsPage({
             </Button>
           )}
         </div>
+
+        {createError && (
+          <Alert variant="destructive" className="mb-6">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="whitespace-pre-line">
+              {createError}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: Form or Study List */}
