@@ -2,14 +2,29 @@
 
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
+import { ArrowLeft } from 'lucide-react'
 import { useProject } from '@/hooks/useProjects'
 import { useCreateSimulation } from '@/hooks/useSimulations'
-import { Header } from '@/components/layout/Header'
 import { SimulationForm } from '@/components/forms/SimulationForm'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
-import { ArrowLeft } from 'lucide-react'
+import { PageHeader } from '@/components/kit/PageHeader'
 import type { CreateSimulationInput } from '@/lib/types'
 
+/**
+ * Where a simulation starts, inside the project it belongs to.
+ *
+ * The shell draws the navigation, so this file does not. `Header` was mounted
+ * here to cover the sessions the shell leaves chromeless; dropping it is the
+ * migration's deliberate trade (navigation is the shell's job, not this
+ * page's), not a claim that the two components are equivalent.
+ *
+ * The parameters, their defaults and their validation belong to
+ * `SimulationForm`, which this route only mounts and feeds: this file decides
+ * which project the run joins and where a successful create lands. The column
+ * stays at the 672px measure the migrated FRAKTAL creation screens use, so the
+ * form's two-column rows do not stretch to ~650px per cell on the shell's
+ * 1440px.
+ */
 export default function NewSimulationPage({
   params,
 }: {
@@ -30,39 +45,30 @@ export default function NewSimulationPage({
   }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading..." />
-      </div>
-    )
+    return <LoadingScreen message="Loading..." />
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <div className="mx-auto w-full max-w-2xl">
+      {/* Breadcrumb */}
+      <Link
+        href={`/projects/${id}`}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to {project?.name || 'Project'}
+      </Link>
 
-      <main className="container mx-auto px-4 py-8 max-w-2xl">
-        <Link
-          href={`/projects/${id}`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to {project?.name || 'Project'}
-        </Link>
+      <PageHeader
+        eyebrow="SIMULATION"
+        title="New Simulation"
+        description="Configure and run a 3D agglomerate simulation"
+      />
 
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">New Simulation</h1>
-          <p className="text-muted-foreground mt-2">
-            Configure and run a 3D agglomerate simulation
-          </p>
-        </div>
-
-        <SimulationForm
-          onSubmit={handleSubmit}
-          isLoading={createSimulation.isPending}
-        />
-      </main>
+      <SimulationForm
+        onSubmit={handleSubmit}
+        isLoading={createSimulation.isPending}
+      />
     </div>
   )
 }
