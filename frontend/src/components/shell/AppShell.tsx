@@ -237,8 +237,23 @@ export function AppShell({ children }: AppShellProps) {
             untouched without removing the element.
           */}
           <main
+            /*
+              The page frame follows the route, not the session.
+
+              It used to follow `showChrome`, which is false during the server
+              render and the first client render of every load because
+              `AuthContext` starts with `isLoading = true`. So every migrated page
+              painted edge to edge and then jumped 40px right and 36px down when
+              `/auth/me` resolved — the jump was introduced by the migration, since
+              the screens that still carry their own `container` never showed it.
+
+              `chromeless` is a property of the pathname, which the server knows,
+              so the frame is stable from the first byte. The rail and the top bar
+              keep following `showChrome`, because those really do depend on the
+              session.
+            */
             className={cn(
-              showChrome ? 'mx-auto w-full max-w-[1440px] px-10 pb-14 pt-9' : 'contents',
+              chromeless ? 'contents' : 'mx-auto w-full max-w-[1440px] px-10 pb-14 pt-9',
             )}
           >
             {children}

@@ -59,6 +59,32 @@ describe('AppShell', () => {
     }
   })
 
+  it('keeps the page frame before the session resolves, because the frame follows the route', () => {
+    // `isLoading` is true during the server render and the first client render of
+    // every load. While the frame followed `showChrome`, every migrated page
+    // painted edge to edge and then jumped 40px right and 36px down when
+    // `/auth/me` resolved — a jump the un-migrated screens never showed, because
+    // they still carry their own container.
+    auth.current = {
+      user: null,
+      isAuthenticated: false,
+      isLoading: true,
+      logout: () => {},
+    } as unknown as typeof auth.current
+
+    const { container } = renderAt('/projects/p1')
+
+    const main = container.querySelector('main')
+    expect(main?.className).toContain('px-10')
+    expect(main?.className).not.toBe('contents')
+  })
+
+  it('leaves the chromeless routes without a page frame, because the route says so', () => {
+    const { container } = renderAt('/auth/login')
+
+    expect(container.querySelector('main')?.className).toBe('contents')
+  })
+
   it('wraps an application route in exactly one navigation', () => {
     renderAt('/dashboard')
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1)
