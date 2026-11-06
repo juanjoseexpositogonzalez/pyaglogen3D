@@ -38,6 +38,7 @@ from .services.projection import (
     render_projection_svg,
 )
 from .services.projections import build_projection_zip
+from .sintering_shape import FLAT_KEYS
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
 
@@ -1826,6 +1827,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 study.base_parameters.get("seed_type", "monomers"),
             )
 
+            # #115, point 8: R3's precedence lets a config dict win over a flat
+            # sweep, and this name is built from the combination. Capture what
+            # the combination asked for before the config writes over it.
+            swept_flats = {
+                key: value for key, value in sim_params.items() if key in FLAT_KEYS
+            }
+
             # --- sintering: grid-level overrides study-level ---
             # Popped either way. The pop is unobservable today - the generator
             # already removes the key (utils.py) - so this is defence in depth,
@@ -1843,6 +1851,17 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             # Cast the numeric parameters (guard: skip dicts on the paths whose
             # block always did; the extremes block never did).
             cast_numeric_params(sim_params, guarded=guarded_cast)
+
+            # #115, point 8: the config may have written over a swept value.
+            # The name must not promise what the child does not run with, so it
+            # carries both the asked-for value and the effective one.
+            if case_label:
+                for key, before in swept_flats.items():
+                    after = sim_params.get(key)
+                    if after is not None and after != before:
+                        case_label = case_label.replace(
+                            f"{key}={before}", f"{key}={before} -> {after}"
+                        )
 
             # R13.10: a parity key declared anywhere reaches the engine under
             # the name the worker reads, and the grid key stays for the views.
