@@ -4,6 +4,7 @@ import { useId, useState } from 'react'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
+import { Callout } from '@/components/kit/Callout'
 import type { DistributionMode, DistributionValue } from '@/lib/types'
 import { distributionValueError } from '@/lib/distributionShape'
 
@@ -70,6 +71,10 @@ export function DistributionSelector({
   // message - measured by a judge of PR #199.
   const messageId = useId()
 
+  // The invalid border keeps the `destructive` bridge token it already used:
+  // two tests outside this change's scope pin that class name on the input
+  // (`DistributionGridInput.test.tsx`, `DistributionSelectorBlur.test.tsx`), so
+  // moving it to the kit's `danger` needs those tests updated first.
   const invalidClass = (field: string) =>
     marked === field ? 'border-destructive focus-visible:ring-destructive' : undefined
   const filteredOptions = allowedTypes
@@ -211,10 +216,16 @@ export function DistributionSelector({
         </div>
       )}
 
+      {/*
+        The field message is a `Callout` (issue #181): a tint alone is not a
+        state, so the notice also carries an icon and a title. The id stays on
+        the wrapper rather than on the message, because `Callout` takes no id
+        and `aria-describedby` has to resolve to something.
+      */}
       {shown && (
-        <p id={messageId} role="alert" className="text-xs text-destructive mt-1">
-          {shown}
-        </p>
+        <div id={messageId}>
+          <Callout tone="danger" title={shown} />
+        </div>
       )}
     </div>
   )

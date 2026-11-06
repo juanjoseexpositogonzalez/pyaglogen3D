@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, within } from '@testing-library/react'
+import { render, screen, fireEvent } from '@testing-library/react'
 import { BatchSimulationForm } from '../BatchSimulationForm'
 
 // ---------------------------------------------------------------------------
@@ -132,8 +132,10 @@ describe('BatchSimulationForm — new parameter grid options', () => {
     // Click trimers to also select it
     fireEvent.click(screen.getByRole('button', { name: /trimers/i }))
 
-    // The seed_type area should show "3 selected" (monomers + dimers + trimers)
-    expect(screen.getByText('3 selected')).toBeDefined()
+    // The seed_type area should show "3 selected" (monomers + dimers + trimers).
+    // The count is a `Num` now, so the number and the word after it are separate
+    // nodes: compare the paragraph both of them belong to.
+    expect(screen.getByText(/selected/).textContent).toBe('3 selected')
   })
 
   // T6.7 — live sim count indicator
@@ -152,10 +154,19 @@ describe('BatchSimulationForm — new parameter grid options', () => {
     // Add a second distribution entry
     fireEvent.click(screen.getByRole('button', { name: /add distribution/i }))
 
-    // Should now show "2" in the total simulations counter
+    // Should now show the projected count for 2 entries and 1 seed.
     // (2 kf_distribution entries × 1 seed = 2 sims)
     expect(screen.getByText(/Total simulations/i)).toBeDefined()
-    expect(screen.getByText('2')).toBeDefined()
+    // The total and the combination count happen to be the same 2 here, and
+    // each is its own `Num` span, so a bare `getByText('2')` is ambiguous: read
+    // the three readings in order - total, combinations, seeds.
+    const panel = screen
+      .getByRole('heading', { name: /total simulations/i })
+      .closest('section')
+    const readings = Array.from(panel!.querySelectorAll('.num')).map(
+      (node) => node.textContent,
+    )
+    expect(readings.slice(0, 3)).toEqual(['2', '2', '1'])
   })
 
   // T6.8 — warning when projected > 200
@@ -288,5 +299,286 @@ describe('BatchSimulationForm — R2 cap on the primary size', () => {
     fireEvent.blur(std)
 
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #181 (slice 2 of 3) — the form moves onto the design-system kit.
+//
+// Two kinds of guard live here. The first describe states the shape the kit
+// requires: `Panel` blocks with second-level headings, notices that carry a
+// role instead of a colour, readings routed through `Num`, tokens instead of
+// palette literals. It fails on the pre-migration form.
+//
+// The second describe is the regression net for "presentation only": it passes
+// on both versions on purpose. The payload is compared as serialised text, so
+// key order and the absence of `NaN`-swallowing are pinned too.
+//
+// Plain matchers only: this repository's vitest setup does not load
+// @testing-library/jest-dom.
+// ---------------------------------------------------------------------------
+
+/** Fill a scalar variation with a discrete-values list. */
+function addScalarVariation(parameter: string, values: string) {
+  fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+  const selects = screen.getAllByRole('combobox')
+  fireEvent.change(selects[selects.length - 1], { target: { value: parameter } })
+  fireEvent.click(screen.getByRole('button', { name: /discrete/i }))
+  fireEvent.change(screen.getByPlaceholderText(/e\.g\., 100/i), {
+    target: { value: values },
+  })
+}
+
+describe('<BatchSimulationForm /> — design-system kit', () => {
+  it('composes its blocks as panels, each with a second-level heading', () => {
+    const { container } = render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    const titles = screen
+      .getAllByRole('heading', { level: 2 })
+      .map((heading) => heading.textContent)
+
+    // The batch page owns the only h1; every block of the form is an h2 under
+    // it, so the outline still reads as one document.
+    expect(titles).toEqual([
+      'Study',
+      'Base Parameters',
+      'Parameter Variations',
+      'Box-Counting Analysis',
+      'Total simulations',
+    ])
+    // A `Panel` is a <section>, not a div that only looks like a card.
+    expect(container.querySelectorAll('section').length).toBeGreaterThanOrEqual(5)
+  })
+
+  it('takes the page position it is given: a form, no landmark, no card', () => {
+    const { container } = render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    expect(container.firstElementChild?.tagName).toBe('FORM')
+    // The page decides the layout and owns the h1; the form must not claim a
+    // region of its own or a second `<main>`.
+    expect(screen.queryByRole('main')).toBeNull()
+  })
+
+  it('carries no palette literal and no deprecated surface', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(
+      join(process.cwd(), 'src/components/batch/BatchSimulationForm.tsx'),
+      'utf8',
+    )
+
+    // Tailwind's named palette. `bg-panel-teal` and friends are kit tones and
+    // carry no shade suffix, so they do not match.
+    const PALETTE =
+      /-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}/
+    expect(source.match(PALETTE)).toBeNull()
+    // A hex colour always carries at least one letter; `#181` in a comment does
+    // not, which keeps this from failing on the issue number.
+    expect(source).not.toMatch(/#(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3,8}\b/)
+    expect(source).not.toMatch(/rgba?\(/)
+    // The shadcn bridge is not the kit: these were the old surfaces.
+    expect(source).not.toMatch(/\btext-muted-foreground\b/)
+    expect(source).not.toMatch(/\bbg-primary\b/)
+    expect(source).not.toMatch(/ui\/card/)
+  })
+
+  it('raises the "may take a while" warning as a notice with a role', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    // 21 integer values × 10 seeds = 210 runs, past the 200 threshold.
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '10' },
+    })
+    addScalarVariation('n_particles', Array.from({ length: 21 }, (_, i) => i + 1).join(','))
+
+    const notice = screen
+      .getAllByRole('note')
+      .find((note) => /may take a while/i.test(note.textContent ?? ''))
+
+    expect(notice).toBeTruthy()
+    // The count inside the notice is a `Num`: its own monospace span, so the
+    // number is readable and alignable apart from the sentence around it.
+    expect(notice!.querySelector('.num')?.textContent).toBe('210')
+  })
+
+  it('raises the over-1000 refusal as a danger notice', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    // 101 integer values × 10 seeds = 1010 runs, past the server's cap.
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '10' },
+    })
+    addScalarVariation(
+      'n_particles',
+      Array.from({ length: 101 }, (_, i) => i + 100).join(','),
+    )
+
+    const refusal = screen
+      .getAllByRole('alert')
+      .find((alert) => /exceeds/i.test(alert.textContent ?? ''))
+
+    // `danger` is the only `Callout` tone that renders as an alert, so a state
+    // the reader must not miss is announced instead of merely tinted.
+    expect(refusal).toBeTruthy()
+    expect(refusal!.textContent).toContain('1000')
+  })
+
+  it('renders the projected total and the per-variation count through `Num`', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    // Two seeds, so the projected total (6) is not the combination count (3):
+    // a fixture where they coincide cannot tell the two readings apart.
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '2' },
+    })
+    addScalarVariation('n_particles', '10, 20, 30')
+
+    const readings = (scope: Element) =>
+      Array.from(scope.querySelectorAll('.num')).map((node) => node.textContent)
+
+    const load = screen
+      .getByRole('heading', { name: /total simulations/i })
+      .closest('section')!
+    // The total, then the breakdown it is made of - each in its own span, so
+    // the numbers can be aligned and read without the words around them.
+    expect(readings(load)).toEqual(['6', '3', '2'])
+
+    // The variation's own tally, next to the words that qualify it.
+    const tally = screen.getByText('Generated values:').parentElement!
+    expect(readings(tally)).toEqual(['3'])
+  })
+})
+
+describe('<BatchSimulationForm /> — the payload the migration must not change', () => {
+  it('submits the default ballistic study byte for byte', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    // Serialised, not `toEqual`: this pins the key order the backend receives
+    // and the absence of a `box_counting_params` key when the option is off.
+    expect(JSON.stringify(onSubmit.mock.calls[0][0])).toBe(
+      JSON.stringify({
+        name: 'Batch ballistic Study',
+        description: '',
+        base_algorithm: 'ballistic',
+        base_parameters: { n_particles: 100, sticking_probability: 1 },
+        parameter_grid: {},
+        seeds_per_combination: 1,
+        include_box_counting: false,
+      }),
+    )
+  })
+
+  it('submits a limiting case with its own flat parameters and the box-counting options', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'limiting' },
+    })
+    fireEvent.change(screen.getByLabelText(/base sintering/i), {
+      target: { value: '0.8' },
+    })
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(JSON.stringify(onSubmit.mock.calls[0][0])).toBe(
+      JSON.stringify({
+        name: 'Batch limiting Study',
+        description: '',
+        base_algorithm: 'limiting',
+        base_parameters: {
+          n_particles: 100,
+          geometry_type: 'chain',
+          configuration_type: 'lineal',
+          packing: 'HC',
+          sintering_coeff: 0.8,
+        },
+        parameter_grid: {},
+        // Deterministic: the form refuses to multiply a limiting case by seeds.
+        seeds_per_combination: 1,
+        include_box_counting: true,
+        box_counting_params: { points_per_sphere: 100, precision: 18 },
+      }),
+    )
+  })
+
+  it('keeps the discrete-values contract for an integer parameter', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    addScalarVariation('n_particles', '10, 20.7, 30')
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    // `n_particles` is an integer parameter, so each token goes through
+    // `parseInt`: the fraction is truncated, not rounded.
+    expect(onSubmit.mock.calls[0][0].parameter_grid).toEqual({
+      n_particles: [10, 20, 30],
+    })
+  })
+
+  it('keeps the range contract: start, end and step expand in the payload', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], {
+      target: { value: 'n_particles' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /range/i }))
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    // The defaults are 100 → 1000 step 100.
+    expect(onSubmit.mock.calls[0][0].parameter_grid).toEqual({
+      n_particles: [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000],
+    })
+  })
+
+  it('sends the distribution entries in the shape the worker reads', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'tunable_cc' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], {
+      target: { value: 'kf_distribution' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    const payload = onSubmit.mock.calls[0][0]
+    // `kf_distribution` speaks the `mode` shape; `sintering_config` speaks its
+    // own and is translated by `toSinteringConfig`. Untouched by the port.
+    expect(payload.parameter_grid).toEqual({
+      kf_distribution: [{ mode: 'fixed', value: 1 }],
+    })
+  })
+
+  it('still announces the variation it dropped when the algorithm changes', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    // `sintering_config` is offered on ballistic and refused by fracval.
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], {
+      target: { value: 'sintering_config' },
+    })
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'fracval' },
+    })
+
+    // The live region is what tells the user why the variation vanished; the
+    // batch page shows no submit error (issue #115, point 6).
+    const live = screen.getByRole('status')
+    expect(live.textContent).toContain(
+      'Sintering coefficient distribution was removed because fracval does not accept it.',
+    )
+    expect(live.querySelector('[role="note"]')).toBeTruthy()
   })
 })
