@@ -82,7 +82,10 @@ def test_an_overwritten_sweep_says_both_values(
     # What the name says must agree with that, and keep what was asked for.
     assert "sintering_coeff=0.6" in child.name, child.name
     assert "0.8" in child.name, child.name
-    assert "→" in child.name, child.name
+    assert "->" in child.name, child.name
+    # ASCII on purpose: the name is a CSV cell and that export declares no
+    # charset and no BOM, so a non-ASCII arrow shows as `?` in Excel.
+    child.name.encode("ascii")
 
 
 @pytest.mark.django_db
@@ -98,21 +101,57 @@ def test_an_untouched_sweep_keeps_its_plain_name(
 
     assert child.parameters["sintering_coeff"] == 0.6
     assert "sintering_coeff=0.6" in child.name, child.name
-    assert "→" not in child.name, child.name
+    assert "->" not in child.name, child.name
 
 
 @pytest.mark.django_db
-def test_a_sweep_of_something_else_is_untouched(
+def test_the_numeric_cast_does_not_invent_an_arrow(
     api_client: APIClient, project: Project
 ) -> None:
+    """The guard that keeps this rule to sintering keys, and why it is real.
+
+    A judge on PR #228 measured the first version of this test as vacuous: it
+    swept a float, whose value the cast never changes, so removing the
+    `key in FLAT_KEYS` guard produced no arrow and the test still passed. A
+    numeric STRING is cast between the capture and the rewrite, so without the
+    guard the name would claim `target_df=1.8 -> 1.8`.
+    """
     response = _post(
         api_client,
         project,
-        parameter_grid={"target_df": [1.8]},
+        parameter_grid={"target_df": ["1.8"]},
         sintering_config=STUDY_CONFIG,
     )
 
     assert response.status_code == 201, response.data
     study = ParametricStudy.objects.get(id=response.data["id"])
-    for child in study.simulations.all():
-        assert "→" not in child.name, child.name
+    child = study.simulations.get()
+
+    assert child.parameters["target_df"] == 1.8
+    assert "->" not in child.name, child.name
+    assert "target_df=1.8" in child.name, child.name
+
+
+@pytest.mark.django_db
+def test_the_rule_covers_every_flat_key_not_just_the_coefficient(
+    api_client: APIClient, project: Project
+) -> None:
+    """A rewrite restricted to `sintering_coeff` left the suite green.
+
+    Measured by a judge on PR #228: the fixed config also overwrites
+    `sintering_type`, and a name saying `fixed` while the child runs `uniform`
+    is the same lie in another key.
+    """
+    response = _post(
+        api_client,
+        project,
+        parameter_grid={"sintering_type": ["uniform"]},
+        sintering_config=STUDY_CONFIG,
+    )
+
+    assert response.status_code == 201, response.data
+    study = ParametricStudy.objects.get(id=response.data["id"])
+    child = study.simulations.get()
+
+    assert child.parameters["sintering_type"] == "fixed"
+    assert "sintering_type=uniform -> fixed" in child.name, child.name

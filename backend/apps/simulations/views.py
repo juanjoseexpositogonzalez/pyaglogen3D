@@ -21,7 +21,6 @@ from apps.accounts.permissions import IsProjectOwnerOrShared
 
 from .expansion_preview import cast_numeric_params
 from .models import ParametricStudy, Simulation, SimulationStatus
-from .sintering_shape import FLAT_KEYS
 from .serializers import (
     BatchProjectionExportRequestSerializer,
     ParametricStudySerializer,
@@ -39,6 +38,7 @@ from .services.projection import (
     render_projection_svg,
 )
 from .services.projections import build_projection_zip
+from .sintering_shape import FLAT_KEYS
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
 
@@ -1860,7 +1860,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     after = sim_params.get(key)
                     if after is not None and after != before:
                         case_label = case_label.replace(
-                            f"{key}={before}", f"{key}={before} → {after}"
+                            f"{key}={before}", f"{key}={before} -> {after}"
                         )
 
             # R13.10: a parity key declared anywhere reaches the engine under
