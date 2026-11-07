@@ -300,6 +300,9 @@ class TestParametricStudySerializer:
         assert not serializer.is_valid()
         assert "sintering_config" in serializer.errors
 
+# --- R3.3 — an invalid sintering config is rejected: the bounds are part of it ---
+
+
     def test_invalid_sintering_uniform_min_greater_than_max(self, db, project):
         """Test uniform sintering with min > max fails."""
         from apps.simulations.serializers import ParametricStudySerializer

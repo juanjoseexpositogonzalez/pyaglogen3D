@@ -69,35 +69,20 @@ def test_r3_6_well_formed_dict_is_accepted(db: Any, project: Any) -> None:
     assert valid, errors
 
 
-# --- R3.3 — an invalid config is rejected, and the bounds are part of it ---
-
-
-def test_r3_3_uniform_min_above_max_is_rejected(db: Any, project: Any) -> None:
-    """The canonical scenario point 12 found with no witness at all.
-
-    A `uniform` entry whose `min` exceeds its `max` was rejected correctly and
-    nobody asserted it: the identifier map said R3.3 had no test, and a
-    regression there would have gone unnoticed. Measured before adding this:
-    400 with `min must be less than or equal to max`.
-    """
-    valid, errors = _is_valid(
-        project,
-        sintering_config={"distribution_type": "uniform", "min": 0.95, "max": 0.7},
-    )
-    assert not valid, "accepted uniform with min above max"
-    assert "min" in str(errors).lower()
-
-
 # --- R3.7 — base_parameters is validated like the others ---
 
 
 def test_r3_7_incomplete_dict_in_base_parameters_is_rejected(
     db: Any, project: Any
 ) -> None:
-    """The second scenario with no witness, and the sharper one.
+    """The API-facing key for a refusal R12.2 already pins end to end.
 
-    The other surfaces were validated first and `base_parameters` was assumed to
-    follow; a malformed dict parked there was accepted and reached the children.
+    The behaviour is not unpinned: `test_r12_an_invalid_setting_writes_nothing`
+    asserts 400, nothing written and nothing dispatched for this shape, which is
+    strictly more than this test can see. What was missing is the exact field a
+    client reads - the R12.2 assertion checks for the word "sintering" in the
+    body, not for `base_parameters.sintering_config`, so a refusal filed under
+    another surface would still pass there and fail here.
     """
     valid, errors = _is_valid(
         project,

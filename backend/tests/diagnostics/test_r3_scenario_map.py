@@ -1,6 +1,8 @@
 """#115, point 12 - which canonical R3 scenario does each test actually cite.
 
-The canonical spec renumbered its scenarios and the tests did not follow. Measured
+The labels were wrong from the day those tests were written: it took a judge
+checking an archived change to establish that nothing was ever renumbered, and
+`test_grid_expansion.py` has been off by two since its first commit. Measured
 before this file existed:
 
     apps/simulations/tests/test_grid_expansion.py   cited R3.3 and R3.4 for what
@@ -14,9 +16,21 @@ The effect is the worst of the two: anyone mapping by identifier was told R3.1,
 R3.4 and R3.7 had no witness (they did, under another label) and that R3.3 and
 R3.7 did (those tests proved something else).
 
-This is a **diagnostic**, not a gate. A mechanical check cannot verify that a test
-exercises the scenario it names - only that the number it names exists - so what
-it asserts is the part that can be asserted, and it prints the rest for a human.
+It is a gate on one thing: **a citation to a scenario this capability does not
+have**. That is all it can assert, and it is worth being blunt about the rest:
+
+- it cannot detect a *renumbering*, because the numbers would still exist;
+- it cannot tell whether a test exercises the scenario it cites;
+- a citation is not coverage: several canonical ANDs have no test at all, and a
+  scenario whose every AND is not pinned still prints as cited.
+
+A judge measured all three on PR #237, after an earlier version of this file was
+sold as protection against a renumbering that never happened.
+
+The scan is scoped to files that declare a `# --- R3.x` header. `R3` is a
+per-capability namespace - `batch-box-counting` has its own R3.1 and R3.2 - so a
+tree-wide scan of `R3.x` counts another capability's citations as corroboration,
+and would one day count them as a false pass.
 
     cd backend && python -m pytest tests/diagnostics/test_r3_scenario_map.py -q -s
 """
@@ -44,12 +58,16 @@ def _canonical() -> dict[str, str]:
     return dict(_SCENARIO.findall(SPEC.read_text(encoding="utf-8")))
 
 
-def _test_files() -> list[Path]:
-    return [
-        path
-        for path in sorted(BACKEND.rglob("test_*.py"))
-        if "diagnostics" not in path.parts
-    ]
+def _test_files() -> list[tuple[Path, str]]:
+    """Test files that declare a header for THIS capability, with their text."""
+    out: list[tuple[Path, str]] = []
+    for path in sorted(BACKEND.rglob("test_*.py")):
+        if "diagnostics" in path.parts:
+            continue
+        text = path.read_text(encoding="utf-8", errors="replace")
+        if any(line.startswith("# --- R3") for line in text.splitlines()):
+            out.append((path, text))
+    return out
 
 
 def _cited() -> dict[str, list[str]]:
@@ -67,8 +85,7 @@ def _cited() -> dict[str, list[str]]:
     by the file, and cannot be produced by a stray mention in prose.
     """
     found: dict[str, list[str]] = {}
-    for path in _test_files():
-        text = path.read_text(encoding="utf-8", errors="replace")
+    for path, text in _test_files():
         for line in text.splitlines():
             if not line.startswith("# --- R3"):
                 continue
@@ -90,8 +107,7 @@ def _every_mention() -> dict[str, list[str]]:
     assertion wants; it is the *report* that must not be inflated.
     """
     found: dict[str, list[str]] = {}
-    for path in _test_files():
-        text = path.read_text(encoding="utf-8", errors="replace")
+    for path, text in _test_files():
         for number in {f"R3.{n}" for n in _CITATION.findall(text)}:
             found.setdefault(number, []).append(str(path.relative_to(BACKEND)))
     return found
@@ -131,7 +147,7 @@ def test_print_the_map_so_a_human_can_see_the_gaps() -> None:
 
     assert canonical, "no scenario parsed: the canonical format moved"
 
-    print("\n=== canonical R3 scenarios ===")
+    print("\n=== canonical R3 scenarios (a citation is not AND-level coverage) ===")
     for number in sorted(canonical, key=lambda n: int(n.split(".")[1])):
         files = cited.get(number, [])
         where = f"{len(files)} file(s): {', '.join(sorted(files))}"
