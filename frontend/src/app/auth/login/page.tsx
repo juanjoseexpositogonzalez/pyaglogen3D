@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { authApi } from '@/lib/auth-api'
@@ -66,6 +66,19 @@ function startOAuth(provider: 'google' | 'github') {
 
 export default function LoginPage() {
   const { login, error, clearError, isLoading } = useAuth()
+
+  /*
+    The OAuth callback writes `?error=` into this route when the provider
+    refuses, and until now nobody read it: a failed sign-in landed on a blank
+    form with no word of why. The value arrives from our own callback, but it
+    reaches this page through the query string, so it is read once and rendered
+    as text — never as markup.
+  */
+  const [providerError, setProviderError] = useState<string | null>(null)
+  useEffect(() => {
+    const reason = new URLSearchParams(window.location.search).get('error')
+    if (reason) setProviderError(reason)
+  }, [])
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
 
@@ -82,7 +95,20 @@ export default function LoginPage() {
   return (
     <Panel title="Sign In" hint="Enter your credentials to access your account">
       <form onSubmit={handleSubmit} className="space-y-4">
-        {error && <Callout tone="danger" title={error} />}
+        {error ? (
+          <Callout tone="danger" title={error} />
+        ) : (
+          providerError && (
+            <Callout
+              tone="danger"
+              title={
+                providerError === 'access_denied'
+                  ? 'The provider did not grant access, so you are not signed in.'
+                  : `Sign-in failed: ${providerError}`
+              }
+            />
+          )
+        )}
 
         <div className="space-y-2">
           <Label htmlFor="email" className="text-ink">

@@ -313,4 +313,22 @@ describe('sign-in screen', () => {
     expect(page).toMatch(/@\/components\/kit\/Callout/)
     expect(page).toMatch(/@\/components\/kit\/Panel/)
   })
+  it('says why an OAuth sign-in failed, instead of showing a blank form', () => {
+    // The callback writes `?error=` and, until now, nothing read it: a provider
+    // refusal landed here as a form with no explanation at all.
+    window.history.replaceState({}, '', '/auth/login?error=access_denied')
+
+    render(<LoginPage />)
+
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/did not grant access/i)
+  })
+
+  it('carries an unrecognised provider error into the notice instead of swallowing it', () => {
+    window.history.replaceState({}, '', '/auth/login?error=server_error')
+
+    render(<LoginPage />)
+
+    expect(screen.getByRole('alert').textContent).toMatch(/server_error/i)
+  })
 })
