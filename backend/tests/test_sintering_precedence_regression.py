@@ -170,7 +170,10 @@ def test_r7_2_a_stored_row_from_before_the_change_still_reads(db) -> None:  # ty
         project=owned,
         name="Historic child",
         algorithm="fracval",
-        parameters={"n_particles": 1000},
+        # The same out-of-range coefficient as the study: a read path that
+        # re-validated stored CHILD parameters is invisible unless the child
+        # carries a value the validation refuses (measured by a judge).
+        parameters={"n_particles": 1000, "target_df": 1.5, "sintering_coeff": 42.0},
         seed=12345,
         status="completed",
         is_batch=True,
@@ -185,9 +188,15 @@ def test_r7_2_a_stored_row_from_before_the_change_still_reads(db) -> None:  # ty
         "sintering_coeff": [42.0],
     }, detail.data["parameter_grid"]
 
-    # 2. Its child simulations are re-listed.
+    # 2. Its child simulations are re-listed - and the child is actually there.
+    # A judge measured that asserting the status alone let a mutant returning an
+    # empty list pass, so the assertion names the child.
     results = client.get(f"/api/v1/projects/{owned.id}/studies/{study.id}/results/")
     assert results.status_code == 200, results.data
+    listed = [row["simulation_id"] for row in results.data["results"]]
+    assert str(child.id) in listed, (listed, str(child.id))
+    stored_child = next(r for r in results.data["results"] if r["simulation_id"] == str(child.id))
+    assert stored_child["parameters"]["sintering_coeff"] == 42.0, stored_child["parameters"]
 
     # 3. And it can still be renamed - the escape R11.8 exists to keep open.
     renamed = client.patch(
@@ -197,4 +206,25 @@ def test_r7_2_a_stored_row_from_before_the_change_still_reads(db) -> None:  # ty
     )
     assert renamed.status_code == 200, renamed.data
     study.refresh_from_db()
+    # The premise the docstring states, asserted rather than narrated: this shape
+    # is one today's create path refuses.
+    refused = client.post(
+        f"/api/v1/projects/{owned.id}/studies/",
+        data={
+            "name": "Would be refused",
+            "base_algorithm": "fracval",
+            "base_parameters": {"n_particles": 1000},
+            "parameter_grid": {"target_df": [1.5], "sintering_coeff": [42.0]},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+    assert refused.status_code == 400, refused.data
+
     assert study.name == "Renamed historic study"
+    # R11.8: "the stored setting is left exactly as it was". A plausible repair is
+    # to heal the row by stripping the refused key, and this is what catches it.
+    assert study.parameter_grid == {
+        "target_df": [1.5],
+        "sintering_coeff": [42.0],
+    }, study.parameter_grid
