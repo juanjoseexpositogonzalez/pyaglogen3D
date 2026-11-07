@@ -170,10 +170,10 @@ def test_r3_8_unknown_flat_sintering_key_is_rejected(db: Any, project: Any) -> N
     assert not valid, "accepted an unknown flat sintering_* key"
 
 
-# --- R3.6 — incomplete flat shapes, on the merged projection ---
+# --- R3.8 — incomplete flat shapes, on the merged projection ---
 
 
-def test_r3_6_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
+def test_r3_8_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
     valid, _ = _is_valid(
         project,
         base_parameters={
@@ -185,7 +185,7 @@ def test_r3_6_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
     assert not valid, "accepted uniform with no sintering_max"
 
 
-def test_r3_6_swept_value_completes_the_shape(db: Any, project: Any) -> None:
+def test_r3_8_swept_value_completes_the_shape(db: Any, project: Any) -> None:
     """The rest of the shape may legitimately live in base_parameters."""
     valid, errors = _is_valid(
         project,
@@ -238,11 +238,11 @@ def test_r3_9_flat_extreme_out_of_range_is_rejected(db: Any, project: Any) -> No
     assert not valid, "accepted sintering_coeff=42.0 in theoretical_extremes"
 
 
-# --- R3.2 — the study field accepts "no sintering" ---
+# --- R3.6 — a study-level {} or null is still accepted ---
 
 
 @pytest.mark.parametrize("empty", [None, {}])
-def test_r3_2_study_field_accepts_empty(db: Any, project: Any, empty: Any) -> None:
+def test_r3_6_study_field_accepts_empty(db: Any, project: Any, empty: Any) -> None:
     """Surfaces 2 and 3: this study configures no sintering."""
     valid, errors = _is_valid(project, sintering_config=empty)
     assert valid, errors

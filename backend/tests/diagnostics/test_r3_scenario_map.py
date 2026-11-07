@@ -44,36 +44,78 @@ def _canonical() -> dict[str, str]:
     return dict(_SCENARIO.findall(SPEC.read_text(encoding="utf-8")))
 
 
+def _test_files() -> list[Path]:
+    return [
+        path
+        for path in sorted(BACKEND.rglob("test_*.py"))
+        if "diagnostics" not in path.parts
+    ]
+
+
 def _cited() -> dict[str, list[str]]:
-    """Every R3.x the tests mention, with the files that mention it."""
+    """The scenarios a test file *declares*, via a `# --- R3.x — ...` header.
+
+    Deliberately not every mention of `R3.x` in the tree. Measured by a judge on
+    PR #237: scanning free text counted `test_box_counting_async.py`, whose R3.1
+    belongs to another capability (`batch-windowed-box-counting`), and
+    `test_parametric_study_serializer.py`, which labels a shape test R3.1/R3.2
+    for different scenarios. Five of the seven citations of R3.1/R3.2 were false,
+    and deleting the real witnesses did not change the report - the map claimed
+    coverage that did not exist.
+
+    A witness therefore declares itself with the header, which is greppable, owned
+    by the file, and cannot be produced by a stray mention in prose.
+    """
     found: dict[str, list[str]] = {}
-    for path in sorted(BACKEND.rglob("test_*.py")):
-        if "diagnostics" in path.parts:
-            continue
+    for path in _test_files():
+        text = path.read_text(encoding="utf-8", errors="replace")
+        for line in text.splitlines():
+            if not line.startswith("# --- R3"):
+                continue
+            rel = str(path.relative_to(BACKEND))
+            for number in {f"R3.{n}" for n in _CITATION.findall(line)}:
+                files = found.setdefault(number, [])
+                # One file can declare the same scenario in more than one
+                # section; counting it twice would inflate a "how well is this
+                # covered" number, which is the one thing this report must not do.
+                if rel not in files:
+                    files.append(rel)
+    return found
+
+
+def _every_mention() -> dict[str, list[str]]:
+    """Every `R3.x` anywhere, headers or prose: the superset used to assert.
+
+    Being a superset only makes the existence check stricter, which is what an
+    assertion wants; it is the *report* that must not be inflated.
+    """
+    found: dict[str, list[str]] = {}
+    for path in _test_files():
         text = path.read_text(encoding="utf-8", errors="replace")
         for number in {f"R3.{n}" for n in _CITATION.findall(text)}:
-            found.setdefault(number, []).append(
-                str(path.relative_to(BACKEND))
-            )
+            found.setdefault(number, []).append(str(path.relative_to(BACKEND)))
     return found
 
 
 def test_every_cited_scenario_exists_in_the_canonical() -> None:
     """The mechanical half: a citation to a scenario that moved or vanished.
 
-    This is what caught the state point 12 was opened for - a test claiming a
-    number the canonical no longer uses for that behaviour.
+    Runs over every mention, headers and prose alike: a wider net only makes this
+    stricter. It is what caught the state point 12 was opened for - a test
+    claiming a number the canonical no longer uses for that behaviour.
     """
     canonical = _canonical()
     unknown = {
         number: files
-        for number, files in _cited().items()
+        for number, files in _every_mention().items()
         if number not in canonical
     }
 
     assert not unknown, (
         "these files cite scenarios the canonical does not have: "
-        + ", ".join(f"{number} ({files[0]})" for number, files in sorted(unknown.items()))
+        + ", ".join(
+            f"{number} ({files[0]})" for number, files in sorted(unknown.items())
+        )
     )
 
 

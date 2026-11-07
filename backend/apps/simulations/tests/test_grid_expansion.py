@@ -207,6 +207,9 @@ class TestSeedTypeBugFix:
 # ---------------------------------------------------------------------------
 
 
+# --- R3.1/R3.2 — the grid entry overrides the study, and its absence falls back ---
+
+
 class TestSinteringGridOverride:
     """Sintering config: grid-level overrides study-level per combo."""
 
