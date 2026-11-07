@@ -12,7 +12,12 @@
  * they describe a different population from the one their configuration
  * claims.
  */
-import { consumesSintering, toSinteringConfig, type SinteringConfig } from './sinteringShape'
+import {
+  consumesSeedType,
+  consumesSintering,
+  toSinteringConfig,
+  type SinteringConfig,
+} from './sinteringShape'
 import type {
   CreateParametricStudyInput,
   DistributionValue,
@@ -301,11 +306,21 @@ export function relaunchPayloadFor(
     grid[key] = normalised as SinteringConfig[]
   }
 
+  // #115, point 14: a study stored before the seed-type rule can carry a value
+  // its algorithm never reads, and re-sending it builds a payload the server
+  // refuses - a launch button whose only outcome is a failure.
+  const algorithm = study.base_algorithm as SimulationAlgorithm
+  const baseParameters = { ...(study.base_parameters ?? {}) }
+  if (!consumesSeedType(algorithm)) {
+    delete (baseParameters as Record<string, unknown>).seed_type
+    delete grid.seed_type
+  }
+
   return {
     name: `${study.name ?? 'Study'} (relaunched with sintering)`,
     description: study.description,
-    base_algorithm: study.base_algorithm as SimulationAlgorithm,
-    base_parameters: study.base_parameters ?? {},
+    base_algorithm: algorithm,
+    base_parameters: baseParameters,
     parameter_grid: grid,
     seeds_per_combination: study.seeds_per_combination,
     include_box_counting: study.include_box_counting,

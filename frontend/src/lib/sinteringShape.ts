@@ -64,6 +64,19 @@ export function consumesDistribution(algorithm: SimulationAlgorithm): boolean {
   return DISTRIBUTION_ALGORITHMS.includes(algorithm)
 }
 
+/**
+ * The algorithms whose worker branch samples `seed_type` (#115, point 14).
+ *
+ * One, and written as the set that is permitted rather than as the list of the
+ * excluded, for the same reason as `DISTRIBUTION_ALGORITHMS`: an enumeration of
+ * the excluded is how `limiting` and `imported` were silently lost.
+ */
+export const SEED_TYPE_ALGORITHMS: readonly SimulationAlgorithm[] = ['tunable_cc'] as const
+
+export function consumesSeedType(algorithm: SimulationAlgorithm): boolean {
+  return SEED_TYPE_ALGORITHMS.includes(algorithm)
+}
+
 /** The variation names that carry a distribution config into the payload. */
 const DISTRIBUTION_VARIATIONS = new Set(['kf_distribution', 'particle_radius_config'])
 
@@ -88,6 +101,11 @@ export function rejectsVariation(
   // R10.8: the two distribution keys are refused by every algorithm whose
   // worker never reads them, on the same terms R11 fixes for sintering.
   if (DISTRIBUTION_VARIATIONS.has(name)) return !consumesDistribution(algorithm)
+
+  // #115, point 14: one worker branch reads `seed_type`, so the form must not
+  // offer it for the other ten algorithms - the server refuses them now, and a
+  // control whose only outcome is a 400 is the failure R10.8 warns about.
+  if (name === 'seed_type') return !consumesSeedType(algorithm)
 
   if (!SINTERING_VARIATIONS.has(name)) return false
 

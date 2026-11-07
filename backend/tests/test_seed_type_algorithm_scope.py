@@ -87,7 +87,7 @@ def test_a_seed_type_the_algorithm_never_reads_is_refused(
 
 
 @pytest.mark.django_db
-def test_the_swept_surface_is_refused_too(
+def test_the_grid_surface_is_refused_too(
     api_client: APIClient, project: Project
 ) -> None:
     response = _post(
@@ -153,3 +153,82 @@ def test_adding_the_algorithm_that_changes_the_verdict_is_judged(
 
     assert moved.status_code == 400, moved.data
     assert "seed_type" in str(moved.data), moved.data
+
+
+@pytest.mark.django_db
+def test_the_swept_extremes_surface_is_refused_too(
+    api_client: APIClient, project: Project
+) -> None:
+    """The third swept carrier, which the first version of this gate did not read.
+
+    `generate_limiting_cases` sweeps `theoretical_extremes` and `create_simulation`
+    pops `seed_type` out of it into the child's field, so it carries the setting
+    exactly like `parameter_grid` does. Measured before this test: `fracval` plus
+    `theoretical_extremes: {"seed_type": ["dimers"]}` answered 201 and stored
+    `dimers` on the child - the defect this whole change is about, on the one
+    surface the gate forgot.
+    """
+    before = ParametricStudy.objects.count()
+
+    response = _post(
+        api_client,
+        project,
+        "fracval",
+        base_parameters={"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
+        limiting_cases_config={"theoretical_extremes": {"seed_type": ["dimers"]}},
+        include_limiting_cases=True,
+    )
+
+    assert response.status_code == 400, response.data
+    assert (
+        "limiting_cases_config.theoretical_extremes.seed_type" in response.data
+    ), response.data
+    assert ParametricStudy.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_patching_only_the_setting_is_judged(api_client: APIClient, project: Project) -> None:
+    """The half of the gate that decides when the rule runs, which nothing pinned.
+
+    A mutation that deleted the carrier half of `seed_touched` - leaving only
+    `"base_algorithm" in data` - passed all eight tests, because every one of them
+    is a POST that carries the algorithm. A PATCH that touches only the setting
+    must be judged too, and that is what this asserts.
+    """
+    created = _post(api_client, project, "tunable_cc")
+    assert created.status_code == 201, created.data
+    study = ParametricStudy.objects.get(id=created.data["id"])
+    # A row stored under the old rule: the algorithm does not read seed_type.
+    ParametricStudy.objects.filter(id=study.id).update(base_algorithm="fracval")
+
+    patched = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"base_parameters": {**study.base_parameters, "seed_type": "trimers"}},
+        format="json",
+    )
+
+    assert patched.status_code == 400, patched.data
+    assert "base_parameters.seed_type" in patched.data, patched.data
+
+
+@pytest.mark.django_db
+def test_every_algorithm_the_model_offers_is_decided(
+    api_client: APIClient, project: Project
+) -> None:
+    """Derived from the model, not enumerated, so a new algorithm cannot slip.
+
+    A judge measured that only four of the eleven algorithms were exercised, and
+    that a newly added one would be refused silently with no test saying whether
+    that is deliberate. `sinteringShape.ts` was written for exactly this failure:
+    "an enumeration of the excluded is how `limiting` and `imported` were
+    silently lost".
+    """
+    from apps.simulations.models import SimulationAlgorithm
+    from apps.simulations.serializers import SEED_TYPE_ALGORITHMS
+
+    for algorithm in sorted(set(SimulationAlgorithm.values) - SEED_TYPE_ALGORITHMS):
+        response = _post(api_client, project, algorithm)
+        assert response.status_code == 400, (
+            f"{algorithm} read a seed_type? {response.status_code} {getattr(response, 'data', '')}"
+        )
+        assert "seed_type" in str(response.data), (algorithm, response.data)
