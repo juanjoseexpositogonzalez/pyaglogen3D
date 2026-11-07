@@ -34,7 +34,7 @@ def _is_valid(project: Any, **overrides: Any) -> tuple[bool, Any]:
     return serializer.is_valid(), serializer.errors
 
 
-# --- R3.3 — the dict shape requires its fields, it does not invent them ---
+# --- R3.4/R3.5/R3.6 — the dict shape requires its fields, it does not invent them ---
 
 
 @pytest.mark.parametrize(
@@ -55,24 +55,65 @@ def _is_valid(project: Any, **overrides: Any) -> tuple[bool, Any]:
         ),
     ],
 )
-def test_r3_3_malformed_dict_is_rejected(db: Any, project: Any, config: Any, why: Any) -> None:
+def test_r3_6_malformed_dict_is_rejected(db: Any, project: Any, config: Any, why: Any) -> None:
     """An incomplete or unrecognised dict MUST be rejected, never defaulted."""
     valid, errors = _is_valid(project, sintering_config=config)
     assert not valid, f"accepted {why}: {config}"
     assert "sintering_config" in str(errors).lower()
 
 
-def test_r3_3_well_formed_dict_is_accepted(db: Any, project: Any) -> None:
+def test_r3_6_well_formed_dict_is_accepted(db: Any, project: Any) -> None:
     valid, errors = _is_valid(
         project, sintering_config={"distribution_type": "normal", "mean": 0.8, "std": 0.05}
     )
     assert valid, errors
 
 
-# --- R3.5 — flat scalars in base_parameters (surface 4) ---
+# --- R3.3 — an invalid config is rejected, and the bounds are part of it ---
 
 
-def test_r3_5_flat_coefficient_out_of_range_is_rejected(db: Any, project: Any) -> None:
+def test_r3_3_uniform_min_above_max_is_rejected(db: Any, project: Any) -> None:
+    """The canonical scenario point 12 found with no witness at all.
+
+    A `uniform` entry whose `min` exceeds its `max` was rejected correctly and
+    nobody asserted it: the identifier map said R3.3 had no test, and a
+    regression there would have gone unnoticed. Measured before adding this:
+    400 with `min must be less than or equal to max`.
+    """
+    valid, errors = _is_valid(
+        project,
+        sintering_config={"distribution_type": "uniform", "min": 0.95, "max": 0.7},
+    )
+    assert not valid, "accepted uniform with min above max"
+    assert "min" in str(errors).lower()
+
+
+# --- R3.7 — base_parameters is validated like the others ---
+
+
+def test_r3_7_incomplete_dict_in_base_parameters_is_rejected(
+    db: Any, project: Any
+) -> None:
+    """The second scenario with no witness, and the sharper one.
+
+    The other surfaces were validated first and `base_parameters` was assumed to
+    follow; a malformed dict parked there was accepted and reached the children.
+    """
+    valid, errors = _is_valid(
+        project,
+        base_parameters={
+            "n_particles": 1000,
+            "sintering_config": {"distribution_type": "fixed"},
+        },
+    )
+    assert not valid, "accepted an incomplete sintering_config inside base_parameters"
+    assert "base_parameters.sintering_config" in str(errors).lower(), errors
+
+
+# --- R3.8 — flat scalars in base_parameters (surface 4) ---
+
+
+def test_r3_8_flat_coefficient_out_of_range_is_rejected(db: Any, project: Any) -> None:
     """D5b: `sintering_coeff` outside [0.5, 1.0] is accepted today."""
     valid, _ = _is_valid(
         project, base_parameters={"n_particles": 1000, "sintering_coeff": 42.0}
@@ -80,7 +121,7 @@ def test_r3_5_flat_coefficient_out_of_range_is_rejected(db: Any, project: Any) -
     assert not valid, "accepted sintering_coeff=42.0 in base_parameters"
 
 
-def test_r3_5_flat_coefficient_without_type_reads_as_fixed(db: Any, project: Any) -> None:
+def test_r3_8_flat_coefficient_without_type_reads_as_fixed(db: Any, project: Any) -> None:
     """The batch form sends exactly this on every `limiting` submit."""
     valid, errors = _is_valid(
         project, base_parameters={"n_particles": 1000, "sintering_coeff": 0.8}
@@ -88,10 +129,10 @@ def test_r3_5_flat_coefficient_without_type_reads_as_fixed(db: Any, project: Any
     assert valid, errors
 
 
-# --- R3.6 — swept flat scalars in parameter_grid (surface 5) ---
+# --- R3.8 — swept flat scalars in parameter_grid (surface 5) ---
 
 
-def test_r3_6_swept_flat_values_are_validated(db: Any, project: Any) -> None:
+def test_r3_8_swept_flat_values_are_validated(db: Any, project: Any) -> None:
     """D5b: `parameter_grid={"sintering_coeff": [-5.0, 42.0]}` returns 201 today."""
     valid, _ = _is_valid(
         project, parameter_grid={"target_df": [1.5], "sintering_coeff": [-5.0, 42.0]}
@@ -99,14 +140,14 @@ def test_r3_6_swept_flat_values_are_validated(db: Any, project: Any) -> None:
     assert not valid, "accepted a swept sintering_coeff of -5.0 and 42.0"
 
 
-def test_r3_6_well_formed_sweep_is_accepted(db: Any, project: Any) -> None:
+def test_r3_8_well_formed_sweep_is_accepted(db: Any, project: Any) -> None:
     valid, errors = _is_valid(
         project, parameter_grid={"target_df": [1.5], "sintering_coeff": [0.6, 0.9]}
     )
     assert valid, errors
 
 
-# --- R3.7 — a flat key no consumer reads ---
+# --- R3.8 — a flat key no consumer reads ---
 
 
 @pytest.mark.parametrize(
@@ -116,23 +157,23 @@ def test_r3_6_well_formed_sweep_is_accepted(db: Any, project: Any) -> None:
         ("parameter_grid", {"target_df": [1.5], "sintering_mean": [0.9]}),
     ],
 )
-def test_r3_7_sintering_mean_is_rejected(db: Any, project: Any, where: Any, payload: Any) -> None:
+def test_r3_8_sintering_mean_is_rejected(db: Any, project: Any, where: Any, payload: Any) -> None:
     """`sintering_mean` is written by the helper and read by nobody."""
     valid, _ = _is_valid(project, **{where: payload})
     assert not valid, f"accepted sintering_mean in {where}"
 
 
-def test_r3_7_unknown_flat_sintering_key_is_rejected(db: Any, project: Any) -> None:
+def test_r3_8_unknown_flat_sintering_key_is_rejected(db: Any, project: Any) -> None:
     valid, _ = _is_valid(
         project, base_parameters={"n_particles": 1000, "sintering_factor": 0.9}
     )
     assert not valid, "accepted an unknown flat sintering_* key"
 
 
-# --- R3.8 — incomplete flat shapes, on the merged projection ---
+# --- R3.6 — incomplete flat shapes, on the merged projection ---
 
 
-def test_r3_8_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
+def test_r3_6_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
     valid, _ = _is_valid(
         project,
         base_parameters={
@@ -144,7 +185,7 @@ def test_r3_8_uniform_without_max_is_rejected(db: Any, project: Any) -> None:
     assert not valid, "accepted uniform with no sintering_max"
 
 
-def test_r3_8_swept_value_completes_the_shape(db: Any, project: Any) -> None:
+def test_r3_6_swept_value_completes_the_shape(db: Any, project: Any) -> None:
     """The rest of the shape may legitimately live in base_parameters."""
     valid, errors = _is_valid(
         project,

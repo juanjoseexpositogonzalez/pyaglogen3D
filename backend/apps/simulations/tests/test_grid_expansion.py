@@ -3,8 +3,8 @@
 Covers spec requirements:
 - R4.3, R17.6: seed_type from grid → Simulation.seed_type model field (BUG #634 FIX)
 - R17.7: seed_type from base_parameters → Simulation.seed_type model field
-- R3.3: sintering grid entry overrides study-level
-- R3.4: sintering fallback to study-level config
+- R3.1: sintering grid entry overrides study-level
+- R3.2: sintering fallback to study-level config
 - R1.5: distribution configs pass through as-is
 - R5.1-R5.2: cartesian product correct count
 - R5.3: child sim params match grid combo values
@@ -203,7 +203,7 @@ class TestSeedTypeBugFix:
 
 
 # ---------------------------------------------------------------------------
-# T3.6-T3.7 — Sintering grid override + fallback (R3.3-R3.4)
+# T3.6-T3.7 — Sintering grid override + fallback (R3.1-R3.2)
 # ---------------------------------------------------------------------------
 
 
@@ -213,7 +213,7 @@ class TestSinteringGridOverride:
     def test_sintering_grid_overrides_study_level(
         self, api_client, project
     ) -> None:
-        """R3.3: when sintering_config in grid, override study sintering."""
+        """R3.1: when sintering_config in grid, override study sintering."""
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -239,7 +239,7 @@ class TestSinteringGridOverride:
     def test_sintering_fallback_to_study_level(
         self, api_client, project
     ) -> None:
-        """R3.4: when no sintering_config in grid, study-level is applied."""
+        """R3.2: when no sintering_config in grid, study-level is applied."""
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
