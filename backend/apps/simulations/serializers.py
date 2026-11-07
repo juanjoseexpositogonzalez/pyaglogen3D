@@ -346,6 +346,13 @@ def _swept_payload(limiting: Any) -> Any:
     return limiting.get("theoretical_extremes")
 
 
+#: The only algorithm whose engine binding declares `seed_type`:
+#: `run_simulation_task` reads `simulation.seed_type` inside its `tunable_cc`
+#: branch (`tasks.py:1676`) and no other `run_*` takes the parameter. Every other
+#: algorithm accepted it and stored a value nothing read (#115, point 14).
+SEED_TYPE_ALGORITHMS = frozenset({"tunable_cc"})
+
+
 class ParametricStudySerializer(serializers.ModelSerializer):
     """Serializer for ParametricStudy model."""
 
@@ -745,6 +752,37 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             raise serializers.ValidationError({exc.field: str(exc)}) from exc
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
+
+        # --- #115, point 14: `seed_type` has algorithm scope as well ---
+        # Third row of the same dropdown, after the sintering setting (#97) and
+        # the two distribution grids (#141). The batch form offers seed type for
+        # every algorithm but `limiting`, and only `tunable_cc` reads it, so four
+        # of five stored a value the engine never saw.
+        #
+        # Gated like the rest: judged only when the request touches the setting or
+        # the algorithm, so a row stored before this rule can still be renamed.
+        seed_touched = "base_algorithm" in data or any(
+            isinstance(carrier, Mapping) and "seed_type" in carrier
+            for carrier in (data.get("base_parameters"), data.get("parameter_grid"))
+        )
+        if seed_touched and algorithm not in SEED_TYPE_ALGORITHMS:
+            for seed_surface, seed_carrier in (
+                ("base_parameters", eff_base),
+                ("parameter_grid", eff_grid),
+            ):
+                if "seed_type" not in seed_carrier:
+                    continue
+                raise serializers.ValidationError(
+                    {
+                        f"{seed_surface}.seed_type": (
+                            f"algorithm '{algorithm}' does not read seed_type, so it "
+                            "must not be configured for it. Only "
+                            f"{', '.join(sorted(SEED_TYPE_ALGORITHMS))} samples a "
+                            "seed type; every other algorithm stores the value and "
+                            "runs without it."
+                        )
+                    }
+                )
 
         # --- R13: the four distribution keys, on all twelve surfaces ---
         # Scope first, shape second: a key declared for an algorithm that
