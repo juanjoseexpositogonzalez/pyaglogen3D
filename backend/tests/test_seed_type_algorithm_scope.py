@@ -20,6 +20,7 @@ does not vaccinate against the class.
 from __future__ import annotations
 
 import uuid
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -209,19 +210,49 @@ def test_patching_only_the_setting_is_judged(api_client: APIClient, project: Pro
 
     assert patched.status_code == 400, patched.data
     assert "base_parameters.seed_type" in patched.data, patched.data
+    # The message has to say the way out, not describe the defect as present.
+    # Restoring the old contradictory text left every test green (measured).
+    assert "Remove seed_type from base_parameters" in str(
+        patched.data["base_parameters.seed_type"]
+    ), patched.data
+
+    # The third carrier, on the same path. A mutation that dropped it from
+    # `seed_touched` - the half of the gate that decides WHEN the rule runs -
+    # left this file green until this case existed (measured by a judge).
+    # The stored base has to be clean first, or the loop names that carrier and
+    # this case measures the wrong surface (measured while writing it).
+    clean_base = {k: v for k, v in study.base_parameters.items() if k != "seed_type"}
+    ParametricStudy.objects.filter(id=study.id).update(base_parameters=clean_base)
+    study.refresh_from_db()
+
+    swept = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={
+            "limiting_cases_config": {
+                "theoretical_extremes": {"seed_type": ["trimers"]}
+            },
+            "include_limiting_cases": True,
+        },
+        format="json",
+    )
+
+    assert swept.status_code == 400, swept.data
+    assert (
+        "limiting_cases_config.theoretical_extremes.seed_type" in swept.data
+    ), swept.data
 
 
 @pytest.mark.django_db
 def test_every_algorithm_the_model_offers_is_decided(
     api_client: APIClient, project: Project
 ) -> None:
-    """Derived from the model, not enumerated, so a new algorithm cannot slip.
+    """Every algorithm the model offers is refused if it is not in the constant.
 
-    A judge measured that only four of the eleven algorithms were exercised, and
-    that a newly added one would be refused silently with no test saying whether
-    that is deliberate. `sinteringShape.ts` was written for exactly this failure:
-    "an enumeration of the excluded is how `limiting` and `imported` were
-    silently lost".
+    This closes the enumeration gap - four of eleven were exercised before - and
+    nothing more. A judge measured that it is circular on its own: the refused set
+    is derived from the constant, and the server refuses exactly what is not in
+    the constant, so it cannot fail. The independent check is
+    `test_the_constant_matches_the_branch_that_declares_it` below.
     """
     from apps.simulations.models import SimulationAlgorithm
     from apps.simulations.serializers import SEED_TYPE_ALGORITHMS
@@ -232,3 +263,60 @@ def test_every_algorithm_the_model_offers_is_decided(
             f"{algorithm} read a seed_type? {response.status_code} {getattr(response, 'data', '')}"
         )
         assert "seed_type" in str(response.data), (algorithm, response.data)
+
+
+def test_the_constant_matches_the_branch_that_declares_it() -> None:
+    """The independent half: the constant is checked against the code that reads it.
+
+    A judge on PR #252 measured that a model-derived coverage test cannot fail:
+    adding an algorithm to `SimulationAlgorithm` while leaving the constant alone
+    kept every test green, so an algorithm whose worker DOES read `seed_type`
+    would be refused with the suite satisfied. This parses `tasks.py` and collects
+    the algorithms whose branch calls the engine with `seed_type=`, which is the
+    fact the constant is supposed to mirror.
+    """
+    import ast
+
+    from apps.simulations.serializers import SEED_TYPE_ALGORITHMS
+
+    source = Path("apps/simulations/tasks.py").read_text(encoding="utf-8")
+    tree = ast.parse(source)
+    readers: set[str] = set()
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not (
+            isinstance(test, ast.Compare)
+            and isinstance(test.left, ast.Name)
+            and test.left.id == "algorithm"
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and isinstance(test.comparators[0].value, str)
+        ):
+            continue
+        algorithm = test.comparators[0].value
+        for inner in ast.walk(ast.Module(body=node.body, type_ignores=[])):
+            if not isinstance(inner, ast.Call):
+                continue
+            func = inner.func
+            # `aglogen_core.run_tunable_cc(...)`: an Attribute on the module name,
+            # not a bare Name - which is what the first version looked for, and
+            # why it found nothing (measured while writing it).
+            is_engine_call = (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.value.id == "aglogen_core"
+                and func.attr.startswith("run_")
+            )
+            if not is_engine_call:
+                continue
+            if any(keyword.arg == "seed_type" for keyword in inner.keywords):
+                readers.add(algorithm)
+
+    assert readers, "no branch in tasks.py declares seed_type: the parsing moved"
+    assert readers == set(SEED_TYPE_ALGORITHMS), (
+        "the allow-list and the worker disagree about who reads seed_type: "
+        f"worker={sorted(readers)} allow-list={sorted(SEED_TYPE_ALGORITHMS)}"
+    )

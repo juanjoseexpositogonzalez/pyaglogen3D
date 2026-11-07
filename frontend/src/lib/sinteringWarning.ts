@@ -311,9 +311,22 @@ export function relaunchPayloadFor(
   // refuses - a launch button whose only outcome is a failure.
   const algorithm = study.base_algorithm as SimulationAlgorithm
   const baseParameters = { ...(study.base_parameters ?? {}) }
+  let limitingCases = study.limiting_cases_config
   if (!consumesSeedType(algorithm)) {
     delete (baseParameters as Record<string, unknown>).seed_type
     delete grid.seed_type
+    // The THIRD carrier. The server rule reads this one too, and leaving it here
+    // built a payload the server refuses: the relaunch button was a guaranteed
+    // 400 for any study carrying it (measured by a judge on PR #252).
+    const swept = (limitingCases as { theoretical_extremes?: Record<string, unknown> } | null)
+      ?.theoretical_extremes
+    if (swept && typeof swept === 'object' && 'seed_type' in swept) {
+      const { seed_type: _dropped, ...rest } = swept as Record<string, unknown>
+      limitingCases = {
+        ...(limitingCases as Record<string, unknown>),
+        theoretical_extremes: rest,
+      } as typeof study.limiting_cases_config
+    }
   }
 
   return {
@@ -326,7 +339,7 @@ export function relaunchPayloadFor(
     include_box_counting: study.include_box_counting,
     box_counting_params: study.box_counting_params as CreateParametricStudyInput['box_counting_params'],
     include_limiting_cases: study.include_limiting_cases,
-    limiting_cases_config: study.limiting_cases_config,
+    limiting_cases_config: limitingCases,
     sintering_config,
   }
 }

@@ -51,6 +51,35 @@ describe('seed type scope on the client', () => {
     expect(payload!.parameter_grid).toHaveProperty('target_df')
   })
 
+  it('also strips it from the swept extremes carrier', () => {
+    // The third carrier. A judge measured that stripping only two of three left
+    // the relaunch of such a study as a guaranteed 400.
+    const payload = relaunchPayloadFor(
+      {
+        id: 's3',
+        name: 'Old study with swept extremes',
+        description: '',
+        base_algorithm: 'fracval',
+        base_parameters: { n_particles: 60 },
+        parameter_grid: {},
+        seeds_per_combination: 1,
+        include_limiting_cases: true,
+        limiting_cases_config: {
+          include_theoretical: true,
+          theoretical_extremes: { seed_type: ['dimers'], target_df: [1.8] },
+        },
+        sintering_config: { distribution_type: 'fixed', coefficient: 0.8 },
+      } as never,
+      { distribution_type: 'fixed', coefficient: 0.9 },
+    )
+
+    expect(payload).not.toBeNull()
+    const extremes = (payload!.limiting_cases_config as { theoretical_extremes: Record<string, unknown> })
+      .theoretical_extremes
+    expect(extremes).not.toHaveProperty('seed_type')
+    expect(extremes).toHaveProperty('target_df')
+  })
+
   it('keeps it for the algorithm that reads it', () => {
     const payload = relaunchPayloadFor(
       {
