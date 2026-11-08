@@ -9,13 +9,13 @@ import random
 from typing import Any
 
 from apps.projects.models import Project
+from apps.simulations.expansion_preview import cast_numeric_params
 from apps.simulations.models import (
     ParametricStudy,
     Simulation,
     SimulationAlgorithm,
     SimulationStatus,
 )
-from apps.simulations.expansion_preview import cast_numeric_params
 from apps.simulations.tasks import run_simulation_task
 from apps.simulations.utils import complete_distribution_aliases
 
