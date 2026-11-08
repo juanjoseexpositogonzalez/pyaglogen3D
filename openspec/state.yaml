@@ -34,6 +34,7 @@ archived_changes:
   - 2026-10-25-redesign-design-system
   - 2026-10-25-sintering-reaches-engine
   - 2026-10-26-resilient-token-refresh
+  - 2026-11-08-seed-type-algorithm-scope
 # Los nombres son los directorios reales de openspec/changes/archive/. Conviven dos
 # convenciones historicas (fecha al principio y fecha al final); no se renombran aqui
 # porque un rename rompe cualquier enlace existente a esas rutas. Issue #130.
@@ -76,4 +77,3 @@ notes:
   - "Frontend is Next.js 14 (not SvelteKit as initially assumed)"
   - "Frontend uses vitest (126 tests as of visualize-multiple-2026-04-22); lint + type-check also required"
   - "Rust engine has 160+ passing tests"
-  - 2026-11-08-seed-type-algorithm-scope
