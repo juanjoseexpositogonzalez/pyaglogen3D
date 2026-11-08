@@ -118,9 +118,13 @@ def test_the_scope_still_judges_a_stored_setting(
         base_algorithm="fracval",
     )
 
+    # No distribution key in the payload: this is the case R11.6 names - a stored
+    # setting judged when the algorithm changes - and the one a payload-carried key
+    # would mask, because then the refusal comes from the payload itself (measured
+    # by a judge on PR #261).
     response = api_client.patch(
         f"/api/v1/projects/{project.id}/studies/{study.id}/",
-        data={"parameter_grid": {"dpo_distribution": [{"mode": "fixed", "value": 1.0}]}},
+        data={"base_algorithm": "fracval"},
         format="json",
     )
 
@@ -153,3 +157,99 @@ def test_a_create_with_the_malformed_value_is_still_refused(
     )
 
     assert response.status_code == 400, response.data
+
+
+@pytest.mark.django_db
+def test_a_valid_stored_key_still_judges_an_algorithm_change(
+    api_client: APIClient, project: Project
+) -> None:
+    """One uncollectable carrier must not excuse the others.
+
+    Measured by a judge on PR #261: the first version of the fallback replaced the
+    whole effective set with the payload's, so a row whose *other* carrier held a
+    perfectly collectable key let `PATCH {"base_algorithm": "fracval"}` through with
+    200 - the "stored setting no engine reads" state R13.12 exists to forbid.
+    """
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="legacy mixed",
+        base_algorithm="tunable_cc",
+        base_parameters={
+            "n_particles": 60,
+            "target_df": 2.0,
+            "target_kf": 1.3,
+            # Collectable and valid, on a different carrier than the malformed one.
+            "kf_distribution": {"mode": "fixed", "value": 1.8},
+        },
+        parameter_grid={},
+        seeds_per_combination=1,
+        include_limiting_cases=True,
+        limiting_cases_config={
+            "theoretical_extremes": {"dpo_distribution": {"mode": "fixed", "value": 1.0}}
+        },
+        status="completed",
+    )
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert response.status_code == 400, (
+        "an algorithm change slipped past the allow-list because another carrier "
+        f"was uncollectable: {getattr(response, 'data', '')}"
+    )
+    study.refresh_from_db()
+    assert study.base_algorithm == "tunable_cc", "the refused change was persisted"
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("carrier", "stored"),
+    [
+        ("extremes", [{"mode": "bogus", "value": 1.8}]),
+        ("extremes", [{"mode": "fixed", "value": -1}]),
+        ("base", {"mode": "bogus"}),
+    ],
+)
+def test_a_collectable_but_unrunnable_stored_value_does_not_freeze(
+    api_client: APIClient, project: Project, carrier: str, stored: Any
+) -> None:
+    """The case that distinguishes the two implementations.
+
+    A *collectable* stored value - a valid list, a runnable shape, nonsense inside -
+    used to be SHAPE-validated on a PATCH that never mentioned it. With the split it
+    is not, which is the half no test could see: the non-list store the other tests
+    use is collapsed by the collection itself.
+    """
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="legacy runnable",
+        base_algorithm="tunable_cc",
+        base_parameters=(
+            {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3, "kf_distribution": stored}
+            if carrier == "base"
+            else {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3}
+        ),
+        parameter_grid={},
+        seeds_per_combination=1,
+        include_limiting_cases=True,
+        limiting_cases_config=(
+            {"theoretical_extremes": {"kf_distribution": stored}}
+            if carrier == "extremes"
+            else {}
+        ),
+        status="completed",
+    )
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"parameter_grid": {"dpo_distribution": [{"mode": "fixed", "value": 1.0}]}},
+        format="json",
+    )
+
+    assert response.status_code == 200, (
+        f"a PATCH that did not mention the stored {carrier} surface was refused "
+        f"for it: {getattr(response, 'data', '')}"
+    )

@@ -835,14 +835,24 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             # (R11.6/R13.12). A stored surface too malformed to collect cannot be
             # judged at all, so it is not held against the request - the same rule
             # `_as_mapping` follows for a stored non-object.
-            try:
-                effective_surfaces = collect_distribution_surfaces(
-                    grid=eff_grid,
-                    base_parameters=eff_base,
-                    limiting_cases_config=eff_limiting,
-                )
-            except SweptShapeError:
-                effective_surfaces = payload_surfaces
+            # Collected PER CARRIER, so a carrier too malformed to collect loses
+            # only itself. Excusing all three at once dropped a valid stored
+            # declaration out of the allow-list and let an algorithm change through
+            # - `PATCH {"base_algorithm": "fracval"}` answered 200 on a row whose
+            # other carrier held a perfectly collectable key, which R13.12 forbids
+            # (measured by a judge on PR #261).
+            effective_surfaces: list[tuple[str, Any]] = []
+            for only in (
+                {"grid": eff_grid, "base_parameters": {}, "limiting_cases_config": {}},
+                {"grid": {}, "base_parameters": eff_base, "limiting_cases_config": {}},
+                {"grid": {}, "base_parameters": {}, "limiting_cases_config": eff_limiting},
+            ):
+                try:
+                    effective_surfaces.extend(collect_distribution_surfaces(**only))
+                except SweptShapeError:
+                    # This carrier cannot be judged; it is not held against the
+                    # request, the way `_as_mapping` ignores a stored non-object.
+                    continue
 
             try:
                 check_distribution_scope(algorithm, effective_surfaces)
