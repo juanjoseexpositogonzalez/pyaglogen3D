@@ -154,3 +154,40 @@ class TestConstraints:
         validate_distribution_config(
             config, ALLOWED_TYPES, min_mean=0.01
         )
+
+
+# --- #115, point 16: the type guard, observed where it is the only thing ---
+# The API-level tests cannot see these two: for every boolean or huge payload the
+# legacy validator is pre-empted by R13's `mode` check with the same 400, so the
+# status never changes. Direct calls are the only place the guard is observable.
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"distribution_type": "uniform", "min": 0.5, "max": True}, "max"),
+        ({"distribution_type": "uniform", "min": True, "max": 3.0}, "min"),
+        ({"distribution_type": "normal", "mean": True, "std": 0.1}, "mean"),
+        ({"distribution_type": "fixed", "value": True}, "value"),
+    ],
+)
+def test_a_boolean_is_not_a_quantity(config: dict[str, Any], field: str) -> None:
+    with pytest.raises(ValidationError, match=f"'{field}' must be a number"):
+        validate_distribution_config(config, ["fixed", "normal", "uniform"])
+
+
+@pytest.mark.parametrize(
+    ("config", "field"),
+    [
+        ({"distribution_type": "uniform", "min": 0.5, "max": 10**400}, "max"),
+        ({"distribution_type": "uniform", "min": 10**400, "max": 3.0}, "min"),
+        ({"distribution_type": "normal", "mean": 10**400, "std": 0.1}, "mean"),
+        ({"distribution_type": "fixed", "value": 10**400}, "value"),
+    ],
+)
+def test_an_integer_too_large_for_float_is_refused(
+    config: dict[str, Any], field: str
+) -> None:
+    """Measured: unguarded, this was a 500 where `develop` answered 400."""
+    with pytest.raises(ValidationError, match=f"'{field}' must be a finite number"):
+        validate_distribution_config(config, ["fixed", "normal", "uniform"])
