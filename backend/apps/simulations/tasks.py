@@ -2079,7 +2079,18 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "error": str(simulation.error_message),
         }
 
-    except Exception as e:
+    except (KeyboardInterrupt, SystemExit):
+        # Operator signals are not simulation failures: a worker being stopped or
+        # a deploy must not record healthy work as broken (#115, point 15).
+        raise
+
+    except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
+        # `PanicException` derives from `BaseException`, so the old `except
+        # Exception` let it escape: in production the task died and the row kept
+        # its status, leaving the study `running` with a child that never
+        # settles. Measured in #232 (`target_df`) and recorded in #115 point 15
+        # (`kf_std`): the set of inputs that panic the engine has never been
+        # enumerated, so the fix is here rather than one guard per door.
         logger.exception(f"Simulation {simulation_id} failed: {e}")
         simulation.status = SimulationStatus.FAILED
         simulation.error_message = str(e)
