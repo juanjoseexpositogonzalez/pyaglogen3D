@@ -818,26 +818,43 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             for key in _DIST_KEYS
         )
         if touched:
+            # Shape is validated only where the REQUEST supplies a config: a PATCH
+            # that touches one key must not answer for another surface the row
+            # happens to hold, which is the cross-lane freeze of #115 point 17a.
             try:
-                distribution_surfaces = collect_distribution_surfaces(
-                    grid=eff_grid,
-                    base_parameters=eff_base,
-                    limiting_cases_config=eff_limiting,
+                payload_surfaces = collect_distribution_surfaces(
+                    grid=data.get("parameter_grid") or {},
+                    base_parameters=data.get("base_parameters") or {},
+                    limiting_cases_config=data.get("limiting_cases_config") or {},
                 )
             except SweptShapeError as exc:
                 raise serializers.ValidationError({exc.label: str(exc)}) from exc
 
+            # The scope still reads the EFFECTIVE surfaces: a stored setting has to
+            # be judged when the algorithm changes or when a key is added
+            # (R11.6/R13.12). A stored surface too malformed to collect cannot be
+            # judged at all, so it is not held against the request - the same rule
+            # `_as_mapping` follows for a stored non-object.
             try:
-                check_distribution_scope(algorithm, distribution_surfaces)
+                effective_surfaces = collect_distribution_surfaces(
+                    grid=eff_grid,
+                    base_parameters=eff_base,
+                    limiting_cases_config=eff_limiting,
+                )
+            except SweptShapeError:
+                effective_surfaces = payload_surfaces
+
+            try:
+                check_distribution_scope(algorithm, effective_surfaces)
             except ValueError as exc:
                 label = (
-                    distribution_surfaces[0][0].rsplit("[", 1)[0]
-                    if distribution_surfaces
+                    effective_surfaces[0][0].rsplit("[", 1)[0]
+                    if effective_surfaces
                     else "parameter_grid"
                 )
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
-            for label, config in distribution_surfaces:
+            for label, config in payload_surfaces:
                 key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
                 try:
                     validate_distribution_shape(
