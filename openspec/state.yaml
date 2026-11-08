@@ -1,7 +1,7 @@
 project: pyaglogen3d
 artifact_store: openspec
 initialized_at: 2026-04-18
-last_archived: 2026-11-01-r13-3-keeps-its-keys
+last_archived: 2026-11-08-seed-type-algorithm-scope
 archived_changes:
   - verify-rg-2026-04-20
   - import-aggregate-2026-04-21
@@ -76,3 +76,4 @@ notes:
   - "Frontend is Next.js 14 (not SvelteKit as initially assumed)"
   - "Frontend uses vitest (126 tests as of visualize-multiple-2026-04-22); lint + type-check also required"
   - "Rust engine has 160+ passing tests"
+  - 2026-11-08-seed-type-algorithm-scope

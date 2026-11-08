@@ -294,22 +294,31 @@ These settings are only valid for the algorithms R11 permits.
 
 ### Requirement: R4 — seed_type Grid Key
 
-The system MUST accept `parameter_grid.seed_type` as an array of values from `{"monomers", "dimers", "trimers"}`.
+The system MUST accept `parameter_grid.seed_type` as an array of values from `{"monomers", "dimers", "trimers"}`, and only for the algorithms that consume it: `tunable_cc`, the single branch of `run_simulation_task` whose engine call declares `seed_type`. For any other algorithm the request MUST be refused with 400 naming the surface that carried the value - `parameter_grid.seed_type`, `base_parameters.seed_type` or `limiting_cases_config.theoretical_extremes.seed_type` - because the value would be stored and never read.
 
 Each child sim MUST have `seed_type` set on the Simulation **MODEL FIELD** (not in the params blob). This is the fix for latent bug #634 (`create_simulation`).
 
 #### Scenario R4.1 — Valid seed_type grid expansion
 
-- GIVEN `parameter_grid = {seed_type: ["dimers", "trimers"]}` and `seeds_per_combination = 2`
+- GIVEN `base_algorithm = "tunable_cc"`, `parameter_grid = {seed_type: ["dimers", "trimers"]}` and `seeds_per_combination = 2`
 - WHEN the ParametricStudy is created
 - THEN 4 child sims are created (2 types x 2 seeds)
 - AND each child sim's `Simulation.seed_type` MODEL FIELD equals its grid value
 
 #### Scenario R4.2 — Invalid seed_type rejected
 
-- GIVEN `parameter_grid = {seed_type: ["quadrimers"]}`
+- GIVEN `base_algorithm = "tunable_cc"` and `parameter_grid = {seed_type: ["quadrimers"]}`
 - WHEN the serializer validates
 - THEN a 400 response listing valid values
+
+#### Scenario R4.4 — A seed_type the algorithm never reads is refused
+
+- GIVEN `base_algorithm = "fracval"` and `parameter_grid = {seed_type: ["dimers"]}`
+- WHEN the serializer validates
+- THEN a 400 response naming `parameter_grid.seed_type`
+- AND the same for `base_parameters.seed_type` and for `limiting_cases_config.theoretical_extremes.seed_type`, each named where it was sent
+- AND no study and no child simulation is created
+- AND a study stored before this rule can still be renamed, while a `PUT` or any request carrying `base_algorithm` - even unchanged - is judged (R11.8), and the refusal says how to clear the value in the same request
 
 #### Scenario R4.3 — seed_type set on model field, not params
 
@@ -326,7 +335,7 @@ Grid expansion MUST be the Cartesian product of all parameter_grid keys x `seeds
 
 #### Scenario R5.1 — Multi-key cross product
 
-- GIVEN `parameter_grid = {kf_distribution: [d1, d2], seed_type: ["monomers", "dimers"]}` and `seeds_per_combination = 3`
+- GIVEN `base_algorithm = "tunable_cc"` (the only one that reads `seed_type`, R4), `parameter_grid = {kf_distribution: [d1, d2], seed_type: ["monomers", "dimers"]}` and `seeds_per_combination = 3`
 - WHEN the ParametricStudy is created
 - THEN 12 child sims are created (2 x 2 x 3)
 
@@ -344,7 +353,7 @@ Grid expansion MUST be the Cartesian product of all parameter_grid keys x `seeds
 
 #### Scenario R5.4 — Mixed old and new keys
 
-- GIVEN `parameter_grid = {n_particles: [100, 350], seed_type: ["dimers", "trimers"]}` and `seeds_per_combination = 1`
+- GIVEN `base_algorithm = "tunable_cc"`, `parameter_grid = {n_particles: [100, 350], seed_type: ["dimers", "trimers"]}` and `seeds_per_combination = 1`
 - WHEN the ParametricStudy is created
 - THEN 4 child sims (2 x 2 x 1), each with correct `n_particles` param AND correct `seed_type` model field
 
@@ -393,6 +402,12 @@ flat `sintering_*` keys, a `sintering_config` in `base_parameters` or in
 `coefficient` — which used to run with no sintering at all, because nothing read `value`, and is
 now rejected (R7.3). Nor does it extend to the `normal` mean, which used to travel in `sintering_mean` and
 reach the engine as `1.0`.
+
+One more narrowing joins this list, and it is not a sintering setting: `seed_type` is now accepted
+only for the algorithm that reads it (R4), so a study declaring it for any other algorithm - on the
+grid, in `base_parameters` or in the swept extremes - is refused where it used to create children
+that stored a value nothing read. A request whose grid carries none of the four keys is still
+judged against this rule, which is what the paragraph below is for.
 
 One more narrowing belongs in this list: a **study-level**
 `sintering_config = {distribution_type:"fixed"}` with no `coefficient` used to be accepted and
@@ -512,6 +527,11 @@ The existing dropdown in `BatchSimulationForm.tsx` MUST gain 4 new options:
 - "Sintering coefficient distribution" — **only for the algorithms that consume sintering**
   (R11): `dla`, `cca`, `ballistic`, `ballistic_cc`, `tunable`, `tunable_cc`
 - "Seed type (monomer/dimer/trimer)"
+
+  The qualification this requirement gives its three siblings is **not** applied here yet: the
+  form still offers the option for every algorithm but `limiting`, while the server refuses it
+  for all but `tunable_cc` (R4). The record matches the code; the qualification lands with the
+  form change, not before it.
 
 Each option MUST swap the value input UI to the corresponding component (DistributionGridInput
 for distributions, multi-select chips for seed_type).
