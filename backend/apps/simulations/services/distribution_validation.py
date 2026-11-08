@@ -10,7 +10,7 @@ returns ``None`` on success.
 
 from __future__ import annotations
 
-from typing import Sequence
+from collections.abc import Sequence
 
 from rest_framework.exceptions import ValidationError
 
@@ -30,7 +30,18 @@ def _number(config: dict[str, object], field: str) -> float:
         raise ValidationError(
             f"Distribution '{field}' must be a number, got {type(value).__name__}."
         )
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # A JSON integer past float range converts to nothing: `float(10**400)`
+        # raises, and an unguarded helper answered 500 from inside validation for
+        # three payloads that `develop` refused with 400. The sibling guard
+        # `distribution_shape._positive` already carries this clause for the same
+        # reason (#202).
+        raise ValidationError(
+            f"Distribution '{field}' must be a finite number, got a value too "
+            "large to represent."
+        ) from None
 
 
 def validate_distribution_config(

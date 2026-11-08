@@ -56,9 +56,14 @@ def project(api_client: APIClient) -> Project:
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("key", ["particle_radius_config", "kf_distribution"])
 @pytest.mark.parametrize(("label", "config"), CONFIGS)
 def test_a_non_numeric_field_is_refused_with_400(
-    api_client: APIClient, project: Project, label: str, config: dict[str, Any]
+    api_client: APIClient,
+    project: Project,
+    key: str,
+    label: str,
+    config: dict[str, Any],
 ) -> None:
     response = api_client.post(
         f"/api/v1/projects/{project.id}/studies/",
@@ -66,7 +71,7 @@ def test_a_non_numeric_field_is_refused_with_400(
             "name": "type check",
             "base_algorithm": "tunable_cc",
             "base_parameters": {"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
-            "parameter_grid": {"particle_radius_config": [config]},
+            "parameter_grid": {key: [config]},
             "seeds_per_combination": 1,
         },
         format="json",
@@ -76,7 +81,7 @@ def test_a_non_numeric_field_is_refused_with_400(
         f"{label} answered {response.status_code} instead of refusing: "
         f"{getattr(response, 'data', '')}"
     )
-    assert "particle_radius_config" in str(response.data), response.data
+    assert key in str(response.data), response.data
 
 
 @pytest.mark.django_db
