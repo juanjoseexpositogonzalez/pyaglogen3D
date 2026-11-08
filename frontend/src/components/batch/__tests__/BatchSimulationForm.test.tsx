@@ -582,3 +582,292 @@ describe('<BatchSimulationForm /> — the payload the migration must not change'
     expect(live.querySelector('[role="note"]')).toBeTruthy()
   })
 })
+
+// ---------------------------------------------------------------------------
+// #241 — a numeric key that does not parse is refused on the client.
+//
+// `parseFloat`/`parseInt` return `NaN` and nothing checked them, so the value
+// reached `JSON.stringify`, which serialises `NaN` as `null`: the study was
+// created with a key holding null where the user had typed something. Measured
+// against the parametric-study serializer before this change:
+// `base_parameters.sticking_probability: null` is accepted and stored (`'abc'`
+// too — the field is not type-checked at all), so the corruption is silent.
+// One witness per key, plus the control that the refusal is not permanent.
+// ---------------------------------------------------------------------------
+
+/** Click the submit button, whatever it currently reads. */
+function submitForm() {
+  fireEvent.click(screen.getByRole('button', { name: /run/i }))
+}
+
+/**
+ * Raise the submit event the handler actually receives.
+ *
+ * A click on the button first goes through the browser's own constraint
+ * validation, and jsdom implements it: a `type="number"` input holding a value
+ * below its `min` makes the form invalid, so the click never reaches
+ * `handleSubmit` and a test built on it would assert against a handler that
+ * never ran. The rule under test lives in the handler, so the event is
+ * dispatched directly - which is also the only way to ask what the form does
+ * with a value the native hints would have stopped at the door.
+ */
+function dispatchSubmit(container: HTMLElement) {
+  fireEvent.submit(container.querySelector('form')!)
+}
+
+describe('BatchSimulationForm — #241 a number that does not parse is refused', () => {
+  it('refuses a base sticking probability that does not parse, and names the key', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    const field = screen.getByLabelText(/base sticking prob/i)
+    fireEvent.change(field, { target: { value: 'abc' } })
+    submitForm()
+
+    // Nothing leaves the form: a null here is accepted by the server and the
+    // study runs with a value the user never typed.
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText("'sticking_probability' must be a number")).toBeTruthy()
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('refuses an emptied base sticking probability for the same reason', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    const field = screen.getByLabelText(/base sticking prob/i)
+    fireEvent.change(field, { target: { value: '' } })
+    submitForm()
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText("'sticking_probability' must be a number")).toBeTruthy()
+  })
+
+  it('refuses a base n_particles that does not parse, and names the key', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    const field = screen.getByLabelText(/base n particles/i)
+    fireEvent.change(field, { target: { value: 'abc' } })
+    submitForm()
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText("'n_particles' must be a whole number")).toBeTruthy()
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('refuses an emptied base n_particles', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    const field = screen.getByLabelText(/base n particles/i)
+    fireEvent.change(field, { target: { value: '' } })
+    submitForm()
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText("'n_particles' must be a whole number")).toBeTruthy()
+  })
+
+  it('submits the parsed number once the field is corrected', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    const field = screen.getByLabelText(/base sticking prob/i)
+    fireEvent.change(field, { target: { value: '' } })
+    submitForm()
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    // The refusal is about the value, not about the field: correcting it lets
+    // the same button through, and the number that arrives is the one typed.
+    fireEvent.change(field, { target: { value: '0.7' } })
+    submitForm()
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0].base_parameters).toEqual({
+      n_particles: 100,
+      sticking_probability: 0.7,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #242 — an explicit zero is not an absence.
+//
+// `parseInt(x) || fallback` reads `0` as "nothing typed", so the form submitted
+// a number the user never asked for. What the server does with a zero was
+// measured, not assumed, and it differs by key:
+//
+// - `seeds_per_combination` — the model field is a `PositiveIntegerField` and
+//   the serializer's only bound is `min_value=0`, so `0` is accepted; the
+//   expansion then runs `range(0)` and the study is stored with no children.
+//   Zero is legal, so the form respects it and stops inventing a 1.
+// - `points_per_sphere` / `precision` — `validate_box_counting_params_dict`
+//   refuses anything outside [10, 1000] and [8, 21], `0` included. Zero is not
+//   legal there, so the form refuses it out loud instead of substituting a
+//   number the user did not ask for.
+//
+// An emptied field is the third state and keeps using the key's own default.
+// ---------------------------------------------------------------------------
+
+describe('BatchSimulationForm — #242 an explicit zero is not an absence', () => {
+  it('respects an explicit zero in seeds per combination', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '0' },
+    })
+
+    // The button used to read "Run 1 Simulations" and the payload carried
+    // `seeds_per_combination: 1`. A study of zero runs is refused by the
+    // existing button rule, which is the honest refusal - but the count must
+    // be the one the user asked for.
+    const button = screen.getByRole('button', { name: /run/i })
+    expect(button.textContent).toContain('Run 0 Simulations')
+    expect(button).toHaveProperty('disabled', true)
+  })
+
+  it('sends the number the seeds field holds', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '3' },
+    })
+    submitForm()
+
+    // The payload reads the same resolved number the count on screen does. The
+    // zero itself cannot be asserted here: `totalSimulations === 0` disables the
+    // button, so a study of zero runs is refused before any request exists - and
+    // that refusal is the correct reading of "0 seeds", not a defect.
+    expect(onSubmit.mock.calls[0][0].seeds_per_combination).toBe(3)
+  })
+
+  it('keeps using the default when seeds is emptied', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.change(screen.getByLabelText(/seeds per combination/i), {
+      target: { value: '' },
+    })
+    submitForm()
+
+    // Empty is the use-the-default state, and the model's default is 1.
+    expect(onSubmit.mock.calls[0][0].seeds_per_combination).toBe(1)
+  })
+
+  it('refuses an explicit zero in points per sphere, which the server caps at 10', () => {
+    const onSubmit = vi.fn()
+    const { container } = render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    const field = screen.getByLabelText(/points per sphere/i)
+    fireEvent.change(field, { target: { value: '0' } })
+    dispatchSubmit(container)
+
+    // Used to become 100 silently; the server refuses 0, so a study run with
+    // a sampling density nobody chose is what the user got instead.
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(
+      screen.getByText('points_per_sphere must be between 10 and 1000'),
+    ).toBeTruthy()
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('refuses an explicit zero in precision, which the server caps at 8', () => {
+    const onSubmit = vi.fn()
+    const { container } = render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    const field = screen.getByLabelText(/precision/i)
+    fireEvent.change(field, { target: { value: '0' } })
+    dispatchSubmit(container)
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText('precision must be between 8 and 21')).toBeTruthy()
+    expect(field.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('refuses a precision above the server cap the field used to advertise', () => {
+    const onSubmit = vi.fn()
+    const { container } = render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    // The input carried `max={24}` while the validator's ceiling is 21, so the
+    // only feedback a 22 got was a 400 the batch page never displays.
+    const field = screen.getByLabelText(/precision/i)
+    expect(field.getAttribute('max')).toBe('21')
+
+    fireEvent.change(field, { target: { value: '22' } })
+    dispatchSubmit(container)
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    expect(screen.getByText('precision must be between 8 and 21')).toBeTruthy()
+  })
+
+  it('keeps the backend default when points per sphere is emptied', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    fireEvent.change(screen.getByLabelText(/points per sphere/i), {
+      target: { value: '' },
+    })
+    submitForm()
+
+    expect(onSubmit.mock.calls[0][0].box_counting_params).toEqual({
+      points_per_sphere: 100,
+      precision: 18,
+    })
+  })
+
+  it('keeps the backend default when precision is emptied', () => {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+
+    fireEvent.click(screen.getByLabelText(/run box-counting analysis/i))
+    fireEvent.change(screen.getByLabelText(/precision/i), { target: { value: '' } })
+    submitForm()
+
+    expect(onSubmit.mock.calls[0][0].box_counting_params).toEqual({
+      points_per_sphere: 100,
+      precision: 18,
+    })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// R10.8 — a control whose only possible outcome is a rejection is not offered.
+//
+// The `seed_type` grid key is read by one worker branch (`tunable_cc`) and the
+// backend answers 400 for every other algorithm. The dropdown listed it for all
+// of them, so picking it produced a request the batch page cannot even report.
+// `consumesSeedType` is the same predicate the drop-on-algorithm-change rule
+// already uses (#115, point 14), imported rather than restated.
+// ---------------------------------------------------------------------------
+
+describe('BatchSimulationForm — R10.8 seed_type is offered only where it is read', () => {
+  /** The parameter dropdown of the first variation. */
+  function parameterOptions(): string[] {
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    const paramSelect = selects[selects.length - 1] as HTMLSelectElement
+    return Array.from(paramSelect.options).map((option) => option.value)
+  }
+
+  it('offers no seed_type for an algorithm whose worker never reads it', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    // `ballistic` is the form's default, and the backend refuses the key on it.
+    expect(parameterOptions()).not.toContain('seed_type')
+  })
+
+  it('offers seed_type on the one algorithm that reads it', () => {
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'tunable_cc' },
+    })
+
+    expect(parameterOptions()).toContain('seed_type')
+  })
+})
