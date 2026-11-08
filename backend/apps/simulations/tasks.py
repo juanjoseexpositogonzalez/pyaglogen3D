@@ -1429,7 +1429,13 @@ def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
                 notes["fractal_dimension"] = (
                     "Box-counting returned non-finite dimension"
                 )
-        except Exception as exc:  # noqa: BLE001 — metrics must never crash import
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as exc:  # noqa: BLE001 — metrics must never crash import
+            # A Rust panic is not an Exception. This guard's own docstring promised
+            # a metrics failure never crashes an import, and it let the panic
+            # through: the row was left `running` forever (measured by a judge on
+            # PR #255). Widened for the same reason as the worker's outer net.
             logger.warning(
                 "Box-counting failed for imported geometry: %s", exc, exc_info=True
             )
@@ -1537,7 +1543,9 @@ def compute_import_metrics_task(self, simulation_id: str) -> dict:
             "execution_time_ms": execution_time_ms,
         }
 
-    except Exception as e:
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
         logger.exception(f"Import metrics computation failed: {e}")
         simulation.status = SimulationStatus.FAILED
         simulation.error_message = str(e)
@@ -2064,7 +2072,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             # from the engine. The row is already COMPLETED on this line, so
             # letting it reach the outer handler rewrote a finished run as
             # `failed` while its study stayed `completed` - a pair no other path
-            # can produce (measured by a judge on PR #255).
+            # can produce for an engine panic (measured by a judge on PR #255).
             logger.warning(f"Box-counting failed for {simulation_id}: {e}")
             # Don't fail the whole simulation for box-counting error
 
