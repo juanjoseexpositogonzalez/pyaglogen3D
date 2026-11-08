@@ -320,4 +320,16 @@ describe('registration screen', () => {
     expect(text).toMatch(/@\/components\/kit\/Callout/)
     expect(text).toMatch(/@\/components\/kit\/Panel/)
   })
+
+  it('tells a password manager which field is which', () => {
+    // Without these, browsers and password managers cannot fill the first
+    // screen of the product reliably, and on registration they cannot tell
+    // the new password from its confirmation (issue #250).
+    const { container } = render(<RegisterPage />)
+    expect(container.querySelector("#first_name")?.getAttribute("autocomplete")).toBe("given-name")
+    expect(container.querySelector("#last_name")?.getAttribute("autocomplete")).toBe("family-name")
+    expect(container.querySelector("#email")?.getAttribute("autocomplete")).toBe("email")
+    expect(container.querySelector("#password")?.getAttribute("autocomplete")).toBe("new-password")
+    expect(container.querySelector("#password_confirm")?.getAttribute("autocomplete")).toBe("new-password")
+  })
 })
