@@ -12,6 +12,7 @@ import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
 import {
   consumesDistribution,
+  consumesSeedType,
   consumesSintering,
   rejectsVariation,
   toSinteringConfig,
@@ -128,16 +129,24 @@ algorithm: SimulationAlgorithm,
       { value: 'particle_radius_config', label: 'Particle radius (per-run variation)' },
     )
   }
-  options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
 
   // R10.4: only the algorithms whose engine invocation receives sintering.
   // The backend answers 400 for the rest since T4, so offering it here
   // invited a refusal the batch page cannot even display.
   if (consumesSintering(algorithm)) {
-    options.splice(options.length - 1, 0, {
+    options.push({
       value: 'sintering_config',
       label: 'Sintering coefficient distribution',
     })
+  }
+
+  // R10.8, second key: one worker branch reads `seed_type` and the backend
+  // refuses it everywhere else (#115, point 14). It sits after sintering, the
+  // position it always had; the previous version inserted sintering before it
+  // with `splice(options.length - 1, 0, …)`, which only worked while this key
+  // was unconditional.
+  if (consumesSeedType(algorithm)) {
+    options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
   }
 
   return options
@@ -206,6 +215,128 @@ function formatValuesPreview(values: (number | string)[], maxShow: number = 8): 
 }
 
 /**
+ * The three states a numeric field can be in (#241, #242).
+ *
+ * Two states were not enough, and the two defects shared a line of code: a
+ * token that does not parse went into the payload as `NaN`, which
+ * `JSON.stringify` writes as `null`, and `parseInt(x) || fallback` read a
+ * legitimate zero as "nothing typed".
+ *
+ * - `empty` — the field holds nothing, so the key's own default applies. Only
+ *   the keys that have one accept this state.
+ * - `invalid` — the field holds something the server cannot take. Nothing is
+ *   submitted, and the message names the key.
+ * - `value` — a number, zero included. Whether a zero is *allowed* is the key's
+ *   own rule, read from the backend rather than assumed:
+ *   `ParametricStudySerializer` accepts `seeds_per_combination: 0` (the model
+ *   field's only bound is `min_value=0`, and the expansion then creates no
+ *   child), while `validate_box_counting_params_dict` refuses
+ *   `points_per_sphere` outside [10, 1000] and `precision` outside [8, 21],
+ *   zero included.
+ */
+type NumericReading =
+  | { kind: 'empty' }
+  | { kind: 'invalid'; message: string }
+  | { kind: 'value'; value: number }
+
+interface NumericRule {
+  /** Parsed with `parseInt` (a count) or `parseFloat` (a magnitude). */
+  whole: boolean
+  /** What an emptied field falls back to. Absent means the field is required. */
+  fallback?: number
+  /** The backend's bounds, mirrored so the refusal is visible before the 400. */
+  min?: number
+  max?: number
+}
+
+/** The defaults of the keys that have one, and of the fields that start on. */
+const DEFAULT_SEEDS_PER_COMBINATION = 1
+const DEFAULT_POINTS_PER_SPHERE = 100
+const DEFAULT_PRECISION = 18
+
+/**
+ * The numeric keys of the payload, each with the rule the backend applies.
+ *
+ * This is the payload's own list, not one invented for the form: `n_particles`
+ * and `sticking_probability` travel in every `base_parameters`, and the three
+ * counted keys are the ones that can be emptied into a default.
+ */
+const NUMERIC_RULES = {
+  n_particles: { whole: true },
+  sticking_probability: { whole: false },
+  seeds_per_combination: { whole: true, fallback: DEFAULT_SEEDS_PER_COMBINATION },
+  points_per_sphere: {
+    whole: true,
+    fallback: DEFAULT_POINTS_PER_SPHERE,
+    min: 10,
+    max: 1000,
+  },
+  precision: { whole: true, fallback: DEFAULT_PRECISION, min: 8, max: 21 },
+} satisfies Record<string, NumericRule>
+
+/**
+ * Read one numeric field, in one place, so no key can go back to `|| default`.
+ *
+ * The tone of the two parse messages is the one the rest of the form already
+ * speaks (`distributionShape`): the key in quotes, lowercase, no full stop. The
+ * two range messages are the backend's own, copied from
+ * `validate_box_counting_params_dict`, so client and server say the same
+ * sentence about the same rule.
+ */
+function readNumeric(key: string, raw: string, rule: NumericRule): NumericReading {
+  const shape = rule.whole ? 'a whole number' : 'a number'
+  const token = raw.trim()
+
+  if (!token) {
+    return rule.fallback === undefined
+      ? { kind: 'invalid', message: `'${key}' must be ${shape}` }
+      : { kind: 'value', value: rule.fallback }
+  }
+
+  const parsed = rule.whole ? parseInt(token, 10) : parseFloat(token)
+  if (!Number.isFinite(parsed)) {
+    return { kind: 'invalid', message: `'${key}' must be ${shape}` }
+  }
+  if (
+    (rule.min !== undefined && parsed < rule.min) ||
+    (rule.max !== undefined && parsed > rule.max)
+  ) {
+    return { kind: 'invalid', message: `${key} must be between ${rule.min} and ${rule.max}` }
+  }
+
+  return { kind: 'value', value: parsed }
+}
+
+/** The number a reading resolved to, for a caller that has already refused. */
+function resolvedNumber(reading: NumericReading): number {
+  if (reading.kind !== 'value') {
+    // Unreachable: `handleSubmit` refuses every reading that is not a value
+    // before it builds anything. Thrown rather than defaulted, because a
+    // default here is the silent substitution this form was fixed to stop.
+    throw new Error('a numeric field that did not resolve reached the payload')
+  }
+  return reading.value
+}
+
+/**
+ * The refusal a numeric field shows, in a wrapper that carries the id its input
+ * points at with `aria-describedby`.
+ *
+ * The message is a `Callout` for the reason `DistributionSelector` gives: a tint
+ * alone is not a state, so the notice also carries an icon and a title. Its
+ * `danger` tone renders as an `alert`, which is what a refusal that blocks the
+ * submit button has to be.
+ */
+function FieldRefusal({ id, message }: { id: string; message: string | null }) {
+  if (!message) return null
+  return (
+    <div id={id}>
+      <Callout tone="danger" title={message} />
+    </div>
+  )
+}
+
+/**
  * The create-batch-study form, on the design-system kit (issue #181, slice 2).
  *
  * One `Panel` per block, in the order the study is built: what it is called,
@@ -229,21 +360,22 @@ function formatValuesPreview(values: (number | string)[], maxShow: number = 8): 
  * aligned down a column and read apart from its unit.
  *
  * Nothing about what the form *does* changed with the port. Same fields, same
- * defaults, same coercions, same payload: the tests pin the serialised request,
- * key order included.
+ * defaults, same payload: the tests pin the serialised request, key order
+ * included. The two coercion defects the port found and deliberately left alone
+ * - they are behaviour, not presentation - were fixed afterwards, and this is
+ * how:
  *
- * Two behaviours were found while porting and deliberately left alone, because
- * they are behaviour and not presentation:
+ * - An unparseable or emptied numeric key is refused on the client, with a
+ *   message that names the key, instead of travelling raw. `parseFloat('abc')`
+ *   is `NaN` and `JSON.stringify` serialises that as `null`, so
+ *   `sticking_probability` left the form as null and the API accepted and
+ *   stored it: corruption with nothing on screen (#241).
+ * - A legitimate zero is respected where the backend accepts it, and refused
+ *   out loud where it does not, instead of `parseInt(x) || fallback` reading it
+ *   as absence (#242).
  *
- * - An unparseable numeric token travels raw. `parseFloat('abc')` is `NaN`, and
- *   `JSON.stringify` serialises that as `null`, so `sticking_probability` or
- *   `n_particles` leaves the form as null and the API answers 400 on a value
- *   the user did type. Clearing the field does the same.
- * - `parseInt(seedsPerCombo) || 1` and `parseInt(boxCountingPointsPerSphere)
- *   || 100` silently substitute a default, so an emptied field submits a number
- *   the user never typed.
- *
- * Both deserve their own issue; neither is a presentation defect.
+ * Both live in `readNumeric` below, which is the only place a numeric string
+ * becomes a number.
  */
 export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationFormProps) {
   const [name, setName] = useState('')
@@ -251,7 +383,9 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('ballistic')
   const [nParticles, setNParticles] = useState('100')
   const [stickingProbability, setStickingProbability] = useState('1.0')
-  const [seedsPerCombo, setSeedsPerCombo] = useState('1')
+  const [seedsPerCombo, setSeedsPerCombo] = useState(
+    String(DEFAULT_SEEDS_PER_COMBINATION),
+  )
   const [variations, setVariations] = useState<ParameterVariation[]>([])
   const [droppedVariations, setDroppedVariations] = useState<string[]>([])
   // Limiting case specific state
@@ -262,8 +396,19 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
 
   // Box-counting analysis option
   const [includeBoxCounting, setIncludeBoxCounting] = useState(false)
-  const [boxCountingPointsPerSphere, setBoxCountingPointsPerSphere] = useState('100')
-  const [boxCountingPrecision, setBoxCountingPrecision] = useState('18')
+  const [boxCountingPointsPerSphere, setBoxCountingPointsPerSphere] = useState(
+    String(DEFAULT_POINTS_PER_SPHERE),
+  )
+  const [boxCountingPrecision, setBoxCountingPrecision] = useState(
+    String(DEFAULT_PRECISION),
+  )
+
+  // #241: a field is called out only once the submit button has been pressed.
+  // Shouting while the user is still typing is worse than saying nothing, which
+  // is the reason `DistributionSelector` reports on blur; here the state a
+  // refusal describes is "this could not be submitted", so it appears when that
+  // is true and disappears as soon as the value is corrected.
+  const [submitAttempted, setSubmitAttempted] = useState(false)
 
   // Update configuration when geometry changes
   const handleGeometryChange = (newGeometry: string) => {
@@ -307,13 +452,86 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setVariations(updated)
   }
 
+  // Every numeric key of the payload, read once. The count on screen, the
+  // refusal and the request all come from these, so the three cannot disagree -
+  // which is how `Run 1 Simulations` came to sit above a payload saying 1 while
+  // the field said 0 (#242).
+  const readings = useMemo(
+    () => ({
+      n_particles: readNumeric('n_particles', nParticles, NUMERIC_RULES.n_particles),
+      sticking_probability: readNumeric(
+        'sticking_probability',
+        stickingProbability,
+        NUMERIC_RULES.sticking_probability,
+      ),
+      seeds_per_combination: readNumeric(
+        'seeds_per_combination',
+        seedsPerCombo,
+        NUMERIC_RULES.seeds_per_combination,
+      ),
+      points_per_sphere: readNumeric(
+        'points_per_sphere',
+        boxCountingPointsPerSphere,
+        NUMERIC_RULES.points_per_sphere,
+      ),
+      precision: readNumeric(
+        'precision',
+        boxCountingPrecision,
+        NUMERIC_RULES.precision,
+      ),
+    }),
+    [
+      nParticles,
+      stickingProbability,
+      seedsPerCombo,
+      boxCountingPointsPerSphere,
+      boxCountingPrecision,
+    ],
+  )
+
+  // A refused reading blocks the submit. The two box-counting keys only travel
+  // when that option is on, so a field the user tried and then abandoned cannot
+  // refuse a study that never asked for it.
+  const hasRefusal = [
+    readings.n_particles,
+    readings.sticking_probability,
+    readings.seeds_per_combination,
+    ...(includeBoxCounting
+      ? [readings.points_per_sphere, readings.precision]
+      : []),
+  ].some((reading) => reading.kind === 'invalid')
+
+  const shownRefusal = (reading: NumericReading): string | null =>
+    submitAttempted && reading.kind === 'invalid' ? reading.message : null
+
+  // Limiting cases are deterministic, so always 1 seed. An unparseable zero-key
+  // shows its default while it is refused: there is no honest number to project
+  // from a field that does not hold one, and the submit is blocked anyway.
+  const seedsForDisplay =
+    readings.seeds_per_combination.kind === 'value'
+      ? readings.seeds_per_combination.value
+      : DEFAULT_SEEDS_PER_COMBINATION
+  const effectiveSeeds = algorithm === 'limiting' ? 1 : seedsForDisplay
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (hasRefusal) {
+      // #241: an unparseable token used to reach the payload as `NaN`, which
+      // `JSON.stringify` writes as `null` - and `sticking_probability: null` is
+      // accepted and stored by the server, so the study was created with a
+      // value nobody chose. The batch page displays no submit error at all,
+      // which is why the refusal has to be visible here and nothing may be
+      // sent.
+      setSubmitAttempted(true)
+      return
+    }
+    setSubmitAttempted(false)
 
     // Build base parameters (different for limiting vs other algorithms)
     const baseParams: Record<string, unknown> = algorithm === 'limiting'
       ? {
-          n_particles: parseInt(nParticles),
+          n_particles: resolvedNumber(readings.n_particles),
           geometry_type: baseGeometry,
           configuration_type: baseConfiguration,
           packing: basePacking,
@@ -325,8 +543,8 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             : {}),
         }
       : {
-          n_particles: parseInt(nParticles),
-          sticking_probability: parseFloat(stickingProbability),
+          n_particles: resolvedNumber(readings.n_particles),
+          sticking_probability: resolvedNumber(readings.sticking_probability),
         }
 
     // Build parameter grid from variations
@@ -366,13 +584,18 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       base_algorithm: algorithm,
       base_parameters: baseParams,
       parameter_grid: parameterGrid,
-      // Limiting cases are deterministic, so always 1 seed
-      seeds_per_combination: algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1),
+      // Limiting cases are deterministic, so always 1 seed. Otherwise the number
+      // the user asked for, zero included: the server accepts
+      // `seeds_per_combination: 0`, so inventing a 1 here is the substitution
+      // #242 is about.
+      seeds_per_combination: effectiveSeeds,
       // Box-counting analysis option
       include_box_counting: includeBoxCounting,
       box_counting_params: includeBoxCounting ? {
-        points_per_sphere: parseInt(boxCountingPointsPerSphere) || 100,
-        precision: parseInt(boxCountingPrecision) || 18,
+        // The defaults an emptied field resolves to are the backend's own, read
+        // from `validate_box_counting_params_dict`, not numbers chosen here.
+        points_per_sphere: resolvedNumber(readings.points_per_sphere),
+        precision: resolvedNumber(readings.precision),
       } : undefined,
     }
 
@@ -395,9 +618,22 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   }, [variations, integerParams])
 
   const totalCombinations = variationCounts.reduce((acc, v) => acc * v.count, 1)
-  // Limiting cases are deterministic, so always 1 seed
-  const effectiveSeeds = algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1)
   const totalSimulations = totalCombinations * effectiveSeeds
+
+  // What each field shows, once the submit has been attempted. The border is the
+  // same `destructive` bridge token `DistributionSelector` marks its fields with,
+  // so a refused number looks the same wherever it is refused.
+  const nParticlesRefusal = shownRefusal(readings.n_particles)
+  const stickingRefusal = shownRefusal(readings.sticking_probability)
+  const seedsRefusal = shownRefusal(readings.seeds_per_combination)
+  const pointsPerSphereRefusal = includeBoxCounting
+    ? shownRefusal(readings.points_per_sphere)
+    : null
+  const precisionRefusal = includeBoxCounting
+    ? shownRefusal(readings.precision)
+    : null
+  const refusalClass = (message: string | null) =>
+    message ? 'border-destructive focus-visible:ring-destructive' : undefined
 
   const parameterOptions = useMemo(() => parameterOptionsFor(algorithm), [algorithm])
 
@@ -509,7 +745,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                   onChange={(e) => setNParticles(e.target.value)}
                   min={1}
                   max={10000}
+                  aria-invalid={nParticlesRefusal ? true : undefined}
+                  aria-describedby={nParticlesRefusal ? 'nParticles-error' : undefined}
+                  className={refusalClass(nParticlesRefusal)}
                 />
+                <FieldRefusal id="nParticles-error" message={nParticlesRefusal} />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="basePacking">Packing</Label>
@@ -548,7 +788,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                 onChange={(e) => setNParticles(e.target.value)}
                 min={10}
                 max={100000}
+                aria-invalid={nParticlesRefusal ? true : undefined}
+                aria-describedby={nParticlesRefusal ? 'nParticles-error' : undefined}
+                className={refusalClass(nParticlesRefusal)}
               />
+              <FieldRefusal id="nParticles-error" message={nParticlesRefusal} />
             </div>
             <div className="space-y-2">
               <Label htmlFor="sticking">Base Sticking Prob.</Label>
@@ -560,7 +804,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                 min={0}
                 max={1}
                 step={0.1}
+                aria-invalid={stickingRefusal ? true : undefined}
+                aria-describedby={stickingRefusal ? 'sticking-error' : undefined}
+                className={refusalClass(stickingRefusal)}
               />
+              <FieldRefusal id="sticking-error" message={stickingRefusal} />
             </div>
           </div>
         )}
@@ -576,7 +824,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               onChange={(e) => setSeedsPerCombo(e.target.value)}
               min={1}
               max={10}
+              aria-invalid={seedsRefusal ? true : undefined}
+              aria-describedby={seedsRefusal ? 'seeds-error' : undefined}
+              className={refusalClass(seedsRefusal)}
             />
+            <FieldRefusal id="seeds-error" message={seedsRefusal} />
             <p className="hint">
               Run multiple simulations per parameter combination with different random seeds
             </p>
@@ -811,6 +1063,15 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                 min={10}
                 max={1000}
                 placeholder="100"
+                aria-invalid={pointsPerSphereRefusal ? true : undefined}
+                aria-describedby={
+                  pointsPerSphereRefusal ? 'boxCountingPointsPerSphere-error' : undefined
+                }
+                className={refusalClass(pointsPerSphereRefusal)}
+              />
+              <FieldRefusal
+                id="boxCountingPointsPerSphere-error"
+                message={pointsPerSphereRefusal}
               />
               <p className="hint">Surface sampling density (higher = more accurate)</p>
             </div>
@@ -824,9 +1085,17 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                 value={boxCountingPrecision}
                 onChange={(e) => setBoxCountingPrecision(e.target.value)}
                 min={8}
-                max={24}
+                // The validator's ceiling, not the 24 this field used to
+                // advertise: a 22 was accepted by the input and refused by
+                // `validate_box_counting_params_dict`, with a 400 the batch page
+                // never displays.
+                max={21}
                 placeholder="18"
+                aria-invalid={precisionRefusal ? true : undefined}
+                aria-describedby={precisionRefusal ? 'boxCountingPrecision-error' : undefined}
+                className={refusalClass(precisionRefusal)}
               />
+              <FieldRefusal id="boxCountingPrecision-error" message={precisionRefusal} />
               <p className="hint">Morton code precision (18 recommended)</p>
             </div>
           </div>
