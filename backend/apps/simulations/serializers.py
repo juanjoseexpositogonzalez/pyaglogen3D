@@ -818,26 +818,83 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             for key in _DIST_KEYS
         )
         if touched:
+            # Shape is validated only where the REQUEST supplies a config: a PATCH
+            # that touches one key must not answer for another surface the row
+            # happens to hold, which is the cross-lane freeze of #115 point 17a.
             try:
-                distribution_surfaces = collect_distribution_surfaces(
-                    grid=eff_grid,
-                    base_parameters=eff_base,
-                    limiting_cases_config=eff_limiting,
+                payload_surfaces = collect_distribution_surfaces(
+                    grid=data.get("parameter_grid") or {},
+                    base_parameters=data.get("base_parameters") or {},
+                    limiting_cases_config=data.get("limiting_cases_config") or {},
                 )
             except SweptShapeError as exc:
                 raise serializers.ValidationError({exc.label: str(exc)}) from exc
 
+            # The scope still reads the EFFECTIVE surfaces: a stored setting has to
+            # be judged when the algorithm changes or when a key is added
+            # (R11.6/R13.12). A stored surface too malformed to collect cannot be
+            # judged at all, so it is not held against the request - the same rule
+            # `_as_mapping` follows for a stored non-object.
+            # Collected PER CARRIER, so a carrier too malformed to collect loses
+            # only itself. Excusing all three at once dropped a valid stored
+            # declaration out of the allow-list and let an algorithm change through
+            # - `PATCH {"base_algorithm": "fracval"}` answered 200 on a row whose
+            # other carrier held a perfectly collectable key, which R13.12 forbids
+            # (measured by a judge on PR #261).
+            # Collected PER KEY, one declaration at a time. Grouping by carrier
+            # as well was still too coarse: `collect_surfaces` raises on the first
+            # non-list entry it meets, so one malformed key discarded its
+            # collectable SIBLINGS in the same carrier - and a row holding a valid
+            # list beside a non-list one accepted an algorithm change that R13.12
+            # forbids, with 200 and persisted (measured by a judge on PR #261). Only
+            # the declaration that cannot be collected is excused, which is the rule
+            # `_as_mapping` follows for a stored non-object.
+            effective_surfaces: list[tuple[str, Any]] = []
+            for key in _DIST_KEYS:
+                single_declarations: list[dict[str, Any]] = []
+                if key in eff_grid:
+                    single_declarations.append(
+                        {
+                            "grid": {key: eff_grid[key]},
+                            "base_parameters": {},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_base:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {key: eff_base[key]},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_extremes:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {},
+                            "limiting_cases_config": {
+                                "theoretical_extremes": {key: eff_extremes[key]}
+                            },
+                        }
+                    )
+                for only in single_declarations:
+                    try:
+                        effective_surfaces.extend(collect_distribution_surfaces(**only))
+                    except SweptShapeError:
+                        continue
+
             try:
-                check_distribution_scope(algorithm, distribution_surfaces)
+                check_distribution_scope(algorithm, effective_surfaces)
             except ValueError as exc:
                 label = (
-                    distribution_surfaces[0][0].rsplit("[", 1)[0]
-                    if distribution_surfaces
+                    effective_surfaces[0][0].rsplit("[", 1)[0]
+                    if effective_surfaces
                     else "parameter_grid"
                 )
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
-            for label, config in distribution_surfaces:
+            for label, config in payload_surfaces:
                 key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
                 try:
                     validate_distribution_shape(
