@@ -5,7 +5,9 @@ import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useProject } from '@/hooks/useProjects'
 import { studiesApi, pollBoxCountingJobStatus } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { Num } from '@/components/kit/Num'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
 import { SinteringWarning } from '@/components/batch/SinteringWarning'
 import { relaunchPayloadFor, studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
@@ -154,12 +156,9 @@ export default function BatchSimulationsPage({
   }
 
   if (isLoadingStudies) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading batch studies..." />
-      </div>
-    )
+    // The shell provides the frame and the padding since #226: this page is not
+    // chromeless, so a second header and a second container were both redundant.
+    return <LoadingScreen message="Loading batch studies..." />
   }
 
   const studies = studiesData?.results || []
@@ -189,10 +188,7 @@ export default function BatchSimulationsPage({
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-
-      <main className="container mx-auto px-4 py-8">
+    <div className="mx-auto w-full max-w-6xl">
         {/* Breadcrumb */}
         <Link
           href={`/projects/${id}`}
@@ -202,26 +198,24 @@ export default function BatchSimulationsPage({
           Back to {project?.name || 'Project'}
         </Link>
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">Batch Simulations</h1>
-            <p className="text-muted-foreground mt-1">
-              Run parameter sweeps and compare results
-            </p>
-          </div>
-          {!showForm && (
-            <Button
-              onClick={() => {
-                setCreateError(null)
-                setShowForm(true)
-              }}
-            >
-              <Plus className="h-4 w-4 mr-2" />
-              New Batch Study
-            </Button>
-          )}
-        </div>
+        <PageHeader
+          eyebrow="PROJECT"
+          title="Batch Simulations"
+          description="Run parameter sweeps and compare results"
+          actions={
+            !showForm && (
+              <Button
+                onClick={() => {
+                  setCreateError(null)
+                  setShowForm(true)
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Batch Study
+              </Button>
+            )
+          }
+        />
 
         {createError && (
           <Alert key={createErrorAttempt} variant="destructive" className="mb-6">
@@ -237,13 +231,15 @@ export default function BatchSimulationsPage({
           <div className="lg:col-span-1 space-y-4">
             {showForm ? (
               <div className="space-y-4">
-                <BatchSimulationForm
-                  onSubmit={(data) => {
-                    setCreateError(null)
-                    createStudy.mutate(data)
-                  }}
-                  isLoading={createStudy.isPending}
-                />
+                <Panel title="New batch study">
+                  <BatchSimulationForm
+                    onSubmit={(data) => {
+                      setCreateError(null)
+                      createStudy.mutate(data)
+                    }}
+                    isLoading={createStudy.isPending}
+                  />
+                </Panel>
                 <Button
                   variant="outline"
                   className="w-full"
@@ -423,7 +419,6 @@ export default function BatchSimulationsPage({
             )}
           </div>
         </div>
-      </main>
     </div>
   )
 }
