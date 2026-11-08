@@ -2041,7 +2041,14 @@ def run_simulation_task(self, simulation_id: str) -> dict:
         bc_result = None
         try:
             bc_result = run_box_counting_if_configured(simulation_id)
-        except Exception as e:
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
+            # Box-counting must not fail the simulation, and that includes a panic
+            # from the engine. The row is already COMPLETED on this line, so
+            # letting it reach the outer handler rewrote a finished run as
+            # `failed` while its study stayed `completed` - a pair no other path
+            # can produce (measured by a judge on PR #255).
             logger.warning(f"Box-counting failed for {simulation_id}: {e}")
             # Don't fail the whole simulation for box-counting error
 

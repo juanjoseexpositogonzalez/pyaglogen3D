@@ -25,7 +25,7 @@ import pytest
 
 from apps.accounts.models import User
 from apps.projects.models import Project
-from apps.simulations.models import Simulation, SimulationStatus
+from apps.simulations.models import ParametricStudy, Simulation, SimulationStatus
 from apps.simulations.tasks import run_simulation_task
 
 
@@ -35,7 +35,19 @@ def simulation(db: None) -> Simulation:
         email=f"panic-{uuid.uuid4()}@example.com", password="x"
     )
     project = Project.objects.create(name="panic", owner=user)
-    return Simulation.objects.create(
+    # Linked to a study on purpose: the harm the point names is that the STUDY
+    # stays `running`, and it settles through a post_save signal that only fires
+    # for a child the study knows about.
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="Panicking study",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 60, "target_df": 1e308, "target_kf": 1.3},
+        parameter_grid={},
+        seeds_per_combination=1,
+        status="running",
+    )
+    simulation = Simulation.objects.create(
         project=project,
         name="Panicking run",
         algorithm="tunable_cc",
@@ -46,6 +58,8 @@ def simulation(db: None) -> Simulation:
         status=SimulationStatus.QUEUED,
         is_batch=True,
     )
+    study.simulations.add(simulation)
+    return simulation
 
 
 def test_a_rust_panic_leaves_a_failed_simulation(simulation: Simulation) -> None:
@@ -59,6 +73,14 @@ def test_a_rust_panic_leaves_a_failed_simulation(simulation: Simulation) -> None
     assert simulation.error_message, "a failed simulation must say why"
     assert simulation.completed_at is not None
     assert result["status"] == "failed", result
+    # The harm the point names is that the STUDY stays `running`: it settles
+    # through a post_save signal, which this test does not otherwise exercise.
+    study = simulation.studies.first()
+    assert study is not None
+    study.refresh_from_db()
+    assert study.status != SimulationStatus.RUNNING, (
+        f"the study is stuck in {study.status!r}"
+    )
 
 
 def test_an_operator_interrupt_is_not_recorded_as_a_failure(
@@ -86,3 +108,56 @@ def test_an_operator_interrupt_is_not_recorded_as_a_failure(
         "a stopped worker must not record healthy work as broken"
     )
     assert simulation.error_message == ""
+
+
+class _EnginePanic(BaseException):
+    """Stands in for `pyo3_runtime.PanicException`, which is not importable here.
+
+    The handler's rule is about the base class, not about pyo3: anything that is
+    not an `Exception` would have escaped the old guard the same way.
+    """
+
+
+@pytest.fixture
+def completed_simulation(db: None) -> Simulation:
+    user: User = User.objects.create_user(
+        email=f"bc-panic-{uuid.uuid4()}@example.com", password="x"
+    )
+    project = Project.objects.create(name="bc panic", owner=user)
+    return Simulation.objects.create(
+        project=project,
+        name="Box counting panics",
+        algorithm="tunable_cc",
+        parameters={"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
+        seed=7,
+        status=SimulationStatus.QUEUED,
+        is_batch=True,
+    )
+
+
+def test_a_panic_in_box_counting_does_not_fail_a_completed_run(
+    completed_simulation: Simulation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wide net must not reach past the completion point.
+
+    Measured by a judge on PR #255: the box-counting block runs after
+    `status = COMPLETED` is saved, and its own guard was `except Exception`, so a
+    panic there escaped to the outer handler and rewrote a finished run as
+    `failed` while its study stayed `completed`.
+    """
+
+    def explode(simulation_id: str) -> None:
+        raise _EnginePanic("select_pair_smart called with empty pool")
+
+    monkeypatch.setattr(
+        "apps.simulations.tasks.run_box_counting_if_configured", explode, raising=False
+    )
+
+    result = run_simulation_task(str(completed_simulation.id))
+
+    completed_simulation.refresh_from_db()
+    assert completed_simulation.status == SimulationStatus.COMPLETED, (
+        "box counting turned a completed run into a failure"
+    )
+    assert completed_simulation.error_message == ""
+    assert result["status"] == "completed", result
