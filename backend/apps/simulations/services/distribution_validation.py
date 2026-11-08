@@ -15,6 +15,24 @@ from typing import Sequence
 from rest_framework.exceptions import ValidationError
 
 
+def _number(config: dict[str, object], field: str) -> float:
+    """A real number, or a refusal naming the field.
+
+    A string in a numeric slot used to reach the comparisons below and answer 500
+    from *inside* validation: `'>' not supported between instances of 'float' and
+    'str'`. Same family as the unhashable `seed_type` of #115 point 4 - user input
+    producing a server error instead of a refusal - and it is checked here, once,
+    rather than at each comparison (point 16).
+    """
+    value = config[field]
+    # `True` is an `int` in Python, and a boolean is not a quantity.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValidationError(
+            f"Distribution '{field}' must be a number, got {type(value).__name__}."
+        )
+    return float(value)
+
+
 def validate_distribution_config(
     config: object,
     allowed_types: Sequence[str],
@@ -63,6 +81,7 @@ def validate_distribution_config(
             raise ValidationError(
                 "Fixed distribution requires a 'value' field."
             )
+        _number(config, "value")  # type-checked here, compared by the engine
 
     elif dist_type == "normal":
         if "mean" not in config:
@@ -73,8 +92,8 @@ def validate_distribution_config(
             raise ValidationError(
                 "Normal distribution requires a 'std' field."
             )
-        std = config["std"]
-        mean = config["mean"]
+        std = _number(config, "std")
+        mean = _number(config, "mean")
         if std < 0:
             raise ValidationError(
                 "Normal distribution 'std' must be non-negative."
@@ -100,7 +119,7 @@ def validate_distribution_config(
             raise ValidationError(
                 "Uniform distribution requires a 'max' field."
             )
-        if config["min"] > config["max"]:
+        if _number(config, "min") > _number(config, "max"):
             raise ValidationError(
                 "Uniform distribution 'min' must be <= 'max'."
             )
