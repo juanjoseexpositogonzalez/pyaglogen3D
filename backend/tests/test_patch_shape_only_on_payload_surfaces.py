@@ -253,3 +253,57 @@ def test_a_collectable_but_unrunnable_stored_value_does_not_freeze(
         f"a PATCH that did not mention the stored {carrier} surface was refused "
         f"for it: {getattr(response, 'data', '')}"
     )
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    ("carrier", "good", "bad"),
+    [
+        ("grid", "dpo_distribution", "kf_distribution"),
+        ("grid", "kf_distribution", "dpo_distribution"),
+        ("extremes", "dpo_distribution", "kf_distribution"),
+        ("extremes", "kf_distribution", "dpo_distribution"),
+    ],
+)
+def test_a_malformed_sibling_does_not_excuse_a_valid_declaration(
+    api_client: APIClient, project: Project, carrier: str, good: str, bad: str
+) -> None:
+    """The granularity the round-2 fix got wrong.
+
+    Measured by a judge on PR #261: collecting per CARRIER was still too coarse,
+    because `collect_surfaces` raises on the first non-list entry and the handler
+    discarded everything already collected from that carrier. A row holding a valid
+    declaration beside a non-list sibling therefore lost *both*, and
+    `PATCH {"base_algorithm": "fracval"}` answered 200 and persisted it - the state
+    R13.12 forbids, reached one grouping level lower.
+    """
+    valid = [{"mode": "fixed", "value": 1.0}]
+    malformed = {"mode": "fixed", "value": 1.0}  # an object where a list is required
+    carrier_value = {good: valid, bad: malformed}
+
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="mixed carrier",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 60, "target_df": 2.0, "target_kf": 1.3},
+        parameter_grid=carrier_value if carrier == "grid" else {},
+        seeds_per_combination=1,
+        include_limiting_cases=carrier == "extremes",
+        limiting_cases_config=(
+            {"theoretical_extremes": carrier_value} if carrier == "extremes" else {}
+        ),
+        status="completed",
+    )
+
+    response = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{study.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert response.status_code == 400, (
+        f"the valid {good} declaration in {carrier} was excused by its malformed "
+        f"sibling {bad}: {getattr(response, 'data', '')}"
+    )
+    study.refresh_from_db()
+    assert study.base_algorithm == "tunable_cc", "the refused change was persisted"

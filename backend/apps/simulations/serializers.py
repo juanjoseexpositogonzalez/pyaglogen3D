@@ -841,18 +841,48 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             # - `PATCH {"base_algorithm": "fracval"}` answered 200 on a row whose
             # other carrier held a perfectly collectable key, which R13.12 forbids
             # (measured by a judge on PR #261).
+            # Collected PER KEY, one declaration at a time. Grouping by carrier
+            # as well was still too coarse: `collect_surfaces` raises on the first
+            # non-list entry it meets, so one malformed key discarded its
+            # collectable SIBLINGS in the same carrier - and a row holding a valid
+            # list beside a non-list one accepted an algorithm change that R13.12
+            # forbids, with 200 and persisted (measured by a judge on PR #261). Only
+            # the declaration that cannot be collected is excused, which is the rule
+            # `_as_mapping` follows for a stored non-object.
             effective_surfaces: list[tuple[str, Any]] = []
-            for only in (
-                {"grid": eff_grid, "base_parameters": {}, "limiting_cases_config": {}},
-                {"grid": {}, "base_parameters": eff_base, "limiting_cases_config": {}},
-                {"grid": {}, "base_parameters": {}, "limiting_cases_config": eff_limiting},
-            ):
-                try:
-                    effective_surfaces.extend(collect_distribution_surfaces(**only))
-                except SweptShapeError:
-                    # This carrier cannot be judged; it is not held against the
-                    # request, the way `_as_mapping` ignores a stored non-object.
-                    continue
+            for key in _DIST_KEYS:
+                single_declarations: list[dict[str, Any]] = []
+                if key in eff_grid:
+                    single_declarations.append(
+                        {
+                            "grid": {key: eff_grid[key]},
+                            "base_parameters": {},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_base:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {key: eff_base[key]},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_extremes:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {},
+                            "limiting_cases_config": {
+                                "theoretical_extremes": {key: eff_extremes[key]}
+                            },
+                        }
+                    )
+                for only in single_declarations:
+                    try:
+                        effective_surfaces.extend(collect_distribution_surfaces(**only))
+                    except SweptShapeError:
+                        continue
 
             try:
                 check_distribution_scope(algorithm, effective_surfaces)
