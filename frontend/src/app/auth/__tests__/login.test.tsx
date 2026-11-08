@@ -331,4 +331,13 @@ describe('sign-in screen', () => {
 
     expect(screen.getByRole('alert').textContent).toMatch(/server_error/i)
   })
+
+  it('tells a password manager which field is which', () => {
+    // Without these, browsers and password managers cannot fill the first
+    // screen of the product reliably, and on registration they cannot tell
+    // the new password from its confirmation (issue #250).
+    const { container } = render(<LoginPage />)
+    expect(container.querySelector("#email")?.getAttribute("autocomplete")).toBe("email")
+    expect(container.querySelector("#password")?.getAttribute("autocomplete")).toBe("current-password")
+  })
 })
