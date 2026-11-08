@@ -1,14 +1,49 @@
 'use client'
 
+/**
+ * Admin users screen, on the design-system kit (issue #183).
+ *
+ * `/admin` is not chromeless (`isChromeless` is `/` and `/auth/*` only), so
+ * the shell draws the frame and the gutter here: this file mounts no `Header`
+ * and no layout box of its own, which used to pad the screen twice and stack a
+ * second landmark inside the shell's.
+ *
+ * There is no table of accounts. An account carries an identity, a set of
+ * flags, two counts, four controls and an expandable body, and `DataTable` has
+ * no row-expansion: forcing one in would have put a button inside every first
+ * cell and changed how the list behaves. What *is* tabular sits inside the
+ * expanded account — one row per project, with the two counts a reader
+ * compares down the column — and that is `DataTable`, with a caption naming
+ * the account the rows belong to.
+ *
+ * What did not move: the staff guard and the redirect target, the single
+ * `adminApi.getDashboard()` read behind Refresh, the PATCH payload and the
+ * DELETE call, every message, and the rule that you cannot demote, deactivate
+ * or delete the account you are signed in with.
+ *
+ * The account flags keep their words and lose their hue. The old pills picked
+ * purple and blue straight out of Tailwind's palette, which is not this
+ * system's vocabulary; only the brand, warning and danger families carry
+ * meaning here, so "AI access" and "You" are neutral chips that lean on their
+ * text and the `Bot` icon instead of on a colour the kit cannot vouch for.
+ */
 import { useEffect, useState } from 'react'
+import type { ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
 import { adminApi, AdminDashboardData, AdminUser } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { cn } from '@/lib/utils'
+import { Callout } from '@/components/kit/Callout'
+import { DataTable, type Column } from '@/components/kit/DataTable'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import {
@@ -24,7 +59,6 @@ import {
   Edit2,
   Save,
   X,
-  AlertTriangle,
   Bot,
 } from 'lucide-react'
 
@@ -114,95 +148,160 @@ export default function AdminPage() {
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-
-      <main className="container mx-auto px-4 py-8">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold flex items-center gap-2">
-              <Shield className="h-8 w-8" />
-              Admin Dashboard
-            </h1>
-            <p className="text-muted-foreground mt-1">
-              Overview of all users and projects
-            </p>
-          </div>
+    <div className="space-y-8">
+      <PageHeader
+        eyebrow="ADMIN"
+        title={
+          <>
+            <Shield className="mr-2 inline h-7 w-7 align-[-2px]" aria-hidden="true" />
+            Admin Dashboard
+          </>
+        }
+        description="Overview of all users and projects"
+        actions={
           <Button onClick={fetchAdminData} variant="outline">
             Refresh
           </Button>
-        </div>
+        }
+      />
 
-        {isLoading ? (
-          <LoadingScreen message="Loading admin data..." />
-        ) : error ? (
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">{error}</p>
-            </CardContent>
-          </Card>
-        ) : data ? (
-          <>
-            {/* Summary Stats */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Users
-                  </CardTitle>
-                  <Users className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{data.summary.total_users}</div>
-                </CardContent>
-              </Card>
+      {isLoading ? (
+        <LoadingScreen message="Loading admin data..." />
+      ) : error ? (
+        // A read that failed is not an instance with no users: saying so
+        // leaves the accounts on the screen and blames the request.
+        <Callout tone="danger" title={error} />
+      ) : data ? (
+        <>
+          <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+            {/* `digits={0}`: these are counts. The default three decimals turn
+                2 projects into "2.000". */}
+            <MetricCard
+              kind="exact"
+              label="Total Users"
+              value={data.summary.total_users}
+              digits={0}
+              tone="teal"
+            />
+            <MetricCard
+              kind="exact"
+              label="Total Projects"
+              value={data.summary.total_projects}
+              digits={0}
+              tone="violet"
+            />
+            <MetricCard
+              kind="exact"
+              label="Total Simulations"
+              value={data.summary.total_simulations}
+              digits={0}
+              tone="gold"
+            />
+          </div>
 
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Projects
-                  </CardTitle>
-                  <FolderOpen className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{data.summary.total_projects}</div>
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader className="flex flex-row items-center justify-between pb-2">
-                  <CardTitle className="text-sm font-medium text-muted-foreground">
-                    Total Simulations
-                  </CardTitle>
-                  <Atom className="h-4 w-4 text-muted-foreground" />
-                </CardHeader>
-                <CardContent>
-                  <div className="text-3xl font-bold">{data.summary.total_simulations}</div>
-                </CardContent>
-              </Card>
-            </div>
-
-            {/* Users List */}
-            <h2 className="text-xl font-semibold mb-4">All Users</h2>
-            <div className="space-y-4">
-              {data.users.map((adminUser) => (
-                <UserCard
-                  key={adminUser.id}
-                  user={adminUser}
-                  currentUserId={user?.id}
-                  isExpanded={expandedUsers.has(adminUser.id)}
-                  onToggle={() => toggleUserExpand(adminUser.id)}
-                  onUpdate={handleUserUpdate}
-                  onDelete={handleUserDelete}
-                />
-              ))}
-            </div>
-          </>
-        ) : null}
-      </main>
+          <Panel
+            title="All Users"
+            hint="Every account on this instance, with the projects and simulations it owns. Expand one to see what it holds."
+          >
+            {data.users.length === 0 ? (
+              <EmptyState
+                icon={Users}
+                headingLevel={3}
+                title="No users yet"
+                description="Accounts appear here as soon as someone registers."
+              />
+            ) : (
+              <div className="space-y-4">
+                {data.users.map((adminUser) => (
+                  <UserCard
+                    key={adminUser.id}
+                    user={adminUser}
+                    currentUserId={user?.id}
+                    isExpanded={expandedUsers.has(adminUser.id)}
+                    onToggle={() => toggleUserExpand(adminUser.id)}
+                    onUpdate={handleUserUpdate}
+                    onDelete={handleUserDelete}
+                  />
+                ))}
+              </div>
+            )}
+          </Panel>
+        </>
+      ) : null}
     </div>
   )
 }
+
+/**
+ * The account flags, as chips that always carry the word.
+ *
+ * `StatusChip` is the kit's pill, but its union is `SimulationStatus` — a
+ * job's state. An account is not running or queued, so the pills are built
+ * here from the same recipe (rounded, tracked, uppercase, bordered) over the
+ * kit's tokens rather than borrowing a state the product does not have.
+ */
+type PillTone = 'admin' | 'ai' | 'deactivated' | 'unverified' | 'self'
+
+const PILLS: Record<PillTone, string> = {
+  admin: 'border-brand bg-brand-soft text-brand-strong',
+  ai: 'border-line-strong bg-surface-soft text-ink',
+  deactivated: 'border-danger bg-danger-soft text-danger',
+  unverified: 'border-warning bg-warning-soft text-warning',
+  self: 'border-line-strong text-ink-muted',
+}
+
+function Pill({ tone, children }: { tone: PillTone; children: ReactNode }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex items-center gap-1 rounded-full border px-2 py-0.5',
+        'text-[10px] font-extrabold uppercase tracking-[0.06em]',
+        PILLS[tone],
+      )}
+    >
+      {children}
+    </span>
+  )
+}
+
+type AdminProject = AdminUser['projects'][number]
+
+/** One row per project: counted, and reachable by name. */
+const PROJECT_COLUMNS: Column<AdminProject>[] = [
+  {
+    key: 'name',
+    header: 'Project',
+    render: (project) => (
+      <Link href={`/projects/${project.id}`} className="text-ink hover:text-brand-strong">
+        <span className="font-medium">{project.name}</span>
+        {project.description && (
+          <span className="mt-0.5 block line-clamp-1 text-[11px] text-ink-muted">
+            {project.description}
+          </span>
+        )}
+      </Link>
+    ),
+  },
+  {
+    key: 'simulations',
+    header: 'Simulations',
+    numeric: true,
+    digits: 0,
+    value: (project) => project.simulation_count,
+  },
+  {
+    key: 'studies',
+    header: 'Studies',
+    numeric: true,
+    digits: 0,
+    value: (project) => project.study_count,
+  },
+  {
+    key: 'created',
+    header: 'Created',
+    render: (project) => new Date(project.created_at).toLocaleDateString(),
+  },
+]
 
 function UserCard({
   user,
@@ -233,6 +332,7 @@ function UserCard({
   const [hasAIAccess, setHasAIAccess] = useState(user.has_ai_access)
 
   const isSelf = currentUserId === user.id
+  const displayName = user.full_name || user.email
 
   const handleSave = async () => {
     setIsSaving(true)
@@ -277,126 +377,118 @@ function UserCard({
   }
 
   return (
-    <Card className={!user.is_active ? 'opacity-60' : ''}>
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <div
-            className="flex items-center gap-4 cursor-pointer flex-1"
-            onClick={onToggle}
+    // A deactivated account stays legible while reading as diminished. The
+    // state is also spelled out in the "Deactivated" chip, so the opacity is
+    // decoration and not the only carrier.
+    <article
+      className={cn(
+        'rounded-lg border border-line bg-surface p-[17px_18px]',
+        !user.is_active && 'opacity-60',
+      )}
+    >
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div className="flex min-w-0 flex-1 items-start gap-3">
+          {/*
+            The chevron names the account it opens, not "toggle": nine
+            identical "toggle" buttons are indistinguishable out of context.
+          */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="-ml-2 -mt-1 h-8 w-8 shrink-0"
+            aria-expanded={isExpanded}
+            aria-label={`${isExpanded ? 'Hide' : 'Show'} projects for ${displayName}`}
+            onClick={(e) => {
+              // The identity block below is clickable too; without this the
+              // click would reach both handlers and toggle twice.
+              e.stopPropagation()
+              onToggle()
+            }}
           >
-            <Button variant="ghost" size="sm" className="p-0 h-auto">
-              {isExpanded ? (
-                <ChevronDown className="h-5 w-5" />
-              ) : (
-                <ChevronRight className="h-5 w-5" />
-              )}
-            </Button>
-            <div>
-              <CardTitle className="text-lg flex items-center gap-2">
-                {user.full_name || user.email}
-                {user.is_staff && (
-                  <span className="text-xs bg-primary/20 text-primary px-2 py-0.5 rounded">
-                    Admin
-                  </span>
-                )}
-                {user.has_ai_access && (
-                  <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded flex items-center gap-1">
-                    <Bot className="h-3 w-3" />
-                    AI
-                  </span>
-                )}
-                {!user.is_active && (
-                  <span className="text-xs bg-destructive/20 text-destructive px-2 py-0.5 rounded">
-                    Deactivated
-                  </span>
-                )}
-                {!user.email_verified && (
-                  <span className="text-xs bg-yellow-500/20 text-yellow-500 px-2 py-0.5 rounded">
-                    Unverified
-                  </span>
-                )}
-                {isSelf && (
-                  <span className="text-xs bg-blue-500/20 text-blue-500 px-2 py-0.5 rounded">
-                    You
-                  </span>
-                )}
-              </CardTitle>
-              <div className="flex items-center gap-4 text-sm text-muted-foreground mt-1">
-                <span className="flex items-center gap-1">
-                  <Mail className="h-3 w-3" />
-                  {user.email}
-                </span>
-                <span className="flex items-center gap-1">
-                  <Calendar className="h-3 w-3" />
-                  Joined {new Date(user.created_at).toLocaleDateString()}
-                </span>
-                {user.oauth_provider && (
-                  <span className="text-xs bg-secondary px-2 py-0.5 rounded">
-                    {user.oauth_provider}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
+            {isExpanded ? (
+              <ChevronDown className="h-5 w-5" aria-hidden="true" />
+            ) : (
+              <ChevronRight className="h-5 w-5" aria-hidden="true" />
+            )}
+          </Button>
 
-          {/* Stats and Actions */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-4 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <FolderOpen className="h-4 w-4" />
-                {user.project_count} projects
-              </span>
-              <span className="flex items-center gap-1">
-                <Atom className="h-4 w-4" />
-                {user.simulation_count} sims
-              </span>
-            </div>
-
-            {/* Action buttons */}
-            <div className="flex items-center gap-2 ml-4">
-              {!isEditing && (
-                <>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setIsEditing(true)
-                    }}
-                  >
-                    <Edit2 className="h-4 w-4" />
-                  </Button>
-                  {!isSelf && (
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setShowDeleteConfirm(true)
-                      }}
-                      className="text-destructive hover:text-destructive"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                  )}
-                </>
+          <div className="min-w-0 cursor-pointer" onClick={onToggle}>
+            <h3 className="m-0 flex flex-wrap items-center gap-2 text-[15px] font-semibold tracking-[-0.015em] text-ink">
+              {displayName}
+              {user.is_staff && <Pill tone="admin">Admin</Pill>}
+              {user.has_ai_access && (
+                <Pill tone="ai">
+                  <Bot className="h-3 w-3" aria-hidden="true" />
+                  AI
+                </Pill>
               )}
+              {!user.is_active && <Pill tone="deactivated">Deactivated</Pill>}
+              {!user.email_verified && <Pill tone="unverified">Unverified</Pill>}
+              {isSelf && <Pill tone="self">You</Pill>}
+            </h3>
+            <div className="mt-1 flex flex-wrap items-center gap-x-4 gap-y-1 text-[12px] text-ink-muted">
+              <span className="inline-flex items-center gap-1">
+                <Mail className="h-3 w-3" aria-hidden="true" />
+                {user.email}
+              </span>
+              <span className="inline-flex items-center gap-1">
+                <Calendar className="h-3 w-3" aria-hidden="true" />
+                Joined {new Date(user.created_at).toLocaleDateString()}
+              </span>
+              {user.oauth_provider && <Pill tone="self">{user.oauth_provider}</Pill>}
             </div>
           </div>
         </div>
-      </CardHeader>
+
+        {/* Stats and actions */}
+        <div className="flex flex-wrap items-center gap-4">
+          <div className="flex items-center gap-4 text-[12px] text-ink-muted">
+            <span className="inline-flex items-baseline gap-1">
+              <FolderOpen className="h-4 w-4" aria-hidden="true" />
+              <Num value={user.project_count} digits={0} size="sm" />
+              <span>projects</span>
+            </span>
+            <span className="inline-flex items-baseline gap-1">
+              <Atom className="h-4 w-4" aria-hidden="true" />
+              <Num value={user.simulation_count} digits={0} size="sm" />
+              <span>sims</span>
+            </span>
+          </div>
+
+          {!isEditing && (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="icon"
+                aria-label={`Edit ${displayName}`}
+                onClick={() => setIsEditing(true)}
+              >
+                <Edit2 className="h-4 w-4" aria-hidden="true" />
+              </Button>
+              {/* Deleting yourself would take the account doing the deleting,
+                  so the control is absent rather than disabled. */}
+              {!isSelf && (
+                <Button
+                  variant="outline"
+                  size="icon"
+                  aria-label={`Delete ${displayName}`}
+                  onClick={() => setShowDeleteConfirm(true)}
+                >
+                  <Trash2 className="h-4 w-4 text-danger" aria-hidden="true" />
+                </Button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Delete confirmation */}
       {showDeleteConfirm && (
-        <CardContent className="pt-0 pb-4">
-          <div className="flex items-center gap-4 p-4 bg-destructive/10 rounded-lg border border-destructive/20">
-            <AlertTriangle className="h-5 w-5 text-destructive flex-shrink-0" />
-            <div className="flex-1">
-              <p className="font-medium text-destructive">Delete this user?</p>
-              <p className="text-sm text-muted-foreground">
-                This will permanently delete {user.email} and all their projects, simulations, and data.
-              </p>
-            </div>
+        <Callout
+          tone="danger"
+          title="Delete this user?"
+          className="mt-4"
+          action={
             <div className="flex gap-2">
               <Button
                 variant="outline"
@@ -415,141 +507,121 @@ function UserCard({
                 {isDeleting ? 'Deleting...' : 'Delete'}
               </Button>
             </div>
-          </div>
-        </CardContent>
+          }
+        >
+          This will permanently delete {user.email} and all their projects, simulations, and
+          data.
+        </Callout>
       )}
 
       {/* Edit form */}
       {isEditing && (
-        <CardContent className="pt-0 pb-4">
-          <div className="p-4 bg-secondary/30 rounded-lg border">
-            <h4 className="font-medium mb-4">Edit User</h4>
+        <div className="mt-4 rounded-lg border border-line bg-surface-soft p-4">
+          <h4 className="m-0 mb-4 text-[13px] font-semibold text-ink">Edit User</h4>
 
-            {editError && (
-              <div className="mb-4 p-3 bg-destructive/10 border border-destructive/20 rounded text-sm text-destructive">
-                {editError}
-              </div>
-            )}
+          {editError && <Callout tone="danger" title={editError} className="mb-4" />}
 
-            <div className="grid grid-cols-2 gap-4 mb-4">
-              <div>
-                <label className="text-sm font-medium mb-1 block">First Name</label>
-                <Input
-                  value={firstName}
-                  onChange={(e) => setFirstName(e.target.value)}
-                  placeholder="First name"
-                />
-              </div>
-              <div>
-                <label className="text-sm font-medium mb-1 block">Last Name</label>
-                <Input
-                  value={lastName}
-                  onChange={(e) => setLastName(e.target.value)}
-                  placeholder="Last name"
-                />
-              </div>
-            </div>
-
-            <div className="flex items-center gap-8 mb-4 flex-wrap">
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={isStaff}
-                  onCheckedChange={setIsStaff}
-                  disabled={isSelf}
-                />
-                <label className="text-sm">
-                  Admin access
-                  {isSelf && <span className="text-muted-foreground ml-2">(cannot change own)</span>}
-                </label>
-              </div>
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={isActive}
-                  onCheckedChange={setIsActive}
-                  disabled={isSelf}
-                />
-                <label className="text-sm">
-                  Active account
-                  {isSelf && <span className="text-muted-foreground ml-2">(cannot change own)</span>}
-                </label>
-              </div>
-              <div className="flex items-center gap-3">
-                <Switch
-                  checked={hasAIAccess}
-                  onCheckedChange={setHasAIAccess}
-                  disabled={isStaff}
-                />
-                <label className="text-sm flex items-center gap-1">
-                  <Bot className="h-4 w-4" />
-                  AI Assistant access
-                  {isStaff && <span className="text-muted-foreground ml-2">(admins always have access)</span>}
-                </label>
-              </div>
-            </div>
-
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleSave}
-                disabled={isSaving}
-              >
-                <Save className="h-4 w-4 mr-2" />
-                {isSaving ? 'Saving...' : 'Save'}
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleCancel}
-                disabled={isSaving}
-              >
-                <X className="h-4 w-4 mr-2" />
-                Cancel
-              </Button>
-            </div>
-          </div>
-        </CardContent>
-      )}
-
-      {isExpanded && user.projects.length > 0 && (
-        <CardContent className="pt-0">
-          <div className="border-t pt-4">
-            <h4 className="text-sm font-medium mb-3">Projects</h4>
+          <div className="mb-4 grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div className="space-y-2">
-              {user.projects.map((project) => (
-                <Link
-                  key={project.id}
-                  href={`/projects/${project.id}`}
-                  className="block"
-                >
-                  <div className="flex items-center justify-between p-3 rounded-lg bg-secondary/50 hover:bg-secondary transition-colors">
-                    <div>
-                      <p className="font-medium">{project.name}</p>
-                      {project.description && (
-                        <p className="text-sm text-muted-foreground line-clamp-1">
-                          {project.description}
-                        </p>
-                      )}
-                    </div>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <span>{project.simulation_count} sims</span>
-                      <span>{project.study_count} studies</span>
-                      <span>{new Date(project.created_at).toLocaleDateString()}</span>
-                    </div>
-                  </div>
-                </Link>
-              ))}
+              <Label htmlFor={`first-name-${user.id}`}>First Name</Label>
+              <Input
+                id={`first-name-${user.id}`}
+                value={firstName}
+                onChange={(e) => setFirstName(e.target.value)}
+                placeholder="First name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor={`last-name-${user.id}`}>Last Name</Label>
+              <Input
+                id={`last-name-${user.id}`}
+                value={lastName}
+                onChange={(e) => setLastName(e.target.value)}
+                placeholder="Last name"
+              />
             </div>
           </div>
-        </CardContent>
+
+          <div className="mb-4 flex flex-wrap items-center gap-x-8 gap-y-3">
+            <div className="flex items-center gap-3">
+              {/* The visible text is a paragraph, not a `<label for>`: a
+                  `Switch` is a button, and only the button itself can carry
+                  the name a screen reader announces. */}
+              <Switch
+                checked={isStaff}
+                onCheckedChange={setIsStaff}
+                disabled={isSelf}
+                aria-label="Admin access"
+              />
+              <span className="text-[12px] text-ink">
+                Admin access
+                {isSelf && (
+                  <span className="ml-2 text-ink-muted">(cannot change own)</span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={isActive}
+                onCheckedChange={setIsActive}
+                disabled={isSelf}
+                aria-label="Active account"
+              />
+              <span className="text-[12px] text-ink">
+                Active account
+                {isSelf && (
+                  <span className="ml-2 text-ink-muted">(cannot change own)</span>
+                )}
+              </span>
+            </div>
+            <div className="flex items-center gap-3">
+              <Switch
+                checked={hasAIAccess}
+                onCheckedChange={setHasAIAccess}
+                disabled={isStaff}
+                aria-label="AI Assistant access"
+              />
+              <span className="inline-flex items-center gap-1 text-[12px] text-ink">
+                <Bot className="h-4 w-4" aria-hidden="true" />
+                AI Assistant access
+                {isStaff && (
+                  <span className="ml-2 text-ink-muted">
+                    (admins always have access)
+                  </span>
+                )}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            <Button size="sm" onClick={handleSave} disabled={isSaving}>
+              <Save className="mr-2 h-4 w-4" aria-hidden="true" />
+              {isSaving ? 'Saving...' : 'Save'}
+            </Button>
+            <Button variant="outline" size="sm" onClick={handleCancel} disabled={isSaving}>
+              <X className="mr-2 h-4 w-4" aria-hidden="true" />
+              Cancel
+            </Button>
+          </div>
+        </div>
       )}
 
-      {isExpanded && user.projects.length === 0 && (
-        <CardContent className="pt-0">
-          <div className="border-t pt-4">
-            <p className="text-sm text-muted-foreground">No projects yet</p>
-          </div>
-        </CardContent>
+      {isExpanded && (
+        <div className="mt-4 border-t border-line pt-4">
+          <h4 className="m-0 mb-3 text-[13px] font-semibold text-ink">Projects</h4>
+          {user.projects.length > 0 ? (
+            <DataTable
+              columns={PROJECT_COLUMNS}
+              rows={user.projects}
+              rowKey={(project) => project.id}
+              caption={`Projects owned by ${displayName}`}
+              emptyMessage="No projects yet"
+            />
+          ) : (
+            <p className="hint">No projects yet</p>
+          )}
+        </div>
       )}
-    </Card>
+    </article>
   )
 }

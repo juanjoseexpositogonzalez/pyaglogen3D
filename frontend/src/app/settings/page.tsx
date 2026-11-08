@@ -11,19 +11,27 @@
  * Values flow through the shared `User` model, so every subsequent CSV export
  * the backend produces honors this choice (see R-csv-export-locale in
  * openspec/changes/import-aggregate/specs/import-aggregate-contract.md).
+ *
+ * On the design-system kit (issue #183). The shell draws the navigation and
+ * the page gutter: `/settings` is not chromeless (`isChromeless` is `/` and
+ * `/auth/*` only), so this file contributes neither a `Header` nor a layout
+ * box of its own — the two together padded the screen twice and put a
+ * second landmark inside the shell's.
+ *
+ * Nothing below the presentation moved: the same two fields with the same
+ * values, the same `updateProfile` call with the same payload, the same three
+ * messages, and the same redirect for a visitor without a session.
+ *
+ * The column keeps the 768px measure it had. Left to itself the form stretches
+ * to the shell's full 1440px and each select grows into a reading line nobody
+ * scans.
  */
-
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useAuth } from '@/contexts/AuthContext'
-import { Header } from '@/components/layout/Header'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -102,87 +110,74 @@ export default function SettingsPage() {
   const ambiguous = decimal === ',' && delimiter === ','
 
   return (
-    <div className="min-h-screen">
-      <Header />
+    <div className="mx-auto w-full max-w-3xl">
+      <PageHeader
+        eyebrow="ACCOUNT"
+        title="Settings"
+        description="Preferences for your pyAgloGen3D account."
+      />
 
-      <main className="container mx-auto px-4 py-8 max-w-3xl">
-        <div className="mb-8">
-          <h1 className="text-3xl font-bold">Settings</h1>
-          <p className="text-muted-foreground mt-1">
-            Preferences for your pyAgloGen3D account.
-          </p>
+      <Panel
+        title="CSV Export Preferences"
+        hint={
+          <>
+            Choose how numbers and columns are formatted when exporting CSV
+            files. This matches regional conventions — e.g. European{' '}
+            <code className="num">1,5;2,5</code> vs US{' '}
+            <code className="num">1.5,2.5</code>. The setting applies to every
+            CSV export you trigger.
+          </>
+        }
+      >
+        <div className="space-y-6">
+          <div className="space-y-2">
+            <Label htmlFor="csv-decimal">Decimal Separator</Label>
+            <Select
+              id="csv-decimal"
+              value={decimal}
+              onChange={(e) => setDecimal(e.target.value as CsvDecimalSeparator)}
+              options={decimalOptions}
+            />
+            <p className="hint">Character used inside numeric values.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="csv-delimiter">Column Delimiter</Label>
+            <Select
+              id="csv-delimiter"
+              value={delimiter}
+              onChange={(e) =>
+                setDelimiter(e.target.value as CsvColumnDelimiter)
+              }
+              options={delimiterOptions}
+            />
+            <p className="hint">Character used between columns.</p>
+          </div>
+
+          {/* A notice, not a bare tinted box: `Callout` pairs the word with the
+              icon, so the warning survives greyscale and a reader who cannot
+              tell yellow from green. */}
+          {ambiguous && (
+            <Callout tone="warning" title="Ambiguous format">
+              Comma decimal with comma column delimiter produces files that are
+              hard to re-parse. Consider switching the delimiter to semicolon.
+            </Callout>
+          )}
+
+          {feedback && (
+            <Callout
+              tone={feedback.kind === 'success' ? 'success' : 'danger'}
+              title={feedback.message}
+            />
+          )}
+
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving}>
+              {saving ? 'Saving...' : 'Save Preferences'}
+            </Button>
+          </div>
         </div>
-
-        <Card>
-          <CardHeader>
-            <CardTitle>CSV Export Preferences</CardTitle>
-            <CardDescription>
-              Choose how numbers and columns are formatted when exporting CSV
-              files. This matches regional conventions — e.g. European{' '}
-              <code className="bg-muted px-1 rounded">1,5;2,5</code> vs US{' '}
-              <code className="bg-muted px-1 rounded">1.5,2.5</code>. The
-              setting applies to every CSV export you trigger.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <Label htmlFor="csv-decimal">Decimal Separator</Label>
-              <Select
-                id="csv-decimal"
-                value={decimal}
-                onChange={(e) =>
-                  setDecimal(e.target.value as CsvDecimalSeparator)
-                }
-                options={decimalOptions}
-              />
-              <p className="text-xs text-muted-foreground">
-                Character used inside numeric values.
-              </p>
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="csv-delimiter">Column Delimiter</Label>
-              <Select
-                id="csv-delimiter"
-                value={delimiter}
-                onChange={(e) =>
-                  setDelimiter(e.target.value as CsvColumnDelimiter)
-                }
-                options={delimiterOptions}
-              />
-              <p className="text-xs text-muted-foreground">
-                Character used between columns.
-              </p>
-            </div>
-
-            {ambiguous && (
-              <div className="rounded-md border border-yellow-500/50 bg-yellow-500/10 p-3 text-sm">
-                <strong>Ambiguous format:</strong> comma decimal with comma
-                column delimiter produces files that are hard to re-parse.
-                Consider switching the delimiter to semicolon.
-              </div>
-            )}
-
-            {feedback && (
-              <div
-                className={
-                  feedback.kind === 'success'
-                    ? 'rounded-md border border-green-500/50 bg-green-500/10 p-3 text-sm'
-                    : 'rounded-md border border-destructive/50 bg-destructive/10 p-3 text-sm text-destructive'
-                }
-              >
-                {feedback.message}
-              </div>
-            )}
-
-            <div className="flex justify-end">
-              <Button onClick={handleSave} disabled={saving}>
-                {saving ? 'Saving...' : 'Save Preferences'}
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      </main>
+      </Panel>
     </div>
   )
 }
