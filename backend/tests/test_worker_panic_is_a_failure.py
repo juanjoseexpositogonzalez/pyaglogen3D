@@ -78,8 +78,8 @@ def test_a_rust_panic_leaves_a_failed_simulation(simulation: Simulation) -> None
     study = simulation.studies.first()
     assert study is not None
     study.refresh_from_db()
-    assert study.status != SimulationStatus.RUNNING, (
-        f"the study is stuck in {study.status!r}"
+    assert study.status == SimulationStatus.FAILED, (
+        f"the study is {study.status!r}; its only child failed"
     )
 
 
@@ -160,4 +160,61 @@ def test_a_panic_in_box_counting_does_not_fail_a_completed_run(
         "box counting turned a completed run into a failure"
     )
     assert completed_simulation.error_message == ""
+    assert result["status"] == "completed", result
+
+
+@pytest.fixture
+def limiting_simulation(db: None) -> Simulation:
+    """The `limiting` branch, which has its own box-counting guard."""
+    user: User = User.objects.create_user(
+        email=f"bc-limiting-{uuid.uuid4()}@example.com", password="x"
+    )
+    project = Project.objects.create(name="bc limiting", owner=user)
+    study = ParametricStudy.objects.create(
+        project=project,
+        name="Limiting study with box counting",
+        base_algorithm="limiting",
+        base_parameters={"n_particles": 60, "sintering_coeff": 0.8},
+        parameter_grid={},
+        seeds_per_combination=1,
+        include_box_counting=True,
+        status="running",
+    )
+    simulation = Simulation.objects.create(
+        project=project,
+        name="Limiting run",
+        algorithm="limiting",
+        parameters={"n_particles": 60, "sintering_coeff": 0.8},
+        seed=3,
+        status=SimulationStatus.QUEUED,
+        is_batch=True,
+    )
+    study.simulations.add(simulation)
+    return simulation
+
+
+def test_a_panic_in_the_limiting_box_counting_does_not_fail_a_completed_run(
+    limiting_simulation: Simulation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The sibling guard, 88 lines above the one the first fix widened.
+
+    Measured by a judge on PR #255: this branch saves `COMPLETED` and then runs
+    box counting behind its own `except Exception`, so a panic reached the new
+    outer net and produced exactly the pair the fix claimed no path could make - a
+    `failed` run whose study says `completed`.
+    """
+
+    def explode(simulation_id: str) -> None:
+        raise _EnginePanic("select_pair_smart called with empty pool")
+
+    monkeypatch.setattr(
+        "apps.simulations.tasks.run_box_counting_if_configured", explode, raising=False
+    )
+
+    result = run_simulation_task(str(limiting_simulation.id))
+
+    limiting_simulation.refresh_from_db()
+    assert limiting_simulation.status == SimulationStatus.COMPLETED, (
+        "a stand-in panic in the limiting box-counting guard failed a finished run"
+    )
     assert result["status"] == "completed", result

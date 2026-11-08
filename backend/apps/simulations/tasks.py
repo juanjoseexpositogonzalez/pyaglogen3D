@@ -1068,7 +1068,11 @@ def run_windowed_bc(
             precision=precision,
             fit_window=window,
         )
-    except Exception as e:  # noqa: BLE001 — error status never aborts the run (D4)
+    except (KeyboardInterrupt, SystemExit):
+        raise
+    except BaseException as e:  # noqa: BLE001 — error status never aborts the run (D4)
+        # A Rust panic belongs in the same block as any other windowing
+        # failure: the rule is that an error status never aborts the run.
         return build_bc_block(None, params, "error", None, error_message=str(e))
     return build_bc_block(result, params, "ok", window)
 
@@ -1176,7 +1180,12 @@ def run_box_counting_for_study(
                 sim.save(update_fields=["metrics"])
                 results["processed"] += 1
 
-            except Exception as e:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
+                # A panic here used to escape the per-simulation loop and kill
+                # the whole async box-counting job, leaving the remaining
+                # children unprocessed. One child failing is one child failing.
                 results["failed"] += 1
                 results["errors"].append(
                     {
@@ -1951,7 +1960,14 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             bc_result = None
             try:
                 bc_result = run_box_counting_if_configured(simulation_id)
-            except Exception as e:
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
+                # Runs AFTER the row was saved COMPLETED: a panic reaching the
+                # outer net would rewrite a finished run as failed while its
+                # study stayed completed. The first version of this fix widened
+                # one of the two box-counting guards and left this one blind
+                # (measured by a judge on PR #255).
                 logger.warning(
                     f"Box-counting failed for limiting case {simulation_id}: {e}"
                 )
