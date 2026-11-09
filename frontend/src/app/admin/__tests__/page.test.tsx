@@ -142,13 +142,17 @@ describe('Admin users', () => {
 
   it('draws no navigation of its own: the shell owns the only one', async () => {
     const { container } = render(<AdminPage />)
-    await screen.findByRole('heading', { level: 1 })
+
+    // Waits on a user row, not on the h1: `PageHeader` renders outside the
+    // `data ?` branch, so the heading is already there while the screen still
+    // shows "Loading admin data...". The table of users is what only the
+    // loaded screen can paint.
+    await screen.findByText('ada@example.com')
 
     // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
     // assertion would fail for the wrong reason. A <nav> is what a screen
     // growing its own navigation looks like, and the shell draws the only one
-    // this route gets. Asserted after the screen has loaded, so a branch that
-    // renders nothing cannot satisfy it.
+    // this route gets.
     expect(container.querySelector('nav')).toBeNull()
   })
 

@@ -4,10 +4,15 @@
  *
  * R3 — "the legacy `Header` yields to the shell" — closed by deletion: the
  * component, its only navigation, and the `AppShellContext` that told it the
- * shell was mounted are gone, so there is nothing left that could yield. What
- * R3 protected is now plain structure, and "wraps an application route in
- * exactly one navigation" is the assertion that keeps a second navigation from
- * coming back.
+ * shell was mounted are gone, so there is nothing left that could yield.
+ *
+ * What R3 protected does not disappear with it, but it does not live in this
+ * file either. "No route ever shows two navigations at once" is now two facts
+ * held in two places: the shell draws exactly its own two navigations — counted
+ * here, by role and **without** a name filter — and no page draws one of its
+ * own — asserted by each page test with `querySelector('nav')`, which is the
+ * only place a page's navigation can appear. Counting navigations here cannot
+ * prove the second fact: the child of these renders is a literal paragraph.
  *
  * Driven at component level with `usePathname` mocked, which is the pattern
  * this repository already uses. Rendering `app/layout.tsx` is not an option:
@@ -91,8 +96,15 @@ describe('AppShell', () => {
     expect(container.querySelector('main')?.className).toBe('contents')
   })
 
-  it('wraps an application route in exactly one navigation', () => {
+  it('wraps an application route in exactly two navigations, its own and no more', () => {
     renderAt('/dashboard')
+
+    // Counted by role with no name filter, on purpose. An earlier version of
+    // this file counted only navigations named "Main", and the scenario this
+    // change deletes had already warned what that misses: the retired `Header`
+    // drew an unnamed `<nav>`, so a duplicate navigation was invisible to a
+    // name-scoped count. The shell's own two are the rail and the breadcrumb.
+    expect(screen.getAllByRole('navigation')).toHaveLength(2)
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1)
     expect(screen.getByText('page body')).toBeTruthy()
   })

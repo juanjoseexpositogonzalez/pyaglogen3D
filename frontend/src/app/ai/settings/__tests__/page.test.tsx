@@ -94,6 +94,17 @@ describe('AI Settings', () => {
     expect(container.querySelector('nav')).toBeNull()
   })
 
+  it('sends a session-less visitor to the sign-in screen, because the shell leaves this route chromeless', async () => {
+    // `/ai/settings` is not in `middleware.ts`'s protectedRoutes, and the shell
+    // paints no rail and no top bar without a session, so the redirect in this
+    // page's effect is the only way out of the screen. Nothing else pins it:
+    // with the effect deleted, every other test here stays green.
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false })
+    render(<AISettingsPage />)
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/auth/login'))
+  })
+
   it('draws no page frame of its own: the shell owns the gutter and the padding', async () => {
     const { container } = render(<AISettingsPage />)
     await screen.findByRole('heading', { level: 1, name: /ai settings/i })
