@@ -301,8 +301,10 @@ def get_study_results_handler(
         }
 
     # Aggregate metrics
-    all_metrics = []
-    parameter_values = {param: set() for param in study.parameter_grid.keys()}
+    all_metrics: list[dict[str, Any]] = []
+    parameter_values: dict[str, set[Any]] = {
+        param: set() for param in study.parameter_grid.keys()
+    }
 
     for sim in completed_sims:
         if sim.metrics:
@@ -319,14 +321,21 @@ def get_study_results_handler(
                     parameter_values[param].add(sim.parameters[param])
 
     # Calculate summary statistics
-    df_values = [
-        m.get("fractal_dimension") for m in all_metrics if m.get("fractal_dimension")
+    # `float(...)` rather than `.get(...)`: the truthiness filter does not narrow
+    # `Any | None` for the type checker, and the summary below does arithmetic on
+    # these. Same values, a type the reader can trust (#235).
+    df_values: list[float] = [
+        float(m["fractal_dimension"])
+        for m in all_metrics
+        if m.get("fractal_dimension")
     ]
-    rg_values = [
-        m.get("radius_of_gyration") for m in all_metrics if m.get("radius_of_gyration")
+    rg_values: list[float] = [
+        float(m["radius_of_gyration"])
+        for m in all_metrics
+        if m.get("radius_of_gyration")
     ]
 
-    summary = {
+    summary: dict[str, Any] = {
         "completed_simulations": len(all_metrics),
         "total_simulations": study.simulations.count(),
     }
