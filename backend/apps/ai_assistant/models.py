@@ -1,8 +1,9 @@
 """AI Assistant models."""
 import uuid
+from typing import Any
+
 from django.conf import settings
 from django.db import models
-from django.utils import timezone
 
 
 class AIUserProfile(models.Model):
@@ -48,7 +49,7 @@ class AIUserProfile(models.Model):
 
     def __str__(self) -> str:
         status = "✓" if self.has_ai_access else "✗"
-        return f"{self.user.username} [{status}]"
+        return f"{self.user.email} [{status}]"
 
 
 class AIProviderConfig(models.Model):
@@ -112,9 +113,9 @@ class AIProviderConfig(models.Model):
         verbose_name_plural = "AI Provider Configs"
 
     def __str__(self) -> str:
-        return f"{self.user.username} - {self.get_provider_display()}"
+        return f"{self.user.email} - {self.get_provider_display()}"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Ensure only one default provider per user."""
         if self.is_default:
             # Set all other configs for this user to non-default
@@ -164,9 +165,9 @@ class Conversation(models.Model):
         verbose_name_plural = "Conversations"
 
     def __str__(self) -> str:
-        return f"{self.user.username}: {self.title or 'Untitled'}"
+        return f"{self.user.email}: {self.title or 'Untitled'}"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Ensure only one active conversation per user."""
         if self.is_active:
             Conversation.objects.filter(
@@ -267,13 +268,13 @@ class Notification(models.Model):
 
     def __str__(self) -> str:
         status = "read" if self.is_read else "unread"
-        return f"{self.user.username}: {self.title} ({status})"
+        return f"{self.user.email}: {self.title} ({status})"
 
     @classmethod
     def create_simulation_notification(
         cls,
-        user,
-        simulation,
+        user: Any,
+        simulation: Any,
         success: bool = True,
     ) -> "Notification":
         """Create a notification for simulation completion."""
