@@ -9,7 +9,6 @@ import { aiApi } from '@/lib/ai-api'
 import { useProject } from '@/hooks/useProjects'
 import { cn } from '@/lib/utils'
 
-import { AppShellProvider } from './AppShellContext'
 import { Sidebar } from './Sidebar'
 import { TopBar, type Crumb } from './TopBar'
 
@@ -181,86 +180,84 @@ export function AppShell({ children }: AppShellProps) {
   const showChrome = !chromeless && isAuthenticated && !isLoading
 
   return (
-    <AppShellProvider value={showChrome}>
-      <div className={cn('min-h-screen', showChrome && 'bg-shell')}>
-        {/* Fixed rail from 900px up. */}
-        {showChrome && <div
-          className={cn(
-            'fixed inset-y-0 left-0 z-40 hidden lg:block',
-            collapsed ? 'w-[68px]' : 'w-[246px]',
-          )}
-        >
-          {sidebar(collapsed)}
-        </div>}
-
-        {showChrome && drawerOpen && (
-          <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
-            <button
-              type="button"
-              aria-label="Close navigation"
-              onClick={closeDrawer}
-              className="absolute inset-0 bg-rail-scrim"
-            />
-            <div ref={drawerRef} className="absolute inset-y-0 left-0 w-[246px]">
-              {sidebar(false)}
-            </div>
-          </div>
+    <div className={cn('min-h-screen', showChrome && 'bg-shell')}>
+      {/* Fixed rail from 900px up. */}
+      {showChrome && <div
+        className={cn(
+          'fixed inset-y-0 left-0 z-40 hidden lg:block',
+          collapsed ? 'w-[68px]' : 'w-[246px]',
         )}
+      >
+        {sidebar(collapsed)}
+      </div>}
 
-        <div
-          className={cn('min-w-0', showChrome && (collapsed ? 'lg:ml-[68px]' : 'lg:ml-[246px]'))}
-        >
-          {showChrome && (
-          <TopBar
-            crumbs={crumbsFor(pathname, project?.name)}
-            user={
-              user
-                ? {
-                    name: user.full_name || user.email,
-                    initials: (user.first_name?.[0] ?? user.email[0] ?? '?').toUpperCase(),
-                  }
-                : null
-            }
-            onOpenNavigation={(trigger) => {
-              restoreFocusTo.current = trigger
-              setDrawerOpen(true)
-            }}
-            onSignOut={() => logout()}
+      {showChrome && drawerOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden" role="dialog" aria-modal="true" aria-label="Navigation">
+          <button
+            type="button"
+            aria-label="Close navigation"
+            onClick={closeDrawer}
+            className="absolute inset-0 bg-rail-scrim"
           />
-          )}
-          {/*
-            `<main>` renders unconditionally. An earlier attempt swapped it for
-            a bare `children`, which is a different element type at the same
-            position: React unmounts and remounts the whole page when
-            authentication resolves, and every load passes through that
-            transition. `display: contents` keeps the chromeless layout
-            untouched without removing the element.
-          */}
-          <main
-            /*
-              The page frame follows the route, not the session.
-
-              It used to follow `showChrome`, which is false during the server
-              render and the first client render of every load because
-              `AuthContext` starts with `isLoading = true`. So every migrated page
-              painted edge to edge and then jumped 40px right and 36px down when
-              `/auth/me` resolved — the jump was introduced by the migration, since
-              the screens that still carry their own `container` never showed it.
-
-              `chromeless` is a property of the pathname, which the server knows,
-              so the frame is stable from the first byte. The rail and the top bar
-              keep following `showChrome`, because those really do depend on the
-              session.
-            */
-            className={cn(
-              chromeless ? 'contents' : 'mx-auto w-full max-w-[1440px] px-10 pb-14 pt-9',
-            )}
-          >
-            {children}
-          </main>
+          <div ref={drawerRef} className="absolute inset-y-0 left-0 w-[246px]">
+            {sidebar(false)}
+          </div>
         </div>
+      )}
+
+      <div
+        className={cn('min-w-0', showChrome && (collapsed ? 'lg:ml-[68px]' : 'lg:ml-[246px]'))}
+      >
+        {showChrome && (
+        <TopBar
+          crumbs={crumbsFor(pathname, project?.name)}
+          user={
+            user
+              ? {
+                  name: user.full_name || user.email,
+                  initials: (user.first_name?.[0] ?? user.email[0] ?? '?').toUpperCase(),
+                }
+              : null
+          }
+          onOpenNavigation={(trigger) => {
+            restoreFocusTo.current = trigger
+            setDrawerOpen(true)
+          }}
+          onSignOut={() => logout()}
+        />
+        )}
+        {/*
+          `<main>` renders unconditionally. An earlier attempt swapped it for
+          a bare `children`, which is a different element type at the same
+          position: React unmounts and remounts the whole page when
+          authentication resolves, and every load passes through that
+          transition. `display: contents` keeps the chromeless layout
+          untouched without removing the element.
+        */}
+        <main
+          /*
+            The page frame follows the route, not the session.
+
+            It used to follow `showChrome`, which is false during the server
+            render and the first client render of every load because
+            `AuthContext` starts with `isLoading = true`. So every migrated page
+            painted edge to edge and then jumped 40px right and 36px down when
+            `/auth/me` resolved — the jump was introduced by the migration, since
+            the screens that still carry their own `container` never showed it.
+
+            `chromeless` is a property of the pathname, which the server knows,
+            so the frame is stable from the first byte. The rail and the top bar
+            keep following `showChrome`, because those really do depend on the
+            session.
+          */
+          className={cn(
+            chromeless ? 'contents' : 'mx-auto w-full max-w-[1440px] px-10 pb-14 pt-9',
+          )}
+        >
+          {children}
+        </main>
       </div>
-    </AppShellProvider>
+    </div>
   )
 }
 

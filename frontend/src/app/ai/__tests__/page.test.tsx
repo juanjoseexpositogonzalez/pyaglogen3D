@@ -2,10 +2,10 @@
  * AI assistant migrated onto the design-system kit (issue #183, slice 2).
  *
  * Asserted through what a reader can perceive — headings, roles, messages,
- * empty states — plus the source-level contracts a DOM assertion cannot see:
- * the deprecated `Header` is no longer mounted, no page frame of the screen's
- * own is drawn, and no colour literal came along. A test that only counted
- * imports would pass a refactor that breaks the page.
+ * empty states — plus two things the page has to keep regardless of how it is
+ * built: it draws no navigation or page frame of its own, and it carries no
+ * colour literal. A test that only counted imports would pass a refactor that
+ * breaks the page.
  *
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
@@ -161,13 +161,27 @@ describe('AI Assistant', () => {
     vi.clearAllMocks()
   })
 
-  it('does not mount the deprecated header', async () => {
-    const source = await sourceOf()
+  it('draws no navigation of its own: the shell owns the only one', async () => {
+    const { container } = render(<AIAssistantPage />)
+    await titleAppears()
 
-    // Asserted on the import, not on the absence of `<header>` elements: the
-    // kit primitives use that tag legitimately, so counting tags would both
-    // fail on a correct page and pass on a wrong one.
-    expect(source).not.toContain('components/layout/Header')
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets. Asserted after the screen has loaded, so the loading
+    // branch cannot satisfy it.
+    expect(container.querySelector('nav')).toBeNull()
+  })
+
+  it('sends a session-less visitor to the sign-in screen, because the shell leaves this route chromeless', async () => {
+    // `/ai` is not in `middleware.ts`'s protectedRoutes, and the shell paints no
+    // rail and no top bar without a session, so the redirect in this page's
+    // effect is the only way out of the screen. Nothing else pins it: with the
+    // effect deleted, every other test here stays green.
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false })
+    render(<AIAssistantPage />)
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/auth/login'))
   })
 
   it('draws no page frame of its own: the shell owns the gutter and the padding', async () => {
@@ -337,7 +351,7 @@ describe('AI Assistant', () => {
     )
   })
 
-  it('carries no colour literal, no card bridge and no deprecated header', async () => {
+  it('carries no colour literal and no card bridge', async () => {
     const source = await sourceOf()
 
     expect(source).not.toMatch(/#(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3,8}\b/)
@@ -348,6 +362,5 @@ describe('AI Assistant', () => {
       /\b(?:bg|text|border)-(?:yellow|green|red|blue|purple|slate|gray)-\d{2,3}\b/,
     )
     expect(source).not.toContain('ui/card')
-    expect(source).not.toContain('components/layout/Header')
   })
 })

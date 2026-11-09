@@ -2,10 +2,9 @@
  * Settings migrated onto the design-system kit (issue #183, slice 1).
  *
  * Asserted through what a reader can perceive — headings, labels, roles,
- * messages — plus the two source-level contracts a DOM assertion cannot see:
- * the deprecated `Header` is no longer mounted and no colour literal came
- * along. A test that only counted imports would pass a refactor that breaks
- * the page.
+ * messages — plus two things the page has to keep regardless of how it is
+ * built: it draws no navigation of its own, and no colour literal came along.
+ * A test that only counted imports would pass a refactor that breaks the page.
  *
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.
@@ -20,7 +19,6 @@ const mockUseAuth = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
-  // The deprecated header reads this while it is still mounted.
   usePathname: () => '/settings',
 }))
 
@@ -78,13 +76,14 @@ describe('Settings', () => {
     vi.clearAllMocks()
   })
 
-  it('does not mount the deprecated header', async () => {
-    const source = await sourceOf()
+  it('draws no navigation of its own: the shell owns the only one', () => {
+    const { container } = render(<SettingsPage />)
 
-    // Asserted on the import, not on the absence of `<header>` elements: the
-    // kit primitives use that tag legitimately, so counting tags would both
-    // fail on a correct page and pass on a wrong one.
-    expect(source).not.toContain('components/layout/Header')
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell already draws the
+    // only one this route gets.
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('draws no page frame of its own: the shell owns the gutter and the padding', async () => {

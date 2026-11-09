@@ -18,8 +18,6 @@ const mockUseAuth = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  // The deprecated header reads this. Once the page stops mounting it the
-  // stub is dead weight, which is itself a signal worth keeping until then.
   usePathname: () => '/dashboard',
 }))
 
@@ -62,18 +60,14 @@ describe('Dashboard', () => {
     vi.clearAllMocks()
   })
 
-  it('does not mount the deprecated header', async () => {
-    const { readFileSync } = await import('node:fs')
-    const { join } = await import('node:path')
-    const source = readFileSync(join(process.cwd(), 'src/app/dashboard/page.tsx'), 'utf8')
+  it('draws no navigation of its own: the shell owns the only one', () => {
+    const { container } = render(<DashboardPage />)
 
-    // Asserted on the import, not on the absence of `<header>` elements: the
-    // kit primitives use that tag legitimately, so counting tags would both
-    // fail on a correct page and pass on a wrong one.
-    //
-    // The shell owns navigation now. Leaving the old header imported is how a
-    // page ends up with two of them the moment the shell changes.
-    expect(source).not.toContain('components/layout/Header')
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets.
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('states the totals it adds up, each next to its own label', () => {

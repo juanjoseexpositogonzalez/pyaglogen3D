@@ -2,9 +2,9 @@
  * AI provider settings migrated onto the design-system kit (issue #183, slice 2).
  *
  * Asserted through what a reader can perceive — headings, labels, roles,
- * messages, empty states — plus the source-level contracts a DOM assertion
- * cannot see: the deprecated `Header` is no longer mounted, no page frame of
- * the screen's own is drawn, and no colour literal came along.
+ * messages, empty states — plus two things the page has to keep regardless of
+ * how it is built: it draws no navigation or page frame of its own, and it
+ * carries no colour literal.
  *
  * The page manages API keys, so the tests also pin the one property that
  * matters: the key is collected in a password field and travels to the API,
@@ -82,10 +82,27 @@ describe('AI Settings', () => {
     vi.clearAllMocks()
   })
 
-  it('does not mount the deprecated header', async () => {
-    const source = await sourceOf()
+  it('draws no navigation of its own: the shell owns the only one', async () => {
+    const { container } = render(<AISettingsPage />)
+    await screen.findByRole('heading', { level: 1, name: /ai settings/i })
 
-    expect(source).not.toContain('components/layout/Header')
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets. Asserted after the screen has loaded, so the loading
+    // branch cannot satisfy it.
+    expect(container.querySelector('nav')).toBeNull()
+  })
+
+  it('sends a session-less visitor to the sign-in screen, because the shell leaves this route chromeless', async () => {
+    // `/ai/settings` is not in `middleware.ts`'s protectedRoutes, and the shell
+    // paints no rail and no top bar without a session, so the redirect in this
+    // page's effect is the only way out of the screen. Nothing else pins it:
+    // with the effect deleted, every other test here stays green.
+    mockUseAuth.mockReturnValue({ user: null, isLoading: false })
+    render(<AISettingsPage />)
+
+    await waitFor(() => expect(mockPush).toHaveBeenCalledWith('/auth/login'))
   })
 
   it('draws no page frame of its own: the shell owns the gutter and the padding', async () => {
