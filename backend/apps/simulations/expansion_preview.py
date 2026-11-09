@@ -66,7 +66,24 @@ NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
     ("target_df", float),
     ("target_kf", float),
     ("particle_radius", float),
+    # #230: the rest of the numeric parameters the worker reads. Taken from the
+    # binding's own call sites rather than from the issue's list, which is how
+    # `geometric_std` and `radius_max` turned up outside it - the sixth time a list
+    # of the named instances was shorter than the class.
+    ("sticking_probability", float),
+    ("geometric_mean", float),
+    ("geometric_std", float),
+    ("radius_min", float),
+    ("radius_max", float),
+    ("n_levels", int),
+    ("seed_cluster_size", int),
+    ("max_rotation_attempts", int),
 )
+
+#: The two the engine accepts as absent. Measured: `null` answers 201 today and the
+#: worker passes `None` through, where it means "choose for me" - so casting must
+#: leave it alone instead of turning an unset option into a refusal.
+OPTIONAL_NUMERIC_PARAMS = frozenset({"seed_cluster_size", "max_rotation_attempts"})
 
 
 def _not_a_number(name: str, cast: type, value: Any) -> str:
@@ -107,6 +124,8 @@ def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
     """
     for name, cast in NUMERIC_CASTS:
         if name not in sim_params:
+            continue
+        if name in OPTIONAL_NUMERIC_PARAMS and sim_params[name] is None:
             continue
         if guarded and isinstance(sim_params[name], dict):
             continue
@@ -188,7 +207,9 @@ def preview_children(
         for combo in itertools.product(*param_values):
             params = dict(base_parameters)
             for index, name in enumerate(param_names):
-                set_distribution_parameter(params, name, combo[index], declared=param_names)
+                set_distribution_parameter(
+                    params, name, combo[index], declared=param_names
+                )
             children.append(_as_child(params, study_sintering_config))
 
         if include_limiting_cases:
@@ -231,7 +252,6 @@ def preview_children(
         raise ExpansionPreviewError(
             f"this study cannot be expanded as configured: {exc}"
         ) from exc
-
 
     return children
 
