@@ -78,8 +78,8 @@ const browser = await chromium.launch()
     if (res.url().includes('/auth/logout/')) logoutStatus = res.status()
   })
 
-  // Targeted by its label: the deprecated header exposes a control with the
-  // same accessible name, and matching loosely picks the wrong one.
+  // Targeted by its label: the account area beside it links to /settings, so a
+  // looser match can follow that link instead of signing out.
   const button = page.locator('button[aria-label=\'Sign out\']').first()
   const visible = await button.isVisible().catch(() => false)
   check('cierre: el botón de salir está disponible', visible)

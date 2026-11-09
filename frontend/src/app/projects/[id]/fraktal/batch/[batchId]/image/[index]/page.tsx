@@ -8,19 +8,18 @@
  * Resolves route params and delegates rendering to FraktalBatchImageDetail.
  *
  * The shell draws the app frame — `<main>`, the padding and the capped column —
- * so this route draws none of it. It also stopped mounting the legacy `Header`,
- * and what that gives up is worth stating precisely, because the reason is not
- * "a second header would paint two": `Header` renders `null` when the shell is
- * mounted (`useIsInsideAppShell`), so inside the shell it was already inert.
+ * so this route draws none of it, and it never mounted a navigation of its own:
+ * that is the shell's job, and the only component that ever offered one,
+ * `components/layout/Header.tsx`, is deleted.
  *
- * What is ceded is the fallback chrome for the sessions the shell leaves
- * chromeless. `AppShell` shows its chrome only when
- * `!chromeless && isAuthenticated && !isLoading`, while the middleware only
- * checks that a session cookie exists — so a stale cookie with a rejected token
- * paints this route with no rail and no top bar, and `Header` was the one way
- * out of it. Dropping it is the migration's deliberate trade, the same one part
- * A of this slice made for the batch route (navigation is the shell's job, not
- * this page's), not a claim that the two are equivalent.
+ * What that leaves, stated plainly instead of sold as a tidy trade: `AppShell`
+ * paints its chrome only when `!chromeless && isAuthenticated && !isLoading`,
+ * while the middleware only checks that a session cookie exists. A stale cookie
+ * with a rejected token therefore paints this route with no rail and no top
+ * bar. That gap predates this route's migration — by the time it landed, no
+ * production file rendered the legacy `Header` at all — and it belongs to the
+ * shell's chrome decision, not to a page that would have to grow a header of
+ * its own to paper over it.
  */
 import { FraktalBatchImageDetail } from '@/components/fraktal/FraktalBatchImageDetail'
 

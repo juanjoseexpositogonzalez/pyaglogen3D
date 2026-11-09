@@ -34,11 +34,8 @@ vi.mock('@/hooks/useProjects', () => ({
   useDeleteProject: () => ({ mutate: mockMutate, isPending: false }),
 }))
 
-// Only the deprecated header needs this. When the page stops mounting it the
-// stub becomes dead weight — which is the signal that the migration landed.
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({ user: { email: 'demo@pyaglogen3d.dev' }, logout: vi.fn() }),
-}))
+// No `@/contexts/AuthContext` stub: the page reads the session nowhere, and the
+// retired `Header` was the only reason the stub existed.
 
 import ProjectsPage from '../page'
 
@@ -66,19 +63,18 @@ describe('the projects list', () => {
     expect(headings[0].textContent).toBe('Projects')
   })
 
-  it('stops mounting the deprecated header', () => {
+  it('draws no navigation of its own: the shell owns the only one', () => {
     const { container } = render(<ProjectsPage />)
 
     // Not "renders no <header>": the kit's own PageHeader is a <header>, so
     // that assertion failed for the wrong reason and satisfying it would have
     // undone the migration.
     //
-    // Worth knowing what this does and does not prove: rendered here, outside
-    // AppShellProvider, the retired Header draws its navigation. Inside the
-    // real shell it returns null, so remounting it would be invisible to a
-    // user and still turn this red. It guards the import, not the experience
-    // — kept because a page growing its own navigation is still worth
-    // catching, not because it measures what someone sees.
+    // What this proves, precisely: the page draws no navigation of its own.
+    // There is no fallback navigation left to render — the retired `Header` and
+    // the `AppShellContext` that silenced it under the shell are both deleted —
+    // so a `<nav>` here would be a page growing one, and the shell already owns
+    // the only navigation the route gets.
     expect(container.querySelector('nav')).toBeNull()
   })
 
@@ -138,7 +134,7 @@ describe('the projects list', () => {
   })
 
   // Measured, not assumed: run this file against the page as it stood on
-  // develop and three fail — the deprecated header, the tabular numerals and
+  // develop and three fail — the navigation guard, the tabular numerals and
   // the kit's empty-state surface. The other seven already held, which is the
   // point: they are regression guards for behaviour the port must not lose,
   // not evidence that the port happened.

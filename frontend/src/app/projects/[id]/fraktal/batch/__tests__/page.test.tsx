@@ -261,10 +261,8 @@ describe('FraktalBatchPage — design-system kit presentation', () => {
 //
 // That route has no test of its own, so the frame it must not rebuild is pinned
 // here, next to the route that shares its folder. It renders the summary and
-// nothing else: the shell owns the frame, and the deprecated `Header` it used to
-// mount was its only chrome on the sessions the shell leaves chromeless
-// (`showChrome` is false while `AuthContext` initialises, and for a live cookie
-// with a dead token).
+// nothing else: the shell owns the frame, and no page draws chrome of its own —
+// the legacy `Header` that was the last candidate is deleted.
 
 describe('FraktalBatchDetailPage — batch summary route frame', () => {
   beforeEach(() => {

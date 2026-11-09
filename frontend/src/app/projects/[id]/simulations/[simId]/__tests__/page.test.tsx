@@ -324,15 +324,14 @@ describe('the simulation detail frame', () => {
     expect(title).not.toMatch(/tunable_cc/)
   })
 
-  it('stops mounting the deprecated navigation', () => {
+  it('draws no navigation of its own: the shell owns the only one', () => {
     const { container } = renderPage()
 
     // Not "renders no <header>": the kit's own PageHeader is a <header>, so
-    // that assertion would fail for the wrong reason. Rendered outside
-    // AppShellProvider the retired Header still draws its navigation, while
-    // inside the real shell it renders nothing — so this guards the import,
-    // not the experience. Kept because a page growing its own navigation is
-    // worth catching either way.
+    // that assertion would fail for the wrong reason. There is no fallback
+    // navigation left to render — the retired `Header` and the context that
+    // silenced it under the shell are deleted — so a `<nav>` here is a page
+    // growing one, and the shell owns the only navigation this route gets.
     expect(container.querySelector('nav')).toBeNull()
   })
 
