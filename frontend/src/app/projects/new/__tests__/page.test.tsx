@@ -69,13 +69,6 @@ vi.mock('@/hooks/useProjects', () => ({
   },
 }))
 
-// The deprecated header still exists and eighteen pages import it; this stub
-// stands in for it so its presence on the page is observable instead of
-// crashing the render on a router the shell already provides.
-vi.mock('@/components/layout/Header', () => ({
-  Header: () => React.createElement('div', { 'data-testid': 'deprecated-header' }),
-}))
-
 import NewProjectPage from '../page'
 
 const renderPage = () => render(<NewProjectPage />)
@@ -99,13 +92,14 @@ afterEach(() => {
 })
 
 describe('new-project page', () => {
-  it('does not mount the deprecated header', () => {
-    renderPage()
+  it('draws no navigation of its own: the shell owns the only one', () => {
+    const { container } = renderPage()
 
-    // Asserted on what is on screen, not on an import line: a page can import
-    // the component and not render it. The mock stands in for the deprecated
-    // component so its presence is observable at all.
-    expect(screen.queryByTestId('deprecated-header')).toBeNull()
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets.
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('keeps title and form inside one capped column, and draws no main of its own', () => {

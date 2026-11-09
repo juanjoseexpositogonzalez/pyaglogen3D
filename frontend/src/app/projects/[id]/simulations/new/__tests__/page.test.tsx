@@ -70,13 +70,6 @@ vi.mock('@/hooks/useSimulations', () => ({
   },
 }))
 
-// The deprecated header still exists and eighteen pages import it; this stub
-// stands in for it so its presence on the page is observable instead of
-// crashing the render on a router the shell already provides.
-vi.mock('@/components/layout/Header', () => ({
-  Header: () => React.createElement('div', { 'data-testid': 'deprecated-header' }),
-}))
-
 // Records its props: a bare stub cannot tell "the page forwards the pending
 // state" from "the page stopped mounting the form at all".
 vi.mock('@/components/forms/SimulationForm', () => ({
@@ -129,10 +122,10 @@ afterEach(() => {
 })
 
 describe('new-simulation page', () => {
-  it('does not mount the deprecated header', () => {
-    renderPage()
+  it('draws no navigation of its own: the shell owns the only one', () => {
+    const { container } = renderPage()
 
-    expect(screen.queryByTestId('deprecated-header')).toBeNull()
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('keeps title and form inside one capped column, and draws no main of its own', () => {
@@ -193,9 +186,9 @@ describe('new-simulation page', () => {
 
     expect(screen.getByText('Loading...')).toBeTruthy()
     expect(screen.queryByTestId('simulation-form')).toBeNull()
-    expect(screen.queryByTestId('deprecated-header')).toBeNull()
     // The loading branch is a whole render of this route: it must not bring the
-    // document frame back either.
+    // document frame or a navigation back either.
+    expect(container.querySelector('nav')).toBeNull()
     expect(container.querySelector('main')).toBeNull()
   })
 

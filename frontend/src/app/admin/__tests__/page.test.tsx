@@ -20,7 +20,6 @@ const mockDeleteUser = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
-  // The deprecated header reads this while it is still mounted.
   usePathname: () => '/admin',
 }))
 
@@ -141,12 +140,16 @@ describe('Admin users', () => {
     vi.clearAllMocks()
   })
 
-  it('does not mount the deprecated header', async () => {
-    const source = await sourceOf()
+  it('draws no navigation of its own: the shell owns the only one', async () => {
+    const { container } = render(<AdminPage />)
+    await screen.findByRole('heading', { level: 1 })
 
-    // Asserted on the import, not on the absence of `<header>` elements: the
-    // kit primitives use that tag legitimately.
-    expect(source).not.toContain('components/layout/Header')
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets. Asserted after the screen has loaded, so a branch that
+    // renders nothing cannot satisfy it.
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('draws no page frame of its own: /admin is not chromeless', async () => {

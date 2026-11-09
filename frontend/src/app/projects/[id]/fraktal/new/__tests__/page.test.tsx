@@ -44,13 +44,6 @@ vi.mock('@/hooks/useFraktalAnalyses', () => ({
   useCreateFraktalAnalysis: () => mockUseCreateFraktalAnalysis(),
 }))
 
-// The deprecated header still exists and eighteen pages import it; this stub
-// stands in for it so its presence on the page is observable instead of
-// crashing the render on a router the shell already provides.
-vi.mock('@/components/layout/Header', () => ({
-  Header: () => React.createElement('div', { 'data-testid': 'deprecated-header' }),
-}))
-
 // Records its props: a bare stub cannot tell "the page forwards the completed
 // simulations" from "the page stopped mounting the form at all".
 vi.mock('@/components/fraktal/FraktalAnalysisForm', () => ({
@@ -114,14 +107,14 @@ afterEach(() => {
 })
 
 describe('FRAKTAL new-analysis page', () => {
-  it('does not mount the deprecated header', () => {
-    renderPage()
+  it('draws no navigation of its own: the shell owns the only one', () => {
+    const { container } = renderPage()
 
-    // Asserted on what is on screen, not on an import line: a page can import
-    // the component and not render it, and a substring check on the source
-    // misses a tag split across lines. The mock stands in for the deprecated
-    // component so its presence is observable at all.
-    expect(screen.queryByTestId('deprecated-header')).toBeNull()
+    // Not "renders no <header>": the kit's own PageHeader is a <header>, so that
+    // assertion would fail for the wrong reason. A <nav> is what a screen
+    // growing its own navigation looks like, and the shell draws the only one
+    // this route gets.
+    expect(container.querySelector('nav')).toBeNull()
   })
 
   it('keeps its column at the width the other creation screens use', () => {

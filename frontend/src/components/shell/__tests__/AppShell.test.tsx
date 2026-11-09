@@ -1,6 +1,13 @@
 /**
- * Covers app-shell-navigation R1 (mounted once), R2 (never on the public and
- * auth routes) and R3 (the legacy header yields).
+ * Covers app-shell-navigation R1 (mounted once) and R2 (never on the public
+ * and auth routes).
+ *
+ * R3 — "the legacy `Header` yields to the shell" — closed by deletion: the
+ * component, its only navigation, and the `AppShellContext` that told it the
+ * shell was mounted are gone, so there is nothing left that could yield. What
+ * R3 protected is now plain structure, and "wraps an application route in
+ * exactly one navigation" is the assertion that keeps a second navigation from
+ * coming back.
  *
  * Driven at component level with `usePathname` mocked, which is the pattern
  * this repository already uses. Rendering `app/layout.tsx` is not an option:
@@ -39,7 +46,6 @@ vi.mock('@/hooks/useProjects', () => ({ useProject: () => ({ data: null }) }))
 vi.mock('@/lib/ai-api', () => ({ aiApi: { checkAccess: () => Promise.resolve({ has_access: false }) } }))
 
 import { AppShell } from '../AppShell'
-import { Header } from '@/components/layout/Header'
 
 function renderAt(path: string) {
   pathname.current = path
@@ -110,23 +116,6 @@ describe('AppShell', () => {
     expect(screen.getByText('page body')).toBeTruthy()
   })
 
-  it('leaves the legacy header to navigate a signed-out visitor', () => {
-    // Making the provider unconditional silenced Header everywhere, so a
-    // visitor on an unprotected route had no navigation at all: middleware
-    // guards only /dashboard and /projects, and /settings, /ai and /admin
-    // became dead ends. The context value now follows the chrome.
-    auth.current = { ...auth.current, isAuthenticated: false, user: null as never }
-    pathname.current = '/settings'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /Sign In/i })).toBeTruthy()
-  })
-
   it('keeps one <main> across the authentication flip, so pages are not remounted', () => {
     // The tree shape must not depend on auth state. Swapping <main> for a
     // bare children is a different element type at the same position, and
@@ -176,32 +165,6 @@ describe('AppShell', () => {
     auth.current = { ...auth.current, user: { ...auth.current.user, is_staff: true } }
     renderAt('/dashboard')
     expect(screen.getByRole('link', { name: 'Users' })).toBeTruthy()
-  })
-})
-
-describe('the legacy Header inside the shell', () => {
-  it('renders nothing, so no route shows two navigations', () => {
-    // Eighteen files still import Header. Rather than edit pages belonging to
-    // later waves, it yields to the shell.
-    //
-    // Counting navigations named "Main" would not catch this: Header's own
-    // <nav> carries no such name, so a duplicated navigation would be
-    // invisible to that assertion. The brand mark is what both render.
-    pathname.current = '/dashboard'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
-    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
-  })
-
-  it('still renders on its own, outside the shell', () => {
-    pathname.current = '/dashboard'
-    render(<Header />)
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
   })
 })
 
