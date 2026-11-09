@@ -1,5 +1,6 @@
 """AI Assistant models."""
 import uuid
+from typing import Any
 
 from django.conf import settings
 from django.db import models
@@ -114,7 +115,7 @@ class AIProviderConfig(models.Model):
     def __str__(self) -> str:
         return f"{self.user.email} - {self.get_provider_display()}"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Ensure only one default provider per user."""
         if self.is_default:
             # Set all other configs for this user to non-default
@@ -166,7 +167,7 @@ class Conversation(models.Model):
     def __str__(self) -> str:
         return f"{self.user.email}: {self.title or 'Untitled'}"
 
-    def save(self, *args, **kwargs) -> None:
+    def save(self, *args: Any, **kwargs: Any) -> None:
         """Ensure only one active conversation per user."""
         if self.is_active:
             Conversation.objects.filter(
@@ -272,8 +273,8 @@ class Notification(models.Model):
     @classmethod
     def create_simulation_notification(
         cls,
-        user,
-        simulation,
+        user: Any,
+        simulation: Any,
         success: bool = True,
     ) -> "Notification":
         """Create a notification for simulation completion."""
