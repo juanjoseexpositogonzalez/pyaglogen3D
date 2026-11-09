@@ -9,6 +9,7 @@ import random
 from typing import Any
 
 from apps.projects.models import Project
+from apps.simulations.expansion_preview import cast_numeric_params
 from apps.simulations.models import (
     ParametricStudy,
     Simulation,
@@ -16,6 +17,7 @@ from apps.simulations.models import (
     SimulationStatus,
 )
 from apps.simulations.tasks import run_simulation_task
+from apps.simulations.utils import complete_distribution_aliases
 
 from .decorators import tool
 
@@ -160,6 +162,18 @@ def create_parametric_study_handler(
         # Merge base parameters with varied parameters
         params = {**base_parameters, **combo}
 
+        # The same three steps the study path applies (#115 points 2 and 3): cast
+        # the numerics the binding reads, translate a declared key to the name the
+        # worker reads, and move `seed_type` to its model field. This tool builds
+        # children itself, so it was a fourth door with all three of them open -
+        # a swept "1.5" was stored as a string the binding refused, and a declared
+        # seed_type stayed in the blob while the child ran at the default (#229).
+        cast_numeric_params(params, guarded=True)
+        params = complete_distribution_aliases(params)
+        child_seed_type = params.pop(
+            "seed_type", base_parameters.get("seed_type", "monomers")
+        )
+
         for seed_idx in range(seeds_per_combination):
             seed = random.randint(1, 2**31 - 1)
 
@@ -170,6 +184,7 @@ def create_parametric_study_handler(
                 parameters=params,
                 seed=seed,
                 status=SimulationStatus.QUEUED,
+                seed_type=child_seed_type,
             )
             simulations_created.append(sim)
             # Linked as it is created and dispatched only below: a child that
