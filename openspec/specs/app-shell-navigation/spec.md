@@ -12,8 +12,7 @@ application rather than of each page — it is mounted once, in the root layout 
 adding a screen costs nothing in navigation, and changing navigation costs nothing per screen.
 
 It also governs where the chrome must stay out of the way: public surfaces such as sign-in and
-registration render without it, and the legacy header steps aside rather than competing with
-it, so no route ever shows two navigations at once.
+registration render without it, so no route ever shows two navigations at once.
 
 ## Requirements
 
@@ -67,23 +66,6 @@ fixed-colour utility, so that they stay legible under either theme.
 - WHEN their classes are inspected
 - THEN no fixed-colour utility such as `text-white`, `bg-gray-800` or `text-gray-400` remains
 - AND their colours resolve through theme tokens
-
----
-
-### Requirement: R3. The legacy header is superseded without double navigation
-
-While a legacy navigation component remains importable during the migration, it MUST render
-nothing when the shell is already mounted, so that no route shows two navigations at once.
-
-**Transitional.** This requirement exists only while `components/layout/Header.tsx` survives.
-The wave that deletes it MUST retire this requirement in the same change.
-
-#### Scenario: Legacy header yields to the shell `[test]`
-
-- GIVEN a page that still imports `Header`
-- WHEN it renders inside the shell
-- THEN `Header` renders no navigation
-- AND exactly one navigation is present in the document
 
 ---
 
