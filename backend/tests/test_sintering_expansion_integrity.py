@@ -754,8 +754,8 @@ def test_r12_a_non_list_grid_value_cannot_disable_validation(
             "two kf distributions",
             {
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "fixed", "value": 1.5},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "fixed", "value": 1.5},
                 ]
             },
         ),
@@ -947,19 +947,23 @@ def test_r12_a_non_sintering_extreme_should_not_store_key_names(
     assert ParametricStudy.objects.count() == 0, "refused and wrote a study anyway"
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "Derived with the one above. Reverting my rejection of unorderable "
-        "grid lists was right for `n_particles`, whose children run because "
-        "`create_simulation` casts them - a judge showed the argument does not "
-        "generalise: a mixed `target_df` stores a string the engine binding "
-        "cannot take."
-    ),
-)
 def test_r12_a_mixed_target_df_grid_should_not_store_a_string(
     api_client: APIClient, project: Project
 ) -> None:
+    """A mixed grid list must not store a value the engine cannot run.
+
+    This was an `xfail(strict=True)` until #115 point 2: the 201 stored "abc"
+    as `target_df`, and `run_tunable_cc` answered `TypeError: argument
+    'target_df': must be real number, not str`. The numeric cast closes it -
+    `cast_numeric_params` casts what can be cast and refuses the rest before
+    the study row exists - so the marker comes off here.
+
+    The status is asserted, not only the consequence it used to watch: a
+    retired strict marker that looked for a string child would stay green if
+    the endpoint ever answered 201 with no children at all.
+    """
+    before = ParametricStudy.objects.count()
+
     resp = _post(
         api_client,
         project,
@@ -967,14 +971,8 @@ def test_r12_a_mixed_target_df_grid_should_not_store_a_string(
         include_limiting_cases=True,
     )
 
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        strings = [
-            child.name
-            for child in study.simulations.all()
-            if isinstance(child.parameters.get("target_df"), str)
-        ]
-        assert not strings, strings
+    assert resp.status_code == 400, resp.data
+    assert ParametricStudy.objects.count() == before, "refused and wrote a study anyway"
 
 
 def test_r12_the_scope_predicate_matches_the_rest_of_the_module(
@@ -1103,8 +1101,8 @@ def test_r12_particle_radius_config_with_two_entries_is_accepted(
         project,
         parameter_grid={
             "particle_radius_config": [
-                {"distribution_type": "fixed", "value": 1.0},
-                {"distribution_type": "fixed", "value": 1.2},
+                {"mode": "fixed", "value": 1.0},
+                {"mode": "fixed", "value": 1.2},
             ]
         },
         include_limiting_cases=True,

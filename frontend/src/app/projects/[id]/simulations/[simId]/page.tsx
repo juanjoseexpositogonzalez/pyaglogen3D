@@ -6,7 +6,6 @@ import { useRouter } from 'next/navigation'
 import { useProject } from '@/hooks/useProjects'
 import { useSimulation, useSimulationGeometry, useNeighborGraph } from '@/hooks/useSimulations'
 import { ApiError, simulationsApi } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
 import { AgglomerateViewer } from '@/components/viewer3d/AgglomerateViewer'
 import { ViewerControls } from '@/components/viewer3d/ViewerControls'
 import {
@@ -25,20 +24,202 @@ import {
   deriveGeneratedDirections,
 } from '@/lib/projection-grid'
 import { NeighborGraph } from '@/components/topology'
-import { StatusBadge } from '@/components/common/StatusBadge'
-import { MetricsCard, MetricsGrid } from '@/components/common/MetricsCard'
+import { Callout } from '@/components/kit/Callout'
+import { type Column } from '@/components/kit/DataTable'
+import { DetailList, type DetailItem } from '@/components/kit/DetailList'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { MetricCard } from '@/components/kit/MetricCard'
+import { Num } from '@/components/kit/Num'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { ShowValues } from '@/components/kit/ShowValues'
+import { StatusChip } from '@/components/kit/StatusChip'
+import { VisualPanel, type Readout } from '@/components/kit/VisualPanel'
 import { FractalPlot } from '@/components/charts'
 import { BoxCountingAnalysis, LimitingCasesCard, LIMITING_CASES, OpticalPropertiesSection } from '@/components/analysis'
 import type { LimitingCaseLine } from '@/components/charts/FractalPlot'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ArrowLeft, BarChart3, Clock, Download, Hash, Settings, StopCircle, Trash2 } from 'lucide-react'
-import { formatNumber } from '@/lib/utils'
+import { ArrowLeft, BarChart3, Download, StopCircle, Trash2 } from 'lucide-react'
+import { formatDistanceToNow } from '@/lib/utils'
 import { getScaleFactorNm, getSchemaVersion } from '@/lib/units'
+import { simulationAlgorithmLabels } from '@/lib/simulation-algorithms'
 import { UnitConventionBanner } from '@/components/banners/UnitConventionBanner'
 import { useAuth } from '@/contexts/AuthContext'
+
+/**
+ * One particle exactly as the stage draws it: the deposition index, the
+ * position and the radius. All three lengths are already in nanometres by the
+ * time a row is built, so the table and the canvas cannot disagree about units.
+ */
+interface ParticleRow {
+  n: number
+  x: number
+  y: number
+  z: number
+  radius: number | null
+}
+
+/**
+ * The values behind the 3D visualisation, in the same order the viewer draws
+ * them. Positions get one decimal in nm, which is the precision the scaled
+ * geometry carries; more would be invented digits.
+ */
+const PARTICLE_COLUMNS: Column<ParticleRow>[] = [
+  { key: 'n', header: '#', numeric: true, digits: 0, value: (row) => row.n },
+  { key: 'x', header: 'x', numeric: true, unit: 'nm', digits: 1, value: (row) => row.x },
+  { key: 'y', header: 'y', numeric: true, unit: 'nm', digits: 1, value: (row) => row.y },
+  { key: 'z', header: 'z', numeric: true, unit: 'nm', digits: 1, value: (row) => row.z },
+  { key: 'radius', header: 'radius', numeric: true, unit: 'nm', digits: 1, value: (row) => row.radius },
+]
+
+/**
+ * How many particle rows the table paints. The serializer accepts up to
+ * 100,000 particles, and a table of that size stalls the page; a bounded head
+ * is honest as long as the caption says it is one.
+ */
+const PARTICLE_ROW_LIMIT = 500
+
+/** The stage's height, in px. */
+const STAGE_HEIGHT = 600
+
+/**
+ * Room left under the table for `VisualPanel`'s readings bar: the bar is about
+ * 35px tall and sits 12px off the bottom edge, so 52px covers it with a few px
+ * to spare. The table's cap must stay *below* the stage height — equal values
+ * scroll the last row under the bar — and the gap also keeps the bar over the
+ * dark canvas, which is the contrast its readings are toned for.
+ */
+const READINGS_BAR_CLEARANCE = 52
+
+/**
+ * What the table is, said once: the caption is all a reader has once the canvas
+ * is gone, so it may not imply more rows than the table paints.
+ */
+const particleCaption = (shown: number, total: number): string =>
+  shown < total
+    ? `First ${shown} of ${total} particles: position and radius in nm, scaled with the record's particle diameter.`
+    : "Particles behind this view: position and radius in nm, scaled with the record's particle diameter."
+
+/**
+ * The radius the scaling plot normalises by. The record's Rg arrives in the
+ * same dimensionless units the engine reports, so 1.0 leaves Rg/rp equal to Rg:
+ * the chart's horizontal axis and the table's column describe the same number.
+ */
+const PRIMARY_PARTICLE_RADIUS = 1.0
+
+/**
+ * The floor the scaling plot applies before it takes a logarithm. A ratio below
+ * it never reaches the chart, so it must not reach the table either — a row the
+ * plot does not draw is a row the reader cannot check against it.
+ */
+const MIN_RG_RP = 0.1
+
+/** Room for the scaling table's own scroll region, in px. */
+const SCALING_TABLE_MAX_HEIGHT = 340
+
+/**
+ * How tall the stage is under a visual that has not been rewritten onto the kit
+ * yet.
+ *
+ * `VisualPanel` clips what overflows it, and those viewers still paint their own
+ * card at their own height — a preview plus a 300px hemisphere, a four-stat
+ * banner plus a 400px canvas plus the node panel a click opens. The frame gets a
+ * bounded height and the card scrolls inside it, so a mis-measured window costs
+ * a scrollbar instead of a control a reader can no longer reach.
+ */
+const PROJECTION_STAGE_HEIGHT = 620
+const TOPOLOGY_STAGE_HEIGHT = 640
+
+/** One point of the scaling plot, as the table behind it reads it. */
+interface ScalingRow {
+  n: number
+  rgRp: number
+}
+
+/**
+ * The points the scaling plot draws: the count it puts on its vertical axis and
+ * the Rg/rp it puts on its horizontal one.
+ *
+ * There is deliberately no fitted column. The line on screen is the chart's own
+ * log-log regression over the points its exclusion sliders leave in, and those
+ * sliders are chart state this page cannot read. A column computed here — from
+ * the record's Df and kf, or from a second regression over these rows — would
+ * contradict the line the reader is looking at, and a header may not call itself
+ * "fit" when it is not the fit that is drawn.
+ */
+const SCALING_COLUMNS: Column<ScalingRow>[] = [
+  { key: 'n', header: 'N', numeric: true, digits: 0, value: (row) => row.n },
+  { key: 'rgRp', header: 'Rg/rp', numeric: true, digits: 3, value: (row) => row.rgRp },
+]
+
+/** What the scaling table is: exactly the series the chart was handed. */
+const SCALING_CAPTION =
+  'Sampled Rg points the scaling plot draws: the particle count of each sample and the Rg/rp it puts on the horizontal axis.'
+
+/**
+ * The pairs `FractalPlot` draws. The page derives them because the page owns the
+ * table of them: the plot samples `rg_evolution` at a step of
+ * totalParticles / length and drops ratios under 0.1 so its log axis stays
+ * finite. Mirroring that sampling here keeps the table's N in step with the axis
+ * and its rows equal to the points on screen.
+ */
+const scalingRows = (
+  rgEvolution: number[],
+  totalParticles: number | undefined,
+): ScalingRow[] => {
+  const step =
+    totalParticles && rgEvolution.length > 0
+      ? Math.round(totalParticles / rgEvolution.length)
+      : 1
+
+  const rows: ScalingRow[] = []
+  rgEvolution.forEach((rg, index) => {
+    const rgRp = rg / PRIMARY_PARTICLE_RADIUS
+    if (rgRp < MIN_RG_RP) return
+    rows.push({ n: (index + 1) * step, rgRp })
+  })
+  return rows
+}
+
+/** How the anisotropy reads in words: the thresholds this page has always used. */
+const anisotropyVerdict = (anisotropy: number): string =>
+  anisotropy < 1.5 ? 'Compact' : anisotropy < 3 ? 'Moderate' : 'Elongated'
+
+/**
+ * One recorded parameter as a detail row.
+ *
+ * The wire key is the only label the record carries, so underscores read as
+ * spaces. Nested dicts (`import_metadata` and the like) are JSON-encoded, which
+ * is the only rendering that does not collapse into "[object Object]".
+ */
+const parameterItem = ([key, value]: [string, unknown]): DetailItem => {
+  const label = key.replace(/_/g, ' ')
+  if (typeof value === 'number') {
+    return { label, value, digits: parameterDigits(value) }
+  }
+  if (value === null || value === undefined) return { label, value: null }
+  // A nested dict renders as JSON and a filename arrives as one unbroken token.
+  // Both are wrapped here, on the page, because neither fits a 20-character
+  // column and `DetailList` owes every caller the same list, not this fix.
+  const text = typeof value === 'object' ? JSON.stringify(value) : String(value)
+  return { label, value: <span className="break-words">{text}</span> }
+}
+
+/**
+ * How many decimals a recorded parameter is written with: as many as the value
+ * carries, never a fixed fill.
+ *
+ * `1.8` gets one decimal because that is what the record holds; printing `1.800`
+ * would invent two digits the run never had. The cap only bites float artefacts
+ * such as 0.30000000000000004, where the digits past the sixth describe the
+ * double rather than the parameter.
+ */
+const parameterDigits = (value: number): number => {
+  if (Number.isInteger(value)) return 0
+  return Math.min(String(value).split('.')[1]?.length ?? 0, 6)
+}
 
 export default function SimulationDetailPage({
   params,
@@ -50,10 +231,11 @@ export default function SimulationDetailPage({
   const { user } = useAuth()
   const { data: project } = useProject(id)
   const { data: simulation, isLoading, error, refetch } = useSimulation(id, simId)
-  const { data: geometry } = useSimulationGeometry(
-    simId,
-    simulation?.status === 'completed'
-  )
+  const {
+    data: geometry,
+    isLoading: isGeometryLoading,
+    isError: isGeometryError,
+  } = useSimulationGeometry(simId, simulation?.status === 'completed')
   const { data: neighborGraph, isLoading: isGraphLoading } = useNeighborGraph(
     id,
     simId,
@@ -262,28 +444,19 @@ export default function SimulationDetailPage({
   }
 
   if (isLoading) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading simulation..." />
-      </div>
-    )
+    // The shell owns the frame and the navigation; this branch only says what
+    // is happening.
+    return <LoadingScreen message="Loading simulation..." />
   }
 
   if (error || !simulation) {
+    // A load that failed is a state, and states on this page are callouts: the
+    // same notice the run's own failure uses, so a reader does not have to
+    // learn a second vocabulary for "this record is not available".
     return (
-      <div className="min-h-screen">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="border-destructive">
-            <CardContent className="p-6">
-              <p className="text-destructive">
-                Failed to load simulation. It may not exist or the backend is unavailable.
-              </p>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <Callout tone="danger" title="Failed to load simulation">
+        It may not exist, or the backend is unavailable.
+      </Callout>
     )
   }
 
@@ -291,6 +464,10 @@ export default function SimulationDetailPage({
   // Handles v1 (primary_particle_radius_nm) and v2 (primary_particle_diameter_nm)
   // schemas uniformly, with a default of 25.0 nm when neither key is present.
   const scaleFactor = getScaleFactorNm(
+    // SAFETY: `parameters` is a JSON object on the wire (the serializer emits a
+    // dict), but the type system only knows the narrow per-algorithm shape. The
+    // unit helpers read arbitrary keys and validate them at runtime, so the
+    // widening is a fact about the payload, not an assumption about a field.
     (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
   )
 
@@ -302,75 +479,209 @@ export default function SimulationDetailPage({
   ])
   const radii = (geometry?.radii ?? []).map((r) => r * scaleFactor)
 
-  return (
-    <div className="min-h-screen">
-      <Header />
+  // A run with no geometry has nothing to draw and nothing to tabulate. Saying
+  // that once here keeps the stage and the toggle from disagreeing.
+  const hasParticles = coordinates.length > 0
 
-      <main className="container mx-auto px-4 py-8">
-        {/* Breadcrumb */}
-        <Link
-          href={`/projects/${id}`}
-          className="inline-flex items-center text-muted-foreground hover:text-foreground mb-6"
-        >
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Back to {project?.name || 'Project'}
-        </Link>
+  /**
+   * The same particles the canvas is drawing, one row each. The radius is read
+   * from the same scaled array the viewer gets, so a geometry payload that
+   * ships fewer radii than positions reads as missing, not as zero.
+   */
+  const particleRows: ParticleRow[] = coordinates.slice(0, PARTICLE_ROW_LIMIT).map(([x, y, z], index) => ({
+    n: index + 1,
+    x,
+    y,
+    z,
+    radius: radii[index] ?? null,
+  }))
 
-        {/* Unit convention transition banner — shown only for legacy (v1/null) simulations */}
-        {(() => {
-          const schemaVersion = getSchemaVersion(
-            (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
-          )
-          if (schemaVersion === 'v2') return null
-          return (
-            <UnitConventionBanner
-              simulationId={simId}
-              schemaVersion={schemaVersion}
-              userId={user?.id ?? 'anonymous'}
-            />
-          )
-        })()}
+  // The stage's body is rendered from a callback, and TypeScript stops
+  // narrowing a property access once a function boundary is crossed. Reading
+  // the axes here keeps that proof in one place instead of optional-chaining
+  // the same value at the call site.
+  const principalAxes = simulation.metrics?.principal_axes
 
-        {/* Header */}
-        <div className="flex items-start justify-between mb-8">
-          <div>
-            <div className="flex items-center gap-3">
-              <h1 className="text-3xl font-bold">
-                {simulation.algorithm.toUpperCase()} Simulation
-              </h1>
-              <StatusBadge status={simulation.status} />
-            </div>
-            <div className="flex gap-4 mt-2 text-sm text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <Hash className="h-4 w-4" />
-                {'n_particles' in simulation.parameters &&
-                  `${(simulation.parameters as { n_particles: number }).n_particles.toLocaleString()} particles`}
-              </span>
-              {simulation.execution_time_ms && (
-                <span className="flex items-center gap-1">
-                  <Clock className="h-4 w-4" />
-                  {(simulation.execution_time_ms / 1000).toFixed(2)}s
+  /**
+   * The caption bar repeats two numbers the page already has — how many
+   * particles the geometry holds and the record's Rg in nm — so the readings
+   * sit on the surface they describe. Nothing is recomputed for them, and the
+   * count says where it comes from: the header counts the record's
+   * `n_particles`, which is not the same number when the payload is short.
+   */
+  const visualReadouts: Readout[] | undefined =
+    hasParticles && simulation.metrics
+      ? [
+          {
+            label: 'in geometry',
+            value: <Num value={coordinates.length} digits={0} size="sm" onDark />,
+          },
+          {
+            label: 'Rg',
+            value: (
+              <Num
+                value={simulation.metrics.radius_of_gyration * scaleFactor}
+                unit="nm"
+                digits={1}
+                size="sm"
+                onDark
+              />
+            ),
+          },
+        ]
+      : undefined
+
+  /**
+   * The scaling series behind the plot, or null when the record cannot support
+   * one. Imported agglomerates ship no `rg_evolution` and may carry a null Df
+   * when N < 50, so all three readings are required before either the chart or
+   * its table is offered.
+   */
+  const scaling =
+    simulation.metrics &&
+    simulation.metrics.rg_evolution &&
+    simulation.metrics.rg_evolution.length > 0 &&
+    simulation.metrics.fractal_dimension !== null &&
+    simulation.metrics.prefactor !== undefined
+      ? {
+          rgEvolution: simulation.metrics.rg_evolution,
+          fractalDimension: simulation.metrics.fractal_dimension,
+          prefactor: simulation.metrics.prefactor,
+          rows: scalingRows(simulation.metrics.rg_evolution, npo),
+        }
+      : null
+
+  /**
+   * The coordination readings as label/value rows. Both are what the engine
+   * measured over the contact network; an absent record renders the em dash
+   * `Num` owes a missing number instead of a card that claims zero contacts.
+   */
+  const coordinationItems: DetailItem[] = simulation.metrics
+    ? [
+        { label: 'Mean', value: simulation.metrics.coordination.mean, digits: 2 },
+        { label: 'Std. dev.', value: simulation.metrics.coordination.std, digits: 2 },
+      ]
+    : []
+
+  /**
+   * The shape readings from the inertia tensor. A legacy payload without an
+   * anisotropy keeps the panel hidden, which is what the card did. The verdict
+   * stays in words beside the number: a form stated as 1.20 alone is a number
+   * the reader has to interpret.
+   */
+  const shapeItems: DetailItem[] =
+    simulation.metrics && simulation.metrics.anisotropy !== undefined
+      ? [
+          {
+            label: 'Anisotropy',
+            value: (
+              <>
+                <Num value={simulation.metrics.anisotropy} digits={2} size="sm" />
+                <span className="hint ml-1.5">
+                  {anisotropyVerdict(simulation.metrics.anisotropy)}
                 </span>
-              )}
-              <span className="flex items-center gap-1">
-                <Settings className="h-4 w-4" />
-                Seed: {simulation.seed}
-              </span>
-            </div>
-          </div>
+              </>
+            ),
+          },
+          { label: 'Asphericity', value: simulation.metrics.asphericity, digits: 3 },
+          { label: 'Acylindricity', value: simulation.metrics.acylindricity, digits: 3 },
+          ...(simulation.metrics.principal_moments
+            ? [
+                {
+                  label: 'Principal moment I\u2081 (min)',
+                  value: simulation.metrics.principal_moments[0],
+                  digits: 1,
+                },
+                {
+                  label: 'Principal moment I\u2082',
+                  value: simulation.metrics.principal_moments[1],
+                  digits: 1,
+                },
+                {
+                  label: 'Principal moment I\u2083 (max)',
+                  value: simulation.metrics.principal_moments[2],
+                  digits: 1,
+                },
+              ]
+            : []),
+        ]
+      : []
 
-          {/* Action Buttons */}
-          <div className="flex gap-2">
-            {(simulation.status === 'queued' || simulation.status === 'running') && (
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={isCancelling}
-              >
-                <StopCircle className="h-4 w-4 mr-2" />
-                {isCancelling ? 'Cancelling...' : 'Cancel'}
-              </Button>
+  /** Every recorded parameter, in the order the wire sends them. */
+  const parameterItems: DetailItem[] = Object.entries(simulation.parameters).map(parameterItem)
+
+  return (
+    <>
+      {/* Breadcrumb */}
+      <Link
+        href={`/projects/${id}`}
+        className="mb-5 inline-flex items-center gap-2 text-[12px] text-ink-muted hover:text-ink"
+      >
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Back to {project?.name || 'Project'}
+      </Link>
+
+      {/* Unit convention transition banner — shown only for legacy (v1/null) simulations */}
+      {(() => {
+        // SAFETY: same payload fact as above — the schema detector probes keys
+        // that the narrow `SimulationParams` type does not enumerate.
+        const schemaVersion = getSchemaVersion(
+          (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
+        )
+        if (schemaVersion === 'v2') return null
+        return (
+          <UnitConventionBanner
+            simulationId={simId}
+            schemaVersion={schemaVersion}
+            userId={user?.id ?? 'anonymous'}
+          />
+        )
+      })()}
+
+      <PageHeader
+        eyebrow="SIMULATION"
+        title={
+          simulation.name?.trim() ||
+          // The generated name is usually present; when it is not, the wire
+          // token (`tunable_cc`) is not a product name. The label map is the
+          // same one the create form shows.
+          (simulationAlgorithmLabels[simulation.algorithm] ??
+            simulation.algorithm.toUpperCase())
+        }
+        /*
+          Reproducibility goes under the title, before any reading: which
+          algorithm produced this, from how many particles, with which seed,
+          and how long it took. Every number goes through `Num`, so the count
+          reads 1,200 and the seed and the duration line up with the rest of
+          the product.
+        */
+        meta={
+          <>
+            <StatusChip status={simulation.status} />
+            <span>{simulation.algorithm.toUpperCase()}</span>
+            {npo !== undefined && (
+              <span>
+                <Num value={npo} digits={0} size="sm" /> particles
+              </span>
             )}
+            {/* A queued run has not been timed yet: the duration is absent, not
+                zero, because "took no time" is a different claim. It keeps its
+                word — a bare "1.20 s" between two labelled items reads as a
+                number nobody named. */}
+            {simulation.execution_time_ms ? (
+              <span>
+                elapsed{' '}
+                <Num value={simulation.execution_time_ms / 1000} digits={2} size="sm" unit="s" />
+              </span>
+            ) : null}
+            <span>
+              seed <Num value={simulation.seed} digits={0} size="sm" />
+            </span>
+            <span>{formatDistanceToNow(simulation.created_at)}</span>
+          </>
+        }
+        actions={
+          <>
             {simulation.status === 'completed' && (
               <Button
                 variant="outline"
@@ -399,8 +710,8 @@ export default function SimulationDetailPage({
               </Button>
             )}
             {showDeleteConfirm ? (
-              <div className="flex gap-2 items-center">
-                <span className="text-sm text-muted-foreground">Delete?</span>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-[12px] text-ink-muted">Delete?</span>
                 <Button
                   variant="destructive"
                   size="sm"
@@ -427,229 +738,255 @@ export default function SimulationDetailPage({
                 Delete
               </Button>
             )}
+          </>
+        }
+      />
+
+      {/* Running State */}
+      {(simulation.status === 'queued' || simulation.status === 'running') && (
+        <Callout
+          className="mb-6"
+          title={simulation.status === 'queued' ? 'Simulation queued' : 'Simulation running'}
+          action={
+            <Button variant="outline" onClick={handleCancel} disabled={isCancelling}>
+              <StopCircle className="h-4 w-4 mr-2" />
+              {isCancelling ? 'Cancelling...' : 'Cancel simulation'}
+            </Button>
+          }
+        >
+          {simulation.status === 'queued'
+            ? 'Your simulation is in the queue and will start shortly...'
+            : 'Generating agglomerate structure... This page will update automatically.'}
+        </Callout>
+      )}
+
+      {/* Cancelled State */}
+      {simulation.status === 'cancelled' && (
+        <Callout className="mb-6" tone="warning" title="Simulation cancelled">
+          {simulation.error_message || 'This simulation was cancelled.'}
+        </Callout>
+      )}
+
+      {/* Failed State */}
+      {simulation.status === 'failed' && (
+        <Callout className="mb-6" tone="danger" title="Simulation failed">
+          {simulation.error_message || 'An unknown error occurred during simulation.'}
+        </Callout>
+      )}
+
+      {/* Completed State */}
+      {simulation.status === 'completed' && simulation.metrics && (
+        <>
+          {/*
+            The headline readings. Each one goes through a metric card so the
+            value, its unit and its uncertainty are separate elements and the
+            digits stay the ones this page has always printed: Df and kf to
+            three, Rg in nm and porosity as a percentage to one.
+          */}
+          <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <MetricCard
+              kind="measured"
+              tone="teal"
+              label="Fractal dimension"
+              value={simulation.metrics.fractal_dimension}
+              sigma={simulation.metrics.fractal_dimension_std}
+              digits={3}
+              detail={
+                simulation.metrics.fractal_dimension === null
+                  ? simulation.metrics.notes?.fractal_dimension ??
+                    'Not measured for this record'
+                  : "Fit slope of Rg versus particle count · the ± is the engine's own estimate, not a fit error"
+              }
+            />
+            <MetricCard
+              kind="measured"
+              tone="violet"
+              label="Radius of gyration"
+              value={simulation.metrics.radius_of_gyration * scaleFactor}
+              sigma={null}
+              digits={1}
+              unit="nm"
+              detail="Scaled to nm with the record's particle diameter (50 nm when it is absent)"
+            />
+            <MetricCard
+              kind="measured"
+              tone="gold"
+              label="Porosity"
+              value={simulation.metrics.porosity * 100}
+              sigma={null}
+              digits={1}
+              unit="%"
+              detail="Empty fraction of the enclosing sphere; the importer bounds it differently"
+            />
+            <MetricCard
+              kind="measured"
+              tone="slate"
+              label="Prefactor (kf)"
+              value={simulation.metrics.prefactor ?? null}
+              sigma={null}
+              digits={3}
+              detail="Scale factor of the same power law"
+            />
           </div>
-        </div>
 
-        {/* Running State */}
-        {(simulation.status === 'queued' || simulation.status === 'running') && (
-          <Card className="mb-8">
-            <CardContent className="p-8 text-center">
-              <div className="animate-pulse">
-                <div className="h-8 w-8 mx-auto mb-4 rounded-full border-4 border-primary border-t-transparent animate-spin" />
-              </div>
-              <h3 className="text-lg font-medium mb-2">
-                {simulation.status === 'queued' ? 'Simulation Queued' : 'Simulation Running'}
-              </h3>
-              <p className="text-muted-foreground mb-4">
-                {simulation.status === 'queued'
-                  ? 'Your simulation is in the queue and will start shortly...'
-                  : 'Generating agglomerate structure... This page will update automatically.'}
-              </p>
-              <Button
-                variant="outline"
-                onClick={handleCancel}
-                disabled={isCancelling}
-              >
-                <StopCircle className="h-4 w-4 mr-2" />
-                {isCancelling ? 'Cancelling...' : 'Cancel Simulation'}
-              </Button>
-            </CardContent>
-          </Card>
-        )}
+            {/* Coordination and shape readings. Both are label/value pairs
+                the engine reported, so both go through `DetailList`: label
+                left, reading right, and the digits each has always carried. */}
+            <div className="mb-8 grid grid-cols-1 gap-6 md:grid-cols-2">
+              <Panel title="Coordination number">
+                <DetailList items={coordinationItems} />
+              </Panel>
 
-        {/* Cancelled State */}
-        {simulation.status === 'cancelled' && (
-          <Card className="mb-8 border-yellow-500">
-            <CardContent className="p-6">
-              <h3 className="text-lg font-medium text-yellow-600 mb-2">
-                Simulation Cancelled
-              </h3>
-              <p className="text-muted-foreground">
-                {simulation.error_message || 'This simulation was cancelled.'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Failed State */}
-        {simulation.status === 'failed' && (
-          <Card className="mb-8 border-destructive">
-            <CardContent className="p-6">
-              <h3 className="text-lg font-medium text-destructive mb-2">
-                Simulation Failed
-              </h3>
-              <p className="text-muted-foreground">
-                {simulation.error_message || 'An unknown error occurred during simulation.'}
-              </p>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Completed State */}
-        {simulation.status === 'completed' && simulation.metrics && (
-          <>
-            {/* Metrics */}
-            <MetricsGrid className="mb-8">
-              <MetricsCard
-                label="Fractal Dimension"
-                value={formatNumber(simulation.metrics.fractal_dimension, 3)}
-                subvalue={`+/- ${formatNumber(simulation.metrics.fractal_dimension_std, 3)}`}
-              />
-              <MetricsCard
-                label="Prefactor (kf)"
-                value={formatNumber(simulation.metrics.prefactor, 3)}
-              />
-              <MetricsCard
-                label="Radius of Gyration (nm)"
-                value={formatNumber(simulation.metrics.radius_of_gyration * scaleFactor, 1)}
-              />
-              <MetricsCard
-                label="Porosity"
-                value={`${(simulation.metrics.porosity * 100).toFixed(1)}%`}
-              />
-            </MetricsGrid>
-
-            {/* Coordination and Shape Analysis */}
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-lg">Coordination Number</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="flex gap-8">
-                    <div>
-                      <p className="text-sm text-muted-foreground">Mean</p>
-                      <p className="text-2xl font-bold">
-                        {formatNumber(simulation.metrics.coordination.mean, 2)}
-                      </p>
-                    </div>
-                    <div>
-                      <p className="text-sm text-muted-foreground">Std. Dev.</p>
-                      <p className="text-2xl font-bold">
-                        {formatNumber(simulation.metrics.coordination.std, 2)}
-                      </p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Shape Analysis from Inertia Tensor */}
-              {simulation.metrics.anisotropy !== undefined && (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Shape Analysis</CardTitle>
-                  </CardHeader>
-                  <CardContent className="space-y-4">
-                    <div className="flex flex-wrap gap-8">
-                      <div>
-                        <p className="text-sm text-muted-foreground">Anisotropy</p>
-                        <p className="text-2xl font-bold">
-                          {formatNumber(simulation.metrics.anisotropy, 2)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {simulation.metrics.anisotropy < 1.5 ? 'Compact' :
-                           simulation.metrics.anisotropy < 3 ? 'Moderate' : 'Elongated'}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Asphericity</p>
-                        <p className="text-2xl font-bold">
-                          {formatNumber(simulation.metrics.asphericity, 3)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-sm text-muted-foreground">Acylindricity</p>
-                        <p className="text-2xl font-bold">
-                          {formatNumber(simulation.metrics.acylindricity, 3)}
-                        </p>
-                      </div>
-                    </div>
-                    {/* Principal Moments of Inertia */}
-                    {simulation.metrics.principal_moments && (
-                      <div className="pt-2 border-t">
-                        <p className="text-sm text-muted-foreground mb-2">Principal Moments of Inertia</p>
-                        <div className="flex gap-6">
-                          <div>
-                            <p className="text-xs text-muted-foreground">I₁ (min)</p>
-                            <p className="text-lg font-mono font-medium">
-                              {formatNumber(simulation.metrics.principal_moments[0], 1)}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">I₂</p>
-                            <p className="text-lg font-mono font-medium">
-                              {formatNumber(simulation.metrics.principal_moments[1], 1)}
-                            </p>
-                          </div>
-                          <div>
-                            <p className="text-xs text-muted-foreground">I₃ (max)</p>
-                            <p className="text-lg font-mono font-medium">
-                              {formatNumber(simulation.metrics.principal_moments[2], 1)}
-                            </p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+              {shapeItems.length > 0 && (
+                <Panel
+                  title="Shape analysis"
+                  hint="Read from the inertia tensor: how far the aggregate departs from a sphere."
+                >
+                  <DetailList items={shapeItems} />
+                </Panel>
               )}
             </div>
 
-            {/* Fractal Scaling Plot — requires rg_evolution AND computed Df/kf.
-                Imported agglomerates don't ship rg_evolution and may have null
-                Df when N < 50, so gate on all three being present. */}
-            {simulation.metrics.rg_evolution &&
-             simulation.metrics.rg_evolution.length > 0 &&
-             simulation.metrics.fractal_dimension !== null &&
-             simulation.metrics.prefactor !== undefined && (
+            {/* Fractal scaling plot. `ShowValues` hands back the control and
+                the table so the page can put the toggle in the panel header and
+                let the table take the chart's place, keeping the title, the
+                hint and the frame where a reader left them. */}
+            {scaling && (
               <div className="mb-8">
-                <FractalPlot
-                  rgEvolution={simulation.metrics.rg_evolution}
-                  fractalDimension={simulation.metrics.fractal_dimension}
-                  prefactor={simulation.metrics.prefactor}
-                  primaryParticleRadius={1.0}
-                  totalParticles={
-                    'n_particles' in simulation.parameters
-                      ? (simulation.parameters as { n_particles: number }).n_particles
-                      : undefined
-                  }
-                  limitingCases={limitingCaseLines}
-                />
+                <ShowValues
+                  columns={SCALING_COLUMNS}
+                  rows={scaling.rows}
+                  caption={SCALING_CAPTION}
+                  maxHeight={SCALING_TABLE_MAX_HEIGHT}
+                >
+                  {({ toggle, table }) => (
+                    <Panel
+                      title="Fractal scaling"
+                      hint="Radius of gyration against particle count on log axes, with the power law fitted to this run."
+                      action={toggle}
+                    >
+                      {/*
+                        The chart stays mounted and is hidden while the table
+                        shows. Unmounting it throws away the exclusion sliders,
+                        the plot background and the legend, so a reader who
+                        excludes points, looks at the numbers and comes back
+                        would meet a different fit without being told.
+                      */}
+                      <div className={table ? 'hidden' : undefined}>
+                        <FractalPlot
+                          rgEvolution={scaling.rgEvolution}
+                          fractalDimension={scaling.fractalDimension}
+                          prefactor={scaling.prefactor}
+                          primaryParticleRadius={PRIMARY_PARTICLE_RADIUS}
+                          totalParticles={npo}
+                          limitingCases={limitingCaseLines}
+                        />
+                      </div>
+                      {table}
+                    </Panel>
+                  )}
+                </ShowValues>
               </div>
             )}
 
-            {/* Fractal Analysis Section */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-              {/* Box-Counting Analysis */}
-              <BoxCountingAnalysis projectId={id} simulationId={simId} />
+            {/* Fractal analysis: box counting, and the canonical cases the
+                scaling plot can overlay. The limiting cases stay open on the
+                page instead of inside a disclosure because they carry the
+                switch that draws their lines: a collapsed block would hide the
+                control as well as the reference table. */}
+            <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-2">
+              {/* No panel title: these three blocks carry their own card header,
+                  and a kit heading above it would stack two names a few pixels
+                  apart. The page only frames them. */}
+              <Panel>
+                <BoxCountingAnalysis projectId={id} simulationId={simId} />
+              </Panel>
 
-              {/* Limiting Cases for Calibration */}
               {'n_particles' in simulation.parameters && (
-                <LimitingCasesCard
-                  npo={(simulation.parameters as { n_particles: number }).n_particles}
-                  actualDf={simulation.metrics.fractal_dimension}
-                  actualKf={simulation.metrics.prefactor}
-                  onVisibilityChange={setShowLimitingCases}
-                />
+                <Panel>
+                  <LimitingCasesCard
+                    npo={(simulation.parameters as { n_particles: number }).n_particles}
+                    actualDf={simulation.metrics.fractal_dimension}
+                    actualKf={simulation.metrics.prefactor}
+                    onVisibilityChange={setShowLimitingCases}
+                  />
+                </Panel>
               )}
             </div>
 
             {/* 3D Viewer */}
             <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
               <div className="lg:col-span-3">
-                <Card>
-                  <CardHeader>
-                    <CardTitle>3D Visualization</CardTitle>
-                  </CardHeader>
-                  <CardContent className="p-2">
-                    <AgglomerateViewer
-                      coordinates={coordinates}
-                      radii={radii}
-                      principalAxes={simulation.metrics.principal_axes}
-                      className="h-[600px]"
-                    />
-                  </CardContent>
-                </Card>
+                {/*
+                  `ShowValues` hands over the toggle and the table so this page
+                  can place them inside its own frame: the toggle goes in the
+                  panel header and the table takes the canvas's place, which
+                  leaves the title, the caption bar and the border where a
+                  reader left them. The page configures the table and never
+                  assembles one.
+                */}
+                <ShowValues
+                  columns={PARTICLE_COLUMNS}
+                  rows={particleRows}
+                  caption={particleCaption(particleRows.length, coordinates.length)}
+                  maxHeight={STAGE_HEIGHT - READINGS_BAR_CLEARANCE}
+                >
+                  {({ toggle, table }) => (
+                    <VisualPanel
+                      title="3D visualization"
+                      readouts={visualReadouts}
+                      action={hasParticles ? toggle : undefined}
+                      height={STAGE_HEIGHT}
+                    >
+                      {isGeometryError ? (
+                        // The request failed; the run may be fine. Saying
+                        // "nothing to draw" would blame the record for a
+                        // transport error.
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
+                          <Callout
+                            tone="danger"
+                            title="Particle positions could not be loaded"
+                            className="w-full max-w-[46ch]"
+                          >
+                            The canvas draws what the engine wrote for this run, and that record
+                            could not be read. Reload the page to ask again.
+                          </Callout>
+                        </div>
+                      ) : isGeometryLoading ? (
+                        // In flight is not missing: same distinction, one state
+                        // earlier.
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
+                          <p className="hint m-0">Reading particle positions…</p>
+                        </div>
+                      ) : !hasParticles ? (
+                        // An empty canvas reads as a broken renderer. The stage
+                        // says what it is waiting for instead.
+                        <div className="flex h-full items-center justify-center bg-surface-strong px-6">
+                          <EmptyState
+                            headingLevel={3}
+                            title="Nothing to draw yet"
+                            description="The 3D view appears once the engine returns the particle positions for this run."
+                            className="max-w-[46ch]"
+                          />
+                        </div>
+                      ) : table ? (
+                        // Paper under the table. `DataTable` paints cells in
+                        // `--ink` and its caption in `--ink-muted`, which over
+                        // the stage measured 1.29:1 and 3.3:1; on the strong
+                        // surface they measure 14.4:1 and 5.7:1 in the light
+                        // theme, and the dark theme flips both tokens together.
+                        <div className="bg-surface-strong">{table}</div>
+                      ) : (
+                        <AgglomerateViewer
+                          coordinates={coordinates}
+                          radii={radii}
+                          principalAxes={principalAxes}
+                          className="h-[600px]"
+                        />
+                      )}
+                    </VisualPanel>
+                  )}
+                </ShowValues>
               </div>
               <div className="lg:col-span-1">
                 <ViewerControls
@@ -659,18 +996,45 @@ export default function SimulationDetailPage({
               </div>
             </div>
 
-            {/* 2D Projections */}
-            <div className="grid grid-cols-1 lg:grid-cols-4 gap-6 mb-8">
+            {/* 2D projections. A projection is a view of the object, so it
+                sits on the dark stage; the controls that generate it and
+                download it keep their own column and their own behaviour. */}
+            <div className="mb-8 grid grid-cols-1 gap-6 lg:grid-cols-4">
               <div className="lg:col-span-3">
-                <ProjectionViewer
-                  imageUrl={projectionUrl}
-                  azimuth={projectionParams.azimuth}
-                  elevation={projectionParams.elevation}
-                  format={projectionParams.format}
-                  gridDirections={gridDirections}
-                  generatedDirections={generatedDirections}
-                  onDirectionClick={handleDirectionClick}
-                />
+                {/* No title: the viewer names itself ("Preview (Az…, El…)").
+                    The stage adds the frame, and the region label below is what
+                    names it for a screen reader. */}
+                <VisualPanel height={PROJECTION_STAGE_HEIGHT}>
+                  {/*
+                    Paper under the legacy card. Its own `bg-card/70` over the
+                    stage (#07141d) composites to #b5b9bb, where its
+                    `--muted-foreground` measures 2.78:1 in the light theme —
+                    under AA, on the labels a reader needs in order to use the
+                    controls. On `--surface-strong` the same text measures 5.52:1
+                    (light) and 8.01:1 (dark), which is the remedy slice 2
+                    applied to the particle table.
+
+                    `role`/`tabIndex` matter as much: the card inside is taller
+                    than the stage, and a scroll box with no focusable content
+                    cannot be reached by keyboard.
+                  */}
+                  <div
+                    role="region"
+                    aria-label="2D projection preview"
+                    tabIndex={0}
+                    className="h-full overflow-y-auto bg-surface-strong"
+                  >
+                    <ProjectionViewer
+                      imageUrl={projectionUrl}
+                      azimuth={projectionParams.azimuth}
+                      elevation={projectionParams.elevation}
+                      format={projectionParams.format}
+                      gridDirections={gridDirections}
+                      generatedDirections={generatedDirections}
+                      onDirectionClick={handleDirectionClick}
+                    />
+                  </div>
+                </VisualPanel>
               </div>
               <div className="lg:col-span-1">
                 <div className="space-y-4">
@@ -691,52 +1055,47 @@ export default function SimulationDetailPage({
               </div>
             </div>
 
-            {/* Topology Analysis */}
+            {/* Topology. A graph is a view of the object too: same stage,
+                same frame. */}
             <div className="mb-8">
-              <NeighborGraph
-                data={neighborGraph ?? null}
-                isLoading={isGraphLoading}
-              />
+              {/* Same frame, same paper and same keyboard contract as the
+                  projection stage: the graph names itself, and its node panel
+                  scrolls. */}
+              <VisualPanel height={TOPOLOGY_STAGE_HEIGHT}>
+                <div
+                  role="region"
+                  aria-label="Topology graph"
+                  tabIndex={0}
+                  className="h-full overflow-y-auto bg-surface-strong"
+                >
+                  <NeighborGraph data={neighborGraph ?? null} isLoading={isGraphLoading} />
+                </div>
+              </VisualPanel>
             </div>
 
-            {/* Optical Properties */}
+            {/* Optical properties */}
             <div className="mb-8">
-              <OpticalPropertiesSection
-                projectId={id}
-                simulationId={simId}
-                existingOptical={simulation.metrics.optical}
-              />
+              <Panel>
+                <OpticalPropertiesSection
+                  projectId={id}
+                  simulationId={simId}
+                  existingOptical={simulation.metrics.optical}
+                />
+              </Panel>
             </div>
 
-            {/* Parameters */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-lg">Simulation Parameters</CardTitle>
-              </CardHeader>
-              <CardContent>
-                <dl className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  {Object.entries(simulation.parameters).map(([key, value]) => (
-                    <div key={key}>
-                      <dt className="text-sm text-muted-foreground">
-                        {key.replace(/_/g, ' ')}
-                      </dt>
-                      <dd className="font-mono break-words">
-                        {/* import_metadata etc. are nested dicts; JSON-encode
-                            so they don't render as "[object Object]". */}
-                        {value === null || value === undefined
-                          ? '—'
-                          : typeof value === 'object'
-                            ? JSON.stringify(value)
-                            : String(value)}
-                      </dd>
-                    </div>
-                  ))}
-                </dl>
-              </CardContent>
-            </Card>
+            {/* What the run was asked for. `DetailList` is the product's
+                parameter recap, so every value keeps its label on the left and
+                a number goes through `Num`. */}
+            <Panel
+              title="Simulation parameters"
+              hint="Exactly what this run was asked for, key by key."
+            >
+              <DetailList items={parameterItems} />
+            </Panel>
+
           </>
         )}
-      </main>
-    </div>
+    </>
   )
 }

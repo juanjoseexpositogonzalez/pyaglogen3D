@@ -11,7 +11,11 @@ from typing import Any
 from rest_framework import serializers
 from rest_framework.exceptions import ValidationError
 
-from .distribution_shape import CAPPED_MAGNITUDE, PARITY_KEYS, SweptShapeError
+from .distribution_shape import (
+    CAPPED_MAGNITUDE,
+    STD_OVER_MEAN_CAP,
+    SweptShapeError,
+)
 from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
 from .distribution_shape import check_algorithm_scope as check_distribution_scope
 from .distribution_shape import collect_surfaces as collect_distribution_surfaces
@@ -27,6 +31,7 @@ from .services.params import (
     SCHEMA_VERSION_CURRENT,
 )
 from .sintering_shape import (
+    AlgorithmScopeError,
     check_algorithm_scope,
     check_flat_keys,
     validate_dict_shape,
@@ -314,6 +319,40 @@ class SimulationDetailSerializer(SimulationSerializer):
         return obj.geometry is not None
 
 
+def _as_mapping(value: Any) -> Mapping[str, Any]:
+    """A stored container, or an empty one when it is not a mapping.
+
+    Rows written outside the serializer - the admin and the AI assistant's
+    tool both write these JSON fields directly - can hold anything, and
+    `.get` on a list raised instead of answering. Such a stored value is
+    ignored rather than held against the request: the request is judged on
+    what it carries, and a row that holds a non-mapping cannot be expanded
+    anyway.
+    """
+    return value if isinstance(value, Mapping) else {}
+
+
+def _swept_payload(limiting: Any) -> Any:
+    """The swept map of a payload, or nothing when the container is not one.
+
+    Called only with payload values, so the case that actually happens is
+    the dull one: the field is absent and `limiting` is `None`. A payload
+    holding a non-mapping is already refused at the top of `validate`, so
+    that branch is defensive - it exists so this helper does not depend on
+    the ordering of a guard elsewhere, not because a list reaches it today.
+    """
+    if not isinstance(limiting, Mapping):
+        return None
+    return limiting.get("theoretical_extremes")
+
+
+#: The only algorithm whose engine binding declares `seed_type`:
+#: `run_simulation_task` reads `simulation.seed_type` inside its `tunable_cc`
+#: branch (`tasks.py:1676`) and no other `run_*` takes the parameter. Every other
+#: algorithm accepted it and stored a value nothing read (#115, point 14).
+SEED_TYPE_ALGORITHMS = frozenset({"tunable_cc"})
+
+
 class ParametricStudySerializer(serializers.ModelSerializer):
     """Serializer for ParametricStudy model."""
 
@@ -422,7 +461,7 @@ class ParametricStudySerializer(serializers.ModelSerializer):
     #: Grid keys validated via distribution helper.
     _DISTRIBUTION_GRID_KEYS: dict[str, dict] = {
         "kf_distribution": {},
-        "particle_radius_config": {"max_std_over_mean": 0.3},
+        "particle_radius_config": {},
     }
 
     _BATCH_HARD_CAP = 1000
@@ -463,9 +502,16 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 # accepts, and would hide the allow-list message.
                 if isinstance(entry, dict) and "mode" in entry:
                     continue
+                # The cap is read here, not baked into the class table: a class
+                # attribute evaluates the constant once at import time and then
+                # disagrees with the R13 site if the constant changes, which is
+                # two live caps again (#201 review).
+                caps = dict(constraints)
+                if key in CAPPED_MAGNITUDE:
+                    caps["max_std_over_mean"] = STD_OVER_MEAN_CAP
                 try:
                     validate_distribution_config(
-                        entry, allowed_dist_types, **constraints
+                        entry, allowed_dist_types, **caps
                     )
                 except serializers.ValidationError as exc:
                     raise serializers.ValidationError(
@@ -623,16 +669,18 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             return getattr(self.instance, field, None)
 
         algorithm = _effective("base_algorithm", data.get("base_algorithm"))
-        eff_base = _effective("base_parameters", base_params) or {}
-        eff_grid = _effective("parameter_grid", grid) or {}
-        eff_limiting = _effective("limiting_cases_config", limiting) or {}
+        # All four stored containers get the same guard. Giving it to two of
+        # them and not to the other two left `.get` on a list raising a 500
+        # where a 400 belongs, for rows written outside the serializer - the
+        # admin and the AI assistant's tool both do that.
+        eff_base = _as_mapping(_effective("base_parameters", base_params))
+        eff_grid = _as_mapping(_effective("parameter_grid", grid))
+        eff_limiting = _as_mapping(_effective("limiting_cases_config", limiting))
         # A stored container can be a truthy non-mapping on rows written
         # through the ORM - the AI assistant's tool and admin both do - and
         # `.get` on a list turned a rename into a 500. New payloads are
         # rejected above; a stored one is ignored rather than held against
         # the request, like the extremes map one level deeper.
-        if not isinstance(eff_limiting, Mapping):
-            eff_limiting = {}
         stored_extremes = eff_limiting.get("theoretical_extremes")
         # A row written before the payload guard can carry a non-object here.
         # Reading it without checking turned an innocent rename into a 500 and
@@ -640,19 +688,112 @@ class ParametricStudySerializer(serializers.ModelSerializer):
         # above; a stored one is ignored rather than held against the request.
         eff_extremes = stored_extremes if isinstance(stored_extremes, dict) else {}
 
-        try:
-            check_algorithm_scope(
-                algorithm,
-                dicts=(
-                    eff_grid.get("sintering_config"),
-                    _effective("sintering_config", data.get("sintering_config")),
-                    eff_base.get("sintering_config"),
-                    eff_extremes.get("sintering_config"),
-                ),
-                flats=(eff_base, eff_grid, eff_extremes),
+        # Same gate R13.12 states for the distribution keys, and for the same
+        # reason: R11 fixes *which* algorithm the rule is evaluated against -
+        # the stored one, on a partial update that omits it - not *when* it
+        # runs. Running it on a request that touches no sintering setting and
+        # no algorithm froze every row stored before the allow-list existed:
+        # renaming one answered 400 with no way out but deleting it. The
+        # bypass #97 closed stays closed, because adding the setting touches
+        # it and changing the algorithm touches the algorithm.
+        sintering_touched = (
+            "base_algorithm" in data
+            or "sintering_config" in data
+            or any(
+                key.startswith("sintering_")
+                for carrier in (
+                    data.get("parameter_grid"),
+                    data.get("base_parameters"),
+                    _swept_payload(data.get("limiting_cases_config")),
+                )
+                if isinstance(carrier, Mapping)
+                for key in carrier
             )
+        )
+        try:
+            if sintering_touched:
+                check_algorithm_scope(
+                    algorithm,
+                    dicts=(
+                        (
+                            "parameter_grid.sintering_config",
+                            eff_grid.get("sintering_config"),
+                        ),
+                        (
+                            "sintering_config",
+                            _as_mapping(
+                                _effective(
+                                    "sintering_config", data.get("sintering_config")
+                                )
+                            ),
+                        ),
+                        (
+                            "base_parameters.sintering_config",
+                            eff_base.get("sintering_config"),
+                        ),
+                        (
+                            "limiting_cases_config.theoretical_extremes.sintering_config",
+                            eff_extremes.get("sintering_config"),
+                        ),
+                    ),
+                    # R3's documented precedence: the grid first, then the
+                    # study field, then the swept extremes.
+                    flats=(
+                        ("parameter_grid", eff_grid),
+                        ("base_parameters", eff_base),
+                        ("limiting_cases_config.theoretical_extremes", eff_extremes),
+                    ),
+                )
+        except AlgorithmScopeError as exc:
+            # The refusal names the field the request carries, not a fixed key:
+            # every surface of R3 reports under its own, and a client reading
+            # `sintering_config` for a payload that never sent one cannot tell
+            # which field to fix (#115, point 5).
+            raise serializers.ValidationError({exc.field: str(exc)}) from exc
         except ValueError as exc:
             raise serializers.ValidationError({"sintering_config": str(exc)}) from exc
+
+        # --- #115, point 14: `seed_type` has algorithm scope as well ---
+        # Third row of the same dropdown, after the sintering setting (#97) and
+        # the two distribution grids (#141). The batch form offers seed type for
+        # every algorithm but `limiting`, and only `tunable_cc` reads it, so four
+        # of five stored a value the engine never saw.
+        #
+        # Gated like the rest: judged only when the request touches the setting or
+        # the algorithm, so a row stored before this rule can still be renamed.
+        seed_touched = "base_algorithm" in data or any(
+            isinstance(carrier, Mapping) and "seed_type" in carrier
+            for carrier in (
+                data.get("base_parameters"),
+                data.get("parameter_grid"),
+                # The third swept carrier. `generate_limiting_cases` sweeps it and
+                # `create_simulation` pops `seed_type` out of it, so leaving it out
+                # left the defect open on exactly one surface - measured by a judge
+                # on the first version of this gate (JD-A-001 on 128c0a1).
+                _swept_payload(data.get("limiting_cases_config")),
+            )
+        )
+        if seed_touched and algorithm not in SEED_TYPE_ALGORITHMS:
+            for seed_surface, seed_carrier in (
+                ("base_parameters", eff_base),
+                ("parameter_grid", eff_grid),
+                (
+                    "limiting_cases_config.theoretical_extremes",
+                    eff_extremes,
+                ),
+            ):
+                if "seed_type" not in seed_carrier:
+                    continue
+                raise serializers.ValidationError(
+                    {
+                        f"{seed_surface}.seed_type": (
+                            f"algorithm '{algorithm}' does not read seed_type. "
+                            f"Remove seed_type from {seed_surface}, or clear it in "
+                            "the same request that changes the algorithm: only "
+                            f"{', '.join(sorted(SEED_TYPE_ALGORITHMS))} consumes it."
+                        )
+                    }
+                )
 
         # --- R13: the four distribution keys, on all twelve surfaces ---
         # Scope first, shape second: a key declared for an algorithm that
@@ -672,37 +813,95 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             for carrier in (
                 data.get("parameter_grid"),
                 data.get("base_parameters"),
-                (data.get("limiting_cases_config") or {}).get("theoretical_extremes"),
+                _swept_payload(data.get("limiting_cases_config")),
             )
             for key in _DIST_KEYS
         )
         if touched:
+            # Shape is validated only where the REQUEST supplies a config: a PATCH
+            # that touches one key must not answer for another surface the row
+            # happens to hold, which is the cross-lane freeze of #115 point 17a.
             try:
-                distribution_surfaces = collect_distribution_surfaces(
-                    grid=eff_grid,
-                    base_parameters=eff_base,
-                    limiting_cases_config=eff_limiting,
+                payload_surfaces = collect_distribution_surfaces(
+                    grid=data.get("parameter_grid") or {},
+                    base_parameters=data.get("base_parameters") or {},
+                    limiting_cases_config=data.get("limiting_cases_config") or {},
                 )
             except SweptShapeError as exc:
                 raise serializers.ValidationError({exc.label: str(exc)}) from exc
 
+            # The scope still reads the EFFECTIVE surfaces: a stored setting has to
+            # be judged when the algorithm changes or when a key is added
+            # (R11.6/R13.12). A stored surface too malformed to collect cannot be
+            # judged at all, so it is not held against the request - the same rule
+            # `_as_mapping` follows for a stored non-object.
+            # Collected PER CARRIER, so a carrier too malformed to collect loses
+            # only itself. Excusing all three at once dropped a valid stored
+            # declaration out of the allow-list and let an algorithm change through
+            # - `PATCH {"base_algorithm": "fracval"}` answered 200 on a row whose
+            # other carrier held a perfectly collectable key, which R13.12 forbids
+            # (measured by a judge on PR #261).
+            # Collected PER KEY, one declaration at a time. Grouping by carrier
+            # as well was still too coarse: `collect_surfaces` raises on the first
+            # non-list entry it meets, so one malformed key discarded its
+            # collectable SIBLINGS in the same carrier - and a row holding a valid
+            # list beside a non-list one accepted an algorithm change that R13.12
+            # forbids, with 200 and persisted (measured by a judge on PR #261). Only
+            # the declaration that cannot be collected is excused, which is the rule
+            # `_as_mapping` follows for a stored non-object.
+            effective_surfaces: list[tuple[str, Any]] = []
+            for key in _DIST_KEYS:
+                single_declarations: list[dict[str, Any]] = []
+                if key in eff_grid:
+                    single_declarations.append(
+                        {
+                            "grid": {key: eff_grid[key]},
+                            "base_parameters": {},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_base:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {key: eff_base[key]},
+                            "limiting_cases_config": {},
+                        }
+                    )
+                if key in eff_extremes:
+                    single_declarations.append(
+                        {
+                            "grid": {},
+                            "base_parameters": {},
+                            "limiting_cases_config": {
+                                "theoretical_extremes": {key: eff_extremes[key]}
+                            },
+                        }
+                    )
+                for only in single_declarations:
+                    try:
+                        effective_surfaces.extend(collect_distribution_surfaces(**only))
+                    except SweptShapeError:
+                        continue
+
             try:
-                check_distribution_scope(algorithm, distribution_surfaces)
+                check_distribution_scope(algorithm, effective_surfaces)
             except ValueError as exc:
                 label = (
-                    distribution_surfaces[0][0].rsplit("[", 1)[0]
-                    if distribution_surfaces
+                    effective_surfaces[0][0].rsplit("[", 1)[0]
+                    if effective_surfaces
                     else "parameter_grid"
                 )
                 raise serializers.ValidationError({label: str(exc)}) from exc
 
-            for label, config in distribution_surfaces:
+            for label, config in payload_surfaces:
                 key = label.rsplit("[", 1)[0].rsplit(".", 1)[-1]
                 try:
                     validate_distribution_shape(
                         config,
-                        max_std_over_mean=0.3 if key in CAPPED_MAGNITUDE else None,
-                        allow_legacy_spelling=key in PARITY_KEYS,
+                        max_std_over_mean=(
+                            STD_OVER_MEAN_CAP if key in CAPPED_MAGNITUDE else None
+                        ),
                     )
                 except ValueError as exc:
                     raise serializers.ValidationError({label: str(exc)}) from exc
@@ -715,7 +914,10 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                     {"parameter_grid.seed_type": "Must be a list of seed_type values."}
                 )
             for entry in seed_type_entries:
-                if entry not in valid_seed_types:
+                # The type check comes first: a list or a dict is not hashable, so
+                # asking for membership in a set raises TypeError and answers 500
+                # instead of naming the offending entry (#115, point 4).
+                if not isinstance(entry, str) or entry not in valid_seed_types:
                     raise serializers.ValidationError(
                         {
                             "parameter_grid.seed_type": (
@@ -724,6 +926,29 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                             )
                         }
                     )
+
+        # `base_parameters.seed_type` travels into the child's own field, so it
+        # takes the same allow-list the grid key takes: an unknown value reaches
+        # `parse_seed_type` in the binding and fails every child of the study
+        # (#115, point 3). Only when the request carries it, so a stored value
+        # is not re-judged on every update.
+        incoming_base = data.get("base_parameters") or {}
+        if "seed_type" in incoming_base:
+            base_seed_type = incoming_base["seed_type"]
+            # Not a `str` at all - a list, a number, `None` - used to reach
+            # the set membership and raise `TypeError` (unhashable), which
+            # is the 500 this issue records as point 4.
+            if not isinstance(base_seed_type, str) or (
+                base_seed_type not in valid_seed_types
+            ):
+                raise serializers.ValidationError(
+                    {
+                        "base_parameters.seed_type": (
+                            f"'{base_seed_type}' is not a valid seed_type. "
+                            f"Choose from: {sorted(valid_seed_types)}."
+                        )
+                    }
+                )
 
         # --- Batch size projection ---
         seeds_per = data.get("seeds_per_combination", 1)

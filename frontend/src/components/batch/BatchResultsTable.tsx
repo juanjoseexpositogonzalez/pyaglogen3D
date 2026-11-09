@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { formatParameterValue } from '@/lib/formatParameterValue'
 import { Progress } from '@/components/ui/progress'
 import { Label } from '@/components/ui/label'
 import { Download, ExternalLink, RefreshCw, Calculator } from 'lucide-react'
@@ -236,7 +237,7 @@ export function BatchResultsTable({
                     </td>
                     {varyingParams.map((param) => (
                       <td key={param} className="px-3 py-2 font-mono">
-                        {String(result.parameters[param] ?? '-')}
+                        {formatParameterValue(result.parameters[param])}
                       </td>
                     ))}
                     <td className="px-3 py-2 text-right font-mono">

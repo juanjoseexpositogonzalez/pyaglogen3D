@@ -4,7 +4,7 @@ Covers spec requirements:
 - R1.1: kf_distribution list of valid configs accepted
 - R1.4: malformed kf_distribution entries rejected
 - R2.2-R2.3: particle_radius_config std/mean cap
-- R3.1-R3.2: sintering_config grid entries validation
+- sintering_config grid entries validation (see R3.3)
 - R4.1-R4.2: seed_type enum list validation
 - R6.1: >200 projected sims → warning
 - R6.2: >1000 projected sims → 400 rejection
@@ -56,8 +56,8 @@ class TestKfDistributionValidation:
             parameter_grid={
                 "n_particles": [100],
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "normal", "mean": 1.3, "std": 0.1},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "normal", "mean": 1.3, "std": 0.1},
                 ],
             }
         )
@@ -95,7 +95,7 @@ class TestParticleRadiusConfigValidation:
             parameter_grid={
                 "n_particles": [100],
                 "particle_radius_config": [
-                    {"distribution_type": "normal", "mean": 50.0, "std": 10.0},
+                    {"mode": "normal", "mean": 50.0, "std": 10.0},
                 ],
             }
         )
@@ -118,7 +118,7 @@ class TestParticleRadiusConfigValidation:
 
 
 # ---------------------------------------------------------------------------
-# T2.4 — sintering_config grid entries (R3.1-R3.2)
+# T2.4 — sintering_config grid entries (R3.3)
 # ---------------------------------------------------------------------------
 
 
@@ -126,7 +126,7 @@ class TestSinteringConfigGridValidation:
     """Validate sintering_config grid entries."""
 
     def test_valid_sintering_config_accepted(self) -> None:
-        """R3.1: valid sintering config list passes."""
+        """A valid sintering config list is accepted (R3's table; no scenario of its own)."""
         data = _make_data(
             parameter_grid={
                 "n_particles": [100],
@@ -140,7 +140,7 @@ class TestSinteringConfigGridValidation:
         assert "sintering_config" in result["parameter_grid"]
 
     def test_invalid_sintering_config_rejected(self) -> None:
-        """R3.2: invalid sintering config entry raises ValidationError."""
+        """An invalid entry is refused: R3.3, not the R3.2 expansion scenario."""
         data = _make_data(
             parameter_grid={
                 "n_particles": [100],

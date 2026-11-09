@@ -6,9 +6,30 @@ distribution config dicts for dpo_distribution and target_kf_distribution.
 
 from __future__ import annotations
 
+import math
+
 from rest_framework import serializers
 
 VALID_MODES = {"fixed", "normal", "uniform"}
+
+
+def _refuse_non_finite(label: str, raw: object) -> None:
+    """Refuse NaN/Inf, and ints past float range, naming the real problem.
+
+    Same rule as `distribution_shape._positive`, which governs the batch
+    surfaces. This field governs the single-simulation one and kept the broken
+    check: `nan <= 0` is False and `inf` is positive, so both passed and the
+    request ended in the database constraint - an `IntegrityError`, which is a
+    500 the caller cannot read (#202).
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return
+    try:
+        number = float(raw)
+    except OverflowError:
+        raise serializers.ValidationError(f"{label} must be a finite number") from None
+    if not math.isfinite(number):
+        raise serializers.ValidationError(f"{label} must be a finite number")
 
 
 class DistributionField(serializers.Field):
@@ -36,13 +57,16 @@ class DistributionField(serializers.Field):
 
         if mode == "fixed":
             value = data.get("value")
+            _refuse_non_finite("value", value)
             if value is None or not isinstance(value, (int, float)) or value <= 0:
                 raise serializers.ValidationError("fixed mode requires positive value")
             return {"mode": "fixed", "value": float(value)}
 
         if mode == "normal":
             mean = data.get("mean")
+            _refuse_non_finite("mean", mean)
             std = data.get("std")
+            _refuse_non_finite("std", std)
             if mean is None or not isinstance(mean, (int, float)) or mean <= 0:
                 raise serializers.ValidationError("normal mode requires positive mean")
             if std is None or not isinstance(std, (int, float)) or std <= 0:
@@ -51,7 +75,9 @@ class DistributionField(serializers.Field):
 
         # mode == "uniform"
         min_v = data.get("min")
+        _refuse_non_finite("min", min_v)
         max_v = data.get("max")
+        _refuse_non_finite("max", max_v)
         if min_v is None or not isinstance(min_v, (int, float)) or min_v <= 0:
             raise serializers.ValidationError("uniform mode requires positive min")
         if max_v is None or not isinstance(max_v, (int, float)):

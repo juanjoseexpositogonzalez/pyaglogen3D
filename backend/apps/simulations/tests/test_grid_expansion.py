@@ -3,8 +3,8 @@
 Covers spec requirements:
 - R4.3, R17.6: seed_type from grid → Simulation.seed_type model field (BUG #634 FIX)
 - R17.7: seed_type from base_parameters → Simulation.seed_type model field
-- R3.3: sintering grid entry overrides study-level
-- R3.4: sintering fallback to study-level config
+- R3.1: sintering grid entry overrides study-level
+- R3.2: sintering fallback to study-level config
 - R1.5: distribution configs pass through as-is
 - R5.1-R5.2: cartesian product correct count
 - R5.3: child sim params match grid combo values
@@ -203,8 +203,11 @@ class TestSeedTypeBugFix:
 
 
 # ---------------------------------------------------------------------------
-# T3.6-T3.7 — Sintering grid override + fallback (R3.3-R3.4)
+# T3.6-T3.7 — Sintering grid override + fallback (R3.1-R3.2)
 # ---------------------------------------------------------------------------
+
+
+# --- R3.1/R3.2 — the grid entry overrides the study, and its absence falls back ---
 
 
 class TestSinteringGridOverride:
@@ -213,7 +216,7 @@ class TestSinteringGridOverride:
     def test_sintering_grid_overrides_study_level(
         self, api_client, project
     ) -> None:
-        """R3.3: when sintering_config in grid, override study sintering."""
+        """R3.1: when sintering_config in grid, override study sintering."""
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -239,7 +242,7 @@ class TestSinteringGridOverride:
     def test_sintering_fallback_to_study_level(
         self, api_client, project
     ) -> None:
-        """R3.4: when no sintering_config in grid, study-level is applied."""
+        """R3.2: when no sintering_config in grid, study-level is applied."""
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -270,7 +273,7 @@ class TestDistributionPassthrough:
         self, api_client, project
     ) -> None:
         """R1.5: kf_distribution config stored in child sim params as-is."""
-        kf_config = {"distribution_type": "normal", "mean": 1.3, "std": 0.1}
+        kf_config = {"mode": "normal", "mean": 1.3, "std": 0.1}
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -293,7 +296,7 @@ class TestDistributionPassthrough:
         self, api_client, project
     ) -> None:
         """Particle radius config stored in child sim params."""
-        radius_config = {"distribution_type": "normal", "mean": 50.0, "std": 10.0}
+        radius_config = {"mode": "normal", "mean": 50.0, "std": 10.0}
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={
@@ -325,10 +328,10 @@ class TestFullIntegration:
         self, api_client, project
     ) -> None:
         """R5.4-R5.5: all 4 new grid keys in one study."""
-        kf1 = {"distribution_type": "fixed", "value": 1.3}
-        kf2 = {"distribution_type": "normal", "mean": 1.5, "std": 0.1}
+        kf1 = {"mode": "fixed", "value": 1.3}
+        kf2 = {"mode": "normal", "mean": 1.5, "std": 0.1}
         sint1 = {"distribution_type": "fixed", "coefficient": 0.9}
-        rad1 = {"distribution_type": "normal", "mean": 50.0, "std": 5.0}
+        rad1 = {"mode": "normal", "mean": 50.0, "std": 5.0}
 
         resp = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",

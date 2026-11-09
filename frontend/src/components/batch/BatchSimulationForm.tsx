@@ -1,18 +1,25 @@
 'use client'
 
 import { useState, useMemo } from 'react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import { Plus, Trash2, Play, AlertTriangle } from 'lucide-react'
+import { Plus, Trash2, Play } from 'lucide-react'
 import { batchSimulationAlgorithmOptions } from '@/lib/simulation-algorithms'
 import { DistributionGridInput } from './DistributionGridInput'
 import type { SimulationAlgorithm, CreateParametricStudyInput, DistributionValue } from '@/lib/types'
-import { consumesSintering, rejectsVariation, toSinteringConfig } from '@/lib/sinteringShape'
+import {
+  consumesDistribution,
+  consumesSeedType,
+  consumesSintering,
+  rejectsVariation,
+  toSinteringConfig,
+} from '@/lib/sinteringShape'
 import { Callout } from '@/components/kit/Callout'
+import { Num } from '@/components/kit/Num'
+import { Panel } from '@/components/kit/Panel'
 
 const limitingGeometryOptions = [
   { value: 'chain', label: 'Linear Chain (Df=1)' },
@@ -111,21 +118,35 @@ algorithm: SimulationAlgorithm,
     options.push({ value: 'target_kf', label: 'Target kf' })
   }
 
-  // New batch-CC parameter grid options
-  options.push(
-    { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
-    { value: 'particle_radius_config', label: 'Particle radius (polydispersity)' },
-    { value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' },
-  )
+  // New batch-CC parameter grid options.
+  // R10.8: the two distribution keys are offered only where the worker reads
+  // them - `tunable_cc` alone. The other ten accepted them and read nothing,
+  // which the backend now refuses, so offering them here invited a 400 the
+  // batch page could not display.
+  if (consumesDistribution(algorithm)) {
+    options.push(
+      { value: 'kf_distribution', label: 'kf distribution (normal/uniform/fixed)' },
+      { value: 'particle_radius_config', label: 'Particle radius (per-run variation)' },
+    )
+  }
 
   // R10.4: only the algorithms whose engine invocation receives sintering.
   // The backend answers 400 for the rest since T4, so offering it here
   // invited a refusal the batch page cannot even display.
   if (consumesSintering(algorithm)) {
-    options.splice(options.length - 1, 0, {
+    options.push({
       value: 'sintering_config',
       label: 'Sintering coefficient distribution',
     })
+  }
+
+  // R10.8, second key: one worker branch reads `seed_type` and the backend
+  // refuses it everywhere else (#115, point 14). It sits after sintering, the
+  // position it always had; the previous version inserted sintering before it
+  // with `splice(options.length - 1, 0, …)`, which only worked while this key
+  // was unconditional.
+  if (consumesSeedType(algorithm)) {
+    options.push({ value: 'seed_type', label: 'Seed type (monomer/dimer/trimer)' })
   }
 
   return options
@@ -193,13 +214,178 @@ function formatValuesPreview(values: (number | string)[], maxShow: number = 8): 
   return `${shown.join(', ')}, ... (${values.length} total)`
 }
 
+/**
+ * The three states a numeric field can be in (#241, #242).
+ *
+ * Two states were not enough, and the two defects shared a line of code: a
+ * token that does not parse went into the payload as `NaN`, which
+ * `JSON.stringify` writes as `null`, and `parseInt(x) || fallback` read a
+ * legitimate zero as "nothing typed".
+ *
+ * - `empty` — the field holds nothing, so the key's own default applies. Only
+ *   the keys that have one accept this state.
+ * - `invalid` — the field holds something the server cannot take. Nothing is
+ *   submitted, and the message names the key.
+ * - `value` — a number, zero included. Whether a zero is *allowed* is the key's
+ *   own rule, read from the backend rather than assumed:
+ *   `ParametricStudySerializer` accepts `seeds_per_combination: 0` (the model
+ *   field's only bound is `min_value=0`, and the expansion then creates no
+ *   child), while `validate_box_counting_params_dict` refuses
+ *   `points_per_sphere` outside [10, 1000] and `precision` outside [8, 21],
+ *   zero included.
+ */
+type NumericReading =
+  | { kind: 'empty' }
+  | { kind: 'invalid'; message: string }
+  | { kind: 'value'; value: number }
+
+interface NumericRule {
+  /** Parsed with `parseInt` (a count) or `parseFloat` (a magnitude). */
+  whole: boolean
+  /** What an emptied field falls back to. Absent means the field is required. */
+  fallback?: number
+  /** The backend's bounds, mirrored so the refusal is visible before the 400. */
+  min?: number
+  max?: number
+}
+
+/** The defaults of the keys that have one, and of the fields that start on. */
+const DEFAULT_SEEDS_PER_COMBINATION = 1
+const DEFAULT_POINTS_PER_SPHERE = 100
+const DEFAULT_PRECISION = 18
+
+/**
+ * The numeric keys of the payload, each with the rule the backend applies.
+ *
+ * This is the payload's own list, not one invented for the form: `n_particles`
+ * and `sticking_probability` travel in every `base_parameters`, and the three
+ * counted keys are the ones that can be emptied into a default.
+ */
+const NUMERIC_RULES = {
+  n_particles: { whole: true },
+  sticking_probability: { whole: false },
+  seeds_per_combination: { whole: true, fallback: DEFAULT_SEEDS_PER_COMBINATION },
+  points_per_sphere: {
+    whole: true,
+    fallback: DEFAULT_POINTS_PER_SPHERE,
+    min: 10,
+    max: 1000,
+  },
+  precision: { whole: true, fallback: DEFAULT_PRECISION, min: 8, max: 21 },
+} satisfies Record<string, NumericRule>
+
+/**
+ * Read one numeric field, in one place, so no key can go back to `|| default`.
+ *
+ * The tone of the two parse messages is the one the rest of the form already
+ * speaks (`distributionShape`): the key in quotes, lowercase, no full stop. The
+ * two range messages are the backend's own, copied from
+ * `validate_box_counting_params_dict`, so client and server say the same
+ * sentence about the same rule.
+ */
+function readNumeric(key: string, raw: string, rule: NumericRule): NumericReading {
+  const shape = rule.whole ? 'a whole number' : 'a number'
+  const token = raw.trim()
+
+  if (!token) {
+    return rule.fallback === undefined
+      ? { kind: 'invalid', message: `'${key}' must be ${shape}` }
+      : { kind: 'value', value: rule.fallback }
+  }
+
+  const parsed = rule.whole ? parseInt(token, 10) : parseFloat(token)
+  if (!Number.isFinite(parsed)) {
+    return { kind: 'invalid', message: `'${key}' must be ${shape}` }
+  }
+  if (
+    (rule.min !== undefined && parsed < rule.min) ||
+    (rule.max !== undefined && parsed > rule.max)
+  ) {
+    return { kind: 'invalid', message: `${key} must be between ${rule.min} and ${rule.max}` }
+  }
+
+  return { kind: 'value', value: parsed }
+}
+
+/** The number a reading resolved to, for a caller that has already refused. */
+function resolvedNumber(reading: NumericReading): number {
+  if (reading.kind !== 'value') {
+    // Unreachable: `handleSubmit` refuses every reading that is not a value
+    // before it builds anything. Thrown rather than defaulted, because a
+    // default here is the silent substitution this form was fixed to stop.
+    throw new Error('a numeric field that did not resolve reached the payload')
+  }
+  return reading.value
+}
+
+/**
+ * The refusal a numeric field shows, in a wrapper that carries the id its input
+ * points at with `aria-describedby`.
+ *
+ * The message is a `Callout` for the reason `DistributionSelector` gives: a tint
+ * alone is not a state, so the notice also carries an icon and a title. Its
+ * `danger` tone renders as an `alert`, which is what a refusal that blocks the
+ * submit button has to be.
+ */
+function FieldRefusal({ id, message }: { id: string; message: string | null }) {
+  if (!message) return null
+  return (
+    <div id={id}>
+      <Callout tone="danger" title={message} />
+    </div>
+  )
+}
+
+/**
+ * The create-batch-study form, on the design-system kit (issue #181, slice 2).
+ *
+ * One `Panel` per block, in the order the study is built: what it is called,
+ * the base parameters every run shares, the variations swept over them, the
+ * optional box-counting pass, and the projected load with its two thresholds.
+ * Each panel is a `<section>` headed by an `h2`, which is what puts the five of
+ * them in the heading outline under the page's only `h1`.
+ *
+ * They are not landmarks. A `<section>` without an accessible name is not one,
+ * and `Panel` does not name its own, so this file makes no claim about regions:
+ * the guarantee on offer is the heading outline.
+ *
+ * The two run-count thresholds used to be coloured paragraphs - amber above 200
+ * and red above 1000 - and they are `Callout`s now, which is the difference
+ * between a tint and a state: each carries an icon and a title, so the refusal
+ * survives greyscale and colour blindness. The dropped-variation notice (R10.6)
+ * keeps its live region and moved inside the panel whose control drops it.
+ *
+ * Every count on screen goes through `Num` - the projected total, the
+ * per-variation tally and the seed/combination breakdown - so a reading can be
+ * aligned down a column and read apart from its unit.
+ *
+ * Nothing about what the form *does* changed with the port. Same fields, same
+ * defaults, same payload: the tests pin the serialised request, key order
+ * included. The two coercion defects the port found and deliberately left alone
+ * - they are behaviour, not presentation - were fixed afterwards, and this is
+ * how:
+ *
+ * - An unparseable or emptied numeric key is refused on the client, with a
+ *   message that names the key, instead of travelling raw. `parseFloat('abc')`
+ *   is `NaN` and `JSON.stringify` serialises that as `null`, so
+ *   `sticking_probability` left the form as null and the API accepted and
+ *   stored it: corruption with nothing on screen (#241).
+ * - A legitimate zero is respected where the backend accepts it, and refused
+ *   out loud where it does not, instead of `parseInt(x) || fallback` reading it
+ *   as absence (#242).
+ *
+ * Both live in `readNumeric` below, which is the only place a numeric string
+ * becomes a number.
+ */
 export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationFormProps) {
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('ballistic')
   const [nParticles, setNParticles] = useState('100')
   const [stickingProbability, setStickingProbability] = useState('1.0')
-  const [seedsPerCombo, setSeedsPerCombo] = useState('1')
+  const [seedsPerCombo, setSeedsPerCombo] = useState(
+    String(DEFAULT_SEEDS_PER_COMBINATION),
+  )
   const [variations, setVariations] = useState<ParameterVariation[]>([])
   const [droppedVariations, setDroppedVariations] = useState<string[]>([])
   // Limiting case specific state
@@ -210,8 +396,19 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
 
   // Box-counting analysis option
   const [includeBoxCounting, setIncludeBoxCounting] = useState(false)
-  const [boxCountingPointsPerSphere, setBoxCountingPointsPerSphere] = useState('100')
-  const [boxCountingPrecision, setBoxCountingPrecision] = useState('18')
+  const [boxCountingPointsPerSphere, setBoxCountingPointsPerSphere] = useState(
+    String(DEFAULT_POINTS_PER_SPHERE),
+  )
+  const [boxCountingPrecision, setBoxCountingPrecision] = useState(
+    String(DEFAULT_PRECISION),
+  )
+
+  // #241: a field is called out only once the submit button has been pressed.
+  // Shouting while the user is still typing is worse than saying nothing, which
+  // is the reason `DistributionSelector` reports on blur; here the state a
+  // refusal describes is "this could not be submitted", so it appears when that
+  // is true and disappears as soon as the value is corrected.
+  const [submitAttempted, setSubmitAttempted] = useState(false)
 
   // Update configuration when geometry changes
   const handleGeometryChange = (newGeometry: string) => {
@@ -255,13 +452,86 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setVariations(updated)
   }
 
+  // Every numeric key of the payload, read once. The count on screen, the
+  // refusal and the request all come from these, so the three cannot disagree -
+  // which is how `Run 1 Simulations` came to sit above a payload saying 1 while
+  // the field said 0 (#242).
+  const readings = useMemo(
+    () => ({
+      n_particles: readNumeric('n_particles', nParticles, NUMERIC_RULES.n_particles),
+      sticking_probability: readNumeric(
+        'sticking_probability',
+        stickingProbability,
+        NUMERIC_RULES.sticking_probability,
+      ),
+      seeds_per_combination: readNumeric(
+        'seeds_per_combination',
+        seedsPerCombo,
+        NUMERIC_RULES.seeds_per_combination,
+      ),
+      points_per_sphere: readNumeric(
+        'points_per_sphere',
+        boxCountingPointsPerSphere,
+        NUMERIC_RULES.points_per_sphere,
+      ),
+      precision: readNumeric(
+        'precision',
+        boxCountingPrecision,
+        NUMERIC_RULES.precision,
+      ),
+    }),
+    [
+      nParticles,
+      stickingProbability,
+      seedsPerCombo,
+      boxCountingPointsPerSphere,
+      boxCountingPrecision,
+    ],
+  )
+
+  // A refused reading blocks the submit. The two box-counting keys only travel
+  // when that option is on, so a field the user tried and then abandoned cannot
+  // refuse a study that never asked for it.
+  const hasRefusal = [
+    readings.n_particles,
+    readings.sticking_probability,
+    readings.seeds_per_combination,
+    ...(includeBoxCounting
+      ? [readings.points_per_sphere, readings.precision]
+      : []),
+  ].some((reading) => reading.kind === 'invalid')
+
+  const shownRefusal = (reading: NumericReading): string | null =>
+    submitAttempted && reading.kind === 'invalid' ? reading.message : null
+
+  // Limiting cases are deterministic, so always 1 seed. An unparseable zero-key
+  // shows its default while it is refused: there is no honest number to project
+  // from a field that does not hold one, and the submit is blocked anyway.
+  const seedsForDisplay =
+    readings.seeds_per_combination.kind === 'value'
+      ? readings.seeds_per_combination.value
+      : DEFAULT_SEEDS_PER_COMBINATION
+  const effectiveSeeds = algorithm === 'limiting' ? 1 : seedsForDisplay
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
+
+    if (hasRefusal) {
+      // #241: an unparseable token used to reach the payload as `NaN`, which
+      // `JSON.stringify` writes as `null` - and `sticking_probability: null` is
+      // accepted and stored by the server, so the study was created with a
+      // value nobody chose. The batch page displays no submit error at all,
+      // which is why the refusal has to be visible here and nothing may be
+      // sent.
+      setSubmitAttempted(true)
+      return
+    }
+    setSubmitAttempted(false)
 
     // Build base parameters (different for limiting vs other algorithms)
     const baseParams: Record<string, unknown> = algorithm === 'limiting'
       ? {
-          n_particles: parseInt(nParticles),
+          n_particles: resolvedNumber(readings.n_particles),
           geometry_type: baseGeometry,
           configuration_type: baseConfiguration,
           packing: basePacking,
@@ -273,8 +543,8 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
             : {}),
         }
       : {
-          n_particles: parseInt(nParticles),
-          sticking_probability: parseFloat(stickingProbability),
+          n_particles: resolvedNumber(readings.n_particles),
+          sticking_probability: resolvedNumber(readings.sticking_probability),
         }
 
     // Build parameter grid from variations
@@ -285,12 +555,11 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       if (DISTRIBUTION_PARAMS.has(variation.name)) {
         // Distribution grid values are objects, not scalars
         if (variation.distributionValues.length > 0) {
-          // R10.5: sintering speaks its own shape. The other two grids keep
-          // the selector's - NOT because it is right, but because translating
-          // them belongs to `distribution-grid-wiring`. A judge measured that
-          // the backend rejects `{mode, ...}` for them too, so choosing
-          // kf_distribution or particle_radius still produces an invisible
-          // 400. Recorded in issue #115, not fixed by stretching this task.
+          // R10.5: sintering speaks its own shape; the two distribution keys
+          // send the `mode` shape the engine pipeline reads, which the backend
+          // accepts for the algorithm that consumes them. Measured: a `mode`
+          // config on `kf_distribution` and a `uniform` on
+          // `particle_radius_config` both answer 201 on `tunable_cc`.
           parameterGrid[variation.name] =
             variation.name === 'sintering_config'
               ? variation.distributionValues.map(toSinteringConfig)
@@ -315,13 +584,18 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       base_algorithm: algorithm,
       base_parameters: baseParams,
       parameter_grid: parameterGrid,
-      // Limiting cases are deterministic, so always 1 seed
-      seeds_per_combination: algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1),
+      // Limiting cases are deterministic, so always 1 seed. Otherwise the number
+      // the user asked for, zero included: the server accepts
+      // `seeds_per_combination: 0`, so inventing a 1 here is the substitution
+      // #242 is about.
+      seeds_per_combination: effectiveSeeds,
       // Box-counting analysis option
       include_box_counting: includeBoxCounting,
       box_counting_params: includeBoxCounting ? {
-        points_per_sphere: parseInt(boxCountingPointsPerSphere) || 100,
-        precision: parseInt(boxCountingPrecision) || 18,
+        // The defaults an emptied field resolves to are the backend's own, read
+        // from `validate_box_counting_params_dict`, not numbers chosen here.
+        points_per_sphere: resolvedNumber(readings.points_per_sphere),
+        precision: resolvedNumber(readings.precision),
       } : undefined,
     }
 
@@ -344,9 +618,22 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   }, [variations, integerParams])
 
   const totalCombinations = variationCounts.reduce((acc, v) => acc * v.count, 1)
-  // Limiting cases are deterministic, so always 1 seed
-  const effectiveSeeds = algorithm === 'limiting' ? 1 : (parseInt(seedsPerCombo) || 1)
   const totalSimulations = totalCombinations * effectiveSeeds
+
+  // What each field shows, once the submit has been attempted. The border is the
+  // same `destructive` bridge token `DistributionSelector` marks its fields with,
+  // so a refused number looks the same wherever it is refused.
+  const nParticlesRefusal = shownRefusal(readings.n_particles)
+  const stickingRefusal = shownRefusal(readings.sticking_probability)
+  const seedsRefusal = shownRefusal(readings.seeds_per_combination)
+  const pointsPerSphereRefusal = includeBoxCounting
+    ? shownRefusal(readings.points_per_sphere)
+    : null
+  const precisionRefusal = includeBoxCounting
+    ? shownRefusal(readings.precision)
+    : null
+  const refusalClass = (message: string | null) =>
+    message ? 'border-destructive focus-visible:ring-destructive' : undefined
 
   const parameterOptions = useMemo(() => parameterOptionsFor(algorithm), [algorithm])
 
@@ -372,125 +659,83 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setAlgorithm(next)
   }
 
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle>Create Batch Simulation</CardTitle>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {/* Study Name */}
-          <div className="space-y-2">
-            <Label htmlFor="name">Study Name</Label>
-            <Input
-              id="name"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              placeholder="e.g., N-particles sweep"
-            />
+    <form onSubmit={handleSubmit} className="space-y-4">
+      {/* What the study is called */}
+      <Panel title="Study" bodyClassName="space-y-4">
+        <div className="space-y-2">
+          <Label htmlFor="name">Study Name</Label>
+          <Input
+            id="name"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            placeholder="e.g., N-particles sweep"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="description">Description</Label>
+          <Textarea
+            id="description"
+            value={description}
+            onChange={(e) => setDescription(e.target.value)}
+            placeholder="Optional study description..."
+            rows={2}
+          />
+        </div>
+      </Panel>
+
+      {/* Base parameters - conditional on the algorithm */}
+      <Panel title="Base Parameters" bodyClassName="space-y-4">
+        {/* Named: the panel title is not the control's label, and there are
+            several comboboxes in this form. */}
+        <div className="space-y-2">
+          <Label htmlFor="algorithm">Algorithm</Label>
+          <Select
+            id="algorithm"
+            value={algorithm}
+            onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
+            options={batchSimulationAlgorithmOptions}
+          />
+        </div>
+
+        {/* R10.6: clearing a variation silently would satisfy the payload half
+            of the rule and fail its sentence - the form must not submit
+            something the backend rejects "without telling the user why". */}
+        {droppedVariations.length > 0 && (
+          <div role="status" aria-live="polite">
+            <Callout tone="warning" title="A variation no longer applies">
+              {droppedVariations.length === 1
+                ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
+                : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
+            </Callout>
           </div>
+        )}
 
-          {/* Description */}
-          <div className="space-y-2">
-            <Label htmlFor="description">Description</Label>
-            <Textarea
-              id="description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Optional study description..."
-              rows={2}
-            />
-          </div>
-
-          {/* Algorithm */}
-          <div className="space-y-2">
-            <Label>Algorithm</Label>
-            <Select
-              value={algorithm}
-              onChange={(e) => handleAlgorithmChange(e.target.value as SimulationAlgorithm)}
-              options={batchSimulationAlgorithmOptions}
-            />
-          </div>
-
-          {/* R10.6: clearing a variation silently would satisfy the payload
-              half of the rule and fail its sentence - the form must not submit
-              something the backend rejects "without telling the user why". */}
-          {droppedVariations.length > 0 && (
-            <div role="status" aria-live="polite">
-              <Callout tone="warning" title="A variation no longer applies">
-                {droppedVariations.length === 1
-                  ? `${droppedVariations[0]} was removed because ${algorithm} does not accept it.`
-                  : `${droppedVariations.length} variations were removed because ${algorithm} does not accept them: ${droppedVariations.join(', ')}.`}
-              </Callout>
-            </div>
-          )}
-
-          {/* Base Parameters - conditional based on algorithm */}
-          {algorithm === 'limiting' ? (
-            /* Limiting case parameters */
-            <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Label>Base Geometry</Label>
-                  <Select
-                    value={baseGeometry}
-                    onChange={(e) => handleGeometryChange(e.target.value)}
-                    options={limitingGeometryOptions}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Configuration</Label>
-                  <Select
-                    value={baseConfiguration}
-                    onChange={(e) => setBaseConfiguration(e.target.value)}
-                    options={getConfigOptionsForGeometry(baseGeometry)}
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-4">
-                <div className="space-y-2">
-                  <Label htmlFor="nParticles">Base N Particles</Label>
-                  <Input
-                    id="nParticles"
-                    type="number"
-                    value={nParticles}
-                    onChange={(e) => setNParticles(e.target.value)}
-                    min={1}
-                    max={10000}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label>Packing</Label>
-                  <Select
-                    value={basePacking}
-                    onChange={(e) => setBasePacking(e.target.value)}
-                    options={packingOptions}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Affects plane & sphere geometries
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="sintering">Base Sintering Coeff.</Label>
-                  <Input
-                    id="sintering"
-                    type="number"
-                    value={baseSintering}
-                    onChange={(e) => setBaseSintering(e.target.value)}
-                    min={0.5}
-                    max={1}
-                    step={0.05}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    1.0 = touching, 0.5 = 50% overlap
-                  </p>
-                </div>
-              </div>
-            </div>
-          ) : (
-            /* Standard algorithm parameters */
+        {algorithm === 'limiting' ? (
+          /* Limiting case parameters */
+          <div className="space-y-4">
             <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="baseGeometry">Base Geometry</Label>
+                <Select
+                  id="baseGeometry"
+                  value={baseGeometry}
+                  onChange={(e) => handleGeometryChange(e.target.value)}
+                  options={limitingGeometryOptions}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="baseConfiguration">Configuration</Label>
+                <Select
+                  id="baseConfiguration"
+                  value={baseConfiguration}
+                  onChange={(e) => setBaseConfiguration(e.target.value)}
+                  options={getConfigOptionsForGeometry(baseGeometry)}
+                />
+              </div>
+            </div>
+            <div className="grid grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label htmlFor="nParticles">Base N Particles</Label>
                 <Input
@@ -498,315 +743,399 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                   type="number"
                   value={nParticles}
                   onChange={(e) => setNParticles(e.target.value)}
-                  min={10}
-                  max={100000}
+                  min={1}
+                  max={10000}
+                  aria-invalid={nParticlesRefusal ? true : undefined}
+                  aria-describedby={nParticlesRefusal ? 'nParticles-error' : undefined}
+                  className={refusalClass(nParticlesRefusal)}
                 />
+                <FieldRefusal id="nParticles-error" message={nParticlesRefusal} />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="sticking">Base Sticking Prob.</Label>
-                <Input
-                  id="sticking"
-                  type="number"
-                  value={stickingProbability}
-                  onChange={(e) => setStickingProbability(e.target.value)}
-                  min={0}
-                  max={1}
-                  step={0.1}
+                <Label htmlFor="basePacking">Packing</Label>
+                <Select
+                  id="basePacking"
+                  value={basePacking}
+                  onChange={(e) => setBasePacking(e.target.value)}
+                  options={packingOptions}
                 />
+                <p className="hint">Affects plane &amp; sphere geometries</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="sintering">Base Sintering Coeff.</Label>
+                <Input
+                  id="sintering"
+                  type="number"
+                  value={baseSintering}
+                  onChange={(e) => setBaseSintering(e.target.value)}
+                  min={0.5}
+                  max={1}
+                  step={0.05}
+                />
+                <p className="hint">1.0 = touching, 0.5 = 50% overlap</p>
               </div>
             </div>
-          )}
-
-          {/* Seeds per combination - not needed for limiting (deterministic) */}
-          {algorithm !== 'limiting' && (
+          </div>
+        ) : (
+          /* Standard algorithm parameters */
+          <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <Label htmlFor="seeds">Seeds per Combination</Label>
+              <Label htmlFor="nParticles">Base N Particles</Label>
               <Input
-                id="seeds"
+                id="nParticles"
                 type="number"
-                value={seedsPerCombo}
-                onChange={(e) => setSeedsPerCombo(e.target.value)}
-                min={1}
-                max={10}
+                value={nParticles}
+                onChange={(e) => setNParticles(e.target.value)}
+                min={10}
+                max={100000}
+                aria-invalid={nParticlesRefusal ? true : undefined}
+                aria-describedby={nParticlesRefusal ? 'nParticles-error' : undefined}
+                className={refusalClass(nParticlesRefusal)}
               />
-              <p className="text-xs text-muted-foreground">
-                Run multiple simulations per parameter combination with different random seeds
-              </p>
+              <FieldRefusal id="nParticles-error" message={nParticlesRefusal} />
             </div>
-          )}
+            <div className="space-y-2">
+              <Label htmlFor="sticking">Base Sticking Prob.</Label>
+              <Input
+                id="sticking"
+                type="number"
+                value={stickingProbability}
+                onChange={(e) => setStickingProbability(e.target.value)}
+                min={0}
+                max={1}
+                step={0.1}
+                aria-invalid={stickingRefusal ? true : undefined}
+                aria-describedby={stickingRefusal ? 'sticking-error' : undefined}
+                className={refusalClass(stickingRefusal)}
+              />
+              <FieldRefusal id="sticking-error" message={stickingRefusal} />
+            </div>
+          </div>
+        )}
 
-          {/* Parameter Variations */}
+        {/* Seeds per combination - not needed for limiting (deterministic) */}
+        {algorithm !== 'limiting' && (
           <div className="space-y-2">
-            <div className="flex items-center justify-between">
-              <Label>Parameter Variations</Label>
-              <Button type="button" variant="outline" size="sm" onClick={addVariation}>
-                <Plus className="h-4 w-4 mr-1" />
-                Add Variation
-              </Button>
-            </div>
+            <Label htmlFor="seeds">Seeds per Combination</Label>
+            <Input
+              id="seeds"
+              type="number"
+              value={seedsPerCombo}
+              onChange={(e) => setSeedsPerCombo(e.target.value)}
+              min={1}
+              max={10}
+              aria-invalid={seedsRefusal ? true : undefined}
+              aria-describedby={seedsRefusal ? 'seeds-error' : undefined}
+              className={refusalClass(seedsRefusal)}
+            />
+            <FieldRefusal id="seeds-error" message={seedsRefusal} />
+            <p className="hint">
+              Run multiple simulations per parameter combination with different random seeds
+            </p>
+          </div>
+        )}
+      </Panel>
 
-            {variations.length === 0 && (
-              <p className="text-sm text-muted-foreground py-2">
-                Add parameters to vary across simulations
-              </p>
-            )}
+      {/* Parameter Variations */}
+      <Panel
+        title="Parameter Variations"
+        action={
+          <Button type="button" variant="outline" size="sm" onClick={addVariation}>
+            <Plus className="h-4 w-4 mr-1" aria-hidden="true" />
+            Add Variation
+          </Button>
+        }
+        bodyClassName="space-y-3"
+      >
+        {variations.length === 0 && (
+          <p className="hint py-2">Add parameters to vary across simulations</p>
+        )}
 
-            {variations.map((variation, index) => {
-              const isInteger = integerParams.has(variation.name)
-              const { values, count } = variationCounts[index] || { values: [], count: 0 }
+        {variations.map((variation, index) => {
+          const isInteger = integerParams.has(variation.name)
+          const { values, count } = variationCounts[index] || { values: [], count: 0 }
 
-              return (
-                <div key={index} className="p-3 border rounded-lg bg-muted/30 space-y-3">
-                  {/* Parameter Selection & Delete */}
-                  <div className="flex gap-2 items-end">
-                    <div className="flex-1 space-y-1">
-                      <Label className="text-xs">Parameter</Label>
-                      <Select
-                        value={variation.name}
-                        onChange={(e) => updateVariation(index, 'name', e.target.value)}
-                        options={parameterOptions}
-                      />
-                    </div>
+          return (
+            <div
+              key={index}
+              className="min-w-0 space-y-3 rounded-md border border-line bg-surface-soft p-3"
+            >
+              {/* Parameter Selection & Delete */}
+              <div className="flex gap-2 items-end">
+                <div className="min-w-0 flex-1 space-y-1">
+                  <Label className="text-[11px]">Parameter</Label>
+                  <Select
+                    aria-label={`Parameter for variation ${index + 1}`}
+                    value={variation.name}
+                    onChange={(e) => updateVariation(index, 'name', e.target.value)}
+                    options={parameterOptions}
+                  />
+                </div>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon"
+                  aria-label={`Remove variation ${index + 1}`}
+                  onClick={() => removeVariation(index)}
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden="true" />
+                </Button>
+              </div>
+
+              {/* Conditional value input based on parameter type */}
+              {DISTRIBUTION_PARAMS.has(variation.name) ? (
+                /* Distribution grid input for kf_distribution, particle_radius, sintering */
+                <DistributionGridInput
+                  value={variation.distributionValues}
+                  onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
+                  label={`${variation.name.replace(/_/g, ' ')} configurations`}
+                  parameterName={variation.name}
+                />
+              ) : variation.name === SEED_TYPE_PARAM ? (
+                /* Seed type multi-select chips */
+                <div className="space-y-2">
+                  <Label className="text-[11px]">Select seed types</Label>
+                  <div className="flex gap-2">
+                    {SEED_TYPE_OPTIONS.map((st) => {
+                      const isSelected = variation.seedTypeValues.includes(st)
+                      return (
+                        <Button
+                          key={st}
+                          type="button"
+                          variant={isSelected ? 'default' : 'outline'}
+                          size="sm"
+                          className="flex-1 capitalize"
+                          onClick={() => {
+                            const newValues = isSelected
+                              ? variation.seedTypeValues.filter((v) => v !== st)
+                              : [...variation.seedTypeValues, st]
+                            // Enforce min 1
+                            if (newValues.length > 0) {
+                              updateVariation(index, 'seedTypeValues', newValues)
+                            }
+                          }}
+                        >
+                          {st}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  {/* The count is a `Num`, so the number and the word that
+                      qualifies it are separate nodes. */}
+                  <p className="hint">
+                    <Num value={variation.seedTypeValues.length} digits={0} size="sm" /> selected
+                  </p>
+                </div>
+              ) : (
+                /* Standard scalar variation: discrete or range */
+                <>
+                  {/* Input Mode Toggle */}
+                  <div className="flex gap-2">
                     <Button
                       type="button"
-                      variant="ghost"
-                      size="icon"
-                      onClick={() => removeVariation(index)}
+                      variant={variation.inputMode === 'range' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'range')}
                     >
-                      <Trash2 className="h-4 w-4" />
+                      Range (Start → End)
+                    </Button>
+                    <Button
+                      type="button"
+                      variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
+                      size="sm"
+                      className="flex-1"
+                      onClick={() => updateVariation(index, 'inputMode', 'discrete')}
+                    >
+                      Discrete Values
                     </Button>
                   </div>
 
-                  {/* Conditional value input based on parameter type */}
-                  {DISTRIBUTION_PARAMS.has(variation.name) ? (
-                    /* Distribution grid input for kf_distribution, particle_radius, sintering */
-                    <DistributionGridInput
-                      value={variation.distributionValues}
-                      onChange={(newVals) => updateVariation(index, 'distributionValues', newVals)}
-                      label={`${variation.name.replace(/_/g, ' ')} configurations`}
-                      allowedTypes={
-                        variation.name === 'particle_radius_config'
-                          ? ['fixed', 'normal']
-                          : undefined
-                      }
-                    />
-                  ) : variation.name === SEED_TYPE_PARAM ? (
-                    /* Seed type multi-select chips */
-                    <div className="space-y-2">
-                      <Label className="text-xs">Select seed types</Label>
-                      <div className="flex gap-2">
-                        {SEED_TYPE_OPTIONS.map((st) => {
-                          const isSelected = variation.seedTypeValues.includes(st)
-                          return (
-                            <Button
-                              key={st}
-                              type="button"
-                              variant={isSelected ? 'default' : 'outline'}
-                              size="sm"
-                              className="flex-1 capitalize"
-                              onClick={() => {
-                                const newValues = isSelected
-                                  ? variation.seedTypeValues.filter((v) => v !== st)
-                                  : [...variation.seedTypeValues, st]
-                                // Enforce min 1
-                                if (newValues.length > 0) {
-                                  updateVariation(index, 'seedTypeValues', newValues)
-                                }
-                              }}
-                            >
-                              {st}
-                            </Button>
-                          )
-                        })}
+                  {/* Range Mode Inputs */}
+                  {variation.inputMode === 'range' && (
+                    <div className="grid grid-cols-3 gap-2">
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-start`} className="text-[11px]">
+                          Start
+                        </Label>
+                        <Input
+                          id={`variation-${index}-start`}
+                          type="number"
+                          value={variation.start}
+                          onChange={(e) => updateVariation(index, 'start', e.target.value)}
+                          placeholder="100"
+                          step={isInteger ? 1 : 0.1}
+                        />
                       </div>
-                      <p className="text-xs text-muted-foreground">
-                        {variation.seedTypeValues.length} selected
-                      </p>
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-end`} className="text-[11px]">
+                          End
+                        </Label>
+                        <Input
+                          id={`variation-${index}-end`}
+                          type="number"
+                          value={variation.end}
+                          onChange={(e) => updateVariation(index, 'end', e.target.value)}
+                          placeholder="1000"
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor={`variation-${index}-step`} className="text-[11px]">
+                          Step
+                        </Label>
+                        <Input
+                          id={`variation-${index}-step`}
+                          type="number"
+                          value={variation.step}
+                          onChange={(e) => updateVariation(index, 'step', e.target.value)}
+                          placeholder="100"
+                          min={isInteger ? 1 : 0.01}
+                          step={isInteger ? 1 : 0.1}
+                        />
+                      </div>
                     </div>
-                  ) : (
-                    /* Standard scalar variation: discrete or range */
-                    <>
-                      {/* Input Mode Toggle */}
-                      <div className="flex gap-2">
-                        <Button
-                          type="button"
-                          variant={variation.inputMode === 'range' ? 'default' : 'outline'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => updateVariation(index, 'inputMode', 'range')}
-                        >
-                          Range (Start → End)
-                        </Button>
-                        <Button
-                          type="button"
-                          variant={variation.inputMode === 'discrete' ? 'default' : 'outline'}
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => updateVariation(index, 'inputMode', 'discrete')}
-                        >
-                          Discrete Values
-                        </Button>
-                      </div>
-
-                      {/* Range Mode Inputs */}
-                      {variation.inputMode === 'range' && (
-                        <div className="grid grid-cols-3 gap-2">
-                          <div className="space-y-1">
-                            <Label className="text-xs">Start</Label>
-                            <Input
-                              type="number"
-                              value={variation.start}
-                              onChange={(e) => updateVariation(index, 'start', e.target.value)}
-                              placeholder="100"
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">End</Label>
-                            <Input
-                              type="number"
-                              value={variation.end}
-                              onChange={(e) => updateVariation(index, 'end', e.target.value)}
-                              placeholder="1000"
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                          <div className="space-y-1">
-                            <Label className="text-xs">Step</Label>
-                            <Input
-                              type="number"
-                              value={variation.step}
-                              onChange={(e) => updateVariation(index, 'step', e.target.value)}
-                              placeholder="100"
-                              min={isInteger ? 1 : 0.01}
-                              step={isInteger ? 1 : 0.1}
-                            />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Discrete Mode Input */}
-                      {variation.inputMode === 'discrete' && (
-                        <div className="space-y-1">
-                          <Label className="text-xs">Values (comma-separated)</Label>
-                          <Input
-                            value={variation.values}
-                            onChange={(e) => updateVariation(index, 'values', e.target.value)}
-                            placeholder="e.g., 100, 200, 500, 1000"
-                          />
-                        </div>
-                      )}
-
-                      {/* Preview */}
-                      <div className="p-2 bg-primary/5 rounded text-sm space-y-1">
-                        <div className="flex items-center justify-between">
-                          <span className="text-muted-foreground">Generated values:</span>
-                          <span className="font-mono font-medium">{count} values</span>
-                        </div>
-                        <p className="text-xs font-mono text-muted-foreground truncate">
-                          {formatValuesPreview(values)}
-                        </p>
-                      </div>
-                    </>
                   )}
-                </div>
-              )
-            })}
-          </div>
 
-          {/* Box-Counting Analysis Option */}
-          <div className="space-y-3 p-3 border rounded-lg">
-            <div className="flex items-center gap-3">
-              <input
-                type="checkbox"
-                id="includeBoxCounting"
-                checked={includeBoxCounting}
-                onChange={(e) => setIncludeBoxCounting(e.target.checked)}
-                className="h-4 w-4 rounded border-gray-300"
-              />
-              <div>
-                <Label htmlFor="includeBoxCounting" className="cursor-pointer">
-                  Run Box-Counting Analysis
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  Compute fractal dimension (Df) using 3D box-counting algorithm
-                </p>
-              </div>
+                  {/* Discrete Mode Input */}
+                  {variation.inputMode === 'discrete' && (
+                    <div className="space-y-1">
+                      <Label htmlFor={`variation-${index}-values`} className="text-[11px]">
+                        Values (comma-separated)
+                      </Label>
+                      <Input
+                        id={`variation-${index}-values`}
+                        value={variation.values}
+                        onChange={(e) => updateVariation(index, 'values', e.target.value)}
+                        placeholder="e.g., 100, 200, 500, 1000"
+                      />
+                    </div>
+                  )}
+
+                  {/* Preview */}
+                  <div className="space-y-1 rounded-md border border-line bg-surface-strong p-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="hint">Generated values:</span>
+                      <Num value={count} digits={0} unit="values" size="sm" />
+                    </div>
+                    <p className="num truncate text-[11px] text-ink-muted">
+                      {formatValuesPreview(values)}
+                    </p>
+                  </div>
+                </>
+              )}
             </div>
+          )
+        })}
+      </Panel>
 
-            {includeBoxCounting && (
-              <div className="grid grid-cols-2 gap-4 pt-2">
-                <div className="space-y-1">
-                  <Label className="text-xs">Points per Sphere</Label>
-                  <Input
-                    type="number"
-                    value={boxCountingPointsPerSphere}
-                    onChange={(e) => setBoxCountingPointsPerSphere(e.target.value)}
-                    min={10}
-                    max={1000}
-                    placeholder="100"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Surface sampling density (higher = more accurate)
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <Label className="text-xs">Precision (bits)</Label>
-                  <Input
-                    type="number"
-                    value={boxCountingPrecision}
-                    onChange={(e) => setBoxCountingPrecision(e.target.value)}
-                    min={8}
-                    max={24}
-                    placeholder="18"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Morton code precision (18 recommended)
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          {/* Summary */}
-          <div className="p-3 bg-primary/10 rounded-lg space-y-2">
-            <p className="text-sm">
-              <span className="font-medium">Total simulations:</span>{' '}
-              <span className="font-mono">{totalSimulations}</span>
-              {variations.length > 0 && (
-                <span className="text-muted-foreground">
-                  {' '}({totalCombinations} combinations × {effectiveSeeds} seeds)
-                </span>
-              )}
-              {includeBoxCounting && (
-                <span className="text-muted-foreground ml-2">
-                  + box-counting
-                </span>
-              )}
+      {/* Box-Counting Analysis Option */}
+      <Panel title="Box-Counting Analysis" bodyClassName="space-y-3">
+        <div className="flex items-start gap-3">
+          <input
+            type="checkbox"
+            id="includeBoxCounting"
+            checked={includeBoxCounting}
+            onChange={(e) => setIncludeBoxCounting(e.target.checked)}
+            className="mt-0.5 h-4 w-4 rounded border-line-strong"
+          />
+          <div>
+            <Label htmlFor="includeBoxCounting" className="cursor-pointer">
+              Run Box-Counting Analysis
+            </Label>
+            <p className="hint">
+              Compute fractal dimension (Df) using 3D box-counting algorithm
             </p>
-
-            {totalSimulations > 200 && totalSimulations <= 1000 && (
-              <p className="text-sm text-yellow-600 flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" />
-                Batch contains {totalSimulations} simulations — this may take a while.
-              </p>
-            )}
-
-            {totalSimulations > 1000 && (
-              <p className="text-sm text-destructive font-medium flex items-center gap-1">
-                <AlertTriangle className="h-4 w-4" />
-                Batch exceeds 1000 simulations ({totalSimulations}). The server will reject this request.
-              </p>
-            )}
           </div>
+        </div>
 
-          {/* Submit */}
-          <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
-            <Play className="h-4 w-4 mr-2" />
-            {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}
-          </Button>
-        </form>
-      </CardContent>
-    </Card>
+        {includeBoxCounting && (
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div className="space-y-1">
+              <Label htmlFor="boxCountingPointsPerSphere" className="text-[11px]">
+                Points per Sphere
+              </Label>
+              <Input
+                id="boxCountingPointsPerSphere"
+                type="number"
+                value={boxCountingPointsPerSphere}
+                onChange={(e) => setBoxCountingPointsPerSphere(e.target.value)}
+                min={10}
+                max={1000}
+                placeholder="100"
+                aria-invalid={pointsPerSphereRefusal ? true : undefined}
+                aria-describedby={
+                  pointsPerSphereRefusal ? 'boxCountingPointsPerSphere-error' : undefined
+                }
+                className={refusalClass(pointsPerSphereRefusal)}
+              />
+              <FieldRefusal
+                id="boxCountingPointsPerSphere-error"
+                message={pointsPerSphereRefusal}
+              />
+              <p className="hint">Surface sampling density (higher = more accurate)</p>
+            </div>
+            <div className="space-y-1">
+              <Label htmlFor="boxCountingPrecision" className="text-[11px]">
+                Precision (bits)
+              </Label>
+              <Input
+                id="boxCountingPrecision"
+                type="number"
+                value={boxCountingPrecision}
+                onChange={(e) => setBoxCountingPrecision(e.target.value)}
+                min={8}
+                // The validator's ceiling, not the 24 this field used to
+                // advertise: a 22 was accepted by the input and refused by
+                // `validate_box_counting_params_dict`, with a 400 the batch page
+                // never displays.
+                max={21}
+                placeholder="18"
+                aria-invalid={precisionRefusal ? true : undefined}
+                aria-describedby={precisionRefusal ? 'boxCountingPrecision-error' : undefined}
+                className={refusalClass(precisionRefusal)}
+              />
+              <FieldRefusal id="boxCountingPrecision-error" message={precisionRefusal} />
+              <p className="hint">Morton code precision (18 recommended)</p>
+            </div>
+          </div>
+        )}
+      </Panel>
+
+      {/* Projected load */}
+      <Panel title="Total simulations" bodyClassName="space-y-3">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <Num value={totalSimulations} digits={0} size="lg" />
+          {variations.length > 0 && (
+            <span className="hint">
+              (<Num value={totalCombinations} digits={0} unit="combinations" size="sm" /> ×{' '}
+              <Num value={effectiveSeeds} digits={0} unit="seeds" size="sm" />)
+            </span>
+          )}
+          {includeBoxCounting && (
+            <span className="hint">+ box-counting</span>
+          )}
+        </div>
+
+        {totalSimulations > 200 && totalSimulations <= 1000 && (
+          <Callout tone="warning" title="This may take a while">
+            Batch contains <Num value={totalSimulations} digits={0} /> simulations.
+          </Callout>
+        )}
+
+        {totalSimulations > 1000 && (
+          <Callout tone="danger" title="Batch exceeds 1000 simulations">
+            <Num value={totalSimulations} digits={0} /> runs requested. The server
+            will reject this request.
+          </Callout>
+        )}
+      </Panel>
+
+      {/* Submit */}
+      <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
+        <Play className="h-4 w-4 mr-2" aria-hidden="true" />
+        {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}
+      </Button>
+    </form>
   )
 }

@@ -1,6 +1,18 @@
 /**
- * Covers app-shell-navigation R1 (mounted once), R2 (never on the public and
- * auth routes) and R3 (the legacy header yields).
+ * Covers app-shell-navigation R1 (mounted once) and R2 (never on the public
+ * and auth routes).
+ *
+ * R3 — "the legacy `Header` yields to the shell" — closed by deletion: the
+ * component, its only navigation, and the `AppShellContext` that told it the
+ * shell was mounted are gone, so there is nothing left that could yield.
+ *
+ * What R3 protected does not disappear with it, but it does not live in this
+ * file either. "No route ever shows two navigations at once" is now two facts
+ * held in two places: the shell draws exactly its own two navigations — counted
+ * here, by role and **without** a name filter — and no page draws one of its
+ * own — asserted by each page test with `querySelector('nav')`, which is the
+ * only place a page's navigation can appear. Counting navigations here cannot
+ * prove the second fact: the child of these renders is a literal paragraph.
  *
  * Driven at component level with `usePathname` mocked, which is the pattern
  * this repository already uses. Rendering `app/layout.tsx` is not an option:
@@ -39,7 +51,6 @@ vi.mock('@/hooks/useProjects', () => ({ useProject: () => ({ data: null }) }))
 vi.mock('@/lib/ai-api', () => ({ aiApi: { checkAccess: () => Promise.resolve({ has_access: false }) } }))
 
 import { AppShell } from '../AppShell'
-import { Header } from '@/components/layout/Header'
 
 function renderAt(path: string) {
   pathname.current = path
@@ -59,8 +70,41 @@ describe('AppShell', () => {
     }
   })
 
-  it('wraps an application route in exactly one navigation', () => {
+  it('keeps the page frame before the session resolves, because the frame follows the route', () => {
+    // `isLoading` is true during the server render and the first client render of
+    // every load. While the frame followed `showChrome`, every migrated page
+    // painted edge to edge and then jumped 40px right and 36px down when
+    // `/auth/me` resolved — a jump the un-migrated screens never showed, because
+    // they still carry their own container.
+    auth.current = {
+      user: null,
+      isAuthenticated: false,
+      isLoading: true,
+      logout: () => {},
+    } as unknown as typeof auth.current
+
+    const { container } = renderAt('/projects/p1')
+
+    const main = container.querySelector('main')
+    expect(main?.className).toContain('px-10')
+    expect(main?.className).not.toBe('contents')
+  })
+
+  it('leaves the chromeless routes without a page frame, because the route says so', () => {
+    const { container } = renderAt('/auth/login')
+
+    expect(container.querySelector('main')?.className).toBe('contents')
+  })
+
+  it('wraps an application route in exactly two navigations, its own and no more', () => {
     renderAt('/dashboard')
+
+    // Counted by role with no name filter, on purpose. An earlier version of
+    // this file counted only navigations named "Main", and the scenario this
+    // change deletes had already warned what that misses: the retired `Header`
+    // drew an unnamed `<nav>`, so a duplicate navigation was invisible to a
+    // name-scoped count. The shell's own two are the rail and the breadcrumb.
+    expect(screen.getAllByRole('navigation')).toHaveLength(2)
     expect(screen.getAllByRole('navigation', { name: 'Main' })).toHaveLength(1)
     expect(screen.getByText('page body')).toBeTruthy()
   })
@@ -82,23 +126,6 @@ describe('AppShell', () => {
     renderAt('/dashboard')
     expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull()
     expect(screen.getByText('page body')).toBeTruthy()
-  })
-
-  it('leaves the legacy header to navigate a signed-out visitor', () => {
-    // Making the provider unconditional silenced Header everywhere, so a
-    // visitor on an unprotected route had no navigation at all: middleware
-    // guards only /dashboard and /projects, and /settings, /ai and /admin
-    // became dead ends. The context value now follows the chrome.
-    auth.current = { ...auth.current, isAuthenticated: false, user: null as never }
-    pathname.current = '/settings'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
-    expect(screen.getByRole('link', { name: /Sign In/i })).toBeTruthy()
   })
 
   it('keeps one <main> across the authentication flip, so pages are not remounted', () => {
@@ -150,32 +177,6 @@ describe('AppShell', () => {
     auth.current = { ...auth.current, user: { ...auth.current.user, is_staff: true } }
     renderAt('/dashboard')
     expect(screen.getByRole('link', { name: 'Users' })).toBeTruthy()
-  })
-})
-
-describe('the legacy Header inside the shell', () => {
-  it('renders nothing, so no route shows two navigations', () => {
-    // Eighteen files still import Header. Rather than edit pages belonging to
-    // later waves, it yields to the shell.
-    //
-    // Counting navigations named "Main" would not catch this: Header's own
-    // <nav> carries no such name, so a duplicated navigation would be
-    // invisible to that assertion. The brand mark is what both render.
-    pathname.current = '/dashboard'
-    render(
-      <AppShell>
-        <Header />
-        <p>page body</p>
-      </AppShell>,
-    )
-    expect(screen.getAllByText('pyAgloGen3D')).toHaveLength(1)
-    expect(screen.getAllByRole('navigation')).toHaveLength(2) // Main + Breadcrumb
-  })
-
-  it('still renders on its own, outside the shell', () => {
-    pathname.current = '/dashboard'
-    render(<Header />)
-    expect(screen.getByText('pyAgloGen3D')).toBeTruthy()
   })
 })
 

@@ -8,7 +8,7 @@ generator somewhere else - the range-boundary children, the server-side default
 extremes, the precedence of a dict over the flat keys.
 
 So this module does not model anything. It runs the **same functions**
-`perform_create` runs (`views.py:1750-1906`), in the same order, over the same
+`perform_create` runs, in the same order, over the same
 inputs, and hands back the parameter dicts the children would carry. Nothing is
 written: `generate_limiting_cases`, `generate_sintering_extreme_cases` and
 `apply_sintering_config` are pure, and the preview never touches the database or
@@ -34,14 +34,16 @@ from __future__ import annotations
 
 import itertools
 from collections.abc import Mapping
-from math import prod
+from math import isfinite, prod
 from typing import Any
 
 from .sintering_shape import check_flat_keys, check_flat_required
 from .utils import (
     apply_sintering_config,
+    complete_distribution_aliases,
     generate_limiting_cases,
     generate_sintering_extreme_cases,
+    set_distribution_parameter,
 )
 
 
@@ -53,28 +55,94 @@ class GridShapeError(ExpansionPreviewError):
     """A `parameter_grid` value that is not a list of values."""
 
 
-#: `create_simulation` casts these before storing them (`views.py:1810-1815`).
-INTEGER_PARAMS = ("n_particles",)
+#: `create_simulation` casts these before storing them, and this module mirrors
+#: it. The engine binding takes a real number, never a string: a study that
+#: swept `"1.5"` stored a string, and `run_tunable_cc` answered `TypeError:
+#: argument 'target_df': must be real number, not str` - while the worker's own
+#: range checks (`0.1 <= target_kf <= 2.7`) raised the same TypeError before the
+#: binding was even reached (#115, point 2).
+NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
+    ("n_particles", int),
+    ("target_df", float),
+    ("target_kf", float),
+    ("particle_radius", float),
+    # #230: the rest of the numeric parameters the worker reads. Taken from the
+    # binding's own call sites rather than from the issue's list, which is how
+    # `geometric_std` and `radius_max` turned up outside it - the sixth time a list
+    # of the named instances was shorter than the class.
+    ("sticking_probability", float),
+    ("geometric_mean", float),
+    ("geometric_std", float),
+    ("radius_min", float),
+    ("radius_max", float),
+    ("n_levels", int),
+    ("seed_cluster_size", int),
+    ("max_rotation_attempts", int),
+)
+
+#: The two the engine accepts as absent. Measured: `null` answers 201 today and the
+#: worker passes `None` through, where it means "choose for me" - so casting must
+#: leave it alone instead of turning an unset option into a refusal.
+OPTIONAL_NUMERIC_PARAMS = frozenset({"seed_cluster_size", "max_rotation_attempts"})
 
 
-def _cast_integers(sim_params: dict[str, Any], *, guarded: bool) -> None:
-    """Mirror the int() cast of the real path, including its asymmetry.
+def _not_a_number(name: str, cast: type, value: Any) -> str:
+    kind = "a whole number" if cast is int else "a real number"
+    return (
+        f"'{name}' must be {kind}, got {value!r}. The engine cannot run that "
+        "value, so the study is refused instead of storing it."
+    )
 
-    `create_simulation` skips dicts (`views.py:1812-1814`); the inline
-    sintering-extremes block does not (`views.py:1878-1880`). Both are
-    reproduced, because a cast that raises here costs nothing, while the same
-    cast raising during expansion costs a study row and its queued tasks.
+
+def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
+    """Cast the numeric parameters, or name the one that cannot be cast.
+
+    `create_simulation` skips dicts on the paths that always did; the branch
+    that builds the sintering extremes does not. Both are reproduced, because
+    here costs nothing, while the same cast raising during expansion costs a
+    study row and its queued tasks.
+
+    A value that cannot be cast raises a `ValueError` naming the key and the
+    value, which the serializer answers as a 400 before anything is written.
+    Storing it instead left the engine to reject the child later, with a
+    TypeError nobody could attribute to the payload that caused it.
+
+    The error is filed under `non_field_errors`, and that key is pinned:
+    `test_r12_a_grid_fault_names_the_grid_and_the_rest_does_not_claim_a_field`
+    asserts that a *shape* fault names `parameter_grid` while a cast fault does
+    not, and moving one into the other changes a client-visible contract. The
+    reason the batch page shows nothing for a 400 is that it has no `onError`
+    at all, whatever the key says.
+
+    Two values cast cleanly and are still refused, both measured on PR #221:
+
+    - a `bool`, because `True` would store as `1.0` - the same rule
+      `_coerce_positive_finite` follows in `services/params.py`;
+    - a non-finite float, because `float("nan")` succeeds and a `JSONField`
+      cannot hold it. The study row was already written when the insert failed,
+      so the request answered 500 and left a `running` study with no children.
     """
-    for name in INTEGER_PARAMS:
+    for name, cast in NUMERIC_CASTS:
         if name not in sim_params:
+            continue
+        if name in OPTIONAL_NUMERIC_PARAMS and sim_params[name] is None:
             continue
         if guarded and isinstance(sim_params[name], dict):
             continue
-        sim_params[name] = int(sim_params[name])
+        value = sim_params[name]
+        if isinstance(value, bool):
+            raise ValueError(_not_a_number(name, cast, value))
+        try:
+            casted = cast(value)
+        except (TypeError, ValueError, OverflowError):
+            raise ValueError(_not_a_number(name, cast, value)) from None
+        if cast is float and not isfinite(casted):
+            raise ValueError(_not_a_number(name, cast, value))
+        sim_params[name] = casted
 
 
 def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[str, Any]:
-    """Apply what `create_simulation` applies (`views.py:1784-1815`)."""
+    """Apply what `create_simulation` applies."""
     sim_params = dict(params)
     sim_params.pop("seed_type", None)
 
@@ -84,8 +152,11 @@ def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[st
     else:
         sim_params = apply_sintering_config(sim_params, study_sintering_config)
 
-    _cast_integers(sim_params, guarded=True)
-    return sim_params
+    cast_numeric_params(sim_params, guarded=True)
+    # Mirror `create_simulation`: a parity key declared anywhere on the request
+    # reaches the engine under the name the worker reads (R13.10), and the grid
+    # key stays for the four result views.
+    return complete_distribution_aliases(sim_params)
 
 
 def preview_children(
@@ -136,7 +207,9 @@ def preview_children(
         for combo in itertools.product(*param_values):
             params = dict(base_parameters)
             for index, name in enumerate(param_names):
-                params[name] = combo[index]
+                set_distribution_parameter(
+                    params, name, combo[index], declared=param_names
+                )
             children.append(_as_child(params, study_sintering_config))
 
         if include_limiting_cases:
@@ -153,11 +226,18 @@ def preview_children(
                 extreme_cases = generate_sintering_extreme_cases(dict(base_parameters))
                 # This path deliberately does not apply the study's dict: each
                 # child keeps the flat coefficient of its own extreme
-                # (`views.py:1875-1880`).
+                # (`perform_create` builds them through `create_simulation`).
                 for _t, _d, params in extreme_cases:
-                    extreme_child = dict(params)
-                    _cast_integers(extreme_child, guarded=False)
-                    children.append(extreme_child)
+                    # The real path pops `seed_type` into the child's field
+                    # (R4.3), so the preview must not hand it back in the
+                    # parameters: a judge measured the two sides disagreeing
+                    # here (#115, point 3).
+                    params.pop("seed_type", None)
+                    cast_numeric_params(params, guarded=False)
+                    # Mirror `views.py`: the real extremal children get the same
+                    # translation, so a parity key declared in base_parameters
+                    # reaches the engine from this path too (R13.10).
+                    children.append(complete_distribution_aliases(params))
         if not children:
             # An empty sweep produces no child at all, so nothing above was
             # checked. The base projection is then the only shape the study
@@ -172,7 +252,6 @@ def preview_children(
         raise ExpansionPreviewError(
             f"this study cannot be expanded as configured: {exc}"
         ) from exc
-
 
     return children
 

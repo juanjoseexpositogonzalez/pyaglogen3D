@@ -1,7 +1,7 @@
 """Integration tests for aglogen_core Rust module."""
-import pytest
-import numpy as np
 
+import numpy as np
+import pytest
 
 # Skip all tests if aglogen_core is not installed
 aglogen_core = pytest.importorskip("aglogen_core")
@@ -12,11 +12,7 @@ class TestDLASimulation:
 
     def test_dla_basic_run(self):
         """Test that DLA simulation runs and returns valid result."""
-        result = aglogen_core.run_dla(
-            n_particles=50,
-            sticking_probability=1.0,
-            seed=42
-        )
+        result = aglogen_core.run_dla(n_particles=50, sticking_probability=1.0, seed=42)
 
         assert result.coordinates.shape == (50, 3)
         assert result.radii.shape == (50,)
@@ -68,9 +64,9 @@ class TestCCASimulation:
         result = aglogen_core.run_cca(
             n_particles=30,
             sticking_probability=1.0,
-            particle_radius=1.0,
+            radius_min=1.0,
             box_size=20.0,
-            seed=42
+            seed=42,
         )
 
         assert result.coordinates.shape == (30, 3)
@@ -79,12 +75,7 @@ class TestCCASimulation:
 
     def test_cca_deterministic_with_seed(self):
         """Test that CCA produces identical results with same seed."""
-        params = dict(
-            n_particles=20,
-            particle_radius=1.0,
-            box_size=15.0,
-            seed=99999
-        )
+        params = dict(n_particles=20, radius_min=1.0, box_size=15.0, seed=99999)
         result1 = aglogen_core.run_cca(**params)
         result2 = aglogen_core.run_cca(**params)
 
@@ -93,11 +84,7 @@ class TestCCASimulation:
 
     def test_cca_metrics_populated(self):
         """Test that all metrics are returned and valid."""
-        result = aglogen_core.run_cca(
-            n_particles=30,
-            box_size=20.0,
-            seed=42
-        )
+        result = aglogen_core.run_cca(n_particles=30, box_size=20.0, seed=42)
 
         assert result.fractal_dimension > 0
         assert result.radius_of_gyration > 0
@@ -110,10 +97,7 @@ class TestBallisticSimulation:
     def test_ballistic_basic_run(self):
         """Test that Ballistic simulation runs and returns valid result."""
         result = aglogen_core.run_ballistic(
-            n_particles=50,
-            sticking_probability=1.0,
-            particle_radius=1.0,
-            seed=42
+            n_particles=50, sticking_probability=1.0, radius_min=1.0, seed=42
         )
 
         assert result.coordinates.shape == (50, 3)
@@ -131,11 +115,7 @@ class TestBallisticSimulation:
     def test_ballistic_produces_denser_structures(self):
         """Ballistic aggregation should produce denser (higher Df) structures than CCA."""
         ballistic_result = aglogen_core.run_ballistic(n_particles=100, seed=42)
-        cca_result = aglogen_core.run_cca(
-            n_particles=100,
-            box_size=30.0,
-            seed=42
-        )
+        cca_result = aglogen_core.run_cca(n_particles=100, box_size=30.0, seed=42)
 
         # Ballistic typically Df ~ 2.8-3.0, CCA ~ 1.8-2.0
         # Not always guaranteed with small N, so just check both are valid
@@ -198,20 +178,17 @@ class TestEdgeCases:
         """Test with very low sticking probability."""
         # Note: sticking_probability=0 might never terminate,
         # so test with very small value or expect specific behavior
-        result = aglogen_core.run_dla(
-            n_particles=10,
-            sticking_probability=0.5,
-            seed=42
-        )
+        result = aglogen_core.run_dla(n_particles=10, sticking_probability=0.5, seed=42)
         assert result.coordinates.shape[0] == 10
 
     def test_custom_particle_radius(self):
-        """Test with non-default particle radius."""
-        result = aglogen_core.run_ballistic(
-            n_particles=20,
-            particle_radius=2.5,
-            seed=42
-        )
+        """Test with non-default particle radius.
+
+        The binding exposes the radius as a ``radius_min``/``radius_max`` pair
+        (it was a single ``particle_radius``); leaving ``radius_max`` unset
+        pins every particle to ``radius_min``, which is the old behaviour.
+        """
+        result = aglogen_core.run_ballistic(n_particles=20, radius_min=2.5, seed=42)
 
         # All radii should be 2.5
         np.testing.assert_array_equal(result.radii, np.full(20, 2.5))

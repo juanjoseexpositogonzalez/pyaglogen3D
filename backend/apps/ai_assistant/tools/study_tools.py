@@ -9,6 +9,7 @@ import random
 from typing import Any
 
 from apps.projects.models import Project
+from apps.simulations.expansion_preview import cast_numeric_params
 from apps.simulations.models import (
     ParametricStudy,
     Simulation,
@@ -16,6 +17,7 @@ from apps.simulations.models import (
     SimulationStatus,
 )
 from apps.simulations.tasks import run_simulation_task
+from apps.simulations.utils import complete_distribution_aliases
 
 from .decorators import tool
 
@@ -160,6 +162,18 @@ def create_parametric_study_handler(
         # Merge base parameters with varied parameters
         params = {**base_parameters, **combo}
 
+        # The same three steps the study path applies (#115 points 2 and 3): cast
+        # the numerics the binding reads, translate a declared key to the name the
+        # worker reads, and move `seed_type` to its model field. This tool builds
+        # children itself, so it was a fourth door with all three of them open -
+        # a swept "1.5" was stored as a string the binding refused, and a declared
+        # seed_type stayed in the blob while the child ran at the default (#229).
+        cast_numeric_params(params, guarded=True)
+        params = complete_distribution_aliases(params)
+        child_seed_type = params.pop(
+            "seed_type", base_parameters.get("seed_type", "monomers")
+        )
+
         for seed_idx in range(seeds_per_combination):
             seed = random.randint(1, 2**31 - 1)
 
@@ -170,18 +184,23 @@ def create_parametric_study_handler(
                 parameters=params,
                 seed=seed,
                 status=SimulationStatus.QUEUED,
+                seed_type=child_seed_type,
             )
             simulations_created.append(sim)
+            # Linked as it is created and dispatched only below: a child that
+            # finished before its siblings were linked settled the study on a
+            # partial set (#152).
+            study.simulations.add(sim)
 
-            # Queue Celery task
-            task = run_simulation_task.delay(str(sim.id))
-            sim.task_id = task.id
-            sim.save(update_fields=["task_id"])
-
-    # Link simulations to study
-    study.simulations.add(*simulations_created)
+    # Running before dispatch, never after: settling when the last child
+    # finishes would otherwise be overwritten by this save.
     study.status = SimulationStatus.RUNNING
     study.save(update_fields=["status"])
+
+    for sim in simulations_created:
+        task = run_simulation_task.delay(str(sim.id))
+        sim.task_id = task.id
+        sim.save(update_fields=["task_id"])
 
     return {
         "status": "running",
@@ -297,8 +316,10 @@ def get_study_results_handler(
         }
 
     # Aggregate metrics
-    all_metrics = []
-    parameter_values = {param: set() for param in study.parameter_grid.keys()}
+    all_metrics: list[dict[str, Any]] = []
+    parameter_values: dict[str, set[Any]] = {
+        param: set() for param in study.parameter_grid.keys()
+    }
 
     for sim in completed_sims:
         if sim.metrics:
@@ -315,14 +336,21 @@ def get_study_results_handler(
                     parameter_values[param].add(sim.parameters[param])
 
     # Calculate summary statistics
-    df_values = [
-        m.get("fractal_dimension") for m in all_metrics if m.get("fractal_dimension")
+    # `float(...)` rather than `.get(...)`: the truthiness filter does not narrow
+    # `Any | None` for the type checker, and the summary below does arithmetic on
+    # these. Same values, a type the reader can trust (#235).
+    df_values: list[float] = [
+        float(m["fractal_dimension"])
+        for m in all_metrics
+        if m.get("fractal_dimension")
     ]
-    rg_values = [
-        m.get("radius_of_gyration") for m in all_metrics if m.get("radius_of_gyration")
+    rg_values: list[float] = [
+        float(m["radius_of_gyration"])
+        for m in all_metrics
+        if m.get("radius_of_gyration")
     ]
 
-    summary = {
+    summary: dict[str, Any] = {
         "completed_simulations": len(all_metrics),
         "total_simulations": study.simulations.count(),
     }

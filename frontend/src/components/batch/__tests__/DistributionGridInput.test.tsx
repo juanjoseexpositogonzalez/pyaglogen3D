@@ -148,3 +148,27 @@ describe('DistributionGridInput', () => {
     expect(options.map(o => o.value)).toEqual(['fixed', 'normal'])
   })
 })
+
+// ---------------------------------------------------------------------------
+// R8.4 — the contract names this component, so the behaviour is witnessed here
+// and not only inside the selector it renders.
+// ---------------------------------------------------------------------------
+
+describe('DistributionGridInput — R8.4 on the component the scenario names', () => {
+  it('shows a border and a message on an entry whose mean is invalid', () => {
+    render(
+      <DistributionGridInput
+        label="configurations"
+        value={[{ mode: 'normal', mean: -1, std: 0.1 } as DistributionValue]}
+        onChange={vi.fn()}
+      />,
+    )
+
+    const mean = screen.getAllByRole('spinbutton')[0] as HTMLInputElement
+    fireEvent.blur(mean)
+
+    expect(screen.getByRole('alert').textContent).toMatch(/mean/i)
+    expect(mean.getAttribute('aria-invalid')).toBe('true')
+    expect(mean.className).toMatch(/destructive/)
+  })
+})

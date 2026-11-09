@@ -137,8 +137,13 @@ describe('DistributionSelector', () => {
     expect(onChange).toHaveBeenCalledTimes(1)
     const newVal = onChange.mock.calls[0][0] as DistributionValue
     expect(newVal.mode).toBe('uniform')
-    expect((newVal as { min: number }).min).toBe(2.0)
-    expect((newVal as { max: number }).max).toBe(2.0)
+    // R13.11: this used to assert `min === max === 2.0`, which is the payload
+    // the backend refuses with `max must be > min` - the test was pinning the
+    // defect it should have caught. Switching to uniform now brackets the value
+    // the user already chose, so the form can be submitted without editing a
+    // bound first.
+    expect((newVal as { min: number }).min).toBeCloseTo(1.8)
+    expect((newVal as { max: number }).max).toBeCloseTo(2.2)
   })
 
   it('switching from normal to fixed preserves mean as value', () => {
@@ -315,5 +320,91 @@ describe('DistributionSelector', () => {
     )
 
     expect(screen.queryByRole('alert')).toBeNull()
+  })
+})
+
+// ---------------------------------------------------------------------------
+// #181 (slice 2 of 3) — the selector moves onto the design-system kit.
+//
+// The selector is a leaf field group: it renders inside `DistributionGridInput`
+// rows, which are already boxed and already carry their own heading, so it takes
+// no `Panel` of its own. What it does take from the kit is the notice: the field
+// message becomes a `Callout`, which pairs its tint with an icon and a title, and
+// its colours come from tokens instead of the palette.
+//
+// Plain matchers only: this repository's vitest setup does not load
+// @testing-library/jest-dom.
+// ---------------------------------------------------------------------------
+
+describe('DistributionSelector — design-system kit', () => {
+  it('carries no palette literal and no deprecated colour utility', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const source = readFileSync(
+      join(process.cwd(), 'src/components/forms/DistributionSelector.tsx'),
+      'utf8',
+    )
+
+    const PALETTE =
+      /-(?:slate|gray|zinc|neutral|stone|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3}/
+    expect(source.match(PALETTE)).toBeNull()
+    expect(source).not.toMatch(/#(?=[0-9a-fA-F]*[a-fA-F])[0-9a-fA-F]{3,8}\b/)
+    expect(source).not.toMatch(/rgba?\(/)
+    // The message is a notice, not a hand-painted paragraph.
+    expect(source).toMatch(/from '@\/components\/kit\/Callout'/)
+    // The invalid border deliberately keeps the `destructive` bridge token:
+    // two tests outside this change's scope pin that class name on the input.
+    // Moving it to the kit's `danger` needs them updated first.
+  })
+
+  it('reports a broken value as a notice that the field points at', () => {
+    const value: DistributionValue = { mode: 'normal', mean: 1, std: 0.5 }
+    render(
+      <DistributionSelector
+        label="particle radius"
+        value={value}
+        onChange={vi.fn()}
+        parameterName="particle_radius_config"
+      />,
+    )
+
+    const std = screen.getByLabelText('desviación') as HTMLInputElement
+    // Nothing is said while the user is still typing (R8.4).
+    expect(std.getAttribute('aria-describedby')).toBeNull()
+
+    fireEvent.blur(std)
+
+    const describedBy = std.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    // The id must resolve: an `aria-describedby` pointing at nothing announces
+    // nothing, which is what a wrapper change silently breaks. `Callout` takes
+    // no id, so the description lives on a wrapper and the state on the notice
+    // inside it.
+    const notice = document.getElementById(describedBy!)
+    expect(notice).toBeTruthy()
+    expect(notice!.querySelector('[role="alert"]')).toBeTruthy()
+    expect(notice!.textContent).toContain('std/mean')
+    expect(notice!.textContent).toContain('0.3')
+  })
+
+  it('marks a non-positive value only after the field loses focus', () => {
+    render(
+      <DistributionSelector
+        label="dpo"
+        value={{ mode: 'fixed', value: 0 }}
+        onChange={vi.fn()}
+      />,
+    )
+
+    const input = screen.getByRole('spinbutton') as HTMLInputElement
+    expect(input.getAttribute('aria-invalid')).toBeNull()
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    fireEvent.blur(input)
+
+    expect(screen.getByRole('alert').textContent).toContain(
+      "'value' must be greater than 0",
+    )
+    expect(input.getAttribute('aria-invalid')).toBe('true')
   })
 })

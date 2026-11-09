@@ -53,8 +53,13 @@ export function Panel({
         className,
       )}
     >
+      {/*
+        One column below `sm`. A panel that carries an action used to keep its
+        title, hint and action in one row at every width, which left the hint a
+        ~90px column on a 320px viewport.
+      */}
       {(title || action) && (
-        <header className="mb-[14px] flex items-start justify-between gap-4">
+        <header className="mb-[14px] flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
           <div className="min-w-0">
             {title && (
               <h2 className="text-[16px] font-semibold tracking-[-0.015em] text-ink">{title}</h2>

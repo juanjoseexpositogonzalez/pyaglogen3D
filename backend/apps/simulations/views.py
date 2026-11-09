@@ -19,6 +19,7 @@ from rest_framework.response import Response
 
 from apps.accounts.permissions import IsProjectOwnerOrShared
 
+from .expansion_preview import cast_numeric_params
 from .models import ParametricStudy, Simulation, SimulationStatus
 from .serializers import (
     BatchProjectionExportRequestSerializer,
@@ -37,6 +38,7 @@ from .services.projection import (
     render_projection_svg,
 )
 from .services.projections import build_projection_zip
+from .sintering_shape import FLAT_KEYS
 from .tasks import compute_import_metrics_task, run_simulation_task
 from .utils import CSVParseError, parse_csv_geometry
 
@@ -1761,9 +1763,11 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
         from .utils import (
             apply_sintering_config,
+            complete_distribution_aliases,
             generate_limiting_cases,
             generate_simulation_name,
             generate_sintering_extreme_cases,
+            set_distribution_parameter,
         )
 
         project_id = self.kwargs.get("project_pk")
@@ -1776,15 +1780,38 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # Create all combinations
         combinations = list(itertools.product(*param_values))
 
-        # Parameters that must be integers
-        integer_params = {"n_particles"}
+        # Numeric parameters the engine reads as numbers. The map lives in
+        # expansion_preview, so the child the preview validates and the child
+        # stored here cannot disagree (#115, point 2).
 
         simulations_created = []
 
         def create_simulation(
-            params: dict, case_type: str = "grid", case_label: str = ""
+            params: dict,
+            case_type: str = "grid",
+            case_label: str = "",
+            *,
+            guarded_cast: bool = True,
+            study_sintering: bool = True,
         ) -> None:
             """Create a single simulation with all configurations applied.
+
+            The grid, the limiting cases and the range boundaries all come
+            through here with their combination. The sintering extremes differ in
+            exactly two ways and are the reason for the two flags: they define
+            their own settings, so the study's config is not applied
+            (`study_sintering=False`), and their block has never skipped dicts
+            before the numeric cast (`guarded_cast=False`).
+
+            `study_sintering` is pinned: forgetting it makes the extremes inherit
+            the study's config and several tests say so. `guarded_cast` is not,
+            and cannot be: the pre-write preview refuses a dict under a numeric
+            key before this runs, so no payload reaches the unguarded branch. It
+            stays because `expansion_preview` still casts those children
+            unguarded, and the two sides are meant to describe the same work -
+            deleting it here would leave the mirror claiming a difference that
+            only one side makes. A reader who finds it unexamined should read
+            this paragraph rather than assume coverage.
 
             Handles:
             - seed_type: popped from params → set as model field (fix #634)
@@ -1800,19 +1827,45 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 study.base_parameters.get("seed_type", "monomers"),
             )
 
-            # --- sintering: grid-level overrides study-level ---
-            combo_sintering = sim_params.pop("sintering_config", None)
-            if combo_sintering is not None:
-                sim_params = apply_sintering_config(sim_params, combo_sintering)
-            else:
-                sim_params = apply_sintering_config(sim_params, study.sintering_config)
+            # #115, point 8: R3's precedence lets a config dict win over a flat
+            # sweep, and this name is built from the combination. Capture what
+            # the combination asked for before the config writes over it.
+            swept_flats = {
+                key: value for key, value in sim_params.items() if key in FLAT_KEYS
+            }
 
-            # Ensure integer parameters are properly typed (guard: skip dicts)
-            for param_name in integer_params:
-                if param_name in sim_params and not isinstance(
-                    sim_params[param_name], dict
-                ):
-                    sim_params[param_name] = int(sim_params[param_name])
+            # --- sintering: grid-level overrides study-level ---
+            # Popped either way. The pop is unobservable today - the generator
+            # already removes the key (utils.py) - so this is defence in depth,
+            # not a behaviour: it keeps a stray `sintering_config` out of the
+            # child's parameters if that generator ever stops.
+            combo_sintering = sim_params.pop("sintering_config", None)
+            if study_sintering:
+                if combo_sintering is not None:
+                    sim_params = apply_sintering_config(sim_params, combo_sintering)
+                else:
+                    sim_params = apply_sintering_config(
+                        sim_params, study.sintering_config
+                    )
+
+            # Cast the numeric parameters (guard: skip dicts on the paths whose
+            # block always did; the extremes block never did).
+            cast_numeric_params(sim_params, guarded=guarded_cast)
+
+            # #115, point 8: the config may have written over a swept value.
+            # The name must not promise what the child does not run with, so it
+            # carries both the asked-for value and the effective one.
+            if case_label:
+                for key, before in swept_flats.items():
+                    after = sim_params.get(key)
+                    if after is not None and after != before:
+                        case_label = case_label.replace(
+                            f"{key}={before}", f"{key}={before} -> {after}"
+                        )
+
+            # R13.10: a parity key declared anywhere reaches the engine under
+            # the name the worker reads, and the grid key stays for the views.
+            sim_params = complete_distribution_aliases(sim_params)
 
             for seed_idx in range(study.seeds_per_combination):
                 seed = random.randint(0, 2**31 - 1)
@@ -1836,19 +1889,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 simulations_created.append(sim)
                 study.simulations.add(sim)
 
-                # Queue the task
-                try:
-                    result = run_simulation_task.delay(str(sim.id))
-                    sim.task_id = result.id
-                    sim.save(update_fields=["task_id"])
-                except Exception as e:
-                    logger.warning(f"Failed to queue simulation {sim.id}: {e}")
-
         # 1. Regular grid combinations
         for combo in combinations:
             params = dict(study.base_parameters)
             for i, name in enumerate(param_names):
-                params[name] = combo[i]
+                set_distribution_parameter(
+                    params, name, combo[i], declared=param_names
+                )
             combo_str = ", ".join(
                 f"{name}={combo[i]}" for i, name in enumerate(param_names)
             )
@@ -1872,38 +1919,31 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     study.base_parameters
                 )
                 for case_type, description, params in sintering_cases:
-                    # Don't apply the study's sintering config for extreme cases
-                    # since they define their own sintering
-                    sim_params = dict(params)
-                    for param_name in integer_params:
-                        if param_name in sim_params:
-                            sim_params[param_name] = int(sim_params[param_name])
+                    # The extremes define their own sintering, so the study's
+                    # config is not applied, and their block has never skipped
+                    # dicts before the cast. Everything else - the seed_type
+                    # field, the cast, the aliases, the name, the row - is the
+                    # same work the grid does, and now it is the same code
+                    # (#115, point 7).
+                    create_simulation(
+                        params,
+                        case_type,
+                        description,
+                        guarded_cast=False,
+                        study_sintering=False,
+                    )
 
-                    for seed_idx in range(study.seeds_per_combination):
-                        seed = random.randint(0, 2**31 - 1)
-                        suffix = f"({case_type}: {description})"
-                        auto_name = generate_simulation_name(
-                            study.base_algorithm, suffix=suffix
-                        )
-
-                        sim = Simulation.objects.create(
-                            project_id=project_id,
-                            algorithm=study.base_algorithm,
-                            parameters=sim_params,
-                            seed=seed,
-                            name=auto_name,
-                            status=SimulationStatus.QUEUED,
-                            is_batch=True,
-                        )
-                        simulations_created.append(sim)
-                        study.simulations.add(sim)
-
-                        try:
-                            result = run_simulation_task.delay(str(sim.id))
-                            sim.task_id = result.id
-                            sim.save(update_fields=["task_id"])
-                        except Exception as e:
-                            logger.warning(f"Failed to queue simulation {sim.id}: {e}")
+        # Dispatch only once every child exists and is linked. The study settles
+        # when its last child finishes, and dispatching per child let the first
+        # one finish while the endpoint was still creating siblings: a study
+        # was closed with one of three children created (measured, #152).
+        for sim in simulations_created:
+            try:
+                result = run_simulation_task.delay(str(sim.id))
+                sim.task_id = result.id
+                sim.save(update_fields=["task_id"])
+            except Exception as e:
+                logger.warning(f"Failed to queue simulation {sim.id}: {e}")
 
         logger.info(
             f"Created parametric study {study.id} with {len(simulations_created)} simulations"
@@ -1991,7 +2031,10 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "base_algorithm": study.base_algorithm,
                 "base_parameters": study.base_parameters,
                 "parameter_grid": study.parameter_grid,
-                "status": "completed" if running == 0 else "running",
+                # The study now settles authoritatively (#152); reporting the
+                # computed guess here made two endpoints disagree about the
+                # same study (measured: field "failed", this "completed").
+                "status": study.status,
                 "progress": {
                     "total": total,
                     "completed": completed,

@@ -82,7 +82,7 @@ export function CompareOverlay({
     <div
       data-testid="compare-overlay"
       className={cn(
-        'relative h-[600px] w-full overflow-hidden rounded-lg border',
+        'relative h-[600px] w-full overflow-hidden rounded-lg border border-visual-border bg-visual',
       )}
     >
       <Canvas
@@ -106,7 +106,11 @@ export function CompareOverlay({
 
         {simulations.map((sim) => {
           if (!sim.geometry) return null
-          const color = colorMap[sim.id] ?? '#999999'
+          // The simulation's identity, from the one map the grid, the table and
+          // the chart also read: an index in the theme's ramp. No substitute
+          // colour here — a grey invented on this surface would be half an
+          // identity.
+          const color = colorMap[sim.id]
           const scale = getScaleFactorNm(sim.parameters)
 
           // Scale first, then center — so CoM is computed in nm space.
@@ -135,14 +139,19 @@ export function CompareOverlay({
         })}
       </Canvas>
 
-      {/* Legend — plain HTML, top-right corner. */}
+      {/* Legend — plain HTML, top-right corner. Kit surface and kit line, so
+          it reads over a dark canvas in both themes. */}
       <div
         data-testid="compare-overlay-legend"
-        className="absolute top-2 right-2 z-10 max-h-[90%] space-y-1 overflow-y-auto rounded border bg-background/90 p-2 text-xs shadow-sm backdrop-blur-sm"
+        className="absolute top-2 right-2 z-10 max-h-[90%] space-y-1 overflow-y-auto rounded-md border border-line bg-surface p-2 text-xs text-ink backdrop-blur-sm"
       >
         <div className="mb-1 font-semibold">Legend</div>
         {simulations.map((sim) => {
-          const color = colorMap[sim.id] ?? '#999999'
+          // The simulation's identity, from the one map the grid, the table and
+          // the chart also read: an index in the theme's ramp. No substitute
+          // colour here — a grey invented on this surface would be half an
+          // identity.
+          const color = colorMap[sim.id]
           return (
             <div
               key={sim.id}

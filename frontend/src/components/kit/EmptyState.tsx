@@ -18,10 +18,25 @@ export interface EmptyStateProps {
   /** What this surface is for, not merely that it is empty. */
   description: ReactNode
   action?: ReactNode
+  /**
+   * Heading level for the title. Required, with no default: an empty state
+   * sits wherever its page puts it, and a fixed level would be wrong for
+   * half the call sites. The projects list hangs off the page `h1`; the
+   * dashboard's sits inside a section that already has an `h2`.
+   */
+  headingLevel: 2 | 3 | 4
   className?: string
 }
 
-export function EmptyState({ icon: Icon, title, description, action, className }: EmptyStateProps) {
+export function EmptyState({
+  icon: Icon,
+  title,
+  description,
+  action,
+  headingLevel,
+  className,
+}: EmptyStateProps) {
+  const Heading = `h${headingLevel}` as 'h2' | 'h3' | 'h4'
   return (
     <div
       className={cn(
@@ -30,7 +45,7 @@ export function EmptyState({ icon: Icon, title, description, action, className }
       )}
     >
       {Icon && <Icon className="h-7 w-7 text-ink-faint" aria-hidden="true" />}
-      <p className="m-0 text-[15px] font-semibold text-ink">{title}</p>
+      <Heading className="m-0 text-[15px] font-semibold text-ink">{title}</Heading>
       <p className="m-0 max-w-[48ch] text-[12px] leading-relaxed text-ink-muted">{description}</p>
       {action && <div className="mt-1.5">{action}</div>}
     </div>

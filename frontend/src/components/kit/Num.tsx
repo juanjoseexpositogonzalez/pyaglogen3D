@@ -14,6 +14,12 @@ import { cn } from '@/lib/utils'
  * claim the engine cannot make, so `sigma` renders inline rather than being
  * left to each caller to format.
  *
+ * Thousands are grouped, which is what the screens did with `toLocaleString`
+ * before the port: a 100 000-particle agglomerate reads `100,000`, not
+ * `100000`, and a column of readings stays scannable. `en-US` rather than the
+ * host locale so the rendered string is the same everywhere, including in
+ * tests.
+ *
  * Covers design-system-foundation R6.
  */
 export interface NumProps {
@@ -34,6 +40,17 @@ export interface NumProps {
   className?: string
   /** Larger presentation for metric cards. */
   size?: 'sm' | 'md' | 'lg'
+  /**
+   * Renders for a dark instrument surface — `VisualPanel`'s caption bar, the
+   * shell's rail — instead of for paper.
+   *
+   * It has to be a prop and not a `className`: the ink sits on the inner value
+   * span, so a caller's class would land on the wrapper and change nothing.
+   * The paper tone on the caption bar measures 1.29:1 in the light theme,
+   * under AA; `--ink-on-dark` measures ~17:1 there and `--ink-on-dark-faint`
+   * 9.4:1 for the unit.
+   */
+  onDark?: boolean
 }
 
 const SIZES: Record<NonNullable<NumProps['size']>, string> = {
@@ -48,10 +65,21 @@ function format(value: number | null | undefined, digits: number): string {
   // column definitions that nothing validates.
   const safe = Math.max(0, Math.min(20, Math.trunc(digits)))
   if (value !== 0 && Math.abs(value) < 0.001) return value.toExponential(Math.min(safe, 2))
-  return value.toFixed(safe)
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: safe,
+    maximumFractionDigits: safe,
+  })
 }
 
-export function Num({ value, unit, digits = 2, sigma, className, size = 'md' }: NumProps) {
+export function Num({
+  value,
+  unit,
+  digits = 2,
+  sigma,
+  className,
+  size = 'md',
+  onDark = false,
+}: NumProps) {
   const text = format(value, digits)
   const hasSigma = sigma !== null && sigma !== undefined && Number.isFinite(sigma)
   // Without a magnitude there is nothing for a unit to qualify.
@@ -59,13 +87,20 @@ export function Num({ value, unit, digits = 2, sigma, className, size = 'md' }: 
 
   return (
     <span className={cn('inline-flex items-baseline gap-[0.28em]', className)}>
-      <span className={cn('num text-ink', SIZES[size])}>{text}</span>
+      <span className={cn('num', onDark ? 'text-ink-on-dark' : 'text-ink', SIZES[size])}>
+        {text}
+      </span>
       {hasSigma && (
-        <span className="num text-[0.72em] text-ink-muted" aria-label="standard deviation">
+        <span
+          className={cn('num text-[0.72em]', onDark ? 'text-ink-on-dark-faint' : 'text-ink-muted')}
+          aria-label="standard deviation"
+        >
           ±{format(sigma as number, digits)}
         </span>
       )}
-      {showUnit && <span className="num-unit">{unit}</span>}
+      {showUnit && (
+        <span className={cn('num-unit', onDark && 'text-ink-on-dark-faint')}>{unit}</span>
+      )}
     </span>
   )
 }

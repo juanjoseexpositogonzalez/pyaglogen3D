@@ -25,6 +25,7 @@ import { Download } from 'lucide-react'
 
 import { pollBoxCountingJobStatus, studiesApi } from '@/lib/api'
 import { formatNumber } from '@/lib/utils'
+import { formatParameterValue } from '@/lib/formatParameterValue'
 import { sturgesBuckets } from '@/components/fraktal/FraktalBatchDistributions'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -107,7 +108,7 @@ function formatConfigLabel(
   const entries: Array<[string, unknown]> = paramKeys.length
     ? paramKeys.map((k) => [k, result.parameters[k]])
     : Object.entries(result.parameters)
-  return entries.map(([k, v]) => `${k}=${v}`).join(', ')
+  return entries.map(([k, v]) => `${k}=${formatParameterValue(v)}`).join(', ')
 }
 
 export interface HistogramBin {
@@ -300,7 +301,7 @@ export function FractalAnalysisTab({
             <div key={configIndex} className="space-y-2">
               <div className="text-xs font-medium text-muted-foreground">
                 {Object.entries(cfg.config)
-                  .map(([k, v]) => `${k}=${v}`)
+                  .map(([k, v]) => `${k}=${formatParameterValue(v)}`)
                   .join(', ')}
               </div>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">

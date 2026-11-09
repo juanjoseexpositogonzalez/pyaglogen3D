@@ -15,6 +15,7 @@ validation and must produce a 400 before anything is written (R12).
 
 from __future__ import annotations
 
+import json
 import uuid
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -597,3 +598,711 @@ def test_r11_6_patch_on_a_consuming_algorithm_still_works(
     )
 
     assert resp.status_code == 200, resp.data
+
+
+# --- The freeze R11 never asked for -----------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("label", "stored"),
+    [
+        (
+            "grid dict",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "study field",
+            {"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        ),
+        (
+            "base_parameters dict",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "base_parameters flat",
+            {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}},
+        ),
+        ("grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
+        (
+            "extremes flat sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": [0.8]}
+                },
+            },
+        ),
+        (
+            "extremes dict sweep",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                },
+            },
+        ),
+        (
+            "grid stored as a list",
+            {
+                "parameter_grid": [1, 2, 3],
+                "base_parameters": {"n_particles": 100, "sintering_coeff": 0.8},
+            },
+        ),
+        (
+            "base_parameters stored as a string",
+            {"base_parameters": "oops", "parameter_grid": {"sintering_coeff": [0.8]}},
+        ),
+        (
+            "limiting stored as a list",
+            {
+                "limiting_cases_config": [1, 2],
+                "parameter_grid": {"sintering_coeff": [0.8]},
+            },
+        ),
+    ],
+)
+def test_a_stored_row_outside_the_allow_list_stays_editable(
+    api_client: APIClient, project: Project, label: str, stored: dict[str, Any]
+) -> None:
+    """R11 fixes *which* algorithm the rule is evaluated against, not *when*.
+
+    R11.6's own scenario is a PATCH that supplies a sintering key: it says
+    such a request is evaluated against the stored algorithm. Nothing in R11
+    asks for the rule to run on a request that touches no sintering key and
+    no algorithm - and running it there froze every row stored before the
+    allow-list existed, so renaming one answered 400 with no way out but
+    deleting it. R13.12 states the gate explicitly for its own four keys;
+    this is the same gate for R11's.
+    """
+    payload: dict[str, Any] = {
+        "name": f"historical: {label}",
+        "base_algorithm": "fracval",
+        "base_parameters": {"n_particles": 100},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    payload.update(stored)
+    row = ParametricStudy.objects.create(project=project, **payload)
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"name": "renamed"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a stored study carrying {label} can no longer be renamed: {resp.data}"
+    )
+    # Not only the status: a plausible "repair" of this gate is to heal the
+    # row by stripping the stored setting, which would keep every assertion
+    # above green while destroying what the user configured.
+    row.refresh_from_db()
+    for field, expected in stored.items():
+        assert getattr(row, field) == expected, (
+            f"the rename rewrote {field}: {getattr(row, field)!r} instead of {expected!r}"
+        )
+
+
+def test_the_bypass_that_was_critical_in_97_stays_closed(
+    api_client: APIClient, project: Project
+) -> None:
+    """Gating must not reopen what the sintering contract closed.
+
+    Creating without the setting and adding it by PATCH touches the key, so
+    the rule still runs; changing the algorithm of a row that already carries
+    it touches the algorithm, so it runs there too.
+    """
+    created = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    added = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{created.id}/",
+        data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        format="json",
+    )
+    assert added.status_code == 400, (
+        f"PATCH slipped sintering past the allow-list: {added.data}"
+    )
+    created.refresh_from_db()
+    assert not created.sintering_config, (
+        f"refused with 400 and persisted it anyway: {created.sintering_config!r}"
+    )
+
+    consuming = ParametricStudy.objects.create(
+        project=project,
+        name="consuming",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100},
+        parameter_grid={"sintering_coeff": [0.8]},
+        seeds_per_combination=1,
+    )
+    moved = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{consuming.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+    assert moved.status_code == 400, (
+        f"the algorithm moved out of the allow-list while sintering was stored: {moved.data}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("label", "payload"),
+    [
+        (
+            "extremes flat sweep",
+            {
+                "limiting_cases_config": {
+                    "theoretical_extremes": {"sintering_coeff": [0.8]}
+                }
+            },
+        ),
+        (
+            "extremes dict sweep",
+            {
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                }
+            },
+        ),
+    ],
+)
+@pytest.mark.parametrize("algorithm", NO_SINTERING)
+def test_the_swept_surfaces_cannot_slip_sintering_past_the_allow_list(
+    api_client: APIClient,
+    project: Project,
+    label: str,
+    payload: dict[str, Any],
+    algorithm: str,
+) -> None:
+    """Surfaces 6 and 7 of R3, which the first version of this guard missed.
+
+    A judge measured that dropping the swept carrier from the gate left the
+    whole suite green while a PATCH persisted sintering on `fracval` - the
+    exact bypass #97 closed as CRITICAL. The code was right; the witness did
+    not exist, and a witness that cannot fail is what this file keeps
+    learning about.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm=algorithm,
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"include_limiting_cases": True, **payload},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        f"{label} slipped sintering onto an algorithm that ignores it: {resp.data}"
+    )
+    # The message, not only the status: shrinking NO_SINTERING_ALGORITHMS left
+    # all 8 cases of this sweep green - and the 28 of the surface matrix too,
+    # which assert only that "sintering" appears - because it falls to a generic
+    # "unknown algorithm" - which is also wrong in front of a user, since the
+    # model accepts every one of these names. R11.4 promises a 400 stating
+    # that *this algorithm* does not consume sintering.
+    # No assertion on the error key here. It is `sintering_config` for every
+    # sintering surface, including the four of these cases whose payload
+    # carries `sintering_coeff` and no `sintering_config` at all - a field
+    # label naming a field the request never sent. R13 reports the real
+    # surface instead ("parameter_grid.kf_distribution[0]"), so the two
+    # halves of the API disagree, and pinning the key across these eight
+    # cases would forbid the fix rather than witness the requirement. R11.4
+    # promises the message, which the next assertion pins; the key has its
+    # own witness in test_the_refusal_is_reported_against_the_field_it_names.
+    mensaje = str(resp.data)
+    assert algorithm in mensaje and "does not consume" in mensaje, (
+        f"the error does not say that {algorithm} ignores sintering: {resp.data}"
+    )
+    row.refresh_from_db()
+    assert not (row.limiting_cases_config or {}).get("theoretical_extremes"), (
+        f"{label} persisted despite the 400: {row.limiting_cases_config!r}"
+    )
+
+
+def test_a_full_representation_is_judged_even_when_the_algorithm_is_unchanged(
+    api_client: APIClient, project: Project
+) -> None:
+    """R11.8's second clause: echoing the algorithm counts as touching it.
+
+    The thaw covers requests that leave the algorithm alone. A PUT must carry
+    `base_algorithm`, so a stored row stays refused there - decided rather
+    than left implicit, because a full representation asserting "this
+    algorithm with this sintering setting" asserts a combination the
+    allow-list forbids. The same holds for a PATCH that echoes it, which is
+    what a GET-then-write client sends.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="historical",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={"sintering_coeff": [0.8]},
+        seeds_per_combination=1,
+    )
+    url = f"/api/v1/projects/{project.id}/studies/{row.id}/"
+
+    echoed = api_client.patch(url, data={"base_algorithm": "fracval"}, format="json")
+    assert echoed.status_code == 400, (
+        f"echoing the algorithm skipped the allow-list: {echoed.data}"
+    )
+
+    replaced = api_client.put(
+        url,
+        data={
+            "name": "historical",
+            "base_algorithm": "fracval",
+            "base_parameters": {"n_particles": 100},
+            "parameter_grid": {"sintering_coeff": [0.8]},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+    assert replaced.status_code == 400, (
+        f"a full representation of an invalid combination was accepted: {replaced.data}"
+    )
+
+    renamed = api_client.patch(url, data={"name": "renamed"}, format="json")
+    assert renamed.status_code == 200, (
+        f"the rename that the thaw exists for stopped working: {renamed.data}"
+    )
+
+    # The PUT above carries the setting, so its 400 arrives through the
+    # ordinary carrier and would survive the echo clause being deleted. These
+    # two leave the setting out of the body, so the stored one plus the
+    # echoed algorithm are the only thing left to judge.
+    for field, stored in (
+        ("sintering_config", {"distribution_type": "fixed", "coefficient": 0.8}),
+        ("limiting_cases_config", {"theoretical_extremes": {"sintering_coeff": [0.8]}}),
+    ):
+        carrier = ParametricStudy.objects.create(
+            project=project,
+            name=f"stored {field}",
+            base_algorithm="fracval",
+            base_parameters={"n_particles": 100},
+            parameter_grid={},
+            seeds_per_combination=1,
+            **{field: stored},
+        )
+        echo_only = api_client.put(
+            f"/api/v1/projects/{project.id}/studies/{carrier.id}/",
+            data={
+                "name": f"stored {field}",
+                "base_algorithm": "fracval",
+                "base_parameters": {"n_particles": 100},
+                "parameter_grid": {},
+                "seeds_per_combination": 1,
+            },
+            format="json",
+        )
+        assert echo_only.status_code == 400, (
+            f"the echoed algorithm alone did not judge the stored {field}: {echo_only.data}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("label", "stored"),
+    [
+        ("grid stored as a list", {"parameter_grid": [1, 2, 3]}),
+        ("base_parameters stored as a string", {"base_parameters": "oops"}),
+        ("limiting stored as a list", {"limiting_cases_config": [1, 2]}),
+        (
+            "extremes stored as a list",
+            {"limiting_cases_config": {"theoretical_extremes": [1, 2]}},
+        ),
+    ],
+)
+def test_a_mistyped_stored_container_answers_a_status_not_a_crash(
+    api_client: APIClient, project: Project, label: str, stored: dict[str, Any]
+) -> None:
+    """The guard, exercised on a request that actually reaches it.
+
+    The first version of this witness renamed the study, which touches
+    neither a sintering setting nor the algorithm - so the gate short-circuits
+    and the guard is never reached. Reverting any of the four guards left it
+    green. Touching the algorithm forces the dereference that used to raise.
+    """
+    campos: dict[str, Any] = {
+        "project": project,
+        "name": f"historical: {label}",
+        "base_algorithm": "fracval",
+        "base_parameters": {"n_particles": 100},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    campos.update(stored)
+    row = ParametricStudy.objects.create(**campos)
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "tunable_cc"},
+        format="json",
+    )
+
+    # Not `in (200, 400)`: R11.8 says a stored non-mapping is **ignored**,
+    # so the request must be answered on what it carries. Accepting either
+    # status would pass just as well if the row were judged instead.
+    assert resp.status_code == 200, (
+        f"{label} was judged on its stored garbage instead of ignored: "
+        f"{resp.status_code} {resp.data}"
+    )
+    # Ignored means left alone, which the status alone does not show: a
+    # repair that healed the stored container would keep the 200. Its
+    # siblings assert this for the other containers; this one did not.
+    row.refresh_from_db()
+    for field, value in stored.items():
+        assert getattr(row, field) == value, (
+            f"{label} rewrote {field} instead of ignoring it: {getattr(row, field)!r}"
+        )
+
+
+@pytest.mark.parametrize(
+    ("surface", "payload"),
+    [
+        (
+            "1 grid dict",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "3 base_parameters dict",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "4 base_parameters flat",
+            {"base_parameters": {"n_particles": 100, "sintering_coeff": 0.8}},
+        ),
+        ("5 grid flat sweep", {"parameter_grid": {"sintering_coeff": [0.8]}}),
+    ],
+)
+def test_no_surface_persists_sintering_on_an_algorithm_that_ignores_it(
+    api_client: APIClient, project: Project, surface: str, payload: dict[str, Any]
+) -> None:
+    """The #97 bypass, by PATCH, with the row re-read on every surface.
+
+    A judge measured that surface 3 had no witness at all and that surfaces
+    1, 4 and 5 asserted the status without re-reading: deleting
+    `data.get("base_parameters")` from the gate left the suite green except
+    one test of another surface, while a PATCH persisted the setting. The
+    CRITICAL this guards was about persistence, so persistence is what is
+    asserted.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+    # A snapshot by value rather than by reference. Said as what it is:
+    # hardening, not a measured hole. A judge tried and could not build a
+    # mutation that the reference form survives and this one catches, because
+    # DRF re-fetches the instance, so the serializer never mutates this
+    # object. It future-proofs a refactor that calls the serializer in
+    # process; it does not close anything measured today.
+    before = json.loads(
+        json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config])
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/", data=payload, format="json"
+    )
+
+    assert resp.status_code == 400, f"surface {surface} was accepted: {resp.data}"
+    row.refresh_from_db()
+    after = json.loads(
+        json.dumps([row.base_parameters, row.parameter_grid, row.sintering_config])
+    )
+    assert after == before, (
+        f"surface {surface} answered 400 and wrote anyway: "
+        f"{row.base_parameters} {row.parameter_grid} {row.sintering_config}"
+    )
+
+
+def test_a_full_update_of_an_allowed_study_still_succeeds(
+    api_client: APIClient, project: Project
+) -> None:
+    """The clause that unblocked the previous round, which had no witness.
+
+    R11.8 says a PUT is judged and refused only when the combination it
+    asserts is not allowed. Nothing in the suite asserted the other half, so
+    a regression refusing every full update would have stayed green - which
+    is how the false absolute got written in the first place.
+    """
+    created = api_client.post(
+        f"/api/v1/projects/{project.id}/studies/",
+        data={
+            "name": "allowed",
+            "base_algorithm": "tunable_cc",
+            "base_parameters": {"n_particles": 100},
+            "parameter_grid": {"n_particles": [100, 200]},
+            "seeds_per_combination": 1,
+            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.9},
+        },
+        format="json",
+    )
+    assert created.status_code == 201, created.data
+
+    replaced = api_client.put(
+        f"/api/v1/projects/{project.id}/studies/{created.data['id']}/",
+        data={
+            "name": "renamed by a full update",
+            "base_algorithm": "tunable_cc",
+            "base_parameters": {"n_particles": 100},
+            "parameter_grid": {"n_particles": [100, 200]},
+            "seeds_per_combination": 1,
+            "sintering_config": {"distribution_type": "fixed", "coefficient": 0.9},
+        },
+        format="json",
+    )
+
+    assert replaced.status_code == 200, (
+        f"a full update of an allowed combination was refused: {replaced.data}"
+    )
+    # A 200 is not the same as having written: an `update()` that validates
+    # and returns the instance without saving keeps every 400 in place and
+    # the whole suite green. "Succeeds" means the row changed.
+    stored = ParametricStudy.objects.get(id=created.data["id"])
+    assert stored.name == "renamed by a full update", (
+        f"the full update answered 200 and wrote nothing: {stored.name!r}"
+    )
+
+
+@pytest.mark.parametrize(
+    ("surface", "stored"),
+    [
+        (
+            "1 parameter_grid",
+            {
+                "parameter_grid": {
+                    "sintering_config": [
+                        {"distribution_type": "fixed", "coefficient": 0.8}
+                    ]
+                }
+            },
+        ),
+        (
+            "3 base_parameters",
+            {
+                "base_parameters": {
+                    "n_particles": 100,
+                    "sintering_config": {
+                        "distribution_type": "fixed",
+                        "coefficient": 0.8,
+                    },
+                }
+            },
+        ),
+        (
+            "7 theoretical_extremes",
+            {
+                "include_limiting_cases": True,
+                "limiting_cases_config": {
+                    "theoretical_extremes": {
+                        "sintering_config": [
+                            {"distribution_type": "fixed", "coefficient": 0.8}
+                        ]
+                    }
+                },
+            },
+        ),
+    ],
+)
+def test_the_stored_dict_surfaces_are_judged_when_only_the_algorithm_moves(
+    api_client: APIClient, project: Project, surface: str, stored: dict[str, Any]
+) -> None:
+    """The three dict surfaces read from the row, not from the payload.
+
+    Each has its own position in the allow-list call, and each was unwitnessed
+    in that dimension: swapping any of them for a payload read left the whole
+    suite at its baseline while a PATCH moved the study to an
+    algorithm that ignores sintering and kept the setting stored. Surface 1
+    was closed first and judges found 3 and 7 open in the same breath, which
+    is what parametrising instead of adding one case prevents.
+    """
+    campos: dict[str, Any] = {
+        "project": project,
+        "name": f"stored {surface}",
+        "base_algorithm": "tunable_cc",
+        "base_parameters": {"n_particles": 100},
+        "parameter_grid": {},
+        "seeds_per_combination": 1,
+    }
+    campos.update(stored)
+    row = ParametricStudy.objects.create(**campos)
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        f"stored surface {surface} was not judged when the algorithm moved: {resp.data}"
+    )
+    # No `assert row.base_algorithm == ...` here: a 400 means DRF never
+    # called save(), so it cannot fail while the assertion above passes. It
+    # is the class of assertion this file removed in round four.
+
+
+def test_the_stored_grid_dict_is_judged_when_only_the_algorithm_moves(
+    api_client: APIClient, project: Project
+) -> None:
+    """Surface 1 read from the row, which no witness covered.
+
+    A judge measured that swapping `eff_grid` for the payload `grid` in the
+    allow-list call left all 82 cases green, while a PATCH that moves the
+    algorithm persisted a sintering dict onto `fracval` - the #97 CRITICAL
+    reopened from the other side. The existing update witness for this
+    surface sends `parameter_grid` in the body, so it cannot tell the stored
+    value from the payload one.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="stored grid dict",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100},
+        parameter_grid={
+            "sintering_config": [{"distribution_type": "fixed", "coefficient": 0.8}]
+        },
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 400, (
+        f"the stored grid dict was not judged when the algorithm moved: {resp.data}"
+    )
+    # No `assert row.base_algorithm == ...` here either: a 400 means DRF never
+    # called save(), so it cannot fail while the assertion above passes.
+
+
+@pytest.mark.parametrize(
+    "stored",
+    # A list and a truthy scalar are the two behaviours; "oops" and 42 are
+    # the same case, so one of them is enough.
+    [[{"distribution_type": "fixed", "coefficient": 0.8}], "oops"],
+)
+def test_a_mistyped_stored_sintering_config_is_ignored_not_judged(
+    api_client: APIClient, project: Project, stored: Any
+) -> None:
+    """The fifth container, whose guard had no witness at all.
+
+    The discriminating move is towards an algorithm that does **not** consume
+    sintering: towards one that does there is nothing to judge, which is why
+    the first version of this witness passed with the guard reverted. With
+    the guard, the stored garbage is ignored and the request is answered on
+    what it carries; without it, `check_algorithm_scope` reads the non-mapping
+    as a setting and refuses a row the contract says to leave alone.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="stored sintering garbage",
+        base_algorithm="tunable_cc",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+        sintering_config=stored,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"base_algorithm": "fracval"},
+        format="json",
+    )
+
+    assert resp.status_code == 200, (
+        f"a stored {type(stored).__name__} in sintering_config was judged "
+        f"instead of ignored: {resp.status_code} {resp.data}"
+    )
+    # Ignored means left alone: a "repair" that healed the row by clearing
+    # the stored non-mapping would keep this 200 and pass otherwise.
+    row.refresh_from_db()
+    assert row.sintering_config == stored, (
+        f"the stored value was rewritten instead of ignored: {row.sintering_config!r}"
+    )
+
+
+def test_the_refusal_is_reported_against_the_field_it_names(
+    api_client: APIClient, project: Project
+) -> None:
+    """The error key of the R11 refusal, pinned once where it is truthful.
+
+    A judge measured that swapping `{"sintering_config": ...}` for
+    `{"detail": ...}` left all 88 cases of this file green: every assertion
+    read the message and none the key. He also measured why pinning it
+    across the swept sweep would be wrong - four of those payloads carry
+    `sintering_coeff` and never a `sintering_config`. So it is pinned here,
+    on the one surface that really does send that field.
+    """
+    row = ParametricStudy.objects.create(
+        project=project,
+        name="clean",
+        base_algorithm="fracval",
+        base_parameters={"n_particles": 100},
+        parameter_grid={},
+        seeds_per_combination=1,
+    )
+
+    resp = api_client.patch(
+        f"/api/v1/projects/{project.id}/studies/{row.id}/",
+        data={"sintering_config": {"distribution_type": "fixed", "coefficient": 0.8}},
+        format="json",
+    )
+
+    assert resp.status_code == 400, f"sintering slipped onto fracval: {resp.data}"
+    assert "sintering_config" in resp.data, (
+        f"the refusal does not name the field the request sent: {list(resp.data)}"
+    )

@@ -5,13 +5,21 @@ import Link from 'next/link'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useProject } from '@/hooks/useProjects'
 import { studiesApi, pollBoxCountingJobStatus } from '@/lib/api'
-import { Header } from '@/components/layout/Header'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
+import { Num } from '@/components/kit/Num'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
+import { SinteringWarning } from '@/components/batch/SinteringWarning'
+import { relaunchPayloadFor, studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
+import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
+import { simulationLabel } from '@/lib/projectionLabel'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { formatApiError } from '@/lib/formatApiError'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
-import { ArrowLeft, Plus, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowLeft, Plus, Trash2 } from 'lucide-react'
 import type { CreateParametricStudyInput, ParametricStudyResults } from '@/lib/types'
 
 export default function BatchSimulationsPage({
@@ -29,6 +37,15 @@ export default function BatchSimulationsPage({
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
   // Dedicated Fractal Analysis tab (P3, spec R7) — additive to the existing Results view.
   const [activeTab, setActiveTab] = useState<'results' | 'fractal'>('results')
+  // A refused creation used to be an invisible dead button: the mutation had
+  // no onError and the API threw the field name away, so the page showed
+  // nothing at all (#115, point 6).
+  const [createError, setCreateError] = useState<string | null>(null)
+  // Two identical refusals set the same string, React bails out, and an
+  // `aria-live` region says nothing when neither its insertion nor its content
+  // changes. Someone who clicks again because "nothing happened" is exactly the
+  // person this banner exists for, so each refusal gets a new key.
+  const [createErrorAttempt, setCreateErrorAttempt] = useState(0)
 
   // Fetch studies list (polls while any study has running simulations)
   const { data: studiesData, isLoading: isLoadingStudies } = useQuery({
@@ -62,9 +79,14 @@ export default function BatchSimulationsPage({
   const createStudy = useMutation({
     mutationFn: (data: CreateParametricStudyInput) => studiesApi.create(id, data),
     onSuccess: (newStudy) => {
+      setCreateError(null)
       queryClient.invalidateQueries({ queryKey: ['studies', id] })
       setShowForm(false)
       setSelectedStudyId(newStudy.id)
+    },
+    onError: (error: unknown) => {
+      setCreateError(formatApiError(error))
+      setCreateErrorAttempt((attempt) => attempt + 1)
     },
   })
 
@@ -134,21 +156,39 @@ export default function BatchSimulationsPage({
   }
 
   if (isLoadingStudies) {
-    return (
-      <div className="min-h-screen">
-        <Header />
-        <LoadingScreen message="Loading batch studies..." />
-      </div>
-    )
+    // The shell provides the frame and the padding since #226: this page is not
+    // chromeless, so a second header and a second container were both redundant.
+    return <LoadingScreen message="Loading batch studies..." />
   }
 
   const studies = studiesData?.results || []
+  const selectedStudy = studies.find((study) => study.id === selectedStudyId)
+
+  /**
+   * Relaunch an affected study with the configuration it always declared.
+   *
+   * Creates a NEW study and leaves the original untouched: overwriting would
+   * destroy the evidence of what ran, which is exactly what someone who
+   * published conclusions from it may need.
+   *
+   * The configuration arrives already normalised and validated — re-sending
+   * what is stored is rejected in almost every shape. The page does show a
+   * refusal now (#115, point 6), but the normalisation stays: it turns a 400
+   * into a working relaunch instead of a message asking the reader to go and
+   * fix a field that was never theirs.
+   */
+  const handleRelaunch = (sintering_config: SinteringConfig) => {
+    if (!selectedStudy) return
+    const payload = relaunchPayloadFor(selectedStudy, sintering_config)
+    // Built and validated in one place: copying the study by hand dropped
+    // the settings that decide what it measures, and resending an old grid
+    // is rejected with a 400 this page cannot show.
+    if (!payload) return
+    createStudy.mutate(payload)
+  }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-
-      <main className="container mx-auto px-4 py-8">
+    <div className="mx-auto w-full max-w-6xl">
         {/* Breadcrumb */}
         <Link
           href={`/projects/${id}`}
@@ -158,35 +198,55 @@ export default function BatchSimulationsPage({
           Back to {project?.name || 'Project'}
         </Link>
 
-        {/* Header */}
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold">Batch Simulations</h1>
-            <p className="text-muted-foreground mt-1">
-              Run parameter sweeps and compare results
-            </p>
-          </div>
-          {!showForm && (
-            <Button onClick={() => setShowForm(true)}>
-              <Plus className="h-4 w-4 mr-2" />
-              New Batch Study
-            </Button>
-          )}
-        </div>
+        <PageHeader
+          eyebrow="PROJECT"
+          title="Batch Simulations"
+          description="Run parameter sweeps and compare results"
+          actions={
+            !showForm && (
+              <Button
+                onClick={() => {
+                  setCreateError(null)
+                  setShowForm(true)
+                }}
+              >
+                <Plus className="h-4 w-4 mr-2" />
+                New Batch Study
+              </Button>
+            )
+          }
+        />
+
+        {createError && (
+          <Alert key={createErrorAttempt} variant="destructive" className="mb-6">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="whitespace-pre-line">
+              {createError}
+            </AlertDescription>
+          </Alert>
+        )}
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           {/* Left: Form or Study List */}
           <div className="lg:col-span-1 space-y-4">
             {showForm ? (
               <div className="space-y-4">
-                <BatchSimulationForm
-                  onSubmit={(data) => createStudy.mutate(data)}
-                  isLoading={createStudy.isPending}
-                />
+                <Panel title="New batch study">
+                  <BatchSimulationForm
+                    onSubmit={(data) => {
+                      setCreateError(null)
+                      createStudy.mutate(data)
+                    }}
+                    isLoading={createStudy.isPending}
+                  />
+                </Panel>
                 <Button
                   variant="outline"
                   className="w-full"
-                  onClick={() => setShowForm(false)}
+                  onClick={() => {
+                    setCreateError(null)
+                    setShowForm(false)
+                  }}
                 >
                   Cancel
                 </Button>
@@ -218,6 +278,15 @@ export default function BatchSimulationsPage({
                             <p className="text-xs text-muted-foreground">
                               {study.completed_simulations}/{study.total_simulations} completed
                             </p>
+                            {/* Cheap criterion: it may mark one study too
+                                many, never one too few. Opening it applies
+                                the exact test against its children. */}
+                            {studyMayHaveRunWithoutSintering(study) && (
+                              <p className="mt-1 inline-flex items-center gap-1 text-[11px] font-bold text-warning">
+                                <AlertTriangle className="h-3 w-3" aria-hidden="true" />
+                                May have run without sintering
+                              </p>
+                            )}
                           </button>
                           {deleteConfirm === study.id ? (
                             <div className="flex gap-1">
@@ -260,6 +329,17 @@ export default function BatchSimulationsPage({
           <div className="lg:col-span-2 space-y-6">
             {selectedStudyId && studyResults ? (
               <>
+                <SinteringWarning
+                  study={{
+                    created_at: selectedStudy?.created_at,
+                    base_algorithm: studyResults.base_algorithm,
+                    sintering_config: selectedStudy?.sintering_config,
+                    total_simulations: selectedStudy?.total_simulations,
+                  }}
+                  childResults={studyResults.results}
+                  isRelaunching={createStudy.isPending}
+                  onRelaunch={handleRelaunch}
+                />
                 {/* Tab bar (P3): Results | Fractal Analysis — additive; the
                     Results tab content below is unchanged. */}
                 <div className="flex gap-1 border-b">
@@ -314,7 +394,13 @@ export default function BatchSimulationsPage({
                       .filter((r) => r.status === 'completed')
                       .map((r) => ({
                         id: r.simulation_id,
-                        name: `Sim ${Object.entries(r.parameters).map(([k, v]) => `${k}=${v}`).join(', ')}`,
+                            // #191: one entry per varying parameter, and the
+                        // value rendered as a value, not `[object Object]`.
+                        name: simulationLabel(
+                          r.parameters,
+                          studyResults.parameter_grid,
+                          studyResults.base_parameters,
+                        ),
                         status: r.status,
                       }))}
                   />
@@ -333,7 +419,6 @@ export default function BatchSimulationsPage({
             )}
           </div>
         </div>
-      </main>
     </div>
   )
 }

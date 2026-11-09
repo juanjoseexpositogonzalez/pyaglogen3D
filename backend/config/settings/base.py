@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from typing import Any
 
 from decouple import config
 
@@ -13,7 +14,7 @@ ALLOWED_HOSTS: list[str] = []
 
 
 # Helper to parse DATABASE_URL (Fly.io, Heroku, etc.)
-def parse_database_url(url: str) -> dict:
+def parse_database_url(url: str) -> dict[str, Any]:
     """Parse DATABASE_URL into Django database config."""
     import re
 

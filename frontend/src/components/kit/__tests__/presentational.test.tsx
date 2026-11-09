@@ -11,7 +11,9 @@ import { EmptyState } from '../EmptyState'
 import { FilterBar, FilterField } from '../FilterBar'
 import { MetricCard } from '../MetricCard'
 import { PageHeader } from '../PageHeader'
+import { DisclosurePanel } from '../DisclosurePanel'
 import { Panel } from '../Panel'
+import { VisualPanel } from '../VisualPanel'
 
 describe('DetailList', () => {
   it('renders a null value as an em dash through Num', () => {
@@ -103,6 +105,28 @@ describe('MetricCard', () => {
   })
 })
 
+// The page outline is a contract between primitives, not a property of any
+// one of them: PageHeader opens at 1, panels sit at 2, and a disclosure
+// nested inside a panel sits at 3. Pinned together because the levels only
+// mean something relative to each other, and nothing else here would notice
+// one of them drifting.
+describe('the heading levels the kit emits', () => {
+  // Rendered through factories rather than inline elements: passing a React
+  // element to `it.each` makes the name formatter walk the tree and blow the
+  // stack, which reports as "no tests" instead of as a failure.
+  const cases: Array<[string, number, string, () => void]> = [
+    ['PageHeader', 1, 'Soot aggregate 12', () => render(<PageHeader title="Soot aggregate 12" />)],
+    ['Panel', 2, 'Coordination number', () => render(<Panel title="Coordination number">body</Panel>)],
+    ['VisualPanel', 2, 'Projection', () => render(<VisualPanel title="Projection">body</VisualPanel>)],
+    ['DisclosurePanel', 3, 'Raw values', () => render(<DisclosurePanel title="Raw values">body</DisclosurePanel>)],
+  ]
+
+  it.each(cases)('%s opens at level %i', (_name, level, title, mount) => {
+    mount()
+    expect(screen.getByRole('heading', { level, name: title })).toBeTruthy()
+  })
+})
+
 describe('Panel', () => {
   it('renders its title as a heading so the page outlines correctly', () => {
     render(
@@ -110,7 +134,7 @@ describe('Panel', () => {
         <p>body</p>
       </Panel>,
     )
-    expect(screen.getByRole('heading', { name: 'Coordination number' })).toBeTruthy()
+    expect(screen.getByRole('heading', { level: 2, name: 'Coordination number' })).toBeTruthy()
     expect(screen.getByText('Contacts per primary particle')).toBeTruthy()
   })
 
@@ -122,6 +146,23 @@ describe('Panel', () => {
     )
     expect(screen.queryByRole('heading')).toBeNull()
   })
+
+  it('stacks its title and action on one column instead of squeezing the hint', () => {
+    // Measured in the browser, not asserted here: with the header in a single
+    // row, a panel that carries an action left the hint a ~90px column on a
+    // 320px viewport — ten lines of three words each, next to a "Delete All"
+    // button. jsdom has no layout, so this guards the classes that allow the
+    // header to stack; the measurement lives in the visual evidence for #174.
+    const { container } = render(
+      <Panel title="Simulations" hint="Every run in this project." action={<button>Delete All</button>}>
+        <p>body</p>
+      </Panel>,
+    )
+    const header = container.querySelector('section > header')
+    expect(header, 'the panel header is missing').not.toBeNull()
+    expect(header?.className).toContain('flex-col')
+    expect(header?.className).toContain('sm:flex-row')
+  })
 })
 
 describe('PageHeader', () => {
@@ -130,17 +171,39 @@ describe('PageHeader', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'Soot aggregate 12' })).toBeTruthy()
     expect(screen.getByText('SIMULATION')).toBeTruthy()
   })
+
+  it('lets the action cluster narrow instead of widening the header', () => {
+    // Measured with a real browser, not asserted here: the project detail's
+    // four action buttons forced the header to 718px on a 320px viewport,
+    // because the cluster carried `shrink-0` — and a flex item that refuses
+    // to shrink never gets narrow enough to wrap its own children, however
+    // much `flex-wrap` it declares. jsdom has no layout, so this guards the
+    // two classes that caused it; the pixel measurement lives in the visual
+    // evidence for #174.
+    const { container } = render(
+      <PageHeader title="Soot aggregate 12" actions={<button>Import aggregate</button>} />,
+    )
+    const cluster = container.querySelector('header > div:last-child')
+    expect(cluster, 'the action cluster is missing').not.toBeNull()
+    expect(cluster?.className).not.toContain('shrink-0')
+    expect(cluster?.className).toContain('flex-wrap')
+  })
 })
 
 describe('EmptyState', () => {
   it('explains what the surface is for, not merely that it is empty', () => {
     render(
       <EmptyState
+        headingLevel={2}
         title="No simulations yet"
         description="A simulation generates a 3D agglomerate from an algorithm and a seed."
       />,
     )
     expect(screen.getByText(/generates a 3D agglomerate/)).toBeTruthy()
+    // The level is the caller's call because an empty state sits wherever its
+    // page puts it — but it must still be a heading, which is what the screen
+    // it replaced had and what navigating by headings depends on.
+    expect(screen.getByRole('heading', { level: 2, name: 'No simulations yet' })).toBeTruthy()
   })
 })
 

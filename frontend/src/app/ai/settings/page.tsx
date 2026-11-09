@@ -1,18 +1,40 @@
 'use client'
 
+/**
+ * AI provider settings (issue #183, migration slice 2).
+ *
+ * The screen stops mounting the deprecated layout `Header` and its own page
+ * frame: `/ai/settings` is not chromeless (`AppShell.isChromeless` is `/` and
+ * `/auth/*` only), so the shell already draws the navigation, the width cap and
+ * the gutter. A second full-width, padded box padded the page twice and put a
+ * second landmark inside the shell's own `<main>`.
+ *
+ * On the design-system kit: `PageHeader` for the title and the add action,
+ * `Panel` for the add form and for each configured provider, `Callout` for a
+ * failed request, and `EmptyState` for the no-providers view. Nothing below
+ * the presentation moved — the same access check, the same CRUD calls with
+ * the same payloads, the same messages.
+ *
+ * Security note: this page never renders an API key. `Input type="password"`
+ * holds the key the user is typing; the provider list `AIProvider` carries no
+ * key field, and nothing read from the backend reaches the DOM.
+ */
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { Header } from '@/components/layout/Header'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Callout } from '@/components/kit/Callout'
+import { EmptyState } from '@/components/kit/EmptyState'
+import { PageHeader } from '@/components/kit/PageHeader'
+import { Panel } from '@/components/kit/Panel'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
-import { Alert, AlertDescription } from '@/components/ui/alert'
+import { LoadingScreen } from '@/components/common/LoadingSpinner'
 import { aiApi, type AIProvider, type AIProviderCreate } from '@/lib/ai-api'
 import { ModelPickerSection } from '@/components/ai/ModelPickerSection'
 import { useAuth } from '@/contexts/AuthContext'
-import { Loader2, Plus, Trash2, Check, X, Star, TestTube, ShieldAlert } from 'lucide-react'
+import { cn } from '@/lib/utils'
+import { Plus, Trash2, Check, X, Star, TestTube, ShieldAlert, KeyRound, Loader2 } from 'lucide-react'
 
 const PROVIDERS = [
   {
@@ -62,6 +84,23 @@ const PROVIDERS = [
 ] as const
 
 type ProviderType = typeof PROVIDERS[number]['value']
+
+/**
+ * The default-provider marker.
+ *
+ * `StatusChip` is the kit's pill, but its union is `SimulationStatus` — a
+ * job's state. A provider being the account default is not a job state, so
+ * the pill is built here from the same recipe over the kit's tokens rather
+ * than borrowing a state the product does not have.
+ */
+function DefaultPill() {
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full border border-warning bg-warning-soft px-2 py-0.5 text-[10px] font-extrabold uppercase tracking-[0.06em] text-warning">
+      <Star className="h-3 w-3" aria-hidden="true" />
+      Default
+    </span>
+  )
+}
 
 export default function AISettingsPage() {
   const router = useRouter()
@@ -211,217 +250,194 @@ export default function AISettingsPage() {
   const selectedProviderConfig = PROVIDERS.find(p => p.value === newProvider)
 
   if (authLoading || isLoading) {
-    return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <main className="container mx-auto px-4 py-8 flex items-center justify-center">
-          <Loader2 className="h-8 w-8 animate-spin" />
-        </main>
-      </div>
-    )
+    return <LoadingScreen />
   }
 
   if (hasAccess === false) {
     return (
-      <div className="min-h-screen bg-background">
-        <Header />
-        <main className="container mx-auto px-4 py-8">
-          <Card className="bg-gray-800/50 border-gray-700 max-w-lg mx-auto">
-            <CardContent className="p-8 text-center">
-              <ShieldAlert className="h-16 w-16 mx-auto text-yellow-500 mb-4" />
-              <h2 className="text-2xl font-bold text-white mb-2">Access Required</h2>
-              <p className="text-gray-400 mb-4">
-                AI features are not enabled for your account. Please contact an administrator to request access.
-              </p>
-              <Button variant="outline" onClick={() => router.push('/dashboard')}>
-                Back to Dashboard
-              </Button>
-            </CardContent>
-          </Card>
-        </main>
-      </div>
+      <EmptyState
+        headingLevel={2}
+        icon={ShieldAlert}
+        title="Access Required"
+        description="AI features are not enabled for your account. Please contact an administrator to request access."
+        action={
+          <Button variant="outline" onClick={() => router.push('/dashboard')}>
+            Back to Dashboard
+          </Button>
+        }
+      />
     )
   }
 
   return (
-    <div className="min-h-screen">
-      <Header />
-
-      <main className="container mx-auto px-4 py-8 max-w-4xl">
-        <div className="flex items-center justify-between mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-white">AI Settings</h1>
-            <p className="text-gray-400 mt-1">
-              Manage your AI provider API keys
-            </p>
-          </div>
+    <div className="mx-auto w-full max-w-3xl">
+      <PageHeader
+        eyebrow="AI"
+        title="AI Settings"
+        description="Manage your AI provider API keys"
+        actions={
           <Button onClick={() => setShowAddForm(!showAddForm)}>
-            <Plus className="h-4 w-4 mr-2" />
+            <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
             Add Provider
           </Button>
-        </div>
+        }
+      />
 
-        {error && (
-          <Alert variant="destructive" className="mb-6">
-            <AlertDescription>{error}</AlertDescription>
-          </Alert>
-        )}
+      <div className="space-y-6">
+        {/* A failed request is a state, so it is a `Callout`, not a tinted box:
+            the role and the message survive greyscale and a screen reader. */}
+        {error && <Callout tone="danger" title={error} />}
 
         {showAddForm && (
-          <Card className="mb-6 bg-gray-800/50 border-gray-700">
-            <CardHeader>
-              <CardTitle className="text-white">Add AI Provider</CardTitle>
-              <CardDescription className="text-gray-400">
-                Add your API key for an AI provider
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <form onSubmit={handleAddProvider} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="provider" className="text-gray-200">Provider</Label>
-                    <Select
-                      value={newProvider}
-                      onChange={(e) => {
-                        const provider = e.target.value as ProviderType
-                        setNewProvider(provider)
-                        const config = PROVIDERS.find(p => p.value === provider)
-                        if (config) setNewModel(config.models[0])
-                      }}
-                      options={PROVIDERS.map(p => ({ value: p.value, label: p.label }))}
-                      className="bg-gray-700 border-gray-600"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="model" className="text-gray-200">Model</Label>
-                    <Select
-                      value={newModel}
-                      onChange={(e) => setNewModel(e.target.value)}
-                      options={selectedProviderConfig?.models.map(m => ({ value: m, label: m })) || []}
-                      className="bg-gray-700 border-gray-600"
-                    />
-                  </div>
+          <Panel title="Add AI Provider" hint="Add your API key for an AI provider">
+            <form onSubmit={handleAddProvider} className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="provider">Provider</Label>
+                  <Select
+                    id="provider"
+                    value={newProvider}
+                    onChange={(e) => {
+                      const provider = e.target.value as ProviderType
+                      setNewProvider(provider)
+                      const config = PROVIDERS.find(p => p.value === provider)
+                      if (config) setNewModel(config.models[0])
+                    }}
+                    options={PROVIDERS.map(p => ({ value: p.value, label: p.label }))}
+                  />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="apiKey" className="text-gray-200">API Key</Label>
-                  <Input
-                    id="apiKey"
-                    type="password"
-                    placeholder="sk-..."
-                    value={newApiKey}
-                    onChange={(e) => setNewApiKey(e.target.value)}
-                    className="bg-gray-700 border-gray-600 text-white"
-                    required
+                  <Label htmlFor="model">Model</Label>
+                  <Select
+                    id="model"
+                    value={newModel}
+                    onChange={(e) => setNewModel(e.target.value)}
+                    options={selectedProviderConfig?.models.map(m => ({ value: m, label: m })) || []}
                   />
-                  <p className="text-xs text-gray-500">
-                    Your API key is encrypted and stored securely
-                  </p>
                 </div>
-                <div className="flex gap-2">
-                  <Button type="submit" disabled={isSubmitting}>
-                    {isSubmitting && <Loader2 className="h-4 w-4 mr-2 animate-spin" />}
-                    Add Provider
-                  </Button>
-                  <Button type="button" variant="outline" onClick={() => setShowAddForm(false)}>
-                    Cancel
-                  </Button>
-                </div>
-              </form>
-            </CardContent>
-          </Card>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="apiKey">API Key</Label>
+                <Input
+                  id="apiKey"
+                  type="password"
+                  placeholder="sk-..."
+                  value={newApiKey}
+                  onChange={(e) => setNewApiKey(e.target.value)}
+                  required
+                />
+                <p className="hint">
+                  Your API key is encrypted and stored securely
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button type="submit" disabled={isSubmitting}>
+                  {isSubmitting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                  Add Provider
+                </Button>
+                <Button type="button" variant="outline" onClick={() => setShowAddForm(false)}>
+                  Cancel
+                </Button>
+              </div>
+            </form>
+          </Panel>
         )}
 
         {providers.length === 0 ? (
-          <Card className="bg-gray-800/50 border-gray-700">
-            <CardContent className="p-8 text-center">
-              <p className="text-gray-400 mb-4">
-                No AI providers configured. Add your API key to use AI features.
-              </p>
+          <EmptyState
+            headingLevel={2}
+            icon={KeyRound}
+            title="No AI providers configured"
+            description="No AI providers configured. Add your API key to use AI features."
+            action={
               <Button onClick={() => setShowAddForm(true)}>
-                <Plus className="h-4 w-4 mr-2" />
+                <Plus className="mr-2 h-4 w-4" aria-hidden="true" />
                 Add Provider
               </Button>
-            </CardContent>
-          </Card>
+            }
+          />
         ) : (
           <div className="space-y-4">
             {providers.map((provider) => (
-              <Card key={provider.id} className="bg-gray-800/50 border-gray-700">
-                <CardContent className="p-4">
-                  <div className="flex items-center justify-between">
-                    <div className="flex items-center gap-4">
-                      <div>
-                        <div className="flex items-center gap-2">
-                          <h3 className="font-semibold text-white">
-                            {PROVIDERS.find(p => p.value === provider.provider)?.label || provider.provider}
-                          </h3>
-                          {provider.is_default && (
-                            <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-500/20 text-yellow-400">
-                              <Star className="h-3 w-3 mr-1" />
-                              Default
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      {testResult?.id === provider.id && (
-                        <span className={`text-sm ${testResult.success ? 'text-green-400' : 'text-red-400'}`}>
-                          {testResult.success ? <Check className="h-4 w-4 inline mr-1" /> : <X className="h-4 w-4 inline mr-1" />}
-                          {testResult.message}
-                        </span>
-                      )}
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => handleTestProvider(provider.id)}
-                        disabled={testingId === provider.id}
-                      >
-                        {testingId === provider.id ? (
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        ) : (
-                          <TestTube className="h-4 w-4" />
+              <Panel
+                key={provider.id}
+                title={
+                  <span className="flex flex-wrap items-center gap-2">
+                    {PROVIDERS.find(p => p.value === provider.provider)?.label || provider.provider}
+                    {provider.is_default && <DefaultPill />}
+                  </span>
+                }
+                action={
+                  <div className="flex items-center gap-2">
+                    {testResult?.id === provider.id && (
+                      <span
+                        className={cn(
+                          'inline-flex items-center gap-1 text-[12px]',
+                          testResult.success ? 'text-success' : 'text-danger',
                         )}
-                      </Button>
-                      {!provider.is_default && (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleSetDefault(provider.id)}
-                        >
-                          <Star className="h-4 w-4" />
-                        </Button>
+                      >
+                        {testResult.success ? (
+                          <Check className="h-4 w-4" aria-hidden="true" />
+                        ) : (
+                          <X className="h-4 w-4" aria-hidden="true" />
+                        )}
+                        {testResult.message}
+                      </span>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleTestProvider(provider.id)}
+                      disabled={testingId === provider.id}
+                      aria-label="Test connection"
+                    >
+                      {testingId === provider.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <TestTube className="h-4 w-4" />
                       )}
+                    </Button>
+                    {!provider.is_default && (
                       <Button
                         variant="outline"
                         size="sm"
-                        onClick={() => handleDeleteProvider(provider.id)}
-                        className="text-red-400 hover:text-red-300"
+                        onClick={() => handleSetDefault(provider.id)}
+                        aria-label="Set as default"
                       >
-                        <Trash2 className="h-4 w-4" />
+                        <Star className="h-4 w-4" />
                       </Button>
-                    </div>
+                    )}
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleDeleteProvider(provider.id)}
+                      className="text-danger"
+                      aria-label="Delete provider"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </Button>
                   </div>
-                  {/* Dynamic model picker (T4.3–T4.8) */}
-                  <ModelPickerSection
-                    availableModels={provider.available_models ?? []}
-                    currentModelName={provider.model_name}
-                    modelsRefreshedAt={provider.models_refreshed_at ?? null}
-                    onModelChange={(modelId) => handleModelChange(provider.id, modelId)}
-                    onRefreshModels={() => handleRefreshModels(provider.id)}
-                  />
-                </CardContent>
-              </Card>
+                }
+              >
+                {/* Dynamic model picker (T4.3–T4.8) */}
+                <ModelPickerSection
+                  availableModels={provider.available_models ?? []}
+                  currentModelName={provider.model_name}
+                  modelsRefreshedAt={provider.models_refreshed_at ?? null}
+                  onModelChange={(modelId) => handleModelChange(provider.id, modelId)}
+                  onRefreshModels={() => handleRefreshModels(provider.id)}
+                />
+              </Panel>
             ))}
           </div>
         )}
 
-        <div className="mt-8">
+        <div>
           <Button variant="outline" onClick={() => router.push('/ai')}>
             Back to AI Assistant
           </Button>
         </div>
-      </main>
+      </div>
     </div>
   )
 }

@@ -105,10 +105,10 @@ def test_d1_correct_shape_is_accepted(api_client: APIClient, project: Project) -
         api_client,
         project,
         parameter_grid={
-            "kf_distribution": [{"distribution_type": "fixed", "value": 1.5}]
+            "kf_distribution": [{"mode": "fixed", "value": 1.5}]
         },
     )
-    _report("D1 kf_distribution {distribution_type}", resp, 201)
+    _report("D1 kf_distribution {mode}", resp, 201)
     if resp.status_code == 201:
         study = ParametricStudy.objects.get(id=resp.data["id"])
         for child in study.simulations.all():
@@ -145,24 +145,25 @@ def test_p115_1_bare_dict_in_theoretical_extremes(
 
 
 def test_p115_2_mixed_type_grid_list(api_client: APIClient, project: Project) -> None:
+    # Closed by the numeric cast (#115 point 2): the 201 used to store "abc" as
+    # `target_df` and the engine refused the child. The status is asserted and
+    # the old "which value got stored" block is gone: with the 400 asserted
+    # above it could never run, and unreachable code that claims to measure
+    # something is the shape this file's own lessons are about.
     resp = _post(api_client, project, parameter_grid={"target_df": [1.8, "abc"]})
-    _report("#115.2 grid de tipos mezclados", resp, 201)
-    if resp.status_code == 201:
-        study = ParametricStudy.objects.get(id=resp.data["id"])
-        print(
-            f"    valores: {[c.parameters.get('target_df') for c in study.simulations.all()]}"
-        )
+    _report("#115.2 grid de tipos mezclados", resp, 400)
 
 
 # --- #115 punto 4: 500 con valor inhashable --------------------------------
 
 
 def test_p115_4_unhashable_seed_type(api_client: APIClient, project: Project) -> None:
-    try:
-        resp = _post(api_client, project, parameter_grid={"seed_type": [["monomers"]]})
-        _report("#115.4 seed_type inhashable", resp)
-    except Exception as exc:  # noqa: BLE001 - that is the measurement
-        print(f"\n[#115.4 seed_type inhashable] EXCEPCION {type(exc).__name__}: {exc}")
+    # No try/except: a re-introduced 500 has to fail here. The earlier version
+    # swallowed the exception and printed it, so the diagnostic stayed green in
+    # both worlds and could never witness the closure (measured by JD-A-001 on
+    # PR #219: reverting the guard left this file green).
+    resp = _post(api_client, project, parameter_grid={"seed_type": [["monomers"]]})
+    _report("#115.4 seed_type inhashable", resp, 400)
 
 
 # --- D7: casos limite + dicts -> sorted() sobre dicts ----------------------
@@ -178,8 +179,8 @@ def test_d7_limiting_cases_with_dict_grid(
             include_limiting_cases=True,
             parameter_grid={
                 "kf_distribution": [
-                    {"distribution_type": "fixed", "value": 1.3},
-                    {"distribution_type": "fixed", "value": 1.8},
+                    {"mode": "fixed", "value": 1.3},
+                    {"mode": "fixed", "value": 1.8},
                 ]
             },
         )

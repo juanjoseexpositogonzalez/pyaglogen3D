@@ -62,10 +62,11 @@ describe('BatchStudyComparisonCard', () => {
   it('renders sim_df.value and target from the study_comparison block only', () => {
     render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
 
-    expect(screen.getByTestId('study-comparison-sim-df').textContent).toContain(
-      '2.420'
-    )
-    expect(screen.getByText(/target 2\.300/)).toBeTruthy()
+    const simDf = screen.getByTestId('study-comparison-sim-df')
+    expect(simDf.textContent).toContain('2.420')
+    // The target is a reading too: value, then the word that names it, with
+    // no unit to glue onto it.
+    expect(simDf.textContent).toContain('target 2.300')
   })
 
   it('renders mean_delta', () => {
@@ -104,5 +105,37 @@ describe('BatchStudyComparisonCard', () => {
     expect(screen.getByTestId('study-comparison-mean-delta').textContent).toContain(
       '—'
     )
+  })
+
+  it('states the quantity the figures are, not an image size', () => {
+    render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
+
+    // "image dimensions" in a product where "dimension" already means fractal
+    // dimension reads as a pixel size, and the card shows none of those: it
+    // shows statistics of the images' Df.
+    const panel = screen
+      .getByRole('heading', { level: 2, name: 'Study Comparison' })
+      .closest('section')
+    expect(panel!.textContent).toContain('image Df')
+    expect(panel!.textContent).not.toContain('image dimensions')
+  })
+
+  it('names itself with a section heading the page outline can follow', () => {
+    render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
+
+    // A card title painted as a div leaves the comparison invisible to a
+    // reader navigating by headings.
+    expect(
+      screen.getByRole('heading', { level: 2, name: 'Study Comparison' })
+    ).toBeTruthy()
+  })
+
+  it('states the Sorensen note as a notice, not as loose prose', () => {
+    render(<BatchStudyComparisonCard studyComparison={makeStudyComparison()} />)
+
+    const note = screen.getByTestId('study-comparison-sorensen-note')
+    const notice = note.querySelector('[role="note"]')
+    expect(notice).toBeTruthy()
+    expect(notice!.textContent).toContain('does NOT indicate simulation error')
   })
 })

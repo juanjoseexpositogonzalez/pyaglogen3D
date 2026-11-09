@@ -38,7 +38,7 @@
   R13.3 no lo contradicen, y si lo hacen, modificar R5 explícitamente.
 - [x] T1.3a **Releer cada bloque MODIFIED contra el canónico entero**, no solo los títulos de
   escenario: un MODIFIED reemplaza el requisito completo (ver L9).
-- [ ] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
+- [x] T1.6 Alinear el formulario batch con R2: hoy restringe `particle_radius_config` a `fixed` y
   `normal`, y la API acepta `uniform`.
 - [x] T1.4 **Hecho**: R7 declara ya los tres grupos, incluido el de la allow-list, que era el mayor y el único sin declarar. Original: R7 (compatibilidad): **declarar el carve-out de cada 400 nuevo** en la propia R7, como
   hizo #97. Un 400 no declarado contradice su promesa de comportamiento idéntico.
@@ -62,21 +62,21 @@
 - [x] T2.1a Los rangos no son cosmética: `kf_value=-1`, `kf_mean=-1` y `kf uniform` invertido
   **revientan el worker** con `PanicException`, que deriva de `BaseException` y escapa al único `except
   Exception`. La simulación se queda en `RUNNING` para siempre.
-- [ ] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
+- [x] T2.1c **Precedencia**: cuando una clave de rejilla y `base_parameters` declaran la misma
   magnitud, gana la rejilla (R13.9), y lo mismo para el par `particle_radius_config` /
   `base_parameters.dpo_distribution`. Hoy **no** es así: `create_simulation` parte de
   `dict(base_parameters)` y el worker acaba leyendo el valor de base.
-- [ ] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
+- [x] T2.1d **Entregar, no solo validar**, las cuatro superficies que hoy se aceptan y se
   descartan: las dos claves de paridad en `base_parameters` y las dos barridas por
   `theoretical_extremes` (R13.10).
 - [x] T2.1b Alinear con `cc-tunable-aggregation` R11 y R12, que ya exigen esos rechazos para
   estas mismas entradas del engine. No se inventa regla nueva: se cumple la que hay.
 - [ ] T2.2 Testigo de que el engine recibe los kwargs, con espía del binding (R13.1, R13.2).
-- [ ] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
+- [x] T2.3 Las claves de paridad aceptan `mode` y se traducen a `target_kf_distribution` /
   `dpo_distribution`. Ojo: **dos sitios expanden**, `create_simulation` y
   `expansion_preview._as_child`; si divergen, la validación previa valida una forma que la ruta
   real nunca escribe.
-- [ ] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
+- [x] T2.4 Los tres tests de expansión (`test_kf_distribution_passes_through`,
   `test_particle_radius_config_passes_through`, `test_all_four_keys_expand_correctly`) **se
   extienden, no se invierten**: lo que afirman —que el hijo conserva la clave de rejilla— es
   justo lo que R5.2 y R13.3 exigen que siga siendo verdad. Lo que cambia es la grafía (`mode`) y
@@ -85,7 +85,7 @@
 
 ## T3 — Lo que se rompería sin que nadie se entere
 
-- [ ] T3.8 **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
+- [ ] T3.8 **(abierta, ya con issue: #196)** **R8.4** es falso hoy: `DistributionGridInput` no pasa la prop `error` que
   `DistributionSelector` ya soporta, así que el borde rojo y el mensaje no se pintan. O se
   implementa la validación por campo, o se acota R8.4 a lo que el componente hace.
 - [x] T2.1f Testigos de **R1.6** (modo desconocido en la clave de paridad) y **R7.4** (el
@@ -99,14 +99,14 @@
   `test_p115_1_bare_dict_in_theoretical_extremes` (201 → 400, R13.7) y
   `test_d7_limiting_cases_with_dict_grid` (201 → 400, R1) y la parametrización
   `{mode:"lognormal"}` de `test_undocumented_doors`, que hoy mide 201 y pasará a 400.
-- [ ] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
+- [x] T3.6 Testigo de **R10.8**: el desplegable no ofrece `kf_distribution` ni
   `particle_radius_config` fuera de la allow-list, y cambiar de algoritmo limpia o marca la
   variación ya configurada.
-- [ ] T3.7 Testigo de **R13.11**: el selector no emite `min == max` al pasar a `uniform`.
-- [ ] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
+- [x] T3.7 Testigo de **R13.11**: el selector no emite `min == max` al pasar a `uniform`.
+- [x] T3.1 Testigo del **valor**, no de la columna, en las **cuatro** vistas:
   `fractal_analysis_summary`, `export_csv`, `formatConfigLabel` y `varyingParams`. La cuarta se
   me había caído al reescribir el contrato, y el §5 del mapa sí la listaba.
-- [ ] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
+- [x] T3.2 La etiqueta de la interfaz deja de decir «polidispersidad»: es variación por
   ejecución (T0.5).
 - [ ] ~~T3.3 `radius_max` deja de ofrecerse~~ **RETIRADA**: el formulario batch no lo ofrece, así
   que el testigo habría pasado antes del cambio. La medición (el engine lo ignora) vale para el
@@ -117,8 +117,8 @@
 - [x] T4.1 Los cinco gates, con cada deriva explicada contra la base.
 - [ ] T4.2 Verificación con el **engine real**, no solo con espía: un hijo con `kf` declarado
   produce `target_kf_used` distinto del 1.3 por defecto.
-- [ ] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
-- [ ] T4.4 PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
+- [x] T4.3 judgment-day (dos jueces ciegos, sobre el commit).
+- [ ] T4.4 **(archive, cabecera e índice hechos; merge, limpieza, Jira y cierre, pendientes)** PR(s), merge, limpieza, archive y sincronización canónica, **incluida la cabecera
   `<!-- Last sync: ... -->`, que `openspec archive` NO reescribe** y hoy sigue nombrando al
   contrato de sinterizado; entrega en Jira y cierre
   manual de la issue.
@@ -279,3 +279,53 @@ queda igual y el script informa de éxito. Desde aquí toda edición falla ruido
 ancla no está, y la primera vez que lo apliqué paró en seco en un ancla inventada. Es la misma
 lección del guarda del índice (#130): **una comprobación que solo puede pasar no es una
 comprobación.**
+
+**L23 — PR #170: el deshielo, y una convención que costó doce rondas aprender a escribir.** La
+allow-list de R11 se evaluaba en toda actualización, así que una fila guardada antes de que
+existiera no se podía ni renombrar (`PATCH {"name": …}` → 400). El gate de R13.12 se escribe
+ahora en R11 y en su MUST: corre **solo cuando la petición toca un ajuste de sinterizado o el
+algoritmo**, y contra el algoritmo almacenado (`base_algorithm`) cuando la petición no lo trae.
+El eco del algoritmo cuenta como tocarlo, así que un `PUT` sigue juzgándose (R11.8).
+
+Doce rondas de judgment-day encontraron **tres defectos de contrato y ninguno de código** desde
+la segunda: cada THEN que nombra un mensaje incumple su promesa cuando la petición trae un
+segundo problema. La convención aprobada por la persona —cada THEN describe una petición cuyo
+único defecto es el de su GIVEN— se escribe una vez, en el cuerpo de R13, y R1, R2 y R7 la
+señalan. La ronda 12 obligó a tres correcciones más, todas mías: **acotar el alcance** (decía
+«este fichero», y archivada esa frase abarca R5.3 y R6.2, falsos hoy — registrados en #115),
+**determinar los campos no declarados** (si no, la regla se anulaba sola), y **quitar el
+escape** que permitía anular un THEN alegando un segundo defecto que nadie prueba; ésa la
+decidió la persona al cerrar la ronda 2, que terminó `ESCALATED` con el juez A en `APPROVED`.
+
+Medido en cada commit: 15F / 1651P / 1x / 31E con **los mismos quince nombres**, ruff 295, y
+`openspec validate --strict` válido. `R13.9` sigue sin implementar ni citado por ningún test: es
+el PR 2.
+
+**L24 — PR #184: la traducción, y una regla que hubo que aprender al reparar.** Hasta este PR, una
+distribución declarada bajo su nombre de rejilla **no llegaba al motor**: el hijo la guardaba, el
+worker leía el nombre del engine, y la corrida usaba el valor por defecto sin avisar a nadie. Y en
+la dirección contraria, la magnitud que el estudio **barre** perdía contra la que sobrescribe: con
+rejilla 1.5 y base 1.8 el motor recibía 1.8. Las dos salen del mismo sitio — el hijo nace como
+copia de `base_parameters`.
+
+`set_distribution_parameter` escribe el valor barrido bajo los dos nombres de su magnitud;
+`complete_distribution_aliases` rellena el que falta. Lo usan el camino real y el preview, que
+existe para no modelar la expansión. **R1 se cierra**: la tolerancia a `distribution_type` existía,
+en palabras del propio código, «hasta que aterrice la traducción».
+
+**La regla que hubo que aprender**: traducir **añade y nunca reemplaza**. La primera versión
+sincronizaba los dos nombres en el barrido, y con una rejilla que declaraba **las dos grafías** de
+la misma magnitud la segunda entrada pisaba a la primera: dos barridos no llegaban a ningún
+consumidor y el hijo incumplía el *verbatim* de R1. Lo midió el juez A de la ronda 1 y era una
+regresión introducida aquí. Ahora el hermano que la petición declara se respeta.
+
+**R13.9 se acotó por decisión de la persona** (2026-10-29, PR #184): decía «para cada hijo» y los
+diez hijos de casos límite conservan el valor de `base_parameters` bajo ambos nombres — el mismo
+comportamiento que ya tienen los escalares. Ahora dice «para cada hijo **que produce la rejilla**»
+y afirma explícitamente la otra mitad, con testigo propio.
+Y el panel de exportación del frontend compone la etiqueta con `Object.entries`, así que cada
+distribución aparece dos veces: cosmético, y el consumidor es del frontend.
+
+Medido: 15F / 1662P / 1x / 31E con **los mismos quince nombres**, ruff 295, `validate --strict`
+válido, y 19 testigos en el módulo nuevo, los tres críticos verificados por mutación. Excepción de
+tamaño declarada en #141 (603 líneas, 150 de producción).

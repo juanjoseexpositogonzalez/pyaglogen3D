@@ -10,7 +10,7 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import type { FraktalBatchResult } from '@/lib/api'
 
 // Hoist mocks
@@ -194,10 +194,11 @@ describe('<FraktalBatchSummaryPage />', () => {
       <FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />
     )
 
-    expect(await screen.findByText(/failed to load batch/i)).toBeTruthy()
+    // Exact, period included: the message is the contract's, not a paraphrase.
+    expect(await screen.findByText('Failed to load batch.')).toBeTruthy()
   })
 
-  it('renders a back link to the project on error', async () => {
+  it('renders a back link to the project on error, as one tab stop', async () => {
     mockGetBatch.mockRejectedValue(new Error('Not found'))
     render(
       <FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />
@@ -205,6 +206,10 @@ describe('<FraktalBatchSummaryPage />', () => {
 
     const link = await screen.findByRole('link', { name: /back to project/i })
     expect(link.getAttribute('href')).toBe('/projects/proj-1')
+    // A `Link` wrapping a `Button` renders an <a> around a <button>: invalid
+    // nesting, and two tab stops for one destination. The link wears the
+    // button's classes instead.
+    expect(link.querySelector('button')).toBeNull()
   })
 
   // Frente 9 P4: distributions section persists in the summary view.
@@ -216,9 +221,61 @@ describe('<FraktalBatchSummaryPage />', () => {
 
     // Distributions heading appears
     await screen.findByText(/distributions/i)
-    // Section is labeled for accessibility
+    // The landmark's name is the name it shows. A region called "Metric
+    // distributions" with a heading that says "Distributions" is a landmark
+    // voice control cannot reach: the user asks for the words on the screen.
     expect(
-      screen.getByRole('region', { name: /metric distributions/i }),
+      screen.getByRole('region', { name: 'Distributions' }),
+    ).toBeTruthy()
+  })
+})
+
+// ---- Issue #176, slice 3A: the summary on the design-system kit ----
+//
+// The component keeps fetching the batch and keeps handing it to the same
+// results view. What changes is the frame it puts around it: a `PageHeader`
+// instead of a bare `h1`, a `Callout` instead of a hand-built error card, and
+// the distributions block inside a `Panel`.
+
+describe('<FraktalBatchSummaryPage /> — design-system kit presentation', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('names the page with a PageHeader carrying the FRAKTAL eyebrow', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    expect(await screen.findByText('FRAKTAL')).toBeTruthy()
+    expect(
+      screen.getByRole('heading', { level: 1, name: /batch summary/i }),
+    ).toBeTruthy()
+  })
+
+
+  it('states a failed load in a danger alert that keeps the reason', async () => {
+    mockGetBatch.mockRejectedValue(new Error('Not found'))
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    const alert = await screen.findByRole('alert')
+    expect(alert.textContent).toContain('Failed to load batch')
+    // The server's own reason survives: a 404 and a 500 must not read alike.
+    expect(alert.textContent).toContain('Not found')
+  })
+
+  it('names the distributions landmark with the same words it shows', async () => {
+    mockGetBatch.mockResolvedValue(makeBatchResult())
+    render(<FraktalBatchSummaryPage projectId="proj-1" batchId="batch-123" />)
+
+    // Both queried by the same exact string on purpose: the landmark's
+    // accessible name and its visible heading must be the one label, not two.
+    const region = await screen.findByRole('region', { name: 'Distributions' })
+    expect(
+      within(region).getByRole('heading', { name: 'Distributions' }),
     ).toBeTruthy()
   })
 })
