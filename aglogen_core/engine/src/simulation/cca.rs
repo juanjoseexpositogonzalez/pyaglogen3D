@@ -341,6 +341,7 @@ pub fn run_cca_internal(params: CcaParams, seed: u64) -> SimulationResult {
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: n_values,
         fractal_dimension: df,
         fractal_dimension_std: 0.02,
         prefactor: kf,

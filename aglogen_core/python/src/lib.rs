@@ -312,6 +312,13 @@ pub struct PySimulationResult {
     pub coordinates_data: Vec<f64>,
     pub radii_data: Vec<f64>,
     pub rg_evolution_data: Vec<f64>,
+    /// Particle count of each `rg_evolution` point (issue #275).
+    ///
+    /// A list of ints rather than a numpy array: a client needs the counts to plot
+    /// the scaling axis, and nothing about an increasing integer sequence benefits
+    /// from an ndarray.
+    #[pyo3(get)]
+    pub rg_evolution_n: Vec<usize>,
     pub principal_moments_data: [f64; 3],
     pub principal_axes_data: [[f64; 3]; 3],
     #[pyo3(get)]
@@ -415,6 +422,7 @@ impl From<SimulationResult> for PySimulationResult {
                 .collect(),
             radii_data: r.radii,
             rg_evolution_data: r.rg_evolution,
+            rg_evolution_n: r.rg_evolution_n,
             principal_moments_data: r.principal_moments,
             principal_axes_data: r.principal_axes,
             dpo_used: r.dpo_used,
@@ -2563,6 +2571,7 @@ mod tests {
             coordinates: vec![[0.0; 3]; 3],
             radii: vec![1.0; 3],
             rg_evolution: vec![1.0, 1.5, 2.0],
+            rg_evolution_n: vec![2, 4, 8],
             fractal_dimension: 1.8,
             fractal_dimension_std: 0.1,
             prefactor: 1.3,
@@ -2605,6 +2614,7 @@ mod tests {
             coordinates: vec![[0.0; 3]],
             radii: vec![1.0],
             rg_evolution: vec![1.0],
+            rg_evolution_n: vec![4],
             fractal_dimension: 1.8,
             fractal_dimension_std: 0.0,
             prefactor: 1.0,

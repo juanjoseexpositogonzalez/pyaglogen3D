@@ -381,6 +381,7 @@ pub fn run_tunable_internal(params: TunableParams, seed: u64) -> SimulationResul
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: n_values,
         fractal_dimension: actual_df,
         fractal_dimension_std: 0.05,
         prefactor: actual_kf,

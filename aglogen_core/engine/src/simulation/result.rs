@@ -39,6 +39,18 @@ pub struct SimulationResult {
     pub coordinates: Vec<[f64; 3]>,
     pub radii: Vec<f64>,
     pub rg_evolution: Vec<f64>,
+    /// Particle count of each `rg_evolution` point, same length and order (issue #275).
+    ///
+    /// The estimator that produced `fractal_dimension` consumed exactly these
+    /// counts. They are recorded because one point is one successful merge and the
+    /// largest cluster's size after it is *not* the point's index: merges join
+    /// clusters of unequal size, so the counts jump — and a merge elsewhere in the
+    /// aggregate leaves the largest cluster untouched, so counts also repeat. A client that rebuilds them
+    /// from the array length draws a scaling axis nobody measured.
+    ///
+    /// Empty when the algorithm records no evolution (box-counting paths) or when
+    /// no merge succeeded; a non-empty evolution always comes with matching counts.
+    pub rg_evolution_n: Vec<usize>,
     pub fractal_dimension: f64,
     pub fractal_dimension_std: f64,
     pub prefactor: f64,
@@ -106,6 +118,7 @@ mod tests {
             coordinates: Vec::new(),
             radii: Vec::new(),
             rg_evolution: Vec::new(),
+            rg_evolution_n: Vec::new(),
             fractal_dimension: 0.0,
             fractal_dimension_std: 0.0,
             prefactor: 0.0,
@@ -217,6 +230,7 @@ mod tests {
             coordinates: Vec::new(),
             radii: Vec::new(),
             rg_evolution: Vec::new(),
+            rg_evolution_n: Vec::new(),
             fractal_dimension: 0.0,
             fractal_dimension_std: 0.0,
             prefactor: 0.0,

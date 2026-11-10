@@ -511,6 +511,7 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
             coordinates: vec![],
             radii: vec![],
             rg_evolution: vec![],
+            rg_evolution_n: Vec::new(),
             fractal_dimension: df,
             fractal_dimension_std: 0.0,
             prefactor: 1.0,
@@ -601,6 +602,7 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: Vec::new(),
         fractal_dimension: actual_df,
         fractal_dimension_std: 0.1, // Higher uncertainty for grid-based method
         prefactor: actual_kf,

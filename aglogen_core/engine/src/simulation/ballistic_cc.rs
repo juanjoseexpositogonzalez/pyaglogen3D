@@ -369,6 +369,7 @@ pub fn run_ballistic_cc_internal(params: BallisticCcParams, seed: u64) -> Simula
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: n_values,
         fractal_dimension: df,
         fractal_dimension_std: 0.02,
         prefactor: kf,

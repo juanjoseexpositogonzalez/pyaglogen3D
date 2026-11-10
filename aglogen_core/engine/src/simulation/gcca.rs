@@ -596,10 +596,19 @@ pub fn run_gcca_internal(
         vec![calculate_radius_of_gyration(&coords, &radii)]
     };
 
+    // Issue #275: the counts the estimator consumed, with the same singleton
+    // fallback as the evolution itself so both arrays keep their length.
+    let final_rg_evolution_n = if !n_values.is_empty() {
+        n_values
+    } else {
+        vec![coords.len()]
+    };
+
     SimulationResult {
         coordinates: coords,
         radii,
         rg_evolution: final_rg_evolution,
+        rg_evolution_n: final_rg_evolution_n,
         fractal_dimension: actual_df,
         fractal_dimension_std: 0.05,
         prefactor: actual_kf,
