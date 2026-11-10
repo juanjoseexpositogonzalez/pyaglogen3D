@@ -14,10 +14,15 @@
 //!    increasing, ending at the run's particle count;
 //! 2. refitting over the shipped counts reproduces `fractal_dimension`, i.e. the
 //!    numbers a client plots are the numbers the engine measured;
-//! 3. `box_rfa` records no evolution and therefore ships no counts, so a client can
-//!    tell "there is no axis" from "here is the axis".
+//! 3. `box_rfa` records an evolution whose points are refinement levels sized by a
+//!    count of occupied boxes, not of particles, so it ships the evolution and no
+//!    counts; a client can tell "there is no particle-count axis" from "here is the
+//!    axis" and says so instead of inventing one.
 
+use aglogen_engine::simulation::ballistic::{run_ballistic_internal, BallisticParams};
 use aglogen_engine::simulation::box_rfa::{run_box_rfa_internal, BoxRfaParams};
+use aglogen_engine::simulation::cca::{run_cca_internal, CcaParams};
+use aglogen_engine::simulation::dla::{run_dla_internal, DlaParams};
 use aglogen_engine::simulation::tunable_cc::{run_tunable_cc_internal, SeedType, TunableCcParams};
 
 /// The engine's estimator, reproduced over the counts the result ships.
@@ -126,10 +131,12 @@ fn refitting_the_shipped_counts_reproduces_the_recorded_df() {
 }
 
 #[test]
-fn an_algorithm_without_an_evolution_ships_no_counts() {
-    // `box_rfa` builds no per-merge evolution, so it must not invent one: an empty
-    // pair is the signal a client needs to say "no scaling axis" out loud instead
-    // of drawing a line over fabricated counts.
+fn box_counting_ships_its_evolution_without_particle_counts() {
+    // `box_rfa` builds one point per refinement level (box_rfa.rs step 2), and the
+    // size of a level is a count of occupied boxes. Shipping those numbers as
+    // `rg_evolution_n` would put box counts on an axis labelled with particle
+    // counts — a second lie in place of the one #275 removed. So the evolution
+    // travels alone, and a client announces the rebuilt axis.
     let result = run_box_rfa_internal(
         BoxRfaParams {
             target_df: 2.5,
@@ -141,8 +148,43 @@ fn an_algorithm_without_an_evolution_ships_no_counts() {
     );
 
     assert!(
+        !result.rg_evolution.is_empty(),
+        "box_rfa records one point per refinement level, so the evolution is not empty"
+    );
+    assert!(
         result.rg_evolution_n.is_empty(),
-        "box_rfa records no evolution and must not ship counts: {:?}",
+        "box counts are not particle counts: {:?}",
         result.rg_evolution_n
     );
+}
+
+#[test]
+fn every_merge_based_algorithm_ships_a_pair_that_can_be_zipped() {
+    // The invariant a consumer may rely on, asserted over the four families that
+    // record a merge: the arrays agree in length, never decrease, and end on the
+    // whole aggregate. `box_rfa` is the documented exception above.
+    let results = [
+        ("tunable", tunable(100, 2.7, 1)),
+        ("cca", run_cca_internal(CcaParams::default(), 2)),
+        ("dla", run_dla_internal(DlaParams::default(), 3)),
+        ("ballistic", run_ballistic_internal(BallisticParams::default(), 4)),
+    ];
+
+    for (name, result) in results {
+        assert!(!result.rg_evolution.is_empty(), "{name}: no evolution recorded");
+        assert_eq!(
+            result.rg_evolution_n.len(),
+            result.rg_evolution.len(),
+            "{name}: one count per Rg point"
+        );
+        assert!(
+            result.rg_evolution_n.windows(2).all(|w| w[1] >= w[0]),
+            "{name}: a merge never shrinks the largest cluster"
+        );
+        assert_eq!(
+            *result.rg_evolution_n.last().unwrap(),
+            result.coordinates.len(),
+            "{name}: the last point is the whole aggregate"
+        );
+    }
 }

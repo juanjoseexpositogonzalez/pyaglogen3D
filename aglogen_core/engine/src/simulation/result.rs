@@ -45,11 +45,21 @@ pub struct SimulationResult {
     /// counts. They are recorded because one point is one successful merge and the
     /// largest cluster's size after it is *not* the point's index: merges join
     /// clusters of unequal size, so the counts jump — and a merge elsewhere in the
-    /// aggregate leaves the largest cluster untouched, so counts also repeat. A client that rebuilds them
-    /// from the array length draws a scaling axis nobody measured.
+    /// aggregate leaves the largest cluster untouched, so counts also repeat. A
+    /// client that rebuilds them from the array length draws a scaling axis nobody
+    /// measured.
     ///
-    /// Empty when the algorithm records no evolution (box-counting paths) or when
-    /// no merge succeeded; a non-empty evolution always comes with matching counts.
+    /// When both arrays are non-empty they agree in length, and that is the only
+    /// invariant a reader may rely on. The exceptions are deliberate and named here
+    /// because they are what a consumer must handle:
+    ///
+    /// - `box_rfa` ships an evolution with **no** counts. Its points are refinement
+    ///   levels whose size is a count of occupied boxes, not of particles, and putting
+    ///   box counts on an axis labelled with particle counts would be a second lie in
+    ///   place of the first.
+    /// - `gcca` and `fracval` synthesize one point from the final cluster when nothing
+    ///   merged, and synthesize its count the same way, so the pair stays consistent
+    ///   in the case that produced no merges at all.
     pub rg_evolution_n: Vec<usize>,
     pub fractal_dimension: f64,
     pub fractal_dimension_std: f64,
