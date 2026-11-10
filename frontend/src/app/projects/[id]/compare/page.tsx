@@ -370,8 +370,11 @@ export default function CompareSimulationsPage() {
   const rgSeries: RgSeries[] = useMemo(
     () =>
       compareSims.map((sim) => {
-        const raw = loaded.find((l) => l.id === sim.id)?.result.simulation
-          .metrics?.rg_evolution
+        const metrics = loaded.find((l) => l.id === sim.id)?.result.simulation.metrics
+        const raw = metrics?.rg_evolution
+        // The counts the engine recorded (#275). Without them the chart falls back
+        // to the sample index and says so: an index is not the aggregate size.
+        const counts = metrics?.rg_evolution_n
         return {
           label: sim.name,
           // The simulation's identity, from the same map its grid cell and its
@@ -379,6 +382,7 @@ export default function CompareSimulationsPage() {
           // every surface, and it follows the theme with everything else.
           color: colorMap[sim.id],
           rgEvolution: Array.isArray(raw) ? raw : [],
+          n: Array.isArray(counts) ? counts : undefined,
           parameters: sim.parameters,
         }
       }),

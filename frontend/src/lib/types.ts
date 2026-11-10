@@ -243,11 +243,10 @@ export interface SimulationMetrics {
   /**
    * Particle count of each `rg_evolution` point, same length and order (#275).
    *
-   * One point is one successful merge, so these jump: the count after merge `i`
-   * is not `i`. Records written before #275, imported metrics and the analytic
-   * limiting cases without counts leave this absent; a reader that needs the
-   * scaling axis must say so out loud instead of rebuilding it from the array
-   * length.
+   * One point is one successful merge, so these jump and repeat: the count after
+   * merge `i` is not `i`. Records written before #275, imported metrics and the
+   * analytic cases without counts leave this absent; a reader that needs the
+   * scaling axis must say so instead of rebuilding it from the array length.
    */
   rg_evolution_n?: number[]
   // Inertia tensor analysis
