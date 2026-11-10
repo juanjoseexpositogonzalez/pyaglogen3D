@@ -52,8 +52,13 @@ describe("simulationsApi.exportProjections", () => {
       { mode: "grid", n_az: 4, n_el: 3 },
     );
 
-    expect(blob).toBeInstanceOf(Blob);
+    // `instanceof Blob` compares two realms: the value comes from undici's
+    // `Response.blob()`, and the `Blob` in scope here is jsdom's, so the check
+    // passes on one Node version and fails on another. What the caller needs is a
+    // Blob-like carrying the zip, and that is what these assert.
+    expect(blob.size).toBe(4);
     expect(blob.type).toBe("application/zip");
+    expect(typeof blob.arrayBuffer).toBe("function");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain(
