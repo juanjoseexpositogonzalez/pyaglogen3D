@@ -43,7 +43,11 @@ fn refit(result: &aglogen_engine::simulation::result::SimulationResult, rp: f64)
     (n * sxy - sx * sy) / (n * sxx - sx * sx)
 }
 
-fn tunable(n_particles: usize, target_df: f64, seed: u64) -> aglogen_engine::simulation::result::SimulationResult {
+fn tunable(
+    n_particles: usize,
+    target_df: f64,
+    seed: u64,
+) -> aglogen_engine::simulation::result::SimulationResult {
     run_tunable_cc_internal(
         TunableCcParams {
             n_particles,
@@ -101,7 +105,9 @@ fn refitting_the_shipped_counts_reproduces_the_recorded_df() {
     // The whole point of #275: what a client can plot equals what the engine says.
     // Before the counts shipped, this equality was impossible to check and the
     // screen showed a number 0.3 away from the header.
-    for &(n_particles, target_df, seed) in &[(100_usize, 2.7_f64, 1_u64), (100, 2.9, 2), (500, 2.5, 3)] {
+    for &(n_particles, target_df, seed) in
+        &[(100_usize, 2.7_f64, 1_u64), (100, 2.9, 2), (500, 2.5, 3)]
+    {
         let result = tunable(n_particles, target_df, seed);
         let rp = result
             .dpo_used
