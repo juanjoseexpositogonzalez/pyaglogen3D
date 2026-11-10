@@ -280,8 +280,15 @@ describe('<FraktalBatchImageDetail />', () => {
 
       await screen.findByRole('img')
       fireEvent.keyDown(document, { key: 'ArrowRight' })
-      expect(mockPush).toHaveBeenCalledWith(
-        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/3`
+      // The listener is registered in a `useEffect`, and the assertion used to run
+      // synchronously: on a loaded runner the effect had not run yet, the spy was
+      // never called, and the test failed on 1 of 59 - flaky, not broken. Waiting for
+      // the consequence instead of assuming the mount already happened is the difference
+      // between a test of the navigation and a test of the machine's speed.
+      await waitFor(() =>
+        expect(mockPush).toHaveBeenCalledWith(
+          `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/3`
+        )
       )
     })
 
