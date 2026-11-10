@@ -597,14 +597,76 @@ describe('the comparison zone', () => {
 
     const table = within(chartFrame).getByRole('table')
     const headers = within(table).getAllByRole('columnheader')
-    expect(headers.map((h) => h.textContent)).toEqual(['N', 'Agg A', 'Agg B'])
+    // `Sample`, not `N`: neither record here carries a particle count per point
+    // (#275), so the column is the position in the curve and the header says it.
+    expect(headers.map((h) => h.textContent)).toEqual(['Sample', 'Agg A', 'Agg B'])
 
     // diameter 20 nm → scale 10 → the three samples are 10.00, 20.00, 40.00 nm.
     const firstRow = within(within(table).getAllByRole('row')[1]).getAllByRole('cell')
     expect(firstRow.map((c) => c.textContent)).toEqual(['1', '10.00nm', '10.00nm'])
+    expect(
+      screen.getByText(/carries the particle count of each point, so this column is a position/i),
+    ).toBeTruthy()
 
     fireEvent.click(within(chartFrame).getByRole('button', { name: /show chart/i }))
     expect(within(chartFrame).getByText('rg evolution widget')).toBeTruthy()
+  })
+
+  it('prints the counts the records carry, and says the column is an N', () => {
+    withSims('sim-a,sim-b')
+    const withCounts = (id: string, name: string) =>
+      loadedQuery(id, name, {
+        metrics: {
+          fractal_dimension: 2.5,
+          prefactor: 1.4,
+          radius_of_gyration: 12,
+          rg_evolution: [1, 2, 4],
+          rg_evolution_n: [4, 16, 100],
+        },
+      })
+    withQueries([withCounts('sim-a', 'Agg A'), withCounts('sim-b', 'Agg B')])
+
+    renderPage()
+    const chartFrame = screen.getByText('rg evolution widget').closest('[class]') as HTMLElement
+    // Wait for the toggle, then hand the plot over to the table it owes.
+    fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+    const table = within(chartFrame).getByRole('table')
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'N',
+      'Agg A',
+      'Agg B',
+    ])
+    // The recorded counts, not the sample position: 1, 2, 3 was the defect.
+    const firstRow = within(within(table).getAllByRole('row')[1]).getAllByRole('cell')
+    expect(firstRow[0].textContent).toBe('4')
+    expect(
+      screen.getByText(/the numbers behind the plot: N and radius of gyration/i),
+    ).toBeTruthy()
+  })
+
+  it('falls back to the position when only one curve carries counts', () => {
+    // A shared column cannot show one series' counts and another's position without
+    // lying about one of them, so the whole column downgrades and says so.
+    withSims('sim-a,sim-b')
+    withQueries([
+      loadedQuery('sim-a', 'Agg A', {
+        metrics: {
+          fractal_dimension: 2.5,
+          prefactor: 1.4,
+          radius_of_gyration: 12,
+          rg_evolution: [1, 2, 4],
+          rg_evolution_n: [4, 16, 100],
+        },
+      }),
+      loadedQuery('sim-b', 'Agg B'),
+    ])
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByRole('columnheader')[0].textContent).toBe('Sample')
   })
 
   it('counts what is being compared and what is not, above the comparison', () => {

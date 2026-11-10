@@ -640,11 +640,26 @@ interface RgSampleRow {
  * longest contributes an em dash rather than a zero: a missing reading is not
  * a measurement of nothing.
  */
-function rgSampleRows(seriesList: RgSeries[]): RgSampleRow[] {
+function rgSampleRows(seriesList: RgSeries[]): {
+  rows: RgSampleRow[]
+  measured: boolean
+} {
   let longest = 0
   for (let i = 0; i < seriesList.length; i++) {
     longest = Math.max(longest, seriesList[i].rgEvolution.length)
   }
+
+  // One shared column can only carry one N, and the counts live per series. The
+  // column is therefore the record's own count only when every curve here has one
+  // of matching length; otherwise the table says `Sample` and means position.
+  //
+  // Before #275 this table and the chart both printed the position and agreed.
+  // Numbering the chart's real counts while this column kept the index would put
+  // two different N on one screen, which is the defect the change removes.
+  const measured =
+    seriesList.length > 0 &&
+    seriesList.every((s) => s.n !== undefined && s.n.length === s.rgEvolution.length)
+  const counts = measured ? (seriesList[0].n as number[]) : undefined
 
   const rows: RgSampleRow[] = []
   for (let sample = 0; sample < longest; sample++) {
@@ -659,15 +674,31 @@ function rgSampleRows(seriesList: RgSeries[]): RgSampleRow[] {
           : null,
       )
     }
-    rows.push({ n: sample + 1, readings })
+    rows.push({ n: counts ? counts[sample] : sample + 1, readings })
   }
-  return rows
+  return { rows, measured }
 }
 
+/** What the shared column is: the recorded count, or only the sample's position. */
+const RG_SAMPLE_CAPTION_MEASURED =
+  'The numbers behind the plot: N and radius of gyration in nm for every curve, one column per simulation.'
+
+const RG_SAMPLE_CAPTION_POSITION =
+  'The numbers behind the plot, one column per simulation: the position of each sample in its curve, and its radius of gyration in nm. Not every curve here carries the particle count of each point, so this column is a position and not an N.'
+
 /** One column per simulation over a shared N, in the kit's number primitive. */
-function rgSampleColumns(seriesList: RgSeries[]): Column<RgSampleRow>[] {
+function rgSampleColumns(
+  seriesList: RgSeries[],
+  measured: boolean,
+): Column<RgSampleRow>[] {
   const columns: Column<RgSampleRow>[] = [
-    { key: 'n', header: 'N', numeric: true, digits: 0, value: (row) => row.n },
+    {
+      key: 'n',
+      header: measured ? 'N' : 'Sample',
+      numeric: true,
+      digits: 0,
+      value: (row) => row.n,
+    },
   ]
 
   for (let i = 0; i < seriesList.length; i++) {
@@ -709,6 +740,10 @@ function CompareBody({
   const [mode, setMode] = useState<CompareMode>('grid')
   const { synchronised, toggleSync } = useCompareCamera()
 
+  // Built once here: the rows, the column header and the caption all depend on
+  // whether the shared column carries a count the record measured (#275).
+  const sampleTable = useMemo(() => rgSampleRows(rgSeries), [rgSeries])
+
   return (
     <div className="space-y-4">
       <Panel
@@ -744,9 +779,11 @@ function CompareBody({
         set — and the table takes the plot's place inside the same frame.
       */}
       <ShowValues
-        columns={rgSampleColumns(rgSeries)}
-        rows={rgSampleRows(rgSeries)}
-        caption="The numbers behind the plot: N and radius of gyration in nm for every curve, one column per simulation."
+        columns={rgSampleColumns(rgSeries, sampleTable.measured)}
+        rows={sampleTable.rows}
+        caption={
+          sampleTable.measured ? RG_SAMPLE_CAPTION_MEASURED : RG_SAMPLE_CAPTION_POSITION
+        }
         maxHeight={300}
       >
         {({ toggle, table }) => (
