@@ -100,7 +100,10 @@ describe("simulationsApi.exportProjections", () => {
       { onProgress, pollIntervalMs: 1, maxWaitMs: 5000 },
     );
 
-    expect(blob).toBeInstanceOf(Blob);
+    // Same realm problem as the sync path: the value is undici's Blob and `Blob`
+    // in this scope is jsdom's, so `instanceof` compares two constructors.
+    expect(blob.size).toBe(4);
+    expect(typeof blob.arrayBuffer).toBe("function");
     // Initial POST + 2 status polls + 1 download = 4 fetches.
     expect(fetchMock).toHaveBeenCalledTimes(4);
 
