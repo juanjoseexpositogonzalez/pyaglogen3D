@@ -649,17 +649,32 @@ function rgSampleRows(seriesList: RgSeries[]): {
     longest = Math.max(longest, seriesList[i].rgEvolution.length)
   }
 
-  // One shared column can only carry one N, and the counts live per series. The
-  // column is therefore the record's own count only when every curve here has one
-  // of matching length; otherwise the table says `Sample` and means position.
+  // One shared column can only carry one N. Rows are aligned by sample position, so
+  // the column is the record's own count only when every curve that contributes a
+  // row carries the *same* counts: two different arrays would put two different N
+  // under one header. Otherwise the table says `Sample` and means position.
   //
-  // Before #275 this table and the chart both printed the position and agreed.
-  // Numbering the chart's real counts while this column kept the index would put
-  // two different N on one screen, which is the defect the change removes.
+  // Two traps this has to survive, both of them found in review:
+  // - a curve with no evolution contributes no rows, so it must not veto the column;
+  // - the row count is the longest curve's, so the counts must be long enough for
+  //   every row, or the tail of the column would be blank on rows that do have
+  //   readings.
+  const contributing = seriesList.filter((s) => s.rgEvolution.length > 0)
+  const countsFor = (s: RgSeries) =>
+    s.n && s.n.length === s.rgEvolution.length ? s.n : undefined
+  const firstCounts = contributing.length > 0 ? countsFor(contributing[0]) : undefined
   const measured =
-    seriesList.length > 0 &&
-    seriesList.every((s) => s.n !== undefined && s.n.length === s.rgEvolution.length)
-  const counts = measured ? (seriesList[0].n as number[]) : undefined
+    firstCounts !== undefined &&
+    firstCounts.length === longest &&
+    contributing.every((s) => {
+      const candidate = countsFor(s)
+      return (
+        candidate !== undefined &&
+        candidate.length === firstCounts.length &&
+        candidate.every((value, index) => value === firstCounts[index])
+      )
+    })
+  const counts = measured ? firstCounts : undefined
 
   const rows: RgSampleRow[] = []
   for (let sample = 0; sample < longest; sample++) {

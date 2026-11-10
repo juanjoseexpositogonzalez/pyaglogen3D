@@ -669,6 +669,82 @@ describe('the comparison zone', () => {
     expect(within(table).getAllByRole('columnheader')[0].textContent).toBe('Sample')
   })
 
+  it('keeps the measured column when a curve with no evolution joins', () => {
+    // Found in review: a simulation that contributes no rows (no `rg_evolution`)
+    // must not veto the column for the ones that do. Before the fix it did, and a
+    // comparison of two records carrying counts fell back to `Sample`.
+    withSims('sim-a,sim-b')
+    withQueries([
+      loadedQuery('sim-a', 'Agg A', {
+        metrics: {
+          fractal_dimension: 2.5,
+          prefactor: 1.4,
+          radius_of_gyration: 12,
+          rg_evolution: [1, 2, 4],
+          rg_evolution_n: [4, 16, 100],
+        },
+      }),
+      loadedQuery('sim-b', 'Agg B', {
+        metrics: {
+          fractal_dimension: null,
+          prefactor: null,
+          radius_of_gyration: null,
+          rg_evolution: [],
+        },
+      }),
+    ])
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByRole('columnheader').map((h) => h.textContent)).toEqual([
+      'N',
+      'Agg A',
+      'Agg B',
+    ])
+    const firstRow = within(within(table).getAllByRole('row')[1]).getAllByRole('cell')
+    expect(firstRow[0].textContent).toBe('4')
+  })
+
+  it('never leaves an N cell blank when the curves have different counts', () => {
+    // Found in review: the row count is the longest curve's, so a shorter first
+    // curve left the tail of the column undefined. Different arrays cannot share one
+    // column, so the whole column becomes `Sample` — and every row has a value.
+    withSims('sim-a,sim-b')
+    withQueries([
+      loadedQuery('sim-a', 'Agg A', {
+        metrics: {
+          fractal_dimension: 2.5,
+          prefactor: 1.4,
+          radius_of_gyration: 12,
+          rg_evolution: [1, 2],
+          rg_evolution_n: [4, 16],
+        },
+      }),
+      loadedQuery('sim-b', 'Agg B', {
+        metrics: {
+          fractal_dimension: 2.5,
+          prefactor: 1.4,
+          radius_of_gyration: 12,
+          rg_evolution: [1, 2, 4, 8],
+          rg_evolution_n: [4, 16, 100, 1000],
+        },
+      }),
+    ])
+
+    renderPage()
+    fireEvent.click(screen.getByRole('button', { name: /show values/i }))
+
+    const table = screen.getByRole('table')
+    expect(within(table).getAllByRole('columnheader')[0].textContent).toBe('Sample')
+    const nCells = within(table)
+      .getAllByRole('row')
+      .slice(1)
+      .map((row) => within(row).getAllByRole('cell')[0].textContent)
+    expect(nCells).toEqual(['1', '2', '3', '4'])
+  })
+
   it('counts what is being compared and what is not, above the comparison', () => {
     withSims('sim-a,sim-b,sim-c')
     withQueries([
