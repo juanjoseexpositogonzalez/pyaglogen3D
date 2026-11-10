@@ -90,3 +90,39 @@ describe('a refused request keeps the fields the server named', () => {
     expect(formatApiError(withNoise)).not.toContain('42')
   })
 })
+
+
+describe('#236 - the failure that is not a field error is still news', () => {
+  // `compare/page.tsx` separates these five outcomes and this module used to
+  // collapse them into `Request failed: 500`, which tells a reader on a flaky
+  // connection that their work is broken when the truth may be "retry".
+  it('names an expired session as a session', () => {
+    const message = formatApiError(new ApiError('Request failed: 401', 401))
+    expect(message).toMatch(/session expired/i)
+    expect(message).toMatch(/sign in again/i)
+  })
+
+  it('names a missing record as gone, not as the reader\'s fault', () => {
+    const message = formatApiError(new ApiError('Request failed: 404', 404))
+    expect(message).toMatch(/gone or it is not yours/i)
+  })
+
+  it('tells the reader a 500 may be worth retrying', () => {
+    const message = formatApiError(new ApiError('Request failed: 500', 500))
+    expect(message).toMatch(/server failed/i)
+    expect(message).toMatch(/retrying/i)
+  })
+
+  it('says a request that never arrived never arrived', () => {
+    const message = formatApiError(new TypeError('Failed to fetch'))
+    expect(message).toMatch(/did not reach the server/i)
+    expect(message).toMatch(/connection/i)
+  })
+
+  it('keeps a refusal that names its field exactly as it is', () => {
+    const message = formatApiError(
+      new ApiError('Request failed: 400', 400, { name: ['This field may not be blank.'] })
+    )
+    expect(message).toBe('name: This field may not be blank.')
+  })
+})

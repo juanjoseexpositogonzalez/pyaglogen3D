@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest'
 
 import { consumesSeedType, rejectsVariation } from '../sinteringShape'
-import { relaunchPayloadFor } from '../sinteringWarning'
+import { relaunchPayloadFor, relaunchRefusal } from '../sinteringWarning'
 
 describe('seed type scope on the client', () => {
   it('knows the one algorithm that samples it', () => {
@@ -96,5 +96,18 @@ describe('seed type scope on the client', () => {
     )
 
     expect(payload!.base_parameters).toHaveProperty('seed_type', 'dimers')
+  })
+})
+
+
+describe('#236 - a relaunch the page cannot build says so', () => {
+  it('names the reason instead of returning silently', () => {
+    const message = relaunchRefusal(null)
+    expect(message).toMatch(/cannot be relaunched from here/i)
+    expect(message).toMatch(/not a shape this page can normalise/i)
+  })
+
+  it('says nothing when there is a payload', () => {
+    expect(relaunchRefusal({ name: 'x' })).toBeNull()
   })
 })
