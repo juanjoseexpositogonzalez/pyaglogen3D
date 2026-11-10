@@ -173,10 +173,11 @@ const SCALING_CAPTION_REBUILT =
  *
  * The count of each point is the one the engine recorded (#275): one point is one
  * successful merge, and the largest cluster after it is not the point's index, so
- * these jump and repeat. Only a record written before #275, or one that came from
- * an import, arrives without them — and then the axis is rebuilt at a step of
- * totalParticles / length, which the chart announces under the plot instead of
- * pretending it is the fit the header quotes.
+ * these jump and repeat. A record arrives without them in three cases — written
+ * before #275, imported from a CSV, or produced by box counting, whose points are
+ * refinement levels sized in boxes rather than in particles — and then the axis is
+ * rebuilt at a step of totalParticles / length, which the chart announces under the
+ * plot instead of pretending it is the fit the header quotes.
  *
  * Both consumers read this one function on purpose: the table's N and the chart's
  * axis cannot disagree, because they are the same array.

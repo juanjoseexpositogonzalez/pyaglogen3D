@@ -32,10 +32,17 @@ interface FractalPlotProps {
    *
    * One point is one successful merge, so the count after merge `i` is not `i`:
    * it jumps by the size of the cluster that merged. When the record carries
-   * these, the axis and the fit below are the record's own. When it does not
-   * (records written before #275, imported metrics), the axis is rebuilt from the
-   * series length and the plot says so instead of drawing a line the header
-   * contradicts.
+   * these, the N axis below is the record's own.
+   *
+   * The fit is not, and cannot be: this plot regresses ln N on ln(Rg/rp) and takes
+   * the slope, while `cca`, `dla`, `ballistic` and `ballistic_cc` report
+   * `fractal_dimension` as the reciprocal of the opposite regression. For those four
+   * a difference between the header and this line is the estimator, not the axis —
+   * which is why the note under the chart names the regression it fitted.
+   *
+   * Without counts (records written before #275, imported metrics, box-counting
+   * runs whose N is a box count) the axis is rebuilt from the series length, and the
+   * plot says so instead of drawing a line the header contradicts.
    */
   rgEvolutionN?: number[]
   /** Reported fractal dimension from simulation (for comparison) */
@@ -647,7 +654,10 @@ export function FractalPlot({
         {countsMatch ? (
           showComparison && (
             <div className="text-xs text-amber-600 dark:text-amber-400">
-              Note: Reported Df = {formatNumber(reportedDf, 3)} differs from fitted Df = {formatNumber(actualDf, 3)}
+              Reported Df = {formatNumber(reportedDf, 3)}; the slope of the line drawn here
+              (ln N on ln Rg/rp) = {formatNumber(actualDf, 3)}. They agree only when the record
+              used this same regression: cca, dla, ballistic and ballistic_cc report the
+              reciprocal fit instead.
             </div>
           )
         ) : (

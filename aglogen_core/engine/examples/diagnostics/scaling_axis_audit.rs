@@ -121,12 +121,17 @@ fn audit(params: TunableCcParams, seed: u64, rp: f64) -> Option<Row> {
     let ns: Vec<usize> = filtered.iter().map(|&(_, n)| n).collect();
     let y_n: Vec<f64> = ns.iter().map(|&v| (v as f64).ln()).collect();
 
-    let (true_df, _, true_r2, points) = ols(&x_true, &y_n)?;
+    let (true_df, true_intercept, true_r2, points) = ols(&x_true, &y_n)?;
 
-    // The engine's reported Df comes from this same fit over these same points, so
-    // |TRUE - engine| is the self-validation of the reconstruction: if it is not ~0,
-    // the reconstruction is not what the engine consumed and nothing below is valid.
-    let rec_err = (true_df - result.fractal_dimension).abs();
+    // The engine's reported Df and prefactor come from this same fit over these same
+    // points, so the larger of the two gaps is the self-validation of the
+    // reconstruction: if it is not ~0, the reconstruction is not what the engine
+    // consumed and nothing below is valid. kf is exp(intercept) because the fitted
+    // line is ln N = ln kf + Df·ln(Rg/rp).
+    let true_kf = true_intercept.exp();
+    let rec_err = (true_df - result.fractal_dimension)
+        .abs()
+        .max((true_kf - result.prefactor).abs());
 
     // FAKE: exactly what the browser builds. `step` from the total particle count,
     // which the frontend takes from the simulation's parameters.
@@ -301,7 +306,7 @@ fn main() {
     println!();
     println!("=== Verdict inputs ===");
     println!(
-        "max |TRUE - engine| : {:.2e}  (reconstruction validated if ~0)",
+        "max |TRUE - engine| : {:.2e}  (Df and kf; validated only if ~0)",
         max_rec_err
     );
     println!(
