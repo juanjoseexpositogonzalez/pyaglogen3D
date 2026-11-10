@@ -2041,7 +2041,12 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             # Issue #275: the particle count of each rg_evolution point, as the
             # engine recorded them. One point is one successful merge, so these
             # jump and repeat; a client must not rebuild them from the array length.
-            "rg_evolution_n": [int(n) for n in result.rg_evolution_n],
+            #
+            # Read defensively: a wheel built before #275 has no such attribute, and
+            # an AttributeError here would turn a completed run into a failed one.
+            # Absent counts are a supported state -- the client says the axis was
+            # rebuilt -- so the key is always present and may be empty.
+            "rg_evolution_n": [int(n) for n in getattr(result, "rg_evolution_n", [])],
             # Inertia tensor analysis
             "anisotropy": float(result.anisotropy),
             "asphericity": float(result.asphericity),
