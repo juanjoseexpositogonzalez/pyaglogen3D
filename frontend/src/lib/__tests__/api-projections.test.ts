@@ -21,10 +21,11 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 function zipResponse(status = 200): Response {
-  const blob = new Blob([new Uint8Array([0x50, 0x4b, 0x03, 0x04])], {
-    type: "application/zip",
-  });
-  return new Response(blob, {
+  // The body is a bare byte array, not a jsdom `Blob`: undici's `Response` calls
+  // `.stream()` on a Blob body, and jsdom's Blob does not have one - which made this
+  // test pass on one Node version and throw `object.stream is not a function` on
+  // another. `Response.blob()` still hands the code a native Blob.
+  return new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04]), {
     status,
     headers: { "Content-Type": "application/zip" },
   });
@@ -51,8 +52,13 @@ describe("simulationsApi.exportProjections", () => {
       { mode: "grid", n_az: 4, n_el: 3 },
     );
 
-    expect(blob).toBeInstanceOf(Blob);
+    // `instanceof Blob` compares two realms: the value comes from undici's
+    // `Response.blob()`, and the `Blob` in scope here is jsdom's, so the check
+    // passes on one Node version and fails on another. What the caller needs is a
+    // Blob-like carrying the zip, and that is what these assert.
+    expect(blob.size).toBe(4);
     expect(blob.type).toBe("application/zip");
+    expect(typeof blob.arrayBuffer).toBe("function");
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toContain(
@@ -94,7 +100,10 @@ describe("simulationsApi.exportProjections", () => {
       { onProgress, pollIntervalMs: 1, maxWaitMs: 5000 },
     );
 
-    expect(blob).toBeInstanceOf(Blob);
+    // Same realm problem as the sync path: the value is undici's Blob and `Blob`
+    // in this scope is jsdom's, so `instanceof` compares two constructors.
+    expect(blob.size).toBe(4);
+    expect(typeof blob.arrayBuffer).toBe("function");
     // Initial POST + 2 status polls + 1 download = 4 fetches.
     expect(fetchMock).toHaveBeenCalledTimes(4);
 

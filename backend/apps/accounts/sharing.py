@@ -5,6 +5,7 @@ Project sharing models for collaboration.
 import secrets
 import uuid
 from datetime import timedelta
+from typing import Any
 
 from django.conf import settings
 from django.db import models
@@ -90,7 +91,7 @@ class ShareInvitation(models.Model):
         unique_together = ["project", "email"]
         ordering = ["-created_at"]
 
-    def save(self, *args, **kwargs):
+    def save(self, *args: Any, **kwargs: Any) -> None:
         if not self.token:
             self.token = secrets.token_urlsafe(32)
         if not self.expires_at:

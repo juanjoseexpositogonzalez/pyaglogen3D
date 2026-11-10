@@ -1,0 +1,121 @@
+name: CI
+
+# The repository had no CI: the gates AGENTS.md declares were only ever run by hand,
+# so a PR could be green in its own author's head and red in `develop`. This is the
+# first workflow, and it is written against what the repo actually is, not what it
+# would like to be (#235).
+#
+# Two kinds of gate:
+#   - blocking, because they are green today: the Rust engine tests, the backend
+#     suite, the frontend suite;
+#   - ratchet, because they are red today for pre-existing reasons: ruff, mypy and
+#     tsc. A ratchet fails when the count GROWS, so new debt is caught on the commit
+#     that adds it, and the old debt is paid on purpose. A gate that is simply red
+#     teaches everyone to ignore it.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  engine:
+    name: Rust engine
+    runs-on: ubuntu-latest
+    env:
+      # The macOS toolchain needs this to link the cdylib; harmless here and it keeps
+      # the command identical to the one AGENTS.md documents.
+      PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tests
+        run: cd aglogen_core && cargo test -p aglogen-engine --release
+
+  backend:
+    name: Backend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: backend/pyproject.toml
+
+      - name: Build the engine wheel
+        # The suite imports `aglogen_core` while importing Django, so without the
+        # built extension the backend job does not even boot. `cargo check` is not
+        # enough: the tests run the engine.
+        env:
+          PYO3_USE_ABI3_FORWARD_COMPATIBILITY: "1"
+        run: |
+          pip install "numpy>=1.24" "maturin==1.12.2"
+          cd aglogen_core
+          maturin build --release --strip
+          pip install aglogen_core/target/wheels/*.whl 2>/dev/null || pip install target/wheels/*.whl
+
+      - name: Install
+        # The dev extra asks for `ruff>=0.1` and `mypy>=1.7`. A baseline measured
+        # against one version and checked by another is not a baseline: the first run
+        # reported 287 where this machine measures 286. Pinned to the versions the
+        # baseline in `.github/ci/baseline.env` was measured with.
+        run: |
+          pip install -e "backend[dev]"
+          pip install "ruff==0.15.1" "mypy==1.19.1"
+
+      - name: Suite (blocking)
+        run: cd backend && python -m pytest -q
+
+      - name: ruff (ratchet)
+        run: |
+          source .github/ci/baseline.env
+          cd backend
+          measured=$(ruff check --output-format=json . | python -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          bash ../.github/ci/ratchet.sh "ruff" "$measured" "$RUFF_BASELINE"
+
+      - name: mypy (ratchet)
+        run: |
+          source .github/ci/baseline.env
+          cd backend
+          measured=$(mypy . 2>&1 | sed -n 's/^Found \([0-9]*\) error.*/\1/p' | tail -1)
+          bash ../.github/ci/ratchet.sh "mypy" "${measured:-0}" "$MYPY_BASELINE"
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          # `frontend/package.json` declares `engines.node = 18.x`; the first run used
+          # 20 and reported a suite failure that has to be reproduced on the version
+          # the project actually asks for before it is called a bug.
+          node-version: "18"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install
+        # `npm ci`, never `npm install`: the lockfile pins `next` 14 and an install can
+        # bump it to 16 and rewrite the lockfile as a side effect.
+        run: cd frontend && npm ci
+
+      - name: Suite (blocking)
+        run: cd frontend && npm test
+
+      - name: type-check (ratchet)
+        run: |
+          source .github/ci/baseline.env
+          cd frontend
+          measured=$(npx tsc --noEmit 2>&1 | grep -c "error TS" || true)
+          bash ../.github/ci/ratchet.sh "tsc" "${measured:-0}" "$TSC_BASELINE"
+
+      # `npm run lint` is not wired: the repository has no ESLint configuration, so the
+      # script opens Next's setup wizard and would hang the job. Wiring it is its own
+      # decision (#235), not something to smuggle in here.

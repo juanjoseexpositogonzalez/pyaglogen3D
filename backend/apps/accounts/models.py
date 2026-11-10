@@ -6,6 +6,7 @@ Includes OAuth provider tracking and email verification status.
 """
 
 import uuid
+from typing import Any
 
 from django.contrib.auth.models import (
     AbstractBaseUser,
@@ -15,10 +16,12 @@ from django.contrib.auth.models import (
 from django.db import models
 
 
-class UserManager(BaseUserManager):
+class UserManager(BaseUserManager["User"]):
     """Custom user manager for email-based authentication."""
 
-    def create_user(self, email: str, password: str | None = None, **extra_fields):
+    def create_user(
+        self, email: str, password: str | None = None, **extra_fields: Any
+    ) -> "User":
         """Create and save a regular user with the given email and password."""
         if not email:
             raise ValueError("Email is required")
@@ -28,7 +31,9 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
-    def create_superuser(self, email: str, password: str, **extra_fields):
+    def create_superuser(
+        self, email: str, password: str, **extra_fields: Any
+    ) -> "User":
         """Create and save a superuser with the given email and password."""
         extra_fields.setdefault("is_staff", True)
         extra_fields.setdefault("is_superuser", True)
