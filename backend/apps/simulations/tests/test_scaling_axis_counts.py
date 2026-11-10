@@ -12,7 +12,7 @@ import numpy as np
 from apps.simulations.tasks import compute_limiting_metrics
 
 
-def test_a_limiting_case_pairs_every_rg_point_with_its_prefix_size():
+def test_a_limiting_case_pairs_every_rg_point_with_its_prefix_size() -> None:
     coords = np.array([[float(i), 0.0, 0.0] for i in range(10)])
 
     metrics = compute_limiting_metrics(coords, n_particles=10, radius=1.0)
@@ -22,7 +22,7 @@ def test_a_limiting_case_pairs_every_rg_point_with_its_prefix_size():
     assert metrics["rg_evolution_n"] == list(range(1, 11))
 
 
-def test_a_geometry_with_no_evolution_ships_no_counts():
+def test_a_geometry_with_no_evolution_ships_no_counts() -> None:
     # An empty pair is the honest answer: a client can say "no axis" instead of
     # drawing a line over counts nobody measured.
     metrics = compute_limiting_metrics(np.empty((0, 3)), n_particles=0, radius=1.0)
