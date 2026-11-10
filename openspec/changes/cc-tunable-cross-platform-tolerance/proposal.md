@@ -14,7 +14,8 @@ else, which - until this week - it never did.
 
 ## What Changes
 
-- **R24** states the cross-target bound and why it exists, with the measurement.
-- **R24.1** and **R24.2** name both bounds per value: ≤ 1 ULP on the recording target,
-  ≤ 2 ULP across targets. The in-memory bit-identity guarantee is untouched - it is the
-  property that actually protects the rollback, and it holds on both platforms.
+- **R24** states the cross-target rule and why it cannot be a fixed ULP budget, with the
+  measurement of both coordinates.
+- **R24.1** and **R24.2** name both rules per value: ≤ 1 ULP on the recording target,
+  relative `1e-12` on any other. The in-memory bit-identity guarantee is untouched - it is
+  the property that actually protects the rollback, and it holds on both platforms.
