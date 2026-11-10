@@ -14,8 +14,10 @@ else, which - until this week - it never did.
 
 ## What Changes
 
-- **R24** states the cross-target rule and why it cannot be a fixed ULP budget, with the
-  measurement of both coordinates.
-- **R24.1** and **R24.2** name both rules per value: ≤ 1 ULP on the recording target,
-  relative `1e-12` on any other. The in-memory bit-identity guarantee is untouched - it is
-  the property that actually protects the rollback, and it holds on both platforms.
+- **R24** states that a fixture comparison is only meaningful on the target that recorded
+  the fixtures, with the measurement: 2 ULP on one coordinate, 4 on another, and a different
+  bit pattern in a scalar.
+- **R24.1** and **R24.2** hold on the recording target; elsewhere the fixture test is
+  skipped as `ignored`, and R24.3 - two in-memory runs compared bit-for-bit - is what runs
+  everywhere. That is the property that actually protects the rollback, and it is not
+  weakened by any of this.
