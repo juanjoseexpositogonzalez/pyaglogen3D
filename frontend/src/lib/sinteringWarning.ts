@@ -290,6 +290,22 @@ type RelaunchableStudy = StudyLike & {
  * grid is normalised here too: refusing in the client beats a 400 the page
  * cannot show.
  */
+/**
+ * What to tell the reader when the page cannot rebuild a study.
+ *
+ * `relaunchPayloadFor` returns null for the shapes this page cannot normalise, and the
+ * handler used to return silently: the button did nothing, which is indistinguishable
+ * from a slow network (#236). Returns the message, or null when there is a payload.
+ */
+export function relaunchRefusal(payload: unknown): string | null {
+  if (payload) return null
+  return (
+    'This study cannot be relaunched from here: one of its grid entries is not a shape ' +
+    'this page can normalise, so re-sending it would be refused. Edit the study, or ' +
+    'create a new one with the settings you want.'
+  )
+}
+
 export function relaunchPayloadFor(
   study: RelaunchableStudy,
   sintering_config: SinteringConfig,
