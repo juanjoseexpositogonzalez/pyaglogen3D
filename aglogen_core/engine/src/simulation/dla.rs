@@ -212,6 +212,7 @@ pub fn run_dla_internal(params: DlaParams, seed: u64) -> SimulationResult {
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: n_values,
         fractal_dimension: df,
         fractal_dimension_std: 0.02, // TODO: Calculate from fit
         prefactor: kf,

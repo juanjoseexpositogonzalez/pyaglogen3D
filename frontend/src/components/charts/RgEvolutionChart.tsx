@@ -62,6 +62,11 @@ const MAX_MARKERS = 48
 interface RgEvolutionChartSingleProps {
   rgEvolution: number[]
   /**
+   * Particle count of each point, as the engine recorded it (#275). Without it the
+   * axis is the array index, which the plot announces.
+   */
+  n?: number[]
+  /**
    * Simulation parameters, used to resolve the nm scale factor via the shim.
    * When omitted the default scale (DEFAULT_DIAMETER_NM / 2 = 25 nm) is used.
    */
@@ -79,6 +84,14 @@ export interface RgSeries {
   color: string
   /** Engine-unit Rg evolution array (chart does nm scaling). */
   rgEvolution: number[]
+  /**
+   * Particle count of each `rgEvolution` point, as the engine recorded it (#275).
+   *
+   * One point is one successful merge, so the count is not the array index. When
+   * absent (records written before #275, imported metrics, imported agglomerates)
+   * the axis falls back to the index and the chart says so under the plot.
+   */
+  n?: number[]
   /** Per-series params for the nm scale factor. */
   parameters?: Record<string, unknown>
 }
@@ -214,12 +227,26 @@ function buildTrace(
 }
 
 /** Log10 of N and of Rg in nm — the two axes of this plot. */
-function logSeries(rgEvolution: number[], parameters?: Record<string, unknown>) {
+function logSeries(
+  rgEvolution: number[],
+  parameters?: Record<string, unknown>,
+  recordedCounts?: number[],
+) {
   const scale = getScaleFactorNm(parameters)
-  const n = rgEvolution.map((_, i) => i + 1)
+  // The count of each point comes from the record when it carries it (#275): one
+  // point is one successful merge, so the index is not the count and the index
+  // as an axis understates every point after the first irregular merge. Without
+  // counts the index is the only thing left, and `countsRecorded` is what makes
+  // the plot say so.
+  const counts =
+    recordedCounts && recordedCounts.length === rgEvolution.length
+      ? recordedCounts
+      : undefined
+  const n = counts ?? rgEvolution.map((_, i) => i + 1)
   return {
     xData: n.map((v) => Math.log10(v)),
     yData: rgEvolution.map((v) => Math.log10(v * scale)),
+    countsRecorded: counts !== undefined,
   }
 }
 
@@ -228,17 +255,18 @@ function logSeries(rgEvolution: number[], parameters?: Record<string, unknown>) 
 // ---------------------------------------------------------------------------
 function SingleSeriesChart({
   rgEvolution,
+  n,
   parameters,
   className,
 }: RgEvolutionChartSingleProps) {
   useChartTheme()
 
-  const { xData, yData } = useMemo(() => {
+  const { xData, yData, countsRecorded } = useMemo(() => {
     if (rgEvolution.length === 0) {
-      return { xData: [] as number[], yData: [] as number[] }
+      return { xData: [] as number[], yData: [] as number[], countsRecorded: true }
     }
-    return logSeries(rgEvolution, parameters)
-  }, [rgEvolution, parameters])
+    return logSeries(rgEvolution, parameters, n)
+  }, [rgEvolution, parameters, n])
 
   if (rgEvolution.length === 0) {
     return (
@@ -262,6 +290,15 @@ function SingleSeriesChart({
         config={{ responsive: true, displayModeBar: false }}
         style={{ width: '100%', height: PLOT_HEIGHT }}
       />
+      {!countsRecorded && (
+        <p
+          data-testid="rg-chart-rebuilt-axis"
+          className="hint mt-1 text-xs text-amber-600 dark:text-amber-400"
+        >
+          This record carries no particle count per point, so the horizontal axis is the
+          position of each sample, not the aggregate size it was measured at.
+        </p>
+      )}
     </div>
   )
 }
@@ -272,9 +309,10 @@ function SingleSeriesChart({
 function MultiSeriesChart({ series, className }: RgEvolutionChartMultiProps) {
   useChartTheme()
 
-  const { traces, missingLabels } = useMemo(() => {
+  const { traces, missingLabels, rebuiltLabels } = useMemo(() => {
     const out: PlotParams['data'] = []
     const missing: string[] = []
+    const rebuilt: string[] = []
 
     for (let index = 0; index < series.length; index++) {
       const s = series[index]
@@ -282,11 +320,12 @@ function MultiSeriesChart({ series, className }: RgEvolutionChartMultiProps) {
         missing.push(s.label)
         continue
       }
-      const { xData, yData } = logSeries(s.rgEvolution, s.parameters)
+      const { xData, yData, countsRecorded } = logSeries(s.rgEvolution, s.parameters, s.n)
+      if (!countsRecorded) rebuilt.push(s.label)
       out.push(buildTrace(index, s.label, xData, yData, s.color))
     }
 
-    return { traces: out, missingLabels: missing }
+    return { traces: out, missingLabels: missing, rebuiltLabels: rebuilt }
   }, [series])
 
   // Empty state: every series was missing (or series[] itself empty).
@@ -316,6 +355,16 @@ function MultiSeriesChart({ series, className }: RgEvolutionChartMultiProps) {
         config={{ responsive: true, displayModeBar: false }}
         style={{ width: '100%', height: PLOT_HEIGHT }}
       />
+      {rebuiltLabels.length > 0 && (
+        <p
+          data-testid="rg-chart-rebuilt-axis"
+          className="hint mt-1 text-xs text-amber-600 dark:text-amber-400"
+        >
+          {rebuiltLabels.length === series.length
+            ? 'These records carry no particle count per point, so the horizontal axis is the position of each sample, not the aggregate size it was measured at.'
+            : `Rebuilt axis (no particle count per point): ${rebuiltLabels.join(', ')}. For those curves the horizontal axis is the position of each sample.`}
+        </p>
+      )}
       {missingLabels.length > 0 && (
         <ul
           data-testid="rg-chart-missing-list"
