@@ -267,8 +267,14 @@ describe('<FraktalBatchImageDetail />', () => {
 
       await screen.findByRole('img')
       fireEvent.keyDown(document, { key: 'ArrowLeft' })
-      expect(mockPush).toHaveBeenCalledWith(
-        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
+      // Same race as the ArrowRight sibling below: the listener lives in a
+      // `useEffect`, so asserting in the same tick tested the runner's speed, not
+      // the navigation. This one stayed behind when the other was fixed (#285's CI
+      // failed on it with `expected "spy" to be called`).
+      await waitFor(() =>
+        expect(mockPush).toHaveBeenCalledWith(
+          `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
+        )
       )
     })
 
