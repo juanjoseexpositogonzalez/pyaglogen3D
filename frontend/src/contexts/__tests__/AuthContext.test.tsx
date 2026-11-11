@@ -13,6 +13,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockRegister = vi.fn()
 const mockPush = vi.fn()
+const mockRefreshToken = vi.fn()
+const mockGetMe = vi.fn()
+const mockLogin = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
@@ -25,6 +28,9 @@ vi.mock('@/lib/auth-api', async () => {
     authApi: {
       ...actual.authApi,
       register: (...args: unknown[]) => mockRegister(...args),
+      refreshToken: (...args: unknown[]) => mockRefreshToken(...args),
+      getMe: (...args: unknown[]) => mockGetMe(...args),
+      login: (...args: unknown[]) => mockLogin(...args),
     },
   }
 })
@@ -176,5 +182,140 @@ describe('the message a refused registration produces', () => {
     // so any label at all — including a generic `Field:` — satisfied the loose match
     // and the fallback this change adds was unpinned.
     expect(message).toBe('Username: Enter a valid username.')
+  })
+})
+
+/**
+ * The mount-time restore is its own state (#246).
+ *
+ * The sign-in screen's tests mock `useAuth`, so they can only ever witness the
+ * page's *derivation* from a hand-set pair of booleans. Whether the provider
+ * ever produces that pair is unwitnessed there — delete the initialiser or one
+ * of the exits in `AuthContext` and every page test stays green while every
+ * returning reader gets a permanently dead button. These four probes are on the
+ * real provider, with `authApi` mocked and the storage the provider reads held
+ * by jsdom.
+ */
+describe('the restore flag the sign-in button depends on', () => {
+  function Flags() {
+    const { isLoading, isRestoring, user, login } = useAuth()
+    return (
+      <div>
+        <button
+          onClick={() => {
+            void login({ email: 'ana@example.org', password: 'x' } as never).catch(() => {
+              // `login` rethrows; this probe only reads the flags it flips.
+            })
+          }}
+        >
+          login
+        </button>
+        <p data-testid="flags">
+          {`loading=${String(isLoading)} restoring=${String(isRestoring)} user=${user?.email ?? 'none'}`}
+        </p>
+      </div>
+    )
+  }
+
+  const renderFlags = () =>
+    render(
+      <AuthProvider>
+        <Flags />
+      </AuthProvider>,
+    )
+
+  const flags = () => screen.getByTestId('flags').textContent
+  const settled = (expected: string) => waitFor(() => expect(flags()).toBe(expected))
+
+  beforeEach(() => {
+    localStorage.clear()
+    mockPush.mockReset()
+    mockRefreshToken.mockReset()
+    mockGetMe.mockReset()
+    mockLogin.mockReset()
+  })
+
+  it('settles with no stored session, and asks the server nothing', async () => {
+    renderFlags()
+
+    await settled('loading=false restoring=false user=none')
+    // The absence of a token is decided locally: a visitor with no session must
+    // not cost a request, and must not wait for one to be told they have none.
+    expect(mockRefreshToken).not.toHaveBeenCalled()
+  })
+
+  it('is still restoring while the stored session is being fetched', async () => {
+    localStorage.setItem('pyaglogen3d_refresh_token', 'stored')
+    let releaseRefresh: (value: { access: string }) => void = () => {}
+    mockRefreshToken.mockReturnValue(
+      new Promise<{ access: string }>((resolve) => {
+        releaseRefresh = resolve
+      }),
+    )
+    mockGetMe.mockResolvedValue({ email: 'ana@example.org' } as never)
+    renderFlags()
+
+    // The first render of a returning reader: both flags true, no user yet. This
+    // is the exact state the sign-in button used to narrate as "Signing in...".
+    expect(flags()).toBe('loading=true restoring=true user=none')
+
+    releaseRefresh({ access: 'a-token' })
+    await settled('loading=false restoring=false user=ana@example.org')
+  })
+
+  it('settles when the server refuses the stored token', async () => {
+    localStorage.setItem('pyaglogen3d_refresh_token', 'stored')
+    mockRefreshToken.mockRejectedValue(new Error('401'))
+
+    renderFlags()
+
+    await settled('loading=false restoring=false user=none')
+    // A refusal is not a reason to keep the sign-in form inert.
+    expect(mockGetMe).not.toHaveBeenCalled()
+  })
+
+  it('settles when storage itself refuses to be read', async () => {
+    // Safari in private mode and "block all cookies" make `localStorage.getItem`
+    // throw a SecurityError. Read outside the `try`, it escaped before the
+    // `finally`, so both flags stayed true for as long as the tab lived: the app
+    // stuck behind its loading gate and this button dead, saying "Sign In".
+    // On the instance, not on `Storage.prototype`: `src/test/setup.ts` replaces
+    // `window.localStorage` with its own `InMemoryStorage`, so a `Storage`
+    // prototype spy is inert and the probe would pass without the block ever
+    // happening (measured). A self-check would be better than a comment, but the
+    // block is what the provider is being asked about, not jsdom.
+    const blocked = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
+      throw new Error('SecurityError: the operation is insecure.')
+    })
+
+    try {
+      renderFlags()
+
+      await settled('loading=false restoring=false user=none')
+    } finally {
+      blocked.mockRestore()
+    }
+  })
+
+  it('leaves the restore flag alone while a sign-in is in flight', async () => {
+    // The other half of the contract: the button narrates a submit only when the
+    // context is doing something that is not deciding whether a session exists.
+    // `login` raising `isRestoring` too would make every page test still pass
+    // while the button stopped narrating a real submit.
+    let release: (value: unknown) => void = () => {}
+    mockLogin.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve
+      }),
+    )
+    renderFlags()
+    await settled('loading=false restoring=false user=none')
+
+    fireEvent.click(screen.getByRole('button', { name: 'login' }))
+
+    expect(flags()).toBe('loading=true restoring=false user=none')
+
+    release({ user: { email: 'ana@example.org' } })
+    await settled('loading=false restoring=false user=ana@example.org')
   })
 })
