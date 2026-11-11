@@ -9,7 +9,7 @@ import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
 import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
-import { Download, Image, Loader2, Camera } from 'lucide-react'
+import { Download, Image as ImageIcon, Loader2, Camera } from 'lucide-react'
 import { useViewerStore } from '@/stores/viewerStore'
 import type { ExportProjectionsPayload } from '@/lib/api'
 
@@ -311,7 +311,7 @@ export function ProjectionControls({
               {isLoading ? (
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
               ) : (
-                <Image className="h-4 w-4 mr-2" />
+                <ImageIcon className="h-4 w-4 mr-2" />
               )}
               Preview
             </Button>

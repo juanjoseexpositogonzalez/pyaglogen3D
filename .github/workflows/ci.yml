@@ -116,6 +116,21 @@ jobs:
           measured=$(npx tsc --noEmit 2>&1 | grep -c "error TS" || true)
           bash ../.github/ci/ratchet.sh "tsc" "${measured:-0}" "$TSC_BASELINE"
 
-      # `npm run lint` is not wired: the repository has no ESLint configuration, so the
-      # script opens Next's setup wizard and would hang the job. Wiring it is its own
-      # decision (#235), not something to smuggle in here.
+      - name: lint (blocking errors, ratcheted warnings)
+        # #235 wired this: `.eslintrc.json` now exists, so `next lint` runs instead of
+        # opening Next's setup wizard. Errors block because an error is a defect;
+        # warnings ratchet because they are debt with a decision behind each one.
+        run: |
+          source .github/ci/baseline.env
+          cd frontend
+          # `next lint` exits non-zero as soon as one error exists, so the counts come
+          # from its output and not from its exit status.
+          npx next lint > /tmp/lint.txt 2>&1 || true
+          errors=$(grep -c "Error:" /tmp/lint.txt || true)
+          warnings=$(grep -c "Warning:" /tmp/lint.txt || true)
+          if [ "${errors:-0}" -ne 0 ]; then
+            grep -B2 "Error:" /tmp/lint.txt || true
+            echo "::error::ESLint reported $errors error(s): an error is a defect, not debt"
+            exit 1
+          fi
+          bash ../.github/ci/ratchet.sh "lint warnings" "${warnings:-0}" "$LINT_WARNINGS_BASELINE"

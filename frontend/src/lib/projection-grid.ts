@@ -111,6 +111,13 @@ export function deriveGeneratedDirections(
     n?: number
     azimuth_step?: number
     elevation_step?: number
+    // The legacy export payload also carries its range. It is accepted and not
+    // read here: the derivation rebuilds the full grid from the steps, which is
+    // what `computeGrid` promises. Naming them keeps callers from casting.
+    azimuth_start?: number
+    azimuth_end?: number
+    elevation_start?: number
+    elevation_end?: number
   },
 ): Array<{ az: number; el: number; projectionId: string }> {
   const mode = (payload.mode ?? '') as ProjectionMode

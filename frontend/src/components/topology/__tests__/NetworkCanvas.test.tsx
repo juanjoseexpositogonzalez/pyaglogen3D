@@ -67,7 +67,14 @@ describe('<NetworkCanvas />', () => {
     })
 
     expect(MockNetwork).toHaveBeenCalledTimes(1)
-    const args = MockNetwork.mock.calls[0]
+    // SAFETY: the double is a plain `vi.fn()`, so its recorded arguments are
+    // `unknown[]`. What the component passes is fixed by its own signature, and the
+    // assertions below are the check on it.
+    const args = MockNetwork.mock.calls[0] as [
+      HTMLElement,
+      { nodes: unknown; edges: unknown },
+      { physics: { solver: string } },
+    ]
     // First arg is the container DOM element
     expect(args[0]).toBeInstanceOf(HTMLElement)
     // Second arg is { nodes, edges } data

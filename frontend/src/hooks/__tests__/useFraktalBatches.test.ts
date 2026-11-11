@@ -35,8 +35,12 @@ function makeWrapper() {
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  return ({ children }: { children: ReactNode }) =>
-    createElement(QueryClientProvider, { client: queryClient }, children)
+  // Named, not anonymous: an unnamed component has no display name to show in a
+  // React tree, and the lint rule that says so is right.
+  function Wrapper({ children }: { children: ReactNode }) {
+    return createElement(QueryClientProvider, { client: queryClient }, children)
+  }
+  return Wrapper
 }
 
 // ---------- test suite ----------
