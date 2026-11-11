@@ -161,7 +161,7 @@ def test_a_target_df_that_is_not_a_number_says_so(
 # a borrowed window - is the boundary these tests pin.
 
 
-@pytest.mark.parametrize("target_kf", [0.05, 0.1, 1.3, 2.7, 2.8, 3.0, 1e308])
+@pytest.mark.parametrize("target_kf", [1e-09, 0.05, 0.1, 1.3, 2.7, 2.8, 3.0, 1e308])
 @patch("aglogen_core.run_tunable_cc")
 def test_a_positive_target_kf_reaches_the_engine(
     mock_run: MagicMock, project: Project, target_kf: float
@@ -179,12 +179,17 @@ def test_a_positive_target_kf_reaches_the_engine(
     assert sim.status == "completed"
 
 
-@pytest.mark.parametrize("target_kf", [0.0, -1.0, -0.5])
+@pytest.mark.parametrize("target_kf", [0.0, -1e-09, -0.5, -1.0])
 @patch("aglogen_core.run_tunable_cc")
 def test_a_non_positive_target_kf_never_reaches_the_engine(
     mock_run: MagicMock, project: Project, target_kf: float
 ) -> None:
-    """These panic the binding for real, measured on every seed."""
+    """These panic the binding for real, measured on every seed.
+
+    `-1e-09` is the witness that pins the boundary at zero rather than at a
+    round number: judgment day widened a borrowed window to [0.05, 3.5] and no
+    test complained, which is what a boundary pinned only by aesthetics allows.
+    """
     mock_run.return_value = _fake_engine_result()
     sim = _make_sim(
         project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf}
