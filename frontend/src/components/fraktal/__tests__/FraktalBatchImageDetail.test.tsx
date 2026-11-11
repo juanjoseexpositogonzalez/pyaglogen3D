@@ -266,16 +266,17 @@ describe('<FraktalBatchImageDetail />', () => {
       renderComponent()
 
       await screen.findByRole('img')
-      fireEvent.keyDown(document, { key: 'ArrowLeft' })
-      // Same race as the ArrowRight sibling below: the listener lives in a
-      // `useEffect`, so asserting in the same tick tested the runner's speed, not
-      // the navigation. This one stayed behind when the other was fixed (#285's CI
-      // failed on it with `expected "spy" to be called`).
-      await waitFor(() =>
+      // The listener is registered in a `useEffect`, so a keydown dispatched before
+      // it exists is lost - and waiting *after* the event does not replay it. That is
+      // why #287's `waitFor` around the assertion was not enough: it retried the
+      // check and never the cause. Firing inside `waitFor` retries the event, so the
+      // test waits for the listener instead of for a lucky machine.
+      await waitFor(() => {
+        fireEvent.keyDown(document, { key: 'ArrowLeft' })
         expect(mockPush).toHaveBeenCalledWith(
           `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
         )
-      )
+      })
     })
 
     it('navigates to next image on ArrowRight keydown', async () => {
@@ -285,17 +286,13 @@ describe('<FraktalBatchImageDetail />', () => {
       renderComponent()
 
       await screen.findByRole('img')
-      fireEvent.keyDown(document, { key: 'ArrowRight' })
-      // The listener is registered in a `useEffect`, and the assertion used to run
-      // synchronously: on a loaded runner the effect had not run yet, the spy was
-      // never called, and the test failed on 1 of 59 - flaky, not broken. Waiting for
-      // the consequence instead of assuming the mount already happened is the difference
-      // between a test of the navigation and a test of the machine's speed.
-      await waitFor(() =>
+      // Same race, same fix: the event has to be retried, not only the assertion.
+      await waitFor(() => {
+        fireEvent.keyDown(document, { key: 'ArrowRight' })
         expect(mockPush).toHaveBeenCalledWith(
           `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/3`
         )
-      )
+      })
     })
 
     it('does NOT navigate on ArrowLeft when prev_index is null', async () => {

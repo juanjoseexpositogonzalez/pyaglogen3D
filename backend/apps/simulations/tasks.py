@@ -1694,11 +1694,30 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             )
         elif algorithm == "tunable_cc":
             # Tunable CC with controllable fractal dimension (cluster-cluster)
-            # seed_type: read from the model field (set via API/serializer).
-            # The binding accepts None (→ monomers default) for backward compat.
-            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
+            # The range is its siblings' *policy*, not the engine's panic boundary:
+            # `run_tunable_cc` runs 0.5 or 9.9 happily and panics on 1e308 and on
+            # negatives, while `fracval` and `box_rfa` refuse anything outside
+            # [1.0, 3.0]. Same policy and same message, so a value the UI already
+            # restricts cannot mean something different here than in the batch
+            # algorithms (#232, approved as that decision).
+            # `target_kf` is guarded for a sharper reason: 0.0 and negatives panic
+            # the binding for real, and the binding validates neither value where
+            # `run_fracval` and `run_gcca` validate both.
+            # `isinstance` first and bools refused: a list would raise inside the
+            # comparison and `true` would pass as 1.0 (#231's class).
+            target_df = params.get("target_df", 1.8)
+            if isinstance(target_df, bool) or not isinstance(
+                target_df, (int, float)
+            ):
+                raise ValueError(
+                    f"target_df must be a number, got {type(target_df).__name__}"
+                )
+            if not (1.0 <= target_df <= 3.0):
+                raise ValueError("target_df must be between 1.0 and 3.0")
 
-            # PYA-15: expand distribution configs into engine kwargs.
+            # PYA-15: expand distribution configs first. When a distribution is
+            # present it is what the engine reads, so the scalar checks below have
+            # to know whether they are used at all.
             # When absent, empty dict → engine uses legacy scalars.
             dpo_kwargs = expand_distribution_kwargs(
                 "dpo", params.get("dpo_distribution")
@@ -1707,10 +1726,32 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 "kf", params.get("target_kf_distribution")
             )
 
+            # `kf > 0` is the domain the spec states and the engine's own
+            # boundary: it panics at 0.0 and at negatives and completes at 0.05,
+            # 2.8 and 3.0. This branch's first attempt borrowed `fracval`'s policy
+            # window (0.1-2.7) and judgment day caught it deleting runs that used
+            # to finish, so it now refuses only what panics.
+            # Skipped when a distribution supplies kf: the engine then reads the
+            # distribution, and a 0.0 scalar next to `{mode: fixed, value: 1.3}`
+            # is not a fault.
+            target_kf = params.get("target_kf", 1.3)
+            if not kf_kwargs:
+                if isinstance(target_kf, bool) or not isinstance(
+                    target_kf, (int, float)
+                ):
+                    raise ValueError(
+                        f"target_kf must be a number, got {type(target_kf).__name__}"
+                    )
+                if not target_kf > 0:
+                    raise ValueError("target_kf must be greater than 0")
+            # seed_type: read from the model field (set via API/serializer).
+            # The binding accepts None (→ monomers default) for backward compat.
+            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
+
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),
-                target_df=params.get("target_df", 1.8),
-                target_kf=params.get("target_kf", 1.3),
+                target_df=target_df,
+                target_kf=target_kf,
                 radius_min=radius_min,
                 radius_max=radius_max,
                 seed_cluster_size=params.get("seed_cluster_size"),
