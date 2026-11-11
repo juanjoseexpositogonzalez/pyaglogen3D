@@ -33,8 +33,48 @@ const FIELD_LABELS: Record<string, string> = {
   last_name: 'Last name',
 }
 
+/**
+ * Keys that are not fields, so they take no label.
+ *
+ * `detail`, `error`, `non_field_errors` and `messages` carry the sentence itself —
+ * `authFetch` already reads the first two as the message when there is no field
+ * error at all — and prefixing them turned `Token is invalid or expired` into
+ * `Detail: Token is invalid or expired`.
+ */
+const UNLABELLED_KEYS = new Set(['detail', 'error', 'non_field_errors', 'messages'])
+
+/**
+ * Keys whose value is a machine token, not copy. SimpleJWT sends `code` beside a
+ * refusal; showing it would put `token_not_valid` in front of a person.
+ */
+const MACHINE_KEYS = new Set(['code'])
+
+/**
+ * One sentence out of whatever shape DRF sends.
+ *
+ * An array of strings, a plain string (DRF wraps `detail` that way), or an array of
+ * objects such as SimpleJWT's `messages`, where only the inner `message` is prose.
+ * Anything that is not text is dropped rather than stringified: `[object Object]` is
+ * not a sentence, and `formatApiError` already refuses the same shapes for the same
+ * reason.
+ */
+const messageOf = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(messageOf).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (typeof record.message === 'string') return record.message
+    if (typeof record.detail === 'string') return record.detail
+    return Object.values(record).map(messageOf).filter(Boolean).join(', ')
+  }
+  return ''
+}
+
 const fieldLabel = (key: string) =>
-  FIELD_LABELS[key] ?? key.replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase())
+  // `Object.hasOwn`, not a bare lookup: a key called `constructor` or `toString`
+  // reads through the prototype and would put a native function in the alert.
+  (Object.hasOwn(FIELD_LABELS, key) ? FIELD_LABELS[key] : undefined) ??
+  key.replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase())
 
 interface AuthContextType {
   user: User | null
@@ -126,10 +166,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           // Every key the server sent, in its order, not a fixed list of four.
           const errors: string[] = []
           for (const [field, value] of Object.entries(err.data)) {
-            const messages = Array.isArray(value) ? value.join(', ') : String(value ?? '')
+            if (MACHINE_KEYS.has(field)) continue
+            const messages = messageOf(value)
             if (messages === '') continue
-            // `non_field_errors` is the form speaking, not a field: nothing to prefix.
-            errors.push(field === 'non_field_errors' ? messages : `${fieldLabel(field)}: ${messages}`)
+            errors.push(UNLABELLED_KEYS.has(field) ? messages : `${fieldLabel(field)}: ${messages}`)
           }
           setError(errors.join('; ') || err.message)
         } else {
