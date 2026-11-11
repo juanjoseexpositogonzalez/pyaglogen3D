@@ -19,6 +19,24 @@ import type {
 import { authApi, AuthApiError } from '@/lib/auth-api'
 import { tokenStorage } from '@/lib/token-storage'
 
+/**
+ * How a field the API named is written to the reader.
+ *
+ * Only the fields this screen shows, plus a fallback: the server is the authority on
+ * which fields exist, so an unlisted key is named by its own key rather than dropped
+ * (#248 — the list used to be four keys long, and a refused `first_name` was silent).
+ */
+const FIELD_LABELS: Record<string, string> = {
+  email: 'Email',
+  password: 'Password',
+  password_confirm: 'Password confirmation',
+  first_name: 'First name',
+  last_name: 'Last name',
+}
+
+const fieldLabel = (key: string) =>
+  FIELD_LABELS[key] ?? key.replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase())
+
 interface AuthContextType {
   user: User | null
   isLoading: boolean
@@ -106,11 +124,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (err instanceof AuthApiError) {
         // Format field errors
         if (err.data) {
+          // Every key the server sent, in its order, not a fixed list of four.
           const errors: string[] = []
-          if (err.data.email) errors.push(`Email: ${err.data.email.join(', ')}`)
-          if (err.data.password) errors.push(`Password: ${err.data.password.join(', ')}`)
-          if (err.data.password_confirm) errors.push(`Password confirmation: ${err.data.password_confirm.join(', ')}`)
-          if (err.data.non_field_errors) errors.push(err.data.non_field_errors.join(', '))
+          for (const [field, value] of Object.entries(err.data)) {
+            const messages = Array.isArray(value) ? value.join(', ') : String(value ?? '')
+            if (messages === '') continue
+            // `non_field_errors` is the form speaking, not a field: nothing to prefix.
+            errors.push(field === 'non_field_errors' ? messages : `${fieldLabel(field)}: ${messages}`)
+          }
           setError(errors.join('; ') || err.message)
         } else {
           setError(err.message)
