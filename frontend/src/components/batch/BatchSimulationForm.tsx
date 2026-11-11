@@ -18,6 +18,7 @@ import {
   rejectsVariation,
   toSinteringConfig,
 } from '@/lib/sinteringShape'
+import { firstDistributionError } from '@/lib/distributionShape'
 import { Callout } from '@/components/kit/Callout'
 import { Num } from '@/components/kit/Num'
 import { Panel } from '@/components/kit/Panel'
@@ -493,7 +494,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   // A refused reading blocks the submit. The two box-counting keys only travel
   // when that option is on, so a field the user tried and then abandoned cannot
   // refuse a study that never asked for it.
-  const hasRefusal = [
+  const numericRefusal = [
     readings.n_particles,
     readings.sticking_probability,
     readings.seeds_per_combination,
@@ -501,6 +502,22 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       ? [readings.points_per_sphere, readings.precision]
       : []),
   ].some((reading) => reading.kind === 'invalid')
+
+  // #243, found in review: a distribution entry with an empty box has no payload,
+  // and filtering it out of a grid *silently shortens* what the study sweeps while
+  // the counts on this screen still count it. The submit is refused here instead —
+  // the selector's per-field border was never a gate.
+  const distributionRefusal = variations.reduce<string | null>((found, variation) => {
+    if (found !== null) return found
+    if (!variation.name || !DISTRIBUTION_PARAMS.has(variation.name)) return found
+    if (variation.distributionValues.length === 0) return found
+    const broken = firstDistributionError(variation.distributionValues, variation.name)
+    return broken === null
+      ? found
+      : `${variation.name} #${broken.index + 1}: ${broken.error.message}`
+  }, null)
+
+  const hasRefusal = numericRefusal || distributionRefusal !== null
 
   const shownRefusal = (reading: NumericReading): string | null =>
     submitAttempted && reading.kind === 'invalid' ? reading.message : null
@@ -1136,6 +1153,10 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       </Panel>
 
       {/* Submit */}
+      {submitAttempted && distributionRefusal && (
+        <Callout tone="danger" title={distributionRefusal} />
+      )}
+
       <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
         <Play className="h-4 w-4 mr-2" aria-hidden="true" />
         {isLoading ? 'Creating Study...' : `Run ${totalSimulations} Simulations`}

@@ -57,6 +57,25 @@ function requirePositive(
   return { field, message: POSITIVE[field] }
 }
 
+/**
+ * The first entry of a grid that breaks a rule, or `null`.
+ *
+ * The selector marks a field when it is left, and that is all it does: nothing in
+ * either form refused a submit on it, so an emptied box travelled as `null` — or, in
+ * the batch grid, was filtered out and silently shortened what the study sweeps
+ * (#243, found in review). This is the gate the forms were missing.
+ */
+export function firstDistributionError(
+  values: DistributionValue[],
+  parameterName?: string,
+): { index: number; error: DistributionValueError } | null {
+  for (let index = 0; index < values.length; index++) {
+    const error = distributionValueError(values[index], parameterName)
+    if (error) return { index, error }
+  }
+  return null
+}
+
 function isCapped(parameterName: string | undefined): boolean {
   return (
     parameterName !== undefined &&

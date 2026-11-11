@@ -21,7 +21,6 @@ import {
 } from './sinteringShape'
 import type {
   CreateParametricStudyInput,
-  DistributionValue,
   SimulationAlgorithm,
 } from './types'
 

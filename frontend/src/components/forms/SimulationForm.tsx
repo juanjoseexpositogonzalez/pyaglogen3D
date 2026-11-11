@@ -15,6 +15,9 @@ import {
   simulationAlgorithmDescriptions,
 } from '@/lib/simulation-algorithms'
 import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
+import { Callout } from '@/components/kit/Callout'
+import { distributionValueError } from '@/lib/distributionShape'
+import { isComplete } from '@/lib/sinteringShape'
 import { DistributionSelector, type DistributionValue } from './DistributionSelector'
 
 /**
@@ -578,6 +581,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [seed, setSeed] = useState<string>('')
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [csvError, setCsvError] = useState<string | null>(null)
+  // #243, found in review: an empty box has no payload, and the selector's border
+  // is not a gate — `distributionValueError` was only ever called to paint it. The
+  // submit refuses here, with the message naming which distribution is incomplete.
+  const [distributionError, setDistributionError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dpoDistribution, setDpoDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.0 })
   const [targetKfDistribution, setTargetKfDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.3 })
@@ -638,6 +645,22 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+
+    // #243, found in review: an empty box used to travel as `null` inside
+    // `parameters`, which the backend's own validator never sees — the engine then
+    // fell back to a radius nobody typed or died in the worker with an internal
+    // message. The submit refuses here, and `isComplete` is what lets the compiler
+    // keep a `null` out of the payload's complete-only type.
+    const dpoBroken = distributionValueError(dpoDistribution, 'dpo_distribution')
+    const kfBroken = distributionValueError(targetKfDistribution, 'target_kf_distribution')
+    const incomplete = dpoBroken
+      ? `Primary particle size distribution: ${dpoBroken.message}`
+      : kfBroken
+        ? `Prefactor distribution: ${kfBroken.message}`
+        : null
+    setDistributionError(incomplete)
+    if (incomplete !== null) return
+    if (!isComplete(dpoDistribution) || !isComplete(targetKfDistribution)) return
 
     // Handle imported algorithm separately
     if (algorithm === 'imported') {
@@ -1623,6 +1646,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
         </CardContent>
       </Card>
+
+      {distributionError && <Callout tone="danger" title={distributionError} className="mb-4" />}
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Starting Simulation...' : 'Run Simulation'}

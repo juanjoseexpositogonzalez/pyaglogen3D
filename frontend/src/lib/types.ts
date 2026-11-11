@@ -100,13 +100,24 @@ export type DistributionValue =
   | { mode: 'normal'; mean: number | null; std: number | null }
   | { mode: 'uniform'; min: number | null; max: number | null }
 
+/**
+ * A distribution whose every box holds a number, because the API's shapes have no
+ * "missing number". The form's own state is the wider `DistributionValue`; this is
+ * what a payload may carry, and `isComplete` is the gate between them (#243).
+ */
+export type CompleteDistributionValue =
+  | { mode: 'fixed'; value: number }
+  | { mode: 'normal'; mean: number; std: number }
+  | { mode: 'uniform'; min: number; max: number }
+
 export interface TunableCcParams extends TunableParams {
   seed_cluster_size?: number
   max_rotation_attempts?: number
   seed_type?: 'monomers' | 'dimers' | 'trimers'
-  // Distribution configs for parametric values (PYA-15)
-  dpo_distribution?: DistributionValue
-  target_kf_distribution?: DistributionValue
+  // Distribution configs for parametric values (PYA-15). Complete on purpose: the
+  // type is the gate that keeps a `null` from an empty box out of a payload.
+  dpo_distribution?: CompleteDistributionValue
+  target_kf_distribution?: CompleteDistributionValue
 }
 
 export type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'

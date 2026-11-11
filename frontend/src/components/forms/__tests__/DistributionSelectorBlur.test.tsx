@@ -248,3 +248,29 @@ describe('R8.4 — the error follows the entry, in both directions', () => {
     expect(screen.getAllByRole('spinbutton')[0].getAttribute('aria-invalid')).toBe('true')
   })
 })
+
+describe('changing mode out of an empty box does not invent a number (#243)', () => {
+  it('carries the emptiness into the new mode', () => {
+    // Before: `?? 1.0` wrote a plausible 1 into a scalar the reader never typed, and
+    // `1.0` passes every rule, so it travelled to the payload silently.
+    const onChange = vi.fn()
+    const { rerender } = render(
+      <DistributionSelector
+        label="#1"
+        value={{ mode: 'fixed', value: null } as DistributionValue}
+        onChange={onChange}
+      />,
+    )
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'normal' } })
+
+    expect(onChange).toHaveBeenCalledWith({ mode: 'normal', mean: null, std: null })
+    rerender(
+      <DistributionSelector
+        label="#1"
+        value={{ mode: 'fixed', value: null } as DistributionValue}
+        onChange={onChange}
+      />,
+    )
+  })
+})

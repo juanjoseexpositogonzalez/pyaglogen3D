@@ -29,25 +29,30 @@ const modeOptions = [
 ]
 
 /**
+ * The number in a box, or `null` when the box is empty.
+ *
+ * `parseFloat(raw) || 0` made an emptied field indistinguishable from a typed zero,
+ * so leaving it produced a range error about a number nobody wrote (#243). A box
+ * with nothing in it is `null`, and the validator says so in its own words.
+ *
+ * Only unreadable text becomes `null`. `1e999` is a number the reader typed — it
+ * arrives as `Infinity` — and it must reach `requirePositive`, which answers "must
+ * be a finite number": folding it into "empty" would blame the box for being absent
+ * when it holds something.
+ */
+function parseInput(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const parsed = parseFloat(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+/**
  * Reusable distribution selector component for parametric values.
  *
  * Renders a mode dropdown ("Determinista" / "Normal" / "Uniforme") and
  * conditional numeric inputs for each mode. Used for dpo and target_kf
  * distribution configuration.
  */
-/**
- * The number in a box, or `null` when the box is empty.
- *
- * `parseFloat(raw) || 0` made an emptied field indistinguishable from a typed zero,
- * so leaving it produced a range error about a number nobody wrote (#243). A box
- * with nothing in it is `null`, and the validator says so in its own words.
- */
-function parseInput(raw: string): number | null {
-  if (raw.trim() === '') return null
-  const parsed = parseFloat(raw)
-  return Number.isFinite(parsed) ? parsed : null
-}
-
 export function DistributionSelector({
   label,
   value,
@@ -97,19 +102,21 @@ export function DistributionSelector({
     if (newMode === value.mode) return
 
     if (newMode === 'fixed') {
-      // An empty box upstream carries no number to inherit: `?? 1.0` keeps the
-      // entry usable instead of writing a null the reader did not ask for.
+      // An empty source box carries no number to inherit, so the target is empty
+      // too. Inventing 1.0 here would put a plausible number the reader never typed
+      // in front of them — the substitution #243 removes (#243 review, both judges).
       const v =
-        (value.mode === 'normal' ? value.mean
+        value.mode === 'normal' ? value.mean
         : value.mode === 'uniform' ? value.min
-        : 1.0) ?? 1.0
+        : 1.0
       onChange({ mode: 'fixed', value: v })
     } else if (newMode === 'normal') {
       const m =
-        (value.mode === 'fixed' ? value.value
+        value.mode === 'fixed' ? value.value
         : value.mode === 'uniform' ? value.min
-        : 1.0) ?? 1.0
-      onChange({ mode: 'normal', mean: m, std: 0.1 * m })
+        : 1.0
+      // `std` follows the mean only when there is a mean to follow.
+      onChange({ mode: 'normal', mean: m, std: m === null ? null : 0.1 * m })
     } else {
       const base =
         (value.mode === 'fixed' ? value.value
@@ -119,10 +126,11 @@ export function DistributionSelector({
       // > min`), so switching an entry to uniform left a form that could not be
       // submitted until the user edited a bound by hand. A range around the
       // value already chosen is both submittable and the obvious starting point.
-      // A base of 0 comes from clearing the `fixed` input (`parseFloat('') || 0`),
-      // and bracketing it multiplicatively gives `{min: 0, max: 0}` - refused by
-      // the API for both `min > 0` and `min < max`. The range is built on a
-      // usable value instead, so the form stays submittable.
+      // A deliberately typed 0 (and an emptied box, which `base > 0` also catches)
+      // brackets to `{min: 0, max: 0}`, refused by the API for both `min > 0` and
+      // `min < max`. This is the one place a value is chosen *for* the reader, and
+      // it is a range around a usable anchor rather than a scalar they will submit
+      // as their own (#243 review: the two scalar switches no longer do this).
       const anchor = base > 0 ? base : 1.0
       onChange({ mode: 'uniform', min: anchor * 0.9, max: anchor * 1.1 })
     }

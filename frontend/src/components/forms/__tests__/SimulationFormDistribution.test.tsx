@@ -169,3 +169,35 @@ describe('SimulationForm — dpo distribution (PYA-15 P5.3-P5.5)', () => {
     expect(payload.parameters.dpo_distribution).toBeUndefined()
   })
 })
+
+describe('an empty distribution box refuses the submit (#243)', () => {
+  it('blocks the request and says which distribution is incomplete', () => {
+    // Found in review: the box travelled as `{"mode":"fixed","value":null}` inside
+    // `parameters`, which the backend's own validator never sees — the engine then
+    // ran on a radius nobody typed. The submit is the gate.
+    const { onSubmit } = renderWithAlgorithm('tunable_cc')
+
+    // Two selectors carry that label — dpo and the prefactor — and the dpo one is
+    // the first in the form.
+    fireEvent.change(screen.getAllByLabelText('valor')[0], { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /run simulation/i }))
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    const alert = screen.getByRole('alert')
+    expect(alert.textContent).toMatch(/primary particle size distribution/i)
+    expect(alert.textContent).toMatch(/is required/i)
+  })
+
+  it('lets the request through once the box holds a number again', () => {
+    const { onSubmit } = renderWithAlgorithm('tunable_cc')
+
+    fireEvent.change(screen.getAllByLabelText('valor')[0], { target: { value: '' } })
+    fireEvent.click(screen.getByRole('button', { name: /run simulation/i }))
+    expect(onSubmit).not.toHaveBeenCalled()
+
+    fireEvent.change(screen.getAllByLabelText('valor')[0], { target: { value: '1.2' } })
+    fireEvent.click(screen.getByRole('button', { name: /run simulation/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+  })
+})
