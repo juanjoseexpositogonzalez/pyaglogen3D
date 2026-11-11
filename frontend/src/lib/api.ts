@@ -112,8 +112,16 @@ async function request<T>(
     )
     const details =
       error.details ?? (Object.keys(fieldErrors).length > 0 ? fieldErrors : undefined)
+    // Django's own views answer a refusal as `{"error": "User not found."}` — the
+    // admin user endpoints among them — and this chain used to drop that key, so the
+    // reader got `Request failed: 404` where the server had said exactly what
+    // happened and what to do next (refresh: the row is stale) (#265).
+    const serverMessage =
+      error.message ||
+      error.detail ||
+      (typeof error.error === 'string' ? error.error : '')
     throw new ApiError(
-      error.message || error.detail || `Request failed: ${res.status}`,
+      serverMessage || `Request failed: ${res.status}`,
       res.status,
       details
     )
