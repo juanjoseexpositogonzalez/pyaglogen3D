@@ -11,6 +11,8 @@ import matplotlib
 
 matplotlib.use("Agg")  # Use non-interactive backend
 import matplotlib.pyplot as plt
+from matplotlib.axes import Axes
+from matplotlib.figure import Figure
 from matplotlib.patches import Circle
 from matplotlib.collections import PatchCollection
 
@@ -270,7 +272,7 @@ def _create_projection_figure(
     facecolor: str,
     edgecolor: str,
     background: str,
-) -> tuple[plt.Figure, plt.Axes]:
+) -> tuple[Figure, Axes]:
     """Create matplotlib figure with projected circles.
 
     Args:
@@ -368,7 +370,7 @@ _logger = logging.getLogger(__name__)
 
 
 def _compute_directions(
-    mode: str, config: dict
+    mode: str, config: dict[str, Any]
 ) -> list[tuple[float, float]]:
     """Compute the list of (azimuth, elevation) directions for a given mode.
 
@@ -439,6 +441,7 @@ def _render_single_direction(
     proj = aglogen_core.project_to_2d(coords, radii_arr, azimuth, elevation)
 
     bounds = (proj.bounds[0], proj.bounds[1], proj.bounds[2], proj.bounds[3])
+    image_data: str | bytes
     if img_format == "svg":
         image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
     else:
@@ -447,7 +450,15 @@ def _render_single_direction(
         )
 
     base_name = f"sim_{str(simulation.id)[:8]}"
-    fname = create_projection_filename(base_name, azimuth, elevation, img_format)
+    # The branch above already decided: "svg" renders SVG, anything else renders
+    # PNG. Handing that same decision to the filename keeps the extension and the
+    # bytes in agreement, and gives the signature its Literal without a cast.
+    decided_format: Literal["png", "svg"] = (
+        "svg" if img_format == "svg" else "png"
+    )
+    fname = create_projection_filename(
+        base_name, azimuth, elevation, decided_format
+    )
     out_path = output_dir / fname
     if isinstance(image_data, str):
         out_path.write_text(image_data)
@@ -459,7 +470,7 @@ def _render_single_direction(
 def render_or_reuse_projections(
     simulation: Any,
     mode: str,
-    config: dict,
+    config: dict[str, Any],
     output_dir: Path,
     img_format: str = "png",
 ) -> list[Path]:
@@ -488,8 +499,13 @@ def render_or_reuse_projections(
     base_name = f"sim_{str(simulation.id)[:8]}"
     result: list[Path] = []
 
+    # Same decision as `_render_single_direction`: the extension follows the
+    # format that will actually be rendered.
+    decided_format: Literal["png", "svg"] = (
+        "svg" if img_format == "svg" else "png"
+    )
     for az, el in directions:
-        fname = create_projection_filename(base_name, az, el, img_format)
+        fname = create_projection_filename(base_name, az, el, decided_format)
         file_path = output_dir / fname
 
         if file_path.exists():
