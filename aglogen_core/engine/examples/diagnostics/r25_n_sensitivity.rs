@@ -29,7 +29,7 @@ fn main() {
                     radius_max: 1.0,
                     ..Default::default()
                 };
-                let r = run_tunable_cc_internal(p, seed, None);
+                let r = run_tunable_cc_internal(p, seed, None).expect("tunable_cc should run for a valid payload");
                 let bc = box_counting_3d_morton(&r.coordinates, 18);
                 let delta = (bc.dimension - r.fractal_dimension).abs();
                 if delta > max_delta {

@@ -153,7 +153,7 @@ fn main() {
             seed, target_df, n_particles
         );
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         println!(
             "  fractal_dimension={:.6} prefactor={:.6} coordinates.len()={} merge_trace.len()={}",

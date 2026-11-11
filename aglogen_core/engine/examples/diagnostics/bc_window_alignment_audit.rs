@@ -370,7 +370,7 @@ fn main() {
                     seed_type: SeedType::Dimers,
                     ..Default::default()
                 };
-                let result = run_tunable_cc_internal(params, seed, None);
+                let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
                 if result.coordinates.is_empty() {
                     eprintln!("WARNING: seed {} produced empty result, skipping", seed);
                     continue;

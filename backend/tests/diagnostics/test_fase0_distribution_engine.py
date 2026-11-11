@@ -136,27 +136,42 @@ def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     )
 
 
-def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
-    """The three panics R13 quotes as evidence, asserted instead of quoted.
+def test_engine_reports_every_out_of_range_kf_the_contract_rejects() -> None:
+    """The three cases R13 quotes as evidence, asserted instead of quoted.
 
-    A number cited in the gate artifact has to be reproducible by the command
-    that artifact publishes. Note the boundary: `kf_mean=0.0` does NOT panic
+    They used to be panics. #292 replaced them with an explicit error - Scenario 5.7
+    of cc-tunable-aggregation requires one, because a `PanicException` derives from
+    `BaseException` and escaped the worker's `except Exception`. The evidence is the
+    same three cases; what changed is that the engine now *returns* the fault.
+
+    Note the boundary: `kf_mean=0.0` is not rejected by a crash either
     (it runs at target_kf_used ~0.075), so rejecting `mean <= 0` rests on
-    cc-tunable-aggregation R11/R12, not on a crash.
+    cc-tunable-aggregation R11/R12.
     """
     import aglogen_core
 
     casos = {
-        "fixed value=-1": {"kf_mode": "fixed", "kf_value": -1.0},
-        "normal mean=-1": {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
-        "uniform 2..1": {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
+        # These two reach the pair selection, which reports the degenerate pool with
+        # the same message: it names the condition, not the parameter.
+        "fixed value=-1": ("cannot merge", {"kf_mode": "fixed", "kf_value": -1.0}),
+        "normal mean=-1": (
+            "cannot merge",
+            {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
+        ),
+        # This one never gets that far: `gen_range(2..=1)` panics on the empty range,
+        # so the sampler validates first and returns its own message.
+        "uniform 2..1": (
+            "uniform range",
+            {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
+        ),
     }
-    for nombre, kwargs in casos.items():
-        with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+    for nombre, (esperado, kwargs) in casos.items():
+        with pytest.raises(ValueError) as excinfo:
             aglogen_core.run_tunable_cc(**ENGINE_BASE, **kwargs)
         print(f"\n[panic kf] {nombre}: {type(excinfo.value).__name__}")
-        assert not isinstance(excinfo.value, Exception), (
-            f"{nombre} stopped being a BaseException: the worker guard would now catch it"
+        assert esperado in str(excinfo.value), (
+            f"{nombre} did not report the fault it has: #292 requires an explicit "
+            f"error with a message naming it, got {excinfo.value!r}"
         )
 
     runs = aglogen_core.run_tunable_cc(
@@ -168,20 +183,23 @@ def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
     )
 
 
-def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:
-    """Found by the spec-review: this escapes `except Exception` in the worker."""
+def test_engine_reports_an_inverted_uniform_instead_of_panicking() -> None:
+    """Found by the spec-review: this used to escape `except Exception` in the worker.
+
+    `gen_range(2.0..=1.0)` panics on the empty range, and that panic reached Python as
+    a `PanicException`. #292 built the `Result` channel for the pair selection and
+    then found this second door to the same room on CI: the samplers validate first
+    now, so the caller reads a message naming the range.
+    """
     import aglogen_core
 
-    with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+    with pytest.raises(ValueError) as excinfo:
         aglogen_core.run_tunable_cc(
             **ENGINE_BASE, dpo_mode="uniform", dpo_min=2.0, dpo_max=1.0
         )
-    raised = excinfo.value
-    print(
-        f"\n[panic] {type(raised).__name__}, es Exception: {isinstance(raised, Exception)}"
-    )
-    assert not isinstance(raised, Exception), (
-        "the panic became an ordinary Exception; the worker guard would now catch it"
+    print(f"\n[inverted uniform] {type(excinfo.value).__name__}: {excinfo.value}")
+    assert "uniform range is empty" in str(excinfo.value), (
+        "the message has to name the fault: the panic it replaced carried no name at all"
     )
 
 

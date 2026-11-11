@@ -597,7 +597,7 @@ fn windowed_vs_legacy_on_real_cc_tunable_agglomerates() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let coords = &result.coordinates;
             assert_eq!(
                 coords.len(),

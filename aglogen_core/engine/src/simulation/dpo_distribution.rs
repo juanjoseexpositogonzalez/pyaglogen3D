@@ -84,6 +84,22 @@ impl DpoDistribution {
             Self::Uniform { min, max } => rng.gen_range(*min..=*max),
         }
     }
+    /// Reject the configurations `sample` cannot serve.
+    ///
+    /// `gen_range` panics on an empty range, and a panic reaches Python as a
+    /// `PanicException` that no `except Exception` catches - the class #292 closed
+    /// in `select_pair_smart`, at the sampler's own door.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Self::Uniform { min, max } = self {
+            if min > max {
+                return Err(format!(
+                    "dpo_distribution: uniform range is empty (min {min} > max {max})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
 }
 
 impl TargetKfDistribution {
@@ -98,6 +114,22 @@ impl TargetKfDistribution {
             Self::Uniform { min, max } => rng.gen_range(*min..=*max),
         }
     }
+    /// Reject the configurations `sample` cannot serve.
+    ///
+    /// `gen_range` panics on an empty range, and a panic reaches Python as a
+    /// `PanicException` that no `except Exception` catches - the class #292 closed
+    /// in `select_pair_smart`, at the sampler's own door.
+    pub fn validate(&self) -> Result<(), String> {
+        if let Self::Uniform { min, max } = self {
+            if min > max {
+                return Err(format!(
+                    "target_kf_distribution: uniform range is empty (min {min} > max {max})"
+                ));
+            }
+        }
+        Ok(())
+    }
+
 }
 
 #[cfg(test)]
