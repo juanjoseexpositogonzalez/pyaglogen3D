@@ -37,6 +37,7 @@ from collections.abc import Mapping
 from math import isfinite, prod
 from typing import Any
 
+from .param_policy import rotation_attempts
 from .sintering_shape import check_flat_keys, check_flat_required
 from .utils import (
     apply_sintering_config,
@@ -95,9 +96,14 @@ NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
     ("max_rotation_attempts", int),
 )
 
-#: The two the engine accepts as absent. Measured: `null` answers 201 today and the
-#: worker passes `None` through, where it means "choose for me" - so casting must
-#: leave it alone instead of turning an unset option into a refusal.
+#: The two whose `null` is stored as `null`. Casting must leave it alone instead of
+#: turning an unset option into a refusal; what a stored `null` then means is decided
+#: downstream, not here.
+#:
+#: Only `seed_cluster_size` reaches the binding as `Option<usize>`. Measured for #290:
+#: `run_tunable_cc` declares `max_rotation_attempts: usize`, so a `None` raised
+#: `TypeError` there, and the child failed with a type error instead of a message.
+#: The worker now reads that `null` as the engine's own default (`param_policy`).
 OPTIONAL_NUMERIC_PARAMS = frozenset({"seed_cluster_size", "max_rotation_attempts"})
 
 
@@ -154,6 +160,12 @@ def cast_numeric_params(sim_params: dict[str, Any], *, guarded: bool) -> None:
         if cast is float and not isfinite(casted):
             raise ValueError(_not_a_number(name, cast, value))
         sim_params[name] = casted
+
+    # Not a cast, but the same class of fault with the same sentence: the window
+    # (#290). Without it this surface answered 201 and then failed every child at the
+    # worker, where the single-simulation surface answers 400 for the same payload.
+    if "max_rotation_attempts" in sim_params:
+        rotation_attempts(sim_params)
 
 
 def _as_child(params: Mapping[str, Any], study_sintering_config: Any) -> dict[str, Any]:
