@@ -11,8 +11,8 @@ import { Num } from '@/components/kit/Num'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
 import { SinteringWarning } from '@/components/batch/SinteringWarning'
 import {
+  RELAUNCH_REFUSAL_MESSAGE,
   relaunchPayloadFor,
-  relaunchRefusal,
   studyMayHaveRunWithoutSintering,
 } from '@/lib/sinteringWarning'
 import type { SinteringConfig } from '@/lib/sinteringShape'
@@ -187,11 +187,12 @@ export default function BatchSimulationsPage({
     // Built and validated in one place: copying the study by hand dropped
     // the settings that decide what it measures, and resending an old grid
     // is rejected with a 400 this page cannot show.
-    const refusal = relaunchRefusal(payload)
-    if (refusal) {
+    // relaunchRefusal clears a payload exactly when one exists, so this is the same
+    // test it makes - and narrowing here is what lets mutate() see a non-null payload.
+    if (!payload) {
       // Returning silently made this a dead button for the one case the page could
       // not normalise (#236). The message itself is a pure function, tested on its own.
-      setCreateError(refusal)
+      setCreateError(RELAUNCH_REFUSAL_MESSAGE)
       setCreateErrorAttempt((attempt) => attempt + 1)
       return
     }
