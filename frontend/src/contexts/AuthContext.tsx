@@ -78,7 +78,30 @@ const fieldLabel = (key: string) =>
 
 interface AuthContextType {
   user: User | null
+  /**
+   * A request this context owns is in flight: the mount-time restore, a sign-in,
+   * a registration, a logout or an OAuth landing.
+   *
+   * Three requests deliberately do not raise it — `updateProfile`, `refreshUser`
+   * and the OAuth callback's own profile fetch. For the first two the reason is
+   * mechanical: `settings` swaps its whole form for a full-screen loader on this
+   * flag, so raising it around a save would take the form away mid-save.
+   */
   isLoading: boolean
+  /**
+   * The context has not yet decided whether a session exists.
+   *
+   * True on the first render of every visitor, not only of a returning one: with
+   * no stored token there is no restore to run, only a question that hasn't been
+   * answered yet. So this flag is a reason not to claim anything (#246), never a
+   * licence to say "restoring your session" — a first-time visitor has none.
+   *
+   * Separate from `isLoading` because on a returning reader's first render both
+   * are true and they mean different things: the sign-in button read `isLoading`
+   * alone and claimed a sign-in nobody sent. Additive on purpose — the route
+   * guards read `isLoading` and keep reading exactly what they read before.
+   */
+  isRestoring: boolean
   isAuthenticated: boolean
   error: string | null
   login: (credentials: LoginCredentials) => Promise<void>
@@ -95,6 +118,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  // True until the mount-time restore settles, with a token or without one.
+  // `isLoading` keeps starting true as well: a route guard must not paint a
+  // signed-out screen in the tick before the stored token is read.
+  const [isRestoring, setIsRestoring] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
@@ -105,12 +132,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
    */
   useEffect(() => {
     const initAuth = async () => {
-      if (!tokenStorage.hasRefreshToken()) {
-        setIsLoading(false)
-        return
-      }
-
       try {
+        // Reading the storage is itself a fallible operation: Safari in private
+        // mode and "block all cookies" make `localStorage.getItem` throw a
+        // SecurityError. Read outside this `try`, it escaped before the `finally`
+        // and left both flags true for as long as the tab lived — the app behind
+        // its loading gate and the sign-in button dead, saying "Sign In" with no
+        // reason on the screen (#246).
+        if (!tokenStorage.hasRefreshToken()) return
+
         // Try to refresh the access token
         await authApi.refreshToken()
         // Fetch user profile
@@ -126,6 +156,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // nothing left for this handler to decide.
       } finally {
         setIsLoading(false)
+        setIsRestoring(false)
       }
     }
 
@@ -244,6 +275,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         isLoading,
+        isRestoring,
         isAuthenticated,
         error,
         login,

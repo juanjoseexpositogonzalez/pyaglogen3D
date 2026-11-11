@@ -19,7 +19,7 @@ fn main() {
         radius_max: 1.0,
         ..Default::default()
     };
-    let r = run_tunable_cc_internal(params, 1, None);
+    let r = run_tunable_cc_internal(params, 1, None).expect("tunable_cc should run for a valid payload");
 
     // Round-trip coordinates through serde_json
     let json_str = serde_json::to_string(&r.coordinates).unwrap();

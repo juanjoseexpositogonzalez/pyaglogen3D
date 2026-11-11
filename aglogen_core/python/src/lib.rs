@@ -5,6 +5,7 @@
 
 use ndarray::Array2;
 use numpy::{PyArray1, PyArray2, PyArrayMethods, PyReadonlyArray1, PyReadonlyArray2};
+use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
 // Re-export engine types
@@ -1432,6 +1433,9 @@ fn run_tunable_cc(
     let result = py.allow_threads(|| {
         aglogen_engine::simulation::tunable_cc::run_tunable_cc_internal(params, seed, None)
     });
+    // Scenario 5.7: a degenerate pool is an error, not a panic, and this is the
+    // surface where Python reads it. The message comes from the engine.
+    let result = result.map_err(PyValueError::new_err)?;
     Ok(result.into())
 }
 
@@ -2658,7 +2662,8 @@ mod tests {
             ..Default::default()
         };
         let engine_result =
-            aglogen_engine::simulation::tunable_cc::run_tunable_cc_internal(params, 42, None);
+            aglogen_engine::simulation::tunable_cc::run_tunable_cc_internal(params, 42, None)
+                .expect("tunable_cc should run for a valid payload");
 
         // Convert to PySimulationResult (same path as the binding)
         let py_result: super::PySimulationResult = engine_result.into();

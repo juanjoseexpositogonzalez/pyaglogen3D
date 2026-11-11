@@ -254,16 +254,20 @@ def test_the_scalar_is_not_checked_when_a_distribution_supplies_the_value(
     assert sim.status == "completed"
 
 
-def test_the_binding_still_panics_for_target_kf_zero() -> None:
+def test_the_binding_reports_a_degenerate_pool_instead_of_panicking() -> None:
     """The reason the guard exists, measured on the binding itself.
 
-    Deliberately a real call: the task's own witnesses mock the engine, so without
-    this one nothing in the suite would notice if `run_tunable_cc` stopped panicking
-    - and the guards would then be defending against a defect that no longer exists.
-    `PanicException` derives from `BaseException`, which is what made it a 500 in
-    the first place.
+    This witness used to assert the opposite: that `kf=0.0` raised a `BaseException`
+    which was **not** an `Exception`, so that the day the engine stopped panicking
+    would be noticed instead of silently removing the reason for the guard. #292 is
+    that day - Scenario 5.7 asked for an explicit error - and this test noticed, by
+    failing, exactly as intended.
+
+    What it pins now is the contract that replaced the panic: the binding raises a
+    `ValueError` carrying the engine's message, which the worker's ordinary
+    `except Exception` can record as a failed child.
     """
-    with pytest.raises(BaseException) as raised:
+    with pytest.raises(ValueError) as raised:
         aglogen_core.run_tunable_cc(
             n_particles=60,
             target_df=2.0,
@@ -273,11 +277,7 @@ def test_the_binding_still_panics_for_target_kf_zero() -> None:
             seed=7,
         )
 
-    assert not isinstance(raised.value, Exception), (
-        "if this ever becomes an Exception, the handler in tasks.py no longer needs "
-        "the BaseException branch for this path"
-    )
-    assert "select_pair_smart" in str(raised.value), (
-        "any panic would satisfy the assertion above; this one names the fault the "
-        "guard exists to prevent"
+    assert "cannot merge" in str(raised.value), (
+        "the engine's message is what a caller reads; a bare ValueError would keep "
+        "the information the panic used to hide"
     )

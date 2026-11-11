@@ -55,7 +55,7 @@ fn main() {
                 ..Default::default()
             };
 
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
             // Skip clearly broken sim outputs (negative Df, NaN, etc.)
             if !result.fractal_dimension.is_finite()

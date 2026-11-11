@@ -20,9 +20,15 @@ from .distribution_shape import DISTRIBUTION_KEYS as _DIST_KEYS
 from .distribution_shape import check_algorithm_scope as check_distribution_scope
 from .distribution_shape import collect_surfaces as collect_distribution_surfaces
 from .distribution_shape import validate_shape as validate_distribution_shape
-from .expansion_preview import GridShapeError, check_children, preview_children
+from .expansion_preview import (
+    GridShapeError,
+    ShapeFault,
+    check_children,
+    preview_children,
+)
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
+from .param_policy import rotation_attempts
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
     PARAM_KEY_DIAMETER,
@@ -321,6 +327,15 @@ class SimulationSerializer(serializers.ModelSerializer):
             # Imported algorithm has minimal parameter requirements
             # Parameters will be populated by the view after parsing CSV
             pass
+
+        elif algorithm == "tunable_cc":
+            # #290: the same sentence the worker raises, read from the same place,
+            # so a payload that cannot run is refused with a 400 instead of being
+            # stored and left `running` while the worker sits inside the call.
+            try:
+                rotation_attempts(value)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
 
         return value
 
@@ -657,6 +672,31 @@ class ParametricStudySerializer(serializers.ModelSerializer):
             or getattr(self.instance, "base_algorithm", "")
             or ""
         )
+        # #234: a shape fault has to name the surface the client wrote it on.
+        # `sintering_type` decides which keys are required, and a swept key wins
+        # over the base - the same precedence the children get - so the search
+        # order below is grid, extremes, base. The base stays the root when no
+        # surface declares the anchor at all.
+        def _declaring_surface(predicate: Any) -> str | None:
+            for label, mapping in (
+                ("parameter_grid", grid),
+                ("limiting_cases_config.theoretical_extremes", extremes),
+                ("base_parameters", base_params),
+            ):
+                if predicate(mapping):
+                    return label
+            return None
+
+        sintering_surface = (
+            _declaring_surface(lambda mapping: "sintering_type" in mapping)
+            or _declaring_surface(
+                lambda mapping: any(
+                    key.startswith("sintering_") for key in mapping
+                )
+            )
+            or "base_parameters"
+        )
+
         try:
             children = preview_children(
                 algorithm=effective_algorithm,
@@ -667,9 +707,14 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 limiting_cases_config=limiting or None,
                 max_children=self._BATCH_HARD_CAP,
             )
-            check_children(children)
+            check_children(children, surface=sintering_surface)
         except GridShapeError as exc:
             raise serializers.ValidationError({"parameter_grid": str(exc)}) from exc
+        except ShapeFault as exc:
+            # #234: the shape names its surface. A cast fault keeps the generic
+            # key, which `test_r12_a_grid_fault_names_the_grid_and_the_rest_
+            # does_not_claim_a_field` pins as the client-visible contract.
+            raise serializers.ValidationError({exc.surface: str(exc)}) from exc
         except ValueError as exc:
             raise serializers.ValidationError({"non_field_errors": str(exc)}) from exc
 

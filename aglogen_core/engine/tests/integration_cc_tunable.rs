@@ -65,7 +65,7 @@ fn convergence_5_runs_target_1_6_1_7() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  seed {}: Df={:.3}, kf={:.3} (tunable={}, ballistic={}, max_retries={})",
@@ -133,7 +133,7 @@ fn smoke_cc_tunable_moderate_df() {
         ..Default::default()
     };
 
-    let result = run_tunable_cc_internal(params, 42, None);
+    let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
     // Basic sanity: must produce requested particle count
     assert_eq!(result.coordinates.len(), 100);
@@ -195,7 +195,7 @@ fn diagnostic_dimers_at_low_df_target() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  seed {}: Df={:.3}, kf={:.3} (tunable={}, ballistic={})",
@@ -253,7 +253,7 @@ fn diagnostic_trimers_at_low_df_target() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  seed {}: Df={:.3}, kf={:.3} (tunable={}, ballistic={})",
@@ -310,7 +310,7 @@ fn sintering_no_collapse_small_n() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  sintering_small seed {}: Df={:.3}, kf={:.3}, n={} (tunable={}, ballistic={})",
@@ -368,7 +368,7 @@ fn convergence_5_runs_with_sintering() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  seed {}: Df={:.3}, kf={:.3}, n={} (tunable={}, ballistic={})",
@@ -432,7 +432,7 @@ fn ballistic_fallback_populates_required_distance() {
         ..Default::default()
     };
 
-    let result = run_tunable_cc_internal(params, 42, None);
+    let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
     // Must have at least one fallback merge (ballistic or adaptive) to be meaningful.
     let fallback_entries: Vec<_> = result
@@ -498,7 +498,7 @@ fn ballistic_fallback_handles_degenerate_distance() {
     };
 
     // Must not panic — that's the primary assertion.
-    let result = run_tunable_cc_internal(params, 99, None);
+    let result = run_tunable_cc_internal(params, 99, None).expect("tunable_cc should run for a valid payload");
 
     // With Df=0.05 every merge should fall back (ballistic or adaptive).
     let fallback_entries: Vec<_> = result
@@ -564,7 +564,7 @@ fn phase3_convergence_df_1_7_dimers_3_seeds() {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
         eprintln!(
             "  Phase3 seed {}: Df={:.3}, kf={:.3} (tunable={}, adaptive={}, ballistic={})",
@@ -649,7 +649,7 @@ fn parametric_sweep_df_range_kf_1_3() {
                 ..Default::default()
             };
 
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             assert_eq!(result.coordinates.len(), n_particles);
             df_results.push(result.fractal_dimension);
         }
@@ -742,7 +742,7 @@ fn r21_high_df_band_still_converges_with_fix() {
                 seed_type: SeedType::Monomers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             assert_eq!(
                 result.coordinates.len(),
                 n_particles,
@@ -861,7 +861,7 @@ fn mid_band_non_regression_high_df_fix_on() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
 
             // Count adaptive_high_df_floor entries vs total merge entries.
             let total_merges = result.merge_trace.len();
@@ -1007,7 +1007,7 @@ fn r21_still_converges_with_high_df_fix() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             assert_eq!(
                 result.coordinates.len(),
                 n_particles,
@@ -1107,7 +1107,7 @@ fn r25_bc_sanity_low_df_band_unaffected() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let rg_df = result.fractal_dimension;
 
             let bc_result = bc_3d_morton_integration(&result.coordinates, 18);

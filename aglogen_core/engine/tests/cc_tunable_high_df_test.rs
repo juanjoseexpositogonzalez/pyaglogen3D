@@ -71,12 +71,12 @@ fn high_df_fix_flag_default_on() {
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
     }
-    let result_default = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_default = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
 
     unsafe {
         std::env::set_var("CC_TUNABLE_USE_HIGH_DF_FIX", "true");
     }
-    let result_explicit_on = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_explicit_on = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
     }
@@ -142,7 +142,7 @@ fn high_df_fix_flag_off_values() {
         unsafe {
             std::env::set_var("CC_TUNABLE_USE_HIGH_DF_FIX", val);
         }
-        let r = run_tunable_cc_internal(params.clone(), seed, None);
+        let r = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
         off_results.push(r.fractal_dimension);
     }
     unsafe {
@@ -211,13 +211,13 @@ fn high_df_fix_flag_orthogonal_to_r20_r22() {
         std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", "true");
         std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
     }
-    let result_baseline = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_baseline = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
 
     // Test: PHASE3=true, LOW_DF_FIX=true, HIGH_DF_FIX=false.
     unsafe {
         std::env::set_var("CC_TUNABLE_USE_HIGH_DF_FIX", "false");
     }
-    let result_high_df_off = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_high_df_off = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
 
     // Cleanup.
     unsafe {
@@ -309,7 +309,7 @@ fn high_df_convergence_band() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             df_results.push(result.fractal_dimension);
             kf_results.push(result.prefactor);
         }
@@ -441,7 +441,7 @@ fn high_df_bc_sanity() {
                 seed_type: SeedType::Dimers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let rg_df = result.fractal_dimension;
 
             // Box-counting cross-check (precision=18, mirroring low-Df test).
@@ -557,7 +557,7 @@ fn flag_off_no_high_df_floor_tag() {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
         for entry in &result.merge_trace {
             if entry.merge_type == "adaptive_high_df_floor" {
                 floor_tag_count_on += 1;
@@ -597,7 +597,7 @@ fn flag_off_no_high_df_floor_tag() {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
         for entry in &result.merge_trace {
             if entry.merge_type == "adaptive_high_df_floor" {
                 floor_tag_count_off += 1;
@@ -677,7 +677,7 @@ fn rollback_high_df_fix_false_matches_pre_fix_snapshot() {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, fixture.seed, None);
+        let result = run_tunable_cc_internal(params, fixture.seed, None).expect("tunable_cc should run for a valid payload");
 
         unsafe {
             std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
@@ -880,7 +880,7 @@ fn rollback_both_flags_false_matches_pre_cycle1() {
             seed_type: SeedType::Monomers, // pre-Cycle-1 used Monomers
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, fixture.seed, None);
+        let result = run_tunable_cc_internal(params, fixture.seed, None).expect("tunable_cc should run for a valid payload");
 
         unsafe {
             std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");
@@ -1026,8 +1026,8 @@ fn rollback_no_rng_fork_high_df() {
         ..Default::default()
     };
 
-    let r1 = run_tunable_cc_internal(params.clone(), 7, None);
-    let r2 = run_tunable_cc_internal(params.clone(), 7, None);
+    let r1 = run_tunable_cc_internal(params.clone(), 7, None).expect("tunable_cc should run for a valid payload");
+    let r2 = run_tunable_cc_internal(params.clone(), 7, None).expect("tunable_cc should run for a valid payload");
 
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_HIGH_DF_FIX");

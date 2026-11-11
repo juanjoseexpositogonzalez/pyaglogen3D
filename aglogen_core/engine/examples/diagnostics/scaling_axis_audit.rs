@@ -102,7 +102,7 @@ struct Row {
 }
 
 fn audit(params: TunableCcParams, seed: u64, rp: f64) -> Option<Row> {
-    let result = run_tunable_cc_internal(params, seed, None);
+    let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
     if result.coordinates.is_empty() {
         return None;
     }

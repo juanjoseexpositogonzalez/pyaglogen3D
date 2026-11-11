@@ -36,9 +36,11 @@ import { Loader2 } from 'lucide-react'
  * copy of its own for a rejection.
  *
  * Nothing below the paint moves: the two fields, their types, placeholders and
- * `required` flags, the clear-then-submit order, the pending copy, the OAuth
- * round trip through `authApi.getOAuthUrl`, and the landing page after a
- * successful sign-in (owned by `AuthContext`, which pushes to `/dashboard`).
+ * `required` flags, the clear-then-submit order, the wording of the pending copy,
+ * the OAuth round trip through `authApi.getOAuthUrl`, and the landing page after
+ * a successful sign-in (owned by `AuthContext`, which pushes to `/dashboard`).
+ * What #246 moved on this page is when that copy appears, plus the two signals
+ * that say why the button is inert before anything is sent.
  */
 
 /**
@@ -49,6 +51,9 @@ import { Loader2 } from 'lucide-react'
  */
 const FIELD = 'border-line bg-surface text-ink placeholder:text-ink-faint'
 const OUTLINE_BUTTON = 'border-line bg-surface text-ink hover:bg-surface-soft'
+
+/** The one place the restore's sentence is anchored, for `aria-describedby`. */
+const SESSION_STATUS_ID = 'session-status'
 
 /**
  * Hand the browser to the provider.
@@ -65,7 +70,19 @@ function startOAuth(provider: 'google' | 'github') {
 }
 
 export default function LoginPage() {
-  const { login, error, clearError, isLoading } = useAuth()
+  const { login, error, clearError, isLoading, isRestoring } = useAuth()
+
+  /*
+    Two facts, two sentences (#246). `isRestoring` is true until the context has
+    decided whether a session exists: nothing has been submitted, so the button
+    keeps the idle copy. `submitting` is a context request that is not that
+    decision — on this route, always a sign-in this form sent. `register` and
+    `logout` raise the same flag, but from screens that are not this one, and
+    `logout` clears it in the same batch as the redirect here, so neither can
+    reach this button. It is unpressable in both states and narrates only the
+    submit.
+  */
+  const submitting = isLoading && !isRestoring
 
   /*
     The OAuth callback writes `?error=` into this route when the provider
@@ -142,8 +159,18 @@ export default function LoginPage() {
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? (
+        {/*
+          Both flags, although `isRestoring` implies `isLoading` today: written
+          out because that implication is exactly what #246 separated, and this
+          rule must not depend on it silently.
+        */}
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isRestoring || isLoading}
+          aria-describedby={isRestoring ? SESSION_STATUS_ID : undefined}
+        >
+          {submitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
               Signing in...
@@ -152,6 +179,25 @@ export default function LoginPage() {
             'Sign In'
           )}
         </Button>
+
+        {/*
+          The restore in words, for a reader who cannot see a dimmed button and
+          guess why: the card is fully painted and nothing has been sent.
+
+          Mounted always, with only its text changing, because a live region
+          created together with its own content is not announced — this is the
+          shape `CopyText` and the batch form already use. That still does not
+          promise an announcement here: for a returning reader the text is there
+          at first paint, and there is no mutation to announce. What is reliable
+          is the association, so the button names this paragraph while it waits.
+
+          "Checking", not "restoring": the flag is also true on a first visit,
+          where there is no stored session to restore — only a question still
+          unanswered.
+        */}
+        <p id={SESSION_STATUS_ID} role="status" aria-live="polite" className="sr-only">
+          {isRestoring ? 'Checking your session…' : ''}
+        </p>
 
         {/*
           The rule and the word that interrupts it. The mask matches the panel
