@@ -10,7 +10,6 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { useRouter } from 'next/navigation'
 
 import type {
-  AuthResponse,
   LoginCredentials,
   RegisterData,
   UpdateProfileData,
