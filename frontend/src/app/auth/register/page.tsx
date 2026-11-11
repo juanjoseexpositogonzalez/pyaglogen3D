@@ -28,9 +28,11 @@ import { Loader2 } from 'lucide-react'
  * state from `e.target.name`, so a field without a `name` would still travel as
  * a missing key. Two consequences of that shape are pinned by tests rather than
  * fixed here, because fixing either is a behaviour change with no approval:
- *   - an empty `first_name`/`last_name` travels as `''`, not as `undefined`;
- *   - nothing on this screen compares `password` with `password_confirm`; a
- *     typo costs a round trip and is reported by the API.
+ *   - an empty `first_name`/`last_name` travels as `''`, not as `undefined`.
+ *
+ * What used to be the second consequence — no client-side comparison of `password`
+ * with `password_confirm`, so a typo cost a round trip — is fixed in #247: the screen
+ * compares the two fields before it calls the API and says the backend's own sentence.
  *
  * The landing page after a successful registration is `/auth/check-email`,
  * pushed by `AuthContext`, not by this file.
@@ -67,17 +69,38 @@ export default function RegisterPage() {
     first_name: '',
     last_name: '',
   })
+  // Compared here because the screen can see the mistake the round trip would
+  // report. The wording is the backend's own (`serializers.py` answers
+  // `password_confirm: "Passwords do not match."`), so the reader never meets two
+  // vocabularies for one condition (#247).
+  const [passwordsDiffer, setPasswordsDiffer] = useState(false)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData((prev) => ({
       ...prev,
       [e.target.name]: e.target.value,
     }))
+    // Editing either password field makes the previous refusal stale: telling the
+    // reader "they do not match" about a field they are in the middle of fixing is
+    // the same mistake as saying nothing at all.
+    if (e.target.name === 'password' || e.target.name === 'password_confirm') {
+      setPasswordsDiffer(false)
+    }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     clearError()
+
+    // One comparison, one sentence, no request (#247). The backend still validates
+    // this — the client is saving a round trip on the most sensitive path in the
+    // product, not replacing the server's check.
+    if (formData.password !== formData.password_confirm) {
+      setPasswordsDiffer(true)
+      return
+    }
+    setPasswordsDiffer(false)
+
     try {
       await register(formData)
     } catch {
@@ -89,6 +112,7 @@ export default function RegisterPage() {
     <Panel title="Create Account" hint="Sign up to start using PyAglogen3D">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Callout tone="danger" title={error} />}
+        {passwordsDiffer && <Callout tone="danger" title="Passwords do not match." />}
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">

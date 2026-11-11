@@ -195,6 +195,28 @@ describe('registration screen', () => {
     )
   })
 
+  it('lets the attempt through once the two passwords agree again', async () => {
+    renderPage()
+
+    fill({
+      Email: 'ana@example.org',
+      Password: 'secreto-123',
+      'Confirm Password': 'secreto-124',
+    })
+    await submit()
+    expect(mockRegister).not.toHaveBeenCalled()
+
+    // Fixing the typo must clear the refusal, or the reader would be told the same
+    // thing twice about a form that is now correct.
+    fireEvent.change(screen.getByLabelText('Confirm Password'), {
+      target: { value: 'secreto-123' },
+    })
+    expect(screen.queryByRole('alert')).toBeNull()
+
+    await submit()
+    expect(mockRegister).toHaveBeenCalledTimes(1)
+  })
+
   it('sends the optional names as empty strings rather than omitting them', async () => {
     renderPage()
 
@@ -219,7 +241,7 @@ describe('registration screen', () => {
     expect(payload.last_name).toBe('')
   })
 
-  it('does not catch a mismatched confirmation here; the API does', async () => {
+  it('refuses a mismatched confirmation instead of sending it', async () => {
     renderPage()
 
     fill({
@@ -229,17 +251,12 @@ describe('registration screen', () => {
     })
     await submit()
 
-    // Pinned, not wanted: nothing on this screen compares the two values, so
-    // the typo costs a round trip and the reader only hears about it from the
-    // server. Fixing it changes behaviour and needs its own approval.
-    expect(mockRegister).toHaveBeenCalledWith({
-      first_name: '',
-      last_name: '',
-      email: 'ana@example.org',
-      password: 'secreto-123',
-      password_confirm: 'secreto-124',
-    })
-    expect(screen.queryByRole('alert')).toBeNull()
+    // This witness used to pin the opposite — "does not catch a mismatched
+    // confirmation here; the API does" — so that whoever fixed it had to invert it
+    // knowingly. #247 is that approval: the typo no longer costs a round trip, and
+    // the sentence is the backend's own (`serializers.py`), not a second vocabulary.
+    expect(mockRegister).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain('Passwords do not match.')
   })
 
   it('leaves a rejected registration to the context: the page stays silent', async () => {
