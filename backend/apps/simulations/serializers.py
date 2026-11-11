@@ -293,17 +293,29 @@ class SimulationSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         f"Missing required parameter: {field}"
                     )
-            if value["n_particles"] < 10:
+            n_particles = value["n_particles"]
+            # `isinstance` first: a list, a dict or a numeric string reached the
+            # comparison and answered 500 where the contract wants a 400. Same class
+            # as the nested seed_type above, and judgment day found it there (#231).
+            if not isinstance(n_particles, (int, float)):
+                raise serializers.ValidationError("n_particles must be a number")
+            if n_particles < 10:
                 raise serializers.ValidationError("n_particles must be at least 10")
-            if value["n_particles"] > 100000:
+            if n_particles > 100000:
                 raise serializers.ValidationError("n_particles must be at most 100,000")
 
         elif algorithm == "limiting":
             # Limiting cases allow any N >= 1
-            if "n_particles" in value and value["n_particles"] < 1:
-                raise serializers.ValidationError(
-                    "n_particles must be at least 1 for limiting cases"
-                )
+            if "n_particles" in value:
+                n_particles = value["n_particles"]
+                if not isinstance(n_particles, (int, float)):
+                    raise serializers.ValidationError(
+                        "n_particles must be a number"
+                    )
+                if n_particles < 1:
+                    raise serializers.ValidationError(
+                        "n_particles must be at least 1 for limiting cases"
+                    )
 
         elif algorithm == "imported":
             # Imported algorithm has minimal parameter requirements

@@ -10,8 +10,9 @@ checking `isinstance` first. These tests pin the same rule on the three
 surfaces that kept it, and they go through the HTTP boundary because that is
 where the 500 was measured:
 
-1. `box_counting_params` (the study serializer, whose validator the
-   run-box-counting action shares);
+1. `box_counting_params` (the study serializer; the validator it shares with
+   the run-box-counting action is the same function, though that action already
+   coerced with `int()` and answered 400 before this change);
 2. a nested `parameters.seed_type` lifted in `SimulationSerializer.create`;
 3. `dpo_distribution.mode`, read by the custom distribution field.
 
@@ -90,7 +91,7 @@ def test_box_counting_rejects_a_non_number_with_400(key: str) -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert f"{key} must be" in str(response.data)
     assert ParametricStudy.objects.count() == 0
 
@@ -106,7 +107,7 @@ def test_box_counting_still_refuses_an_out_of_range_number() -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert "points_per_sphere must be between 10 and 1000" in str(response.data)
     assert ParametricStudy.objects.count() == 0
 
@@ -125,7 +126,7 @@ def test_nested_seed_type_rejects_a_non_string_with_400() -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert "is not a valid seed type" in str(response.data)
     assert Simulation.objects.count() == 0
 
@@ -141,7 +142,7 @@ def test_nested_seed_type_still_refuses_an_unknown_choice() -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert "is not a valid seed type" in str(response.data)
     assert Simulation.objects.count() == 0
 
@@ -160,7 +161,7 @@ def test_distribution_mode_rejects_a_non_string_with_400() -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert "mode must be one of" in str(response.data)
     assert Simulation.objects.count() == 0
 
@@ -176,6 +177,49 @@ def test_distribution_mode_still_refuses_an_unknown_mode() -> None:
         format="json",
     )
 
-    assert response.status_code == 400, response.data
+    assert response.status_code == 400, getattr(response, "data", response.content)
     assert "mode must be one of" in str(response.data)
+    assert Simulation.objects.count() == 0
+
+
+# --- 4. n_particles: the same class, fifteen lines above the seed_type fix ---
+#
+# Neither landed in #231's contract: judgment day found it while trying to break
+# the three that did. Same file, same endpoint, same mechanism, so it is closed
+# here rather than left for a reader to find it as a 500.
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("algorithm", ["dla", "limiting"])
+@pytest.mark.parametrize("value", [[10], "10", {"count": 10}])
+def test_n_particles_rejects_a_non_number_with_400(
+    algorithm: str, value: object
+) -> None:
+    """`[10] < 10` raises TypeError in `validate_parameters`."""
+    project, client = _setup()
+
+    response = client.post(
+        _simulations_url(project),
+        _simulation_payload(algorithm=algorithm, parameters={"n_particles": value}),
+        format="json",
+    )
+
+    assert response.status_code == 400, getattr(response, "data", response.content)
+    assert "n_particles must be a number" in str(response.data)
+    assert Simulation.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_n_particles_still_refuses_a_number_below_the_floor() -> None:
+    """The fix narrows the type check; the floor itself is unchanged."""
+    project, client = _setup()
+
+    response = client.post(
+        _simulations_url(project),
+        _simulation_payload(algorithm="dla", parameters={"n_particles": 5}),
+        format="json",
+    )
+
+    assert response.status_code == 400, getattr(response, "data", response.content)
+    assert "n_particles must be at least 10" in str(response.data)
     assert Simulation.objects.count() == 0
