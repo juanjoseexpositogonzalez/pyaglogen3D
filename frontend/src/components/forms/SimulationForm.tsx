@@ -785,6 +785,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     onSubmit({
       name: name.trim() || undefined,
       algorithm,
+      // SAFETY: `algorithmParams` is assembled branch by branch — one object per
+      // algorithm — so no single literal type describes it. The branches are what
+      // pin the shape, and the server validates it on arrival; a cast is the only
+      // way to hand a per-algorithm union to a field typed as one of them.
       parameters: algorithmParams as unknown as CreateSimulationInput['parameters'],
       seed: seed ? parseInt(seed) : undefined,
     })

@@ -627,6 +627,10 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const variationCounts = useMemo(() => {
     return variations.map((v) => {
       if (DISTRIBUTION_PARAMS.has(v.name)) {
+        // SAFETY: the projection only counts and counts-down this array; it never
+        // reads an element as a number. `parameter_grid` accepts numbers and seed
+        // type strings in the same slot, and the union of both is what TypeScript
+        // cannot express here without a discriminant this value does not carry.
         return { values: v.distributionValues as unknown as (number | string)[], count: v.distributionValues.length || 1 }
       }
       if (v.name === SEED_TYPE_PARAM) {
