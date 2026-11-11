@@ -1715,20 +1715,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             if not (1.0 <= target_df <= 3.0):
                 raise ValueError("target_df must be between 1.0 and 3.0")
 
-            target_kf = params.get("target_kf", 1.3)
-            if isinstance(target_kf, bool) or not isinstance(
-                target_kf, (int, float)
-            ):
-                raise ValueError(
-                    f"target_kf must be a number, got {type(target_kf).__name__}"
-                )
-            if not (0.1 <= target_kf <= 2.7):
-                raise ValueError("target_kf must be between 0.1 and 2.7")
-            # seed_type: read from the model field (set via API/serializer).
-            # The binding accepts None (→ monomers default) for backward compat.
-            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
-
-            # PYA-15: expand distribution configs into engine kwargs.
+            # PYA-15: expand distribution configs first. When a distribution is
+            # present it is what the engine reads, so the scalar checks below have
+            # to know whether they are used at all.
             # When absent, empty dict → engine uses legacy scalars.
             dpo_kwargs = expand_distribution_kwargs(
                 "dpo", params.get("dpo_distribution")
@@ -1736,6 +1725,28 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             kf_kwargs = expand_distribution_kwargs(
                 "kf", params.get("target_kf_distribution")
             )
+
+            # `kf > 0` is the domain the spec states and the engine's own
+            # boundary: it panics at 0.0 and at negatives and completes at 0.05,
+            # 2.8 and 3.0. This branch's first attempt borrowed `fracval`'s policy
+            # window (0.1-2.7) and judgment day caught it deleting runs that used
+            # to finish, so it now refuses only what panics.
+            # Skipped when a distribution supplies kf: the engine then reads the
+            # distribution, and a 0.0 scalar next to `{mode: fixed, value: 1.3}`
+            # is not a fault.
+            target_kf = params.get("target_kf", 1.3)
+            if not kf_kwargs:
+                if isinstance(target_kf, bool) or not isinstance(
+                    target_kf, (int, float)
+                ):
+                    raise ValueError(
+                        f"target_kf must be a number, got {type(target_kf).__name__}"
+                    )
+                if not target_kf > 0:
+                    raise ValueError("target_kf must be greater than 0")
+            # seed_type: read from the model field (set via API/serializer).
+            # The binding accepts None (→ monomers default) for backward compat.
+            sim_seed_type: str | None = getattr(simulation, "seed_type", None)
 
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),

@@ -14,8 +14,11 @@ range guard there fixes one door, this fixes the mechanism.
 
 The panic is injected below with `_EnginePanic` rather than provoked. It used to be
 provoked with `target_df = 1e308`, which panicked on every seed; #232 then guarded
-`target_df` and `target_kf`, so no payload reaches the binding through the task any
-more. The rule under test is about the base class, not about which input panics, and
+the `target_df` and `target_kf` scalars, so those two no longer reach the binding
+through the task. Others still do - a `target_kf_distribution` carrying `value: 0.0`
+and a `radius_min` of 1e-300 both panic it - which is exactly why this handler stays
+the mechanism and not a per-input guard. The rule under test is about the base class,
+not about which input panics, and
 `test_the_binding_still_panics_for_target_kf_zero` in
 `apps/simulations/tests/test_tunable_cc_target_df_guard.py` keeps a real
 `PanicException` in the suite so its absence would still be noticed.

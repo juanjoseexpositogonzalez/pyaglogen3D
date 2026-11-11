@@ -152,16 +152,25 @@ def test_a_target_df_that_is_not_a_number_says_so(
     assert "between" not in message
 
 
-# --- target_kf: the parameter whose panic is real ---------------------------
+# --- target_kf: refuse only what panics -------------------------------------
+#
+# The first version of this guard borrowed `fracval`'s policy window [0.1, 2.7]
+# and judgment day measured it deleting runs that used to finish: `kf` 0.05, 0.09,
+# 2.8, 3.0 and 5.0 all completed before it and failed after. The spec states the
+# domain as `kf > 0`, the engine panics at 0.0 and at negatives, so that - and not
+# a borrowed window - is the boundary these tests pin.
 
 
-@pytest.mark.parametrize("target_kf", [0.1, 1.3, 2.7])
+@pytest.mark.parametrize("target_kf", [0.05, 0.1, 1.3, 2.7, 2.8, 3.0, 1e308])
 @patch("aglogen_core.run_tunable_cc")
-def test_a_target_kf_inside_the_range_reaches_the_engine(
+def test_a_positive_target_kf_reaches_the_engine(
     mock_run: MagicMock, project: Project, target_kf: float
 ) -> None:
+    """Including values outside the siblings' window: they completed before."""
     mock_run.return_value = _fake_engine_result()
-    sim = _make_sim(project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf})
+    sim = _make_sim(
+        project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf}
+    )
 
     run_simulation_task(str(sim.id))
 
@@ -170,22 +179,74 @@ def test_a_target_kf_inside_the_range_reaches_the_engine(
     assert sim.status == "completed"
 
 
-@pytest.mark.parametrize("target_kf", [0.0, -1.0, 1e308, "1.3", True])
+@pytest.mark.parametrize("target_kf", [0.0, -1.0, -0.5])
 @patch("aglogen_core.run_tunable_cc")
-def test_an_out_of_policy_target_kf_never_reaches_the_engine(
-    mock_run: MagicMock, project: Project, target_kf: object
+def test_a_non_positive_target_kf_never_reaches_the_engine(
+    mock_run: MagicMock, project: Project, target_kf: float
 ) -> None:
-    """0.0 and negatives panic the binding for real; 1e308 is out of policy."""
+    """These panic the binding for real, measured on every seed."""
     mock_run.return_value = _fake_engine_result()
-    sim = _make_sim(project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf})
+    sim = _make_sim(
+        project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf}
+    )
 
     run_simulation_task(str(sim.id))
 
     mock_run.assert_not_called()
     sim.refresh_from_db()
-    assert sim.status == "failed"
     message = sim.error_message or ""
-    assert "target_kf must be" in message
+    assert "target_kf must be greater than 0" in message
+    assert "must be a number" not in message
+
+
+@pytest.mark.parametrize("target_kf", ["1.3", True, None, [1.3]])
+@patch("aglogen_core.run_tunable_cc")
+def test_a_target_kf_that_is_not_a_number_says_so(
+    mock_run: MagicMock, project: Project, target_kf: object
+) -> None:
+    """The type fault is named as such, like its `target_df` twin."""
+    mock_run.return_value = _fake_engine_result()
+    sim = _make_sim(
+        project, {"n_particles": 20, "target_df": 2.0, "target_kf": target_kf}
+    )
+
+    run_simulation_task(str(sim.id))
+
+    mock_run.assert_not_called()
+    sim.refresh_from_db()
+    message = sim.error_message or ""
+    assert "target_kf must be a number" in message
+    assert "greater than" not in message
+
+
+@patch("aglogen_core.run_tunable_cc")
+def test_the_scalar_is_not_checked_when_a_distribution_supplies_the_value(
+    mock_run: MagicMock, project: Project
+) -> None:
+    """A 0.0 scalar next to `{mode: fixed, value: 1.3}` is not a fault.
+
+    The engine reads the distribution, so refusing the unused scalar would turn a
+    working run into a failure - the mirror of the hole this guard closes.
+    """
+    mock_run.return_value = _fake_engine_result()
+    sim = _make_sim(
+        project,
+        {
+            "n_particles": 20,
+            "target_df": 2.0,
+            "target_kf": 0.0,
+            "target_kf_distribution": {"mode": "fixed", "value": 1.3},
+        },
+    )
+
+    run_simulation_task(str(sim.id))
+
+    assert mock_run.called
+    kwargs = mock_run.call_args.kwargs
+    assert kwargs["kf_mode"] == "fixed"
+    assert kwargs["kf_value"] == 1.3
+    sim.refresh_from_db()
+    assert sim.status == "completed"
 
 
 def test_the_binding_still_panics_for_target_kf_zero() -> None:
@@ -210,4 +271,8 @@ def test_the_binding_still_panics_for_target_kf_zero() -> None:
     assert not isinstance(raised.value, Exception), (
         "if this ever becomes an Exception, the handler in tasks.py no longer needs "
         "the BaseException branch for this path"
+    )
+    assert "select_pair_smart" in str(raised.value), (
+        "any panic would satisfy the assertion above; this one names the fault the "
+        "guard exists to prevent"
     )
