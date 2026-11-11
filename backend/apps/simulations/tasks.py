@@ -1678,11 +1678,28 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 seed=seed,
             )
         elif algorithm == "tunable":
-            # Tunable PC with controllable fractal dimension
+            # Tunable PC with controllable fractal dimension.
+            # `target_kf` is guarded for the same reason as in `tunable_cc`
+            # (#232, #293): 0.0 and negatives make the binding never return, so
+            # the child stayed `queued` for ever and the study never settled.
+            # `kf > 0` is the boundary measured against the engine, which
+            # completes at 0.05 and returns for 2.8 or 3.0.
+            # `isinstance` first and bools refused: a list would raise inside the
+            # comparison and `true` would pass as 1.0 (#231's class).
+            target_kf = params.get("target_kf", 1.3)
+            if isinstance(target_kf, bool) or not isinstance(
+                target_kf, (int, float)
+            ):
+                raise ValueError(
+                    f"target_kf must be a number, got {type(target_kf).__name__}"
+                )
+            if not target_kf > 0:
+                raise ValueError("target_kf must be greater than 0")
+
             result = aglogen_core.run_tunable(
                 n_particles=params.get("n_particles", 1000),
                 target_df=params.get("target_df", 1.8),
-                target_kf=params.get("target_kf", 1.3),
+                target_kf=target_kf,
                 radius_min=radius_min,
                 radius_max=radius_max,
                 sintering_coeff=sintering_coeff,
