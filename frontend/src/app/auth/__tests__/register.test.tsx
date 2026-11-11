@@ -10,12 +10,12 @@
  * state from `e.target.name`, so a field rendered without a `name` would look
  * right on screen and travel as a missing key.
  *
- * Two witnesses pin behaviour this migration found and was not allowed to
- * change:
- *   - `first_name` and `last_name` are optional and travel as empty strings,
- *     not as `undefined`, when left blank;
- *   - a mismatched confirmation is not caught here. The page submits and lets
- *     the API reject it, so the reader learns about the typo after a round trip.
+ * One witness pins behaviour this migration found and was not allowed to change —
+ * `first_name` and `last_name` are optional and travel as empty strings, not as
+ * `undefined`, when left blank — and one pins behaviour #247 changed on purpose: the
+ * screen now compares the two passwords and refuses, with the backend's own sentence,
+ * instead of paying a round trip for a typo it can see. That witness used to assert the
+ * opposite and was inverted, not deleted.
  *
  * Plain matchers only: this repository's vitest setup does not load
  * @testing-library/jest-dom.

@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { PASSWORDS_DO_NOT_MATCH } from '@/lib/authMessages'
 import { authApi } from '@/lib/auth-api'
 import { Callout } from '@/components/kit/Callout'
 import { Panel } from '@/components/kit/Panel'
@@ -26,13 +27,13 @@ import { Loader2 } from 'lucide-react'
  * Nothing below the paint moves. Every field keeps its `id`, its `name`, its
  * type, placeholder and `required` flag; `handleChange` still keys the form
  * state from `e.target.name`, so a field without a `name` would still travel as
- * a missing key. Two consequences of that shape are pinned by tests rather than
- * fixed here, because fixing either is a behaviour change with no approval:
- *   - an empty `first_name`/`last_name` travels as `''`, not as `undefined`.
+ * a missing key. One consequence of that shape is pinned by a test rather than fixed
+ * here, because fixing it would be a behaviour change with no approval: an empty
+ * `first_name`/`last_name` travels as `''`, not as `undefined`.
  *
- * What used to be the second consequence — no client-side comparison of `password`
- * with `password_confirm`, so a typo cost a round trip — is fixed in #247: the screen
- * compares the two fields before it calls the API and says the backend's own sentence.
+ * The other one was fixed in #247: the screen compares `password` with
+ * `password_confirm` before it calls the API and refuses with the backend's own
+ * sentence, so a typo no longer costs a round trip.
  *
  * The landing page after a successful registration is `/auth/check-email`,
  * pushed by `AuthContext`, not by this file.
@@ -112,7 +113,7 @@ export default function RegisterPage() {
     <Panel title="Create Account" hint="Sign up to start using PyAglogen3D">
       <form onSubmit={handleSubmit} className="space-y-4">
         {error && <Callout tone="danger" title={error} />}
-        {passwordsDiffer && <Callout tone="danger" title="Passwords do not match." />}
+        {passwordsDiffer && <Callout tone="danger" title={PASSWORDS_DO_NOT_MATCH} />}
 
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
