@@ -137,7 +137,26 @@ export const useViewerStore = create<ViewerState>()(
       toggleOrthographic: () => set((s) => ({ useOrthographic: !s.useOrthographic })),
       toggleAutoRotate: () => set((s) => ({ autoRotate: !s.autoRotate })),
       setRotateSpeed: (speed) => set({ rotateSpeed: speed }),
-      setCameraAngles: (azimuth, elevation, scope = DEFAULT_CAMERA_SCOPE) =>
+      setCameraAngles: (azimuth, elevation, scope = DEFAULT_CAMERA_SCOPE) => {
+        /*
+          #312: this runs from `useFrame`, sixty times a second, with rounded
+          angles. Rebuilding the state for an unchanged angle is not free — every
+          notification re-renders the subscribers, and `persist` rewrites the whole
+          store to `localStorage` — so an angle that has not moved returns early.
+          The legacy mirror is part of the comparison, because a state migrated
+          from an older payload can carry a scope that disagrees with it.
+        */
+        const snapshot = get()
+        const current = snapshot.cameraScopes[scope]
+        const unchanged =
+          current !== undefined &&
+          current.azimuth === azimuth &&
+          current.elevation === elevation &&
+          (scope !== DEFAULT_CAMERA_SCOPE ||
+            (snapshot.cameraAzimuth === azimuth &&
+              snapshot.cameraElevation === elevation))
+        if (unchanged) return
+
         set((state) => {
           const nextScopes = {
             ...state.cameraScopes,
@@ -154,7 +173,8 @@ export const useViewerStore = create<ViewerState>()(
             }
           }
           return { cameraScopes: nextScopes }
-        }),
+        })
+      },
       getCameraAngles: (scope = DEFAULT_CAMERA_SCOPE) => {
         const scoped = get().cameraScopes[scope]
         if (scoped) return scoped
@@ -171,6 +191,28 @@ export const useViewerStore = create<ViewerState>()(
     }),
     {
       name: 'viewer-settings',
+      /*
+        #312: a camera angle is where the reader was looking, not a preference
+        that should survive a reload — and keeping it in the payload is what put a
+        `localStorage` write on the frame path. The export fields are a request in
+        flight, not state: persisted, a reload could replay a download.
+      */
+      partialize: (state) => {
+        const {
+          cameraScopes,
+          cameraAzimuth,
+          cameraElevation,
+          exportRequest,
+          exportFilename,
+          ...persisted
+        } = state
+        void cameraScopes
+        void cameraAzimuth
+        void cameraElevation
+        void exportRequest
+        void exportFilename
+        return persisted
+      },
       // Migrate older persisted states that predate `cameraScopes`.
       version: 1,
       migrate: (persistedState, version) => {
