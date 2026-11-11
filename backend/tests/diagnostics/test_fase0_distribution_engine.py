@@ -151,10 +151,11 @@ def test_engine_reports_every_out_of_range_kf_the_contract_rejects() -> None:
     import aglogen_core
 
     casos = {
-        # These two reach the pair selection, which now reports the degenerate pool.
-        "fixed value=-1": ("fixed value", {"kf_mode": "fixed", "kf_value": -1.0}),
+        # These two reach the pair selection, which reports the degenerate pool with
+        # the same message: it names the condition, not the parameter.
+        "fixed value=-1": ("cannot merge", {"kf_mode": "fixed", "kf_value": -1.0}),
         "normal mean=-1": (
-            "normal mean",
+            "cannot merge",
             {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
         ),
         # This one never gets that far: `gen_range(2..=1)` panics on the empty range,
@@ -182,20 +183,23 @@ def test_engine_reports_every_out_of_range_kf_the_contract_rejects() -> None:
     )
 
 
-def test_engine_panics_on_inverted_uniform_and_it_is_not_an_exception() -> None:
-    """Found by the spec-review: this escapes `except Exception` in the worker."""
+def test_engine_reports_an_inverted_uniform_instead_of_panicking() -> None:
+    """Found by the spec-review: this used to escape `except Exception` in the worker.
+
+    `gen_range(2.0..=1.0)` panics on the empty range, and that panic reached Python as
+    a `PanicException`. #292 built the `Result` channel for the pair selection and
+    then found this second door to the same room on CI: the samplers validate first
+    now, so the caller reads a message naming the range.
+    """
     import aglogen_core
 
-    with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+    with pytest.raises(ValueError) as excinfo:
         aglogen_core.run_tunable_cc(
             **ENGINE_BASE, dpo_mode="uniform", dpo_min=2.0, dpo_max=1.0
         )
-    raised = excinfo.value
-    print(
-        f"\n[panic] {type(raised).__name__}, es Exception: {isinstance(raised, Exception)}"
-    )
-    assert not isinstance(raised, Exception), (
-        "the panic became an ordinary Exception; the worker guard would now catch it"
+    print(f"\n[inverted uniform] {type(excinfo.value).__name__}: {excinfo.value}")
+    assert "uniform range is empty" in str(excinfo.value), (
+        "the message has to name the fault: the panic it replaced carried no name at all"
     )
 
 
