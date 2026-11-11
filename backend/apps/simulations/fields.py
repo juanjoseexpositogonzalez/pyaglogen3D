@@ -50,7 +50,9 @@ class DistributionField(serializers.Field):
             raise serializers.ValidationError("must be a dict or null")
 
         mode = data.get("mode")
-        if mode not in VALID_MODES:
+        # `isinstance` first: `["fixed"] not in VALID_MODES` raised TypeError,
+        # answering 500 where the contract wants a 400 (#231).
+        if not isinstance(mode, str) or mode not in VALID_MODES:
             raise serializers.ValidationError(
                 f"mode must be one of {sorted(VALID_MODES)}, got {mode!r}"
             )

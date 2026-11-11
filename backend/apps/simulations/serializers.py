@@ -78,11 +78,13 @@ def validate_box_counting_params_dict(value: dict[str, Any]) -> None:
             )
 
     points = value.get("points_per_sphere", 100)
-    if not (10 <= points <= 1000):
+    # `isinstance` first: a list reached the comparison, and the TypeError it
+    # raised answered 500 for a payload this validator exists to refuse (#231).
+    if not isinstance(points, (int, float)) or not (10 <= points <= 1000):
         raise ValidationError("points_per_sphere must be between 10 and 1000")
 
     precision = value.get("precision", 18)
-    if not (8 <= precision <= 21):
+    if not isinstance(precision, (int, float)) or not (8 <= precision <= 21):
         raise ValidationError("precision must be between 8 and 21")
 
     windowed = value.get("windowed")
@@ -216,7 +218,12 @@ class SimulationSerializer(serializers.ModelSerializer):
                 valid_choices = {
                     c[0] for c in Simulation._meta.get_field("seed_type").choices
                 }
-                if nested_seed_type not in valid_choices:
+                # `isinstance` first: `[["monomers"]] not in <set>` raised
+                # TypeError, a 500 where R17 wants a 400 (#231).
+                if (
+                    not isinstance(nested_seed_type, str)
+                    or nested_seed_type not in valid_choices
+                ):
                     raise serializers.ValidationError(
                         {
                             "seed_type": f"'{nested_seed_type}' is not a valid seed type. "
