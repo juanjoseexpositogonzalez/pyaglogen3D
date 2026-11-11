@@ -12,9 +12,13 @@ panic the engine has never been enumerated and any new hole would produce the sa
 silent hang. #232 is the same root cause reached through `target_df`; a per-input
 range guard there fixes one door, this fixes the mechanism.
 
-The trigger below is deterministic (`target_df = 1e308` panics on every seed, as
-measured in #232); `kf_std = 100.0`, the one this point records, panics on 12 of
-20 seeds and would make a flaky witness.
+The panic is injected below with `_EnginePanic` rather than provoked. It used to be
+provoked with `target_df = 1e308`, which panicked on every seed; #232 then guarded
+`target_df` and `target_kf`, so no payload reaches the binding through the task any
+more. The rule under test is about the base class, not about which input panics, and
+`test_the_binding_still_panics_for_target_kf_zero` in
+`apps/simulations/tests/test_tunable_cc_target_df_guard.py` keeps a real
+`PanicException` in the suite so its absence would still be noticed.
 """
 
 from __future__ import annotations

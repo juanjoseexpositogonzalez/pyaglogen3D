@@ -1694,18 +1694,36 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             )
         elif algorithm == "tunable_cc":
             # Tunable CC with controllable fractal dimension (cluster-cluster)
-            # Same guard as its siblings (`fracval`, `box_rfa`). Without it the
-            # value reached the engine, which panicked with "select_pair_smart
-            # called with empty pool"; a PanicException is a BaseException, so the
-            # child failed with a crash instead of naming the field it got wrong
-            # (#232). `isinstance` first, so a list is refused rather than raising
-            # TypeError in the comparison.
+            # The range is its siblings' *policy*, not the engine's panic boundary:
+            # `run_tunable_cc` runs 0.5 or 9.9 happily and panics on 1e308 and on
+            # negatives, while `fracval` and `box_rfa` refuse anything outside
+            # [1.0, 3.0]. Same policy and same message, so a value the UI already
+            # restricts cannot mean something different here than in the batch
+            # algorithms (#232, approved as that decision).
+            # `target_kf` is guarded for a sharper reason: 0.0 and negatives panic
+            # the binding for real, and the binding validates neither value where
+            # `run_fracval` and `run_gcca` validate both.
+            # `isinstance` first and bools refused: a list would raise inside the
+            # comparison and `true` would pass as 1.0 (#231's class).
             target_df = params.get("target_df", 1.8)
-            if (
-                not isinstance(target_df, (int, float))
-                or not (1.0 <= target_df <= 3.0)
+            if isinstance(target_df, bool) or not isinstance(
+                target_df, (int, float)
             ):
+                raise ValueError(
+                    f"target_df must be a number, got {type(target_df).__name__}"
+                )
+            if not (1.0 <= target_df <= 3.0):
                 raise ValueError("target_df must be between 1.0 and 3.0")
+
+            target_kf = params.get("target_kf", 1.3)
+            if isinstance(target_kf, bool) or not isinstance(
+                target_kf, (int, float)
+            ):
+                raise ValueError(
+                    f"target_kf must be a number, got {type(target_kf).__name__}"
+                )
+            if not (0.1 <= target_kf <= 2.7):
+                raise ValueError("target_kf must be between 0.1 and 2.7")
             # seed_type: read from the model field (set via API/serializer).
             # The binding accepts None (→ monomers default) for backward compat.
             sim_seed_type: str | None = getattr(simulation, "seed_type", None)
@@ -1722,7 +1740,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),
                 target_df=target_df,
-                target_kf=params.get("target_kf", 1.3),
+                target_kf=target_kf,
                 radius_min=radius_min,
                 radius_max=radius_max,
                 seed_cluster_size=params.get("seed_cluster_size"),
