@@ -41,8 +41,12 @@ export const CAPPED_MAGNITUDES = ['particle_radius_config', 'dpo_distribution'] 
 
 function requirePositive(
   field: keyof typeof POSITIVE,
-  raw: number,
+  raw: number | null,
 ): DistributionValueError | null {
+  // `null` is an empty box, not a zero (#243). Reporting "'value' must be greater
+  // than 0" for a field the reader just cleared blames them for a number nobody
+  // typed, so the message names the condition that is actually true.
+  if (raw === null) return { field, message: `'${field}' is required` }
   // `NaN <= 0` is false and `Infinity` is positive, so the old check let both
   // through and then said they "must be greater than 0", which is not the
   // problem: the backend says "must be a finite number" and so does this now.
@@ -51,6 +55,25 @@ function requirePositive(
   }
   if (raw > 0) return null
   return { field, message: POSITIVE[field] }
+}
+
+/**
+ * The first entry of a grid that breaks a rule, or `null`.
+ *
+ * The selector marks a field when it is left, and that is all it does: nothing in
+ * either form refused a submit on it, so an emptied box travelled as `null` — or, in
+ * the batch grid, was filtered out and silently shortened what the study sweeps
+ * (#243, found in review). This is the gate the forms were missing.
+ */
+export function firstDistributionError(
+  values: DistributionValue[],
+  parameterName?: string,
+): { index: number; error: DistributionValueError } | null {
+  for (let index = 0; index < values.length; index++) {
+    const error = distributionValueError(values[index], parameterName)
+    if (error) return { index, error }
+  }
+  return null
 }
 
 function isCapped(parameterName: string | undefined): boolean {
@@ -70,10 +93,14 @@ export function distributionValueError(
     const broken =
       requirePositive('mean', value.mean) ?? requirePositive('std', value.std)
     if (broken) return broken
+    // Both are numbers from here: `requirePositive` refused the nulls above.
+    const mean = value.mean
+    const std = value.std
+    if (mean === null || std === null) return null
     // R2's cap, and it follows the magnitude rather than the value: the same
     // spread is refused for the primary size and accepted for the prefactor.
     if (isCapped(parameterName)) {
-      const ratio = value.std / value.mean
+      const ratio = std / mean
       if (ratio > STD_OVER_MEAN_CAP) {
         return {
           field: 'std',
@@ -90,6 +117,9 @@ export function distributionValueError(
   if (low) return low
   const finiteMax = requirePositive('max', value.max)
   if (finiteMax) return finiteMax
-  if (value.max > value.min) return null
+  const min = value.min
+  const max = value.max
+  if (min === null || max === null) return null
+  if (max > min) return null
   return { field: 'max', message: "'max' must be greater than 'min'" }
 }

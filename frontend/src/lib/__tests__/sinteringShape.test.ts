@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { toSinteringConfig } from '../sinteringShape'
-import type { DistributionValue } from '../types'
+import { toSinteringConfig, type CompleteDistributionValue } from '../sinteringShape'
 
 // ---------------------------------------------------------------------------
 // T6.1 / R10.5 — the selector's shape is not the API's shape
@@ -15,7 +14,7 @@ import type { DistributionValue } from '../types'
 
 describe('toSinteringConfig', () => {
   it('maps fixed to coefficient, the key R3 names', () => {
-    const value: DistributionValue = { mode: 'fixed', value: 0.9 }
+    const value: CompleteDistributionValue = { mode: 'fixed', value: 0.9 }
 
     expect(toSinteringConfig(value)).toEqual({
       distribution_type: 'fixed',
@@ -24,7 +23,7 @@ describe('toSinteringConfig', () => {
   })
 
   it('maps normal to mean and std', () => {
-    const value: DistributionValue = { mode: 'normal', mean: 0.8, std: 0.05 }
+    const value: CompleteDistributionValue = { mode: 'normal', mean: 0.8, std: 0.05 }
 
     expect(toSinteringConfig(value)).toEqual({
       distribution_type: 'normal',
@@ -34,7 +33,7 @@ describe('toSinteringConfig', () => {
   })
 
   it('maps uniform to min and max', () => {
-    const value: DistributionValue = { mode: 'uniform', min: 0.7, max: 0.95 }
+    const value: CompleteDistributionValue = { mode: 'uniform', min: 0.7, max: 0.95 }
 
     expect(toSinteringConfig(value)).toEqual({
       distribution_type: 'uniform',
@@ -48,7 +47,7 @@ describe('toSinteringConfig', () => {
       { mode: 'fixed', value: 0.9 },
       { mode: 'normal', mean: 0.8, std: 0.05 },
       { mode: 'uniform', min: 0.7, max: 0.95 },
-    ] as DistributionValue[]) {
+    ] as CompleteDistributionValue[]) {
       expect(Object.keys(toSinteringConfig(value))).not.toContain('mode')
     }
   })

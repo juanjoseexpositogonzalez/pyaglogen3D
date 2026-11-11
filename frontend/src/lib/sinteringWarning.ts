@@ -16,11 +16,11 @@ import {
   consumesSeedType,
   consumesSintering,
   toSinteringConfig,
+  type CompleteDistributionValue,
   type SinteringConfig,
 } from './sinteringShape'
 import type {
   CreateParametricStudyInput,
-  DistributionValue,
   SimulationAlgorithm,
 } from './types'
 
@@ -257,17 +257,17 @@ function normaliseGridEntry(entry: unknown): SinteringConfig | null {
     const mean = num('mean')
     const std = num('std')
     if (mean === null || std === null) return null
-    return toSinteringConfig({ mode: 'normal', mean, std } as DistributionValue)
+    return toSinteringConfig({ mode: 'normal', mean, std } as CompleteDistributionValue)
   }
   if (kind === 'fixed') {
     const value = num('value') ?? num('coefficient')
     if (value === null) return null
-    return toSinteringConfig({ mode: 'fixed', value } as DistributionValue)
+    return toSinteringConfig({ mode: 'fixed', value } as CompleteDistributionValue)
   }
   const min = num('min')
   const max = num('max')
   if (min === null || max === null) return null
-  return toSinteringConfig({ mode: 'uniform', min, max } as DistributionValue)
+  return toSinteringConfig({ mode: 'uniform', min, max } as CompleteDistributionValue)
 }
 
 type RelaunchableStudy = StudyLike & {
