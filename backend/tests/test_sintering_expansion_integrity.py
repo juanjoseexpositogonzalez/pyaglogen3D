@@ -1287,3 +1287,56 @@ def test_r12_a_rename_survives_a_legacy_row_with_a_mistyped_extremes_map(
 
     assert resp.status_code == 200, resp.data
 
+
+# --- #234: a shape fault names the surface it was written on -----------------
+
+
+@pytest.mark.django_db
+def test_a_grid_declared_shape_fault_names_the_grid(
+    api_client: APIClient, project: Project
+) -> None:
+    """#234: the sintered shape reported under `non_field_errors`.
+
+    `check_flat_required` runs over the child's merged projection - base plus every
+    swept key - because R12 lets the shape be split across surfaces. That merge is
+    exactly why the fault had no field to name. It belongs to the surface that
+    declares `sintering_type`, which is the key that selects the required set.
+    """
+    resp = _post(api_client, project, parameter_grid={"sintering_type": ["fixed"]})
+
+    assert resp.status_code == 400, resp.data
+    assert "parameter_grid" in resp.data, resp.data
+    assert "non_field_errors" not in resp.data, resp.data
+    assert "sintering_coeff" in str(resp.data["parameter_grid"])
+
+
+@pytest.mark.django_db
+def test_a_base_declared_shape_fault_names_the_base(
+    api_client: APIClient, project: Project
+) -> None:
+    """The same rule when the shape is written on `base_parameters`."""
+    resp = _post(
+        api_client,
+        project,
+        base_parameters={"n_particles": 100, "sintering_type": "fixed"},
+    )
+
+    assert resp.status_code == 400, resp.data
+    assert "base_parameters" in resp.data, resp.data
+    assert "non_field_errors" not in resp.data, resp.data
+
+
+@pytest.mark.django_db
+def test_a_cast_fault_still_does_not_claim_a_field(
+    api_client: APIClient, project: Project
+) -> None:
+    """The other half of the separation, deliberately unchanged.
+
+    `test_r12_a_grid_fault_names_the_grid_and_the_rest_does_not_claim_a_field`
+    pins a cast fault under `non_field_errors`: #234 moves the *shape* family only,
+    because a cast fault has no field the client wrote to point at.
+    """
+    resp = _post(api_client, project, parameter_grid={"n_particles": ["abc"]})
+
+    assert resp.status_code == 400, resp.data
+    assert "non_field_errors" in resp.data, resp.data

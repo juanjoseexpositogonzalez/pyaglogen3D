@@ -51,6 +51,21 @@ class ExpansionPreviewError(ValueError):
     """An input that would have broken the expansion after writing rows."""
 
 
+class ShapeFault(ValueError):
+    """A sintered-shape fault, carrying the surface the shape was written on.
+
+    The required-key check runs over the child's merged projection because R12
+    lets the shape be split across surfaces, and that merge is exactly what
+    removes the field to name. Only the caller still knows where the keys were
+    written, so it decides the surface and this carries it to the error mapping
+    (#234).
+    """
+
+    def __init__(self, surface: str, message: str) -> None:
+        super().__init__(message)
+        self.surface = surface
+
+
 class GridShapeError(ExpansionPreviewError):
     """A `parameter_grid` value that is not a list of values."""
 
@@ -256,7 +271,9 @@ def preview_children(
     return children
 
 
-def check_children(children: list[dict[str, Any]]) -> None:
+def check_children(
+    children: list[dict[str, Any]], *, surface: str = "non_field_errors"
+) -> None:
     """Every child must carry a sintering shape the worker can run."""
     for child in children:
         sintering = {
@@ -264,5 +281,11 @@ def check_children(children: list[dict[str, Any]]) -> None:
         }
         if not sintering:
             continue
-        check_flat_keys(child, swept=False)
-        check_flat_required(child)
+        try:
+            check_flat_keys(child, swept=False)
+            check_flat_required(child)
+        except ValueError as exc:
+            # Both checks answer about the shape and neither knows which
+            # surface the client wrote it on, so the caller's decision rides
+            # along to the error mapping (#234).
+            raise ShapeFault(surface, str(exc)) from exc
