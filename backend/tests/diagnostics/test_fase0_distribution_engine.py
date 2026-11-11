@@ -136,13 +136,17 @@ def test_engine_ignores_radius_max_for_tunable_cc() -> None:
     )
 
 
-def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
-    """The three panics R13 quotes as evidence, asserted instead of quoted.
+def test_engine_reports_every_out_of_range_kf_the_contract_rejects() -> None:
+    """The three cases R13 quotes as evidence, asserted instead of quoted.
 
-    A number cited in the gate artifact has to be reproducible by the command
-    that artifact publishes. Note the boundary: `kf_mean=0.0` does NOT panic
+    They used to be panics. #292 replaced them with an explicit error - Scenario 5.7
+    of cc-tunable-aggregation requires one, because a `PanicException` derives from
+    `BaseException` and escaped the worker's `except Exception`. The evidence is the
+    same three cases; what changed is that the engine now *returns* the fault.
+
+    Note the boundary: `kf_mean=0.0` is not rejected by a crash either
     (it runs at target_kf_used ~0.075), so rejecting `mean <= 0` rests on
-    cc-tunable-aggregation R11/R12, not on a crash.
+    cc-tunable-aggregation R11/R12.
     """
     import aglogen_core
 
@@ -152,11 +156,12 @@ def test_engine_panics_on_every_out_of_range_kf_the_contract_rejects() -> None:
         "uniform 2..1": {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
     }
     for nombre, kwargs in casos.items():
-        with pytest.raises(BaseException) as excinfo:  # noqa: B017 - that is the point
+        with pytest.raises(ValueError) as excinfo:
             aglogen_core.run_tunable_cc(**ENGINE_BASE, **kwargs)
         print(f"\n[panic kf] {nombre}: {type(excinfo.value).__name__}")
-        assert not isinstance(excinfo.value, Exception), (
-            f"{nombre} stopped being a BaseException: the worker guard would now catch it"
+        assert "cannot merge" in str(excinfo.value), (
+            f"{nombre} did not report the fault: #292 requires an explicit error "
+            "with a message, not just any exception"
         )
 
     runs = aglogen_core.run_tunable_cc(
