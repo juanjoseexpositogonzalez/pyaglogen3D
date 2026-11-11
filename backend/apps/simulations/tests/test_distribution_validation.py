@@ -9,6 +9,7 @@ Covers spec requirements:
 
 from __future__ import annotations
 
+from typing import Any
 import pytest
 from rest_framework.exceptions import ValidationError
 
