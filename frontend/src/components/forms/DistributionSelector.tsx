@@ -128,9 +128,16 @@ export function DistributionSelector({
       // value already chosen is both submittable and the obvious starting point.
       // A deliberately typed 0 (and an emptied box, which `base > 0` also catches)
       // brackets to `{min: 0, max: 0}`, refused by the API for both `min > 0` and
-      // `min < max`. This is the one place a value is chosen *for* the reader, and
-      // it is a range around a usable anchor rather than a scalar they will submit
-      // as their own (#243 review: the two scalar switches no longer do this).
+      // `min < max`, so the entry could not be submitted at all.
+      //
+      // **Accepted exception (#243, decided by the person, 2026-11-11).** This is
+      // the only place a number is chosen for the reader, and it stays: the two
+      // scalar switches above propagate emptiness, while a *range* cannot be empty
+      // — the API has no shape for it, and `{min: 0, max: 0}` is refused on
+      // arrival. The alternative would be an editable limit the user must type
+      // before the mode is usable at all. It is visible (both bounds are on screen
+      // and editable) and it is pinned by a witness, so it is a documented
+      // exception rather than a silent substitution.
       const anchor = base > 0 ? base : 1.0
       onChange({ mode: 'uniform', min: anchor * 0.9, max: anchor * 1.1 })
     }

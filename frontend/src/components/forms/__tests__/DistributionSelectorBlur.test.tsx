@@ -274,3 +274,25 @@ describe('changing mode out of an empty box does not invent a number (#243)', ()
     )
   })
 })
+
+describe('the uniform anchor is the accepted exception to "never invent a number" (#243)', () => {
+  it('brackets an empty box into an editable range instead of an empty one', () => {
+    // The person's decision: a range cannot be empty — the API refuses
+    // `{min: 0, max: 0}` and has no shape for "no range" — so the mode opens on a
+    // usable anchor. Both bounds are on screen and editable, and the two scalar
+    // switches do not do this any more. This witness exists so the exception is
+    // stated, not discovered.
+    const onChange = vi.fn()
+    render(
+      <DistributionSelector
+        label="#1"
+        value={{ mode: 'fixed', value: null } as DistributionValue}
+        onChange={onChange}
+      />,
+    )
+
+    fireEvent.change(screen.getAllByRole('combobox')[0], { target: { value: 'uniform' } })
+
+    expect(onChange).toHaveBeenCalledWith({ mode: 'uniform', min: 0.9, max: 1.1 })
+  })
+})
