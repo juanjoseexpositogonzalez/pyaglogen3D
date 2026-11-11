@@ -28,6 +28,7 @@ from .expansion_preview import (
 )
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
+from .param_policy import rotation_attempts
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
     PARAM_KEY_DIAMETER,
@@ -326,6 +327,15 @@ class SimulationSerializer(serializers.ModelSerializer):
             # Imported algorithm has minimal parameter requirements
             # Parameters will be populated by the view after parsing CSV
             pass
+
+        elif algorithm == "tunable_cc":
+            # #290: the same sentence the worker raises, read from the same place,
+            # so a payload that cannot run is refused with a 400 instead of being
+            # stored as a `queued` child that never reaches a terminal state.
+            try:
+                rotation_attempts(value)
+            except ValueError as exc:
+                raise serializers.ValidationError(str(exc)) from exc
 
         return value
 

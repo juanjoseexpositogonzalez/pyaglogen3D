@@ -9,6 +9,8 @@ import numpy as np
 from celery import shared_task
 from django.utils import timezone
 
+from .param_policy import rotation_attempts
+
 logger = logging.getLogger(__name__)
 
 #: Work-set size above which the study box-counting run is dispatched to
@@ -1772,7 +1774,14 @@ def run_simulation_task(self, simulation_id: str) -> dict:
                 radius_min=radius_min,
                 radius_max=radius_max,
                 seed_cluster_size=params.get("seed_cluster_size"),
-                max_rotation_attempts=params.get("max_rotation_attempts", 50),
+                # #290: refused with a message, never clipped to a ceiling.
+                # `max_placement_attempts` in the `fracval` branch above is clamped
+                # (`min(max(10, x), 10_000)`) and that is the shape this branch must
+                # not copy: measured, a bigger value changes the result, so a clipped
+                # value is a different experiment returned as the one that was asked
+                # for. The window lives in `param_policy` so the 400 and this refusal
+                # are the same sentence.
+                max_rotation_attempts=rotation_attempts(params),
                 sintering_coeff=sintering_coeff,
                 sintering_type=sintering_type,
                 sintering_min=sintering_min,

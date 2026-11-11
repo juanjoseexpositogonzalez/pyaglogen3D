@@ -95,9 +95,14 @@ NUMERIC_CASTS: tuple[tuple[str, type], ...] = (
     ("max_rotation_attempts", int),
 )
 
-#: The two the engine accepts as absent. Measured: `null` answers 201 today and the
-#: worker passes `None` through, where it means "choose for me" - so casting must
-#: leave it alone instead of turning an unset option into a refusal.
+#: The two whose value the engine may be told to choose. `null` answers 201 and is
+#: stored as `null`, so casting must leave it alone instead of turning an unset option
+#: into a refusal.
+#:
+#: Only `seed_cluster_size` reaches the binding as `Option<usize>`. Measured for #290:
+#: `run_tunable_cc` declares `max_rotation_attempts: usize`, so a `None` raised
+#: `TypeError` there, and the child failed with a type error instead of a message.
+#: The worker now reads that `null` as the engine's own default (`param_policy`).
 OPTIONAL_NUMERIC_PARAMS = frozenset({"seed_cluster_size", "max_rotation_attempts"})
 
 
