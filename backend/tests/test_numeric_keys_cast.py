@@ -16,9 +16,11 @@ the lesson #115 kept teaching, so this file takes the set from the engine's own
 surface rather than from the list.
 
 Two of them are **optional**: measured, `seed_cluster_size: null` and
-`max_rotation_attempts: null` are accepted with 201, and the worker passes `None`
-through to the engine, where it means "choose for me". Casting must therefore leave a
-`null` alone instead of turning an unset option into a refusal.
+`max_rotation_attempts: null` are accepted with 201 and stored as `null`, so casting
+must leave them alone instead of turning an unset option into a refusal. What a stored
+`null` then means is decided downstream, and it differs per key: only
+`seed_cluster_size` reaches the binding as `Option<usize>`; `max_rotation_attempts` is
+`usize`, so #290 made the worker read that `null` as the engine's own default (50).
 """
 
 from __future__ import annotations
@@ -108,7 +110,7 @@ def test_a_numeric_key_is_cast_before_it_is_stored(
 def test_an_absent_optional_key_stays_absent(
     api_client: APIClient, project: Project, key: str, algo: str
 ) -> None:
-    """A `null` means "choose for me": casting it would refuse an unset option."""
+    """A `null` is stored untouched: casting it would refuse an unset option."""
     response = _post(
         api_client,
         project,

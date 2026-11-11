@@ -1,35 +1,22 @@
 """`max_rotation_attempts` gets a window, a name, and one home (#290).
 
-The `tunable_cc` branch forwarded whatever the request carried. Measured, a large
-value does not crash and does not refuse: it runs, and the child sits `queued` while
-the worker is still inside the call — the symptom #232 closed for a different
-parameter, reached with a perfectly valid `target_df`.
-
-`fracval`, in the same file, clamps its own attempts value silently
-(`min(max(10, x), 10_000)`). That is the one shape this issue ruled out, because a
-bigger value is **a different experiment, not a slower one**:
+The `tunable_cc` branch forwarded whatever the request carried: a large value does not
+crash and does not refuse, it runs, and the child sits `running` while the worker is
+still inside the call. `fracval` clamps its own attempts value silently; #290 ruled that
+out, because a bigger value is a different experiment:
 
     n=20  attempts      50    0.015 s   df=2.1109  kf=1.1000
     n=20  attempts  100000   19.209 s   df=2.0420  kf=1.2082
 
-So the value is refused with a message naming the field, never reinterpreted, and the
-window is the siblings' policy window rather than a number read off a time curve —
-time depends on `n` as much as on this value, so no fixed cap bounds it (that is the
-engine-side time budget, its own issue).
-
 Three things measured while writing this, stated rather than hidden:
 
-1. **`null` is not "choose for me" here.** The binding declares
-   `max_rotation_attempts: usize` — not `Option<usize>`, unlike `seed_cluster_size` —
-   so a stored `null` reached it as `TypeError: 'NoneType' object cannot be
-   interpreted as an integer`, and the child failed with a type error instead of a
-   message. `null` therefore means the engine's own default, 50, which is what the
-   signature already says when the argument is absent.
-2. **A negative value was not a 400 either**: it reached `usize` as
-   `OverflowError: can't convert negative int to unsigned`.
-3. **The window is inclusive on both ends and the value is forwarded unchanged**, so a
-   guard that validates 10_000 and then passes a default is a failing test here, not a
-   passing one.
+1. `null` is not "choose for me" here: the binding declares `usize`, not
+   `Option<usize>` (that is `seed_cluster_size`), so a stored `null` died as a
+   `TypeError` — it now means the engine's default, 50.
+2. A negative value died as `OverflowError: can't convert negative int to unsigned`;
+   `0` converted fine and ran to a different result, so both are refused with the
+   window rather than as a type error.
+3. The window is inclusive on both ends and the value is forwarded unchanged.
 """
 
 from __future__ import annotations
@@ -46,7 +33,7 @@ from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.projects.models import Project
-from apps.simulations.models import Simulation
+from apps.simulations.models import ParametricStudy, Simulation
 from apps.simulations.tasks import run_simulation_task
 
 #: The message both surfaces answer with. One string, asserted literally: the
@@ -133,7 +120,7 @@ def test_a_value_inside_the_window_reaches_the_engine_unchanged(
 def test_a_value_above_the_window_never_reaches_the_engine(
     mock_run: MagicMock, project: Project, attempts: int
 ) -> None:
-    """The measured hang: 1e7 ran past a minute and left the child without a state."""
+    """The measured hang: 1e7 ran past a minute and left the child `running`."""
     mock_run.return_value = _fake_engine_result()
     sim = _make_sim(project, {"n_particles": 20, "max_rotation_attempts": attempts})
 
@@ -151,11 +138,7 @@ def test_a_value_above_the_window_never_reaches_the_engine(
 def test_zero_and_negative_values_are_refused_with_the_window(
     mock_run: MagicMock, project: Project, attempts: int
 ) -> None:
-    """`0` completes with a different result and a negative died as an `OverflowError`.
-
-    Both read as "a number the engine accepted", and neither is a value anyone asked
-    six million rotations for: the refusal says which field and which window.
-    """
+    """`0` completed with a different result; a negative died as an `OverflowError`."""
     mock_run.return_value = _fake_engine_result()
     sim = _make_sim(project, {"n_particles": 20, "max_rotation_attempts": attempts})
 
@@ -175,12 +158,7 @@ def test_zero_and_negative_values_are_refused_with_the_window(
 def test_a_value_that_is_not_a_whole_number_says_so(
     mock_run: MagicMock, project: Project, value: object
 ) -> None:
-    """A type error is not a range error: reporting one as the other misleads.
-
-    `80.5` is inside the window, so "must be between 1 and 10000" would be false
-    about it. `True` is refused because `isinstance(True, int)` holds and it would
-    otherwise run as 1 attempt without anyone asking for it.
-    """
+    """A type error is not a range error: `80.5` is inside the window."""
     mock_run.return_value = _fake_engine_result()
     sim = _make_sim(project, {"n_particles": 20, "max_rotation_attempts": value})
 
@@ -205,12 +183,7 @@ def test_a_value_that_is_not_a_whole_number_says_so(
 def test_absent_or_null_runs_at_the_engines_own_default(
     mock_run: MagicMock, project: Project, parameters: dict[str, Any]
 ) -> None:
-    """`null` used to reach the binding and die as a TypeError, not as a message.
-
-    The binding's signature declares 50 when the argument is absent, and unlike
-    `seed_cluster_size` it does not take `None` at all, so "absent" is the only thing
-    a stored `null` can honestly mean here.
-    """
+    """A stored `null` used to reach the binding and die as a `TypeError`."""
     mock_run.return_value = _fake_engine_result()
     sim = _make_sim(project, parameters)
 
@@ -219,6 +192,20 @@ def test_absent_or_null_runs_at_the_engines_own_default(
     assert mock_run.call_args.kwargs["max_rotation_attempts"] == 50
     sim.refresh_from_db()
     assert sim.status == "completed"
+
+
+def test_the_backend_default_is_the_bindings_default() -> None:
+    """`ROTATION_ATTEMPTS_DEFAULT` is a copy: this fails the day it stops being true."""
+    import inspect
+
+    import aglogen_core
+
+    from apps.simulations.param_policy import ROTATION_ATTEMPTS_DEFAULT
+
+    signature = inspect.signature(aglogen_core.run_tunable_cc)
+    assert signature.parameters["max_rotation_attempts"].default == (
+        ROTATION_ATTEMPTS_DEFAULT
+    )
 
 
 # --- The API: the same message, before a row is written ----------------------
@@ -298,13 +285,85 @@ def test_the_api_refuses_a_value_that_is_not_a_whole_number(
 def test_the_api_still_accepts_a_null(
     api_client: APIClient, owned_project: Project, mocker: Any
 ) -> None:
-    """`null` was accepted before this change and stays accepted: the worker defaults.
-
-    Turning an accepted payload into a 400 would be a contract change nobody approved;
-    what was wrong was the worker's answer to it, not the serializer's.
-    """
+    """`null` was accepted before this change and stays accepted: the worker defaults."""
     response = _post(api_client, owned_project, mocker, max_rotation_attempts=None)
 
     assert response.status_code == 201, response.data
     sim = Simulation.objects.get(id=response.data["id"])
     assert sim.parameters["max_rotation_attempts"] is None
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("parameters", [[], "x", 3])
+def test_the_api_refuses_parameters_that_are_not_an_object(
+    api_client: APIClient, owned_project: Project, mocker: Any, parameters: object
+) -> None:
+    """`parameters` is a JSONField: any JSON arrives, and `.get` on a list is a 500."""
+    mocker.patch(
+        "apps.simulations.views.run_simulation_task.delay",
+        return_value=mocker.Mock(id="task-id"),
+    )
+    before = Simulation.objects.count()
+
+    response = api_client.post(
+        f"/api/v1/projects/{owned_project.id}/simulations/",
+        {"algorithm": "tunable_cc", "parameters": parameters, "seed": 42},
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert "parameters must be an object" in str(response.data)
+    assert Simulation.objects.count() == before
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize("attempts", [10_001, 50_000])
+def test_the_study_surface_reads_the_same_window(
+    api_client: APIClient, owned_project: Project, attempts: int
+) -> None:
+    """One key, one answer: the batch surface refuses before the study row exists."""
+    before = ParametricStudy.objects.count()
+
+    response = api_client.post(
+        f"/api/v1/projects/{owned_project.id}/studies/",
+        {
+            "name": "window",
+            "base_algorithm": "tunable_cc",
+            "base_parameters": {
+                "n_particles": 60,
+                "target_df": 2.0,
+                "target_kf": 1.3,
+                "max_rotation_attempts": attempts,
+            },
+            "parameter_grid": {},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 400, response.data
+    assert WINDOW_MESSAGE in str(response.data)
+    assert ParametricStudy.objects.count() == before
+
+
+@pytest.mark.django_db
+def test_the_study_surface_still_accepts_a_value_inside_the_window(
+    api_client: APIClient, owned_project: Project
+) -> None:
+    response = api_client.post(
+        f"/api/v1/projects/{owned_project.id}/studies/",
+        {
+            "name": "window ok",
+            "base_algorithm": "tunable_cc",
+            "base_parameters": {
+                "n_particles": 60,
+                "target_df": 2.0,
+                "target_kf": 1.3,
+                "max_rotation_attempts": 500,
+            },
+            "parameter_grid": {},
+            "seeds_per_combination": 1,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data

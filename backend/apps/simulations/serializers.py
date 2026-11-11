@@ -331,7 +331,7 @@ class SimulationSerializer(serializers.ModelSerializer):
         elif algorithm == "tunable_cc":
             # #290: the same sentence the worker raises, read from the same place,
             # so a payload that cannot run is refused with a 400 instead of being
-            # stored as a `queued` child that never reaches a terminal state.
+            # stored and left `running` while the worker sits inside the call.
             try:
                 rotation_attempts(value)
             except ValueError as exc:
