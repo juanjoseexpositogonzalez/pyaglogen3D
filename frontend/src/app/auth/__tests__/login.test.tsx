@@ -373,17 +373,27 @@ describe('#246 — the button does not claim a sign-in nobody asked for', () => 
     // Still not pressable: nothing can be submitted until the context knows whether
     // there is a session. It just stops narrating a fiction.
     expect(button.hasAttribute('disabled')).toBe(true)
-    // And an inert control states why, in words that are not the submit's.
-    expect(screen.getByRole('status').textContent).toMatch(/checking your session/i)
-    expect(button.getAttribute('aria-busy')).toBe('true')
+    // And an inert control names why, in words that are not the submit's: the
+    // paragraph is the button's description while it waits.
+    const reason = screen.getByRole('status')
+    expect(reason.textContent).toMatch(/checking your session/i)
+    expect(button.getAttribute('aria-describedby')).toBe(reason.getAttribute('id'))
   })
 
-  it('says nothing about a session once the context has decided', () => {
+  it('says nothing about a session once the context has decided, and lets the form be sent', () => {
     renderPage()
 
-    // The idle screen is idle: no announcement, and nothing claims the button is
-    // busy. A permanent status line is a permanent lie of a different shape.
-    expect(screen.queryByRole('status')).toBeNull()
-    expect(screen.getByRole('button', { name: 'Sign In' }).getAttribute('aria-busy')).toBe('false')
+    // The region stays mounted — a live region created with its content is not
+    // announced — so "silent" is an empty text, not an absent element.
+    expect(screen.getByRole('status').textContent).toBe('')
+    // And — the assertion this file was missing — a button a reader can actually
+    // press. Every submit test drives the form through `fireEvent.submit`, which a
+    // dead button would not stop, so a permanently disabled button used to pass
+    // the whole suite.
+    const button = screen.getByRole('button', { name: 'Sign In' })
+    expect(button.getAttribute('aria-describedby')).toBeNull()
+    expect(button.hasAttribute('disabled')).toBe(false)
+    // The idle branch draws no spinner either; `textContent` alone cannot see one.
+    expect(button.querySelector('svg')).toBeNull()
   })
 })

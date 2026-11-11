@@ -36,10 +36,11 @@ import { Loader2 } from 'lucide-react'
  * copy of its own for a rejection.
  *
  * Nothing below the paint moves: the two fields, their types, placeholders and
- * `required` flags, the clear-then-submit order, the wording of the pending copy
- * (when it appears is the one thing #246 changed), the OAuth round trip through
- * `authApi.getOAuthUrl`, and the landing page after a successful sign-in (owned
- * by `AuthContext`, which pushes to `/dashboard`).
+ * `required` flags, the clear-then-submit order, the wording of the pending copy,
+ * the OAuth round trip through `authApi.getOAuthUrl`, and the landing page after
+ * a successful sign-in (owned by `AuthContext`, which pushes to `/dashboard`).
+ * What #246 moved on this page is when that copy appears, plus the two signals
+ * that say why the button is inert before anything is sent.
  */
 
 /**
@@ -50,6 +51,9 @@ import { Loader2 } from 'lucide-react'
  */
 const FIELD = 'border-line bg-surface text-ink placeholder:text-ink-faint'
 const OUTLINE_BUTTON = 'border-line bg-surface text-ink hover:bg-surface-soft'
+
+/** The one place the restore's sentence is anchored, for `aria-describedby`. */
+const SESSION_STATUS_ID = 'session-status'
 
 /**
  * Hand the browser to the provider.
@@ -156,17 +160,15 @@ export default function LoginPage() {
         </div>
 
         {/*
-          Both flags, although `isRestoring` implies `isLoading` today — they
-          start true together and are cleared in the same synchronous block — so
-          the first operand cannot change the result. Written out because the
-          implication is the thing #246 separated, and a disabled rule that
-          quietly depends on it is a rule nobody can move later.
+          Both flags, although `isRestoring` implies `isLoading` today: written
+          out because that implication is exactly what #246 separated, and this
+          rule must not depend on it silently.
         */}
         <Button
           type="submit"
           className="w-full"
           disabled={isRestoring || isLoading}
-          aria-busy={isRestoring}
+          aria-describedby={isRestoring ? SESSION_STATUS_ID : undefined}
         >
           {submitting ? (
             <>
@@ -180,16 +182,22 @@ export default function LoginPage() {
 
         {/*
           The restore in words, for a reader who cannot see a dimmed button and
-          guess why: the card is fully painted and nothing has been sent. Said as
-          "checking", not "restoring", because the flag is also true on a first
-          visit, where there is no stored session to restore — only a question
-          still unanswered.
+          guess why: the card is fully painted and nothing has been sent.
+
+          Mounted always, with only its text changing, because a live region
+          created together with its own content is not announced — this is the
+          shape `CopyText` and the batch form already use. That still does not
+          promise an announcement here: for a returning reader the text is there
+          at first paint, and there is no mutation to announce. What is reliable
+          is the association, so the button names this paragraph while it waits.
+
+          "Checking", not "restoring": the flag is also true on a first visit,
+          where there is no stored session to restore — only a question still
+          unanswered.
         */}
-        {isRestoring && (
-          <p role="status" className="sr-only">
-            Checking your session…
-          </p>
-        )}
+        <p id={SESSION_STATUS_ID} role="status" aria-live="polite" className="sr-only">
+          {isRestoring ? 'Checking your session…' : ''}
+        </p>
 
         {/*
           The rule and the word that interrupts it. The mask matches the panel

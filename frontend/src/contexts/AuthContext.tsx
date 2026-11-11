@@ -80,11 +80,12 @@ interface AuthContextType {
   user: User | null
   /**
    * A request this context owns is in flight: the mount-time restore, a sign-in,
-   * a registration or a logout.
+   * a registration, a logout or an OAuth landing.
    *
-   * `updateProfile` and `refreshUser` deliberately do not raise it: `settings`
-   * swaps its whole form for a full-screen loader on this flag, so raising it
-   * around a save would take the form away mid-save.
+   * Three requests deliberately do not raise it — `updateProfile`, `refreshUser`
+   * and the OAuth callback's own profile fetch. For the first two the reason is
+   * mechanical: `settings` swaps its whole form for a full-screen loader on this
+   * flag, so raising it around a save would take the form away mid-save.
    */
   isLoading: boolean
   /**

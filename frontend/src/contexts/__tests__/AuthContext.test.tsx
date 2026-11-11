@@ -15,6 +15,7 @@ const mockRegister = vi.fn()
 const mockPush = vi.fn()
 const mockRefreshToken = vi.fn()
 const mockGetMe = vi.fn()
+const mockLogin = vi.fn()
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: mockPush, replace: vi.fn() }),
@@ -29,6 +30,7 @@ vi.mock('@/lib/auth-api', async () => {
       register: (...args: unknown[]) => mockRegister(...args),
       refreshToken: (...args: unknown[]) => mockRefreshToken(...args),
       getMe: (...args: unknown[]) => mockGetMe(...args),
+      login: (...args: unknown[]) => mockLogin(...args),
     },
   }
 })
@@ -196,11 +198,22 @@ describe('the message a refused registration produces', () => {
  */
 describe('the restore flag the sign-in button depends on', () => {
   function Flags() {
-    const { isLoading, isRestoring, user } = useAuth()
+    const { isLoading, isRestoring, user, login } = useAuth()
     return (
-      <p data-testid="flags">
-        {`loading=${String(isLoading)} restoring=${String(isRestoring)} user=${user?.email ?? 'none'}`}
-      </p>
+      <div>
+        <button
+          onClick={() => {
+            void login({ email: 'ana@example.org', password: 'x' } as never).catch(() => {
+              // `login` rethrows; this probe only reads the flags it flips.
+            })
+          }}
+        >
+          login
+        </button>
+        <p data-testid="flags">
+          {`loading=${String(isLoading)} restoring=${String(isRestoring)} user=${user?.email ?? 'none'}`}
+        </p>
+      </div>
     )
   }
 
@@ -219,6 +232,7 @@ describe('the restore flag the sign-in button depends on', () => {
     mockPush.mockReset()
     mockRefreshToken.mockReset()
     mockGetMe.mockReset()
+    mockLogin.mockReset()
   })
 
   it('settles with no stored session, and asks the server nothing', async () => {
@@ -265,9 +279,11 @@ describe('the restore flag the sign-in button depends on', () => {
     // throw a SecurityError. Read outside the `try`, it escaped before the
     // `finally`, so both flags stayed true for as long as the tab lived: the app
     // stuck behind its loading gate and this button dead, saying "Sign In".
-    // On the instance, not on `Storage.prototype`: jsdom's `localStorage` does not
-    // resolve `getItem` through the prototype, so a prototype spy never fires and
-    // the probe would pass without the block ever happening (measured).
+    // On the instance, not on `Storage.prototype`: `src/test/setup.ts` replaces
+    // `window.localStorage` with its own `InMemoryStorage`, so a `Storage`
+    // prototype spy is inert and the probe would pass without the block ever
+    // happening (measured). A self-check would be better than a comment, but the
+    // block is what the provider is being asked about, not jsdom.
     const blocked = vi.spyOn(window.localStorage, 'getItem').mockImplementation(() => {
       throw new Error('SecurityError: the operation is insecure.')
     })
@@ -279,5 +295,27 @@ describe('the restore flag the sign-in button depends on', () => {
     } finally {
       blocked.mockRestore()
     }
+  })
+
+  it('leaves the restore flag alone while a sign-in is in flight', async () => {
+    // The other half of the contract: the button narrates a submit only when the
+    // context is doing something that is not deciding whether a session exists.
+    // `login` raising `isRestoring` too would make every page test still pass
+    // while the button stopped narrating a real submit.
+    let release: (value: unknown) => void = () => {}
+    mockLogin.mockReturnValue(
+      new Promise((resolve) => {
+        release = resolve
+      }),
+    )
+    renderFlags()
+    await settled('loading=false restoring=false user=none')
+
+    fireEvent.click(screen.getByRole('button', { name: 'login' }))
+
+    expect(flags()).toBe('loading=true restoring=false user=none')
+
+    release({ user: { email: 'ana@example.org' } })
+    await settled('loading=false restoring=false user=ana@example.org')
   })
 })
