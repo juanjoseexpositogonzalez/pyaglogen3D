@@ -34,9 +34,19 @@ const mockGetOAuthUrl = vi.fn()
 
 // Mutable on purpose: the page reads the context on every render, so flipping
 // these between renders is how the error and pending branches are reached.
-let mockAuthState: { error: string | null; isLoading: boolean } = {
+//
+// `isLoading` and `isRestoring` are two different facts (#246). The context sets
+// both on a returning reader's first render — it is restoring a stored session
+// *and* has a request in flight — and only `isLoading` alone on a sign-in this
+// form sent.
+let mockAuthState: {
+  error: string | null
+  isLoading: boolean
+  isRestoring: boolean
+} = {
   error: null,
   isLoading: false,
+  isRestoring: false,
 }
 
 vi.mock('next/link', () => ({
@@ -50,6 +60,7 @@ vi.mock('@/contexts/AuthContext', () => ({
     error: mockAuthState.error,
     clearError: mockClearError,
     isLoading: mockAuthState.isLoading,
+    isRestoring: mockAuthState.isRestoring,
   }),
 }))
 
@@ -74,7 +85,7 @@ const submit = async () => {
 }
 
 beforeEach(() => {
-  mockAuthState = { error: null, isLoading: false }
+  mockAuthState = { error: null, isLoading: false, isRestoring: false }
   mockLogin.mockResolvedValue(undefined)
   mockClearError.mockReset()
   mockGetOAuthUrl.mockImplementation((provider: string) => `https://api.test/oauth/${provider}`)
@@ -189,7 +200,7 @@ describe('sign-in screen', () => {
     expect(screen.queryByRole('alert')).toBeNull()
     unmount()
 
-    mockAuthState = { error: 'Invalid email or password.', isLoading: false }
+    mockAuthState = { error: 'Invalid email or password.', isLoading: false, isRestoring: false }
     renderPage()
 
     const alert = screen.getByRole('alert')
@@ -233,7 +244,9 @@ describe('sign-in screen', () => {
   })
 
   it('says it is signing in, and blocks a second submit, while the request is in flight', () => {
-    mockAuthState = { error: null, isLoading: true }
+    // A sign-in this form sent: the restore already finished, so `isRestoring`
+    // is false and the pending copy is the true one (#246).
+    mockAuthState = { error: null, isLoading: true, isRestoring: false }
     renderPage()
 
     const pending = screen.getByRole('button', { name: /Signing in/ }) as HTMLButtonElement
@@ -339,5 +352,23 @@ describe('sign-in screen', () => {
     const { container } = render(<LoginPage />)
     expect(container.querySelector("#email")?.getAttribute("autocomplete")).toBe("email")
     expect(container.querySelector("#password")?.getAttribute("autocomplete")).toBe("current-password")
+  })
+})
+
+describe('#246 — the button does not claim a sign-in nobody asked for', () => {
+  it('says "Sign In" while the session is being restored', () => {
+    // Opening /auth/login with a stored refresh token starts the context with
+    // both flags set. The button read `isLoading` as "the form is being
+    // submitted" and said "Signing in..." — on the first screen a returning
+    // reader sees, about a request nobody sent.
+    mockAuthState = { error: null, isLoading: true, isRestoring: true }
+    renderPage()
+
+    const button = screen.getByRole('button', { name: /sign in/i })
+    // The idle copy, whole: no spinner and no "Signing in..." left beside it.
+    expect(button.textContent).toBe('Sign In')
+    // Still not pressable: nothing can be submitted until the context knows whether
+    // there is a session. It just stops narrating a fiction.
+    expect(button.hasAttribute('disabled')).toBe(true)
   })
 })
