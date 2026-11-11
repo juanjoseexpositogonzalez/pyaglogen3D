@@ -1115,6 +1115,12 @@ pub fn run_tunable_cc_internal(
     let start_time = Instant::now();
     let mut rng = create_rng(seed);
 
+    // Before sampling: `gen_range` panics on an empty range and the panic reaches
+    // Python as a `PanicException`. #292 built this `Result` channel for exactly
+    // this, so the sampler's empty ranges use it instead of crashing.
+    params.dpo_distribution.validate()?;
+    params.target_kf_distribution.validate()?;
+
     // P2.3 (PYA-15): sample distributions ONCE at run start, before the
     // main aggregation loop. Fixed distributions return the value without
     // consuming RNG state, preserving bit-for-bit backward compatibility.

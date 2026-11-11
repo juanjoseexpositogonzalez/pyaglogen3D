@@ -151,17 +151,26 @@ def test_engine_reports_every_out_of_range_kf_the_contract_rejects() -> None:
     import aglogen_core
 
     casos = {
-        "fixed value=-1": {"kf_mode": "fixed", "kf_value": -1.0},
-        "normal mean=-1": {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
-        "uniform 2..1": {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
+        # These two reach the pair selection, which now reports the degenerate pool.
+        "fixed value=-1": ("fixed value", {"kf_mode": "fixed", "kf_value": -1.0}),
+        "normal mean=-1": (
+            "normal mean",
+            {"kf_mode": "normal", "kf_mean": -1.0, "kf_std": 0.1},
+        ),
+        # This one never gets that far: `gen_range(2..=1)` panics on the empty range,
+        # so the sampler validates first and returns its own message.
+        "uniform 2..1": (
+            "uniform range",
+            {"kf_mode": "uniform", "kf_min": 2.0, "kf_max": 1.0},
+        ),
     }
-    for nombre, kwargs in casos.items():
+    for nombre, (esperado, kwargs) in casos.items():
         with pytest.raises(ValueError) as excinfo:
             aglogen_core.run_tunable_cc(**ENGINE_BASE, **kwargs)
         print(f"\n[panic kf] {nombre}: {type(excinfo.value).__name__}")
-        assert "cannot merge" in str(excinfo.value), (
-            f"{nombre} did not report the fault: #292 requires an explicit error "
-            "with a message, not just any exception"
+        assert esperado in str(excinfo.value), (
+            f"{nombre} did not report the fault it has: #292 requires an explicit "
+            f"error with a message naming it, got {excinfo.value!r}"
         )
 
     runs = aglogen_core.run_tunable_cc(
