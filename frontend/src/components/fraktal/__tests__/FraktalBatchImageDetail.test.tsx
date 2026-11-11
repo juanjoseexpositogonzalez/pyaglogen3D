@@ -266,10 +266,17 @@ describe('<FraktalBatchImageDetail />', () => {
       renderComponent()
 
       await screen.findByRole('img')
-      fireEvent.keyDown(document, { key: 'ArrowLeft' })
-      expect(mockPush).toHaveBeenCalledWith(
-        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
-      )
+      // The listener is registered in a `useEffect`, so a keydown dispatched before
+      // it exists is lost - and waiting *after* the event does not replay it. That is
+      // why #287's `waitFor` around the assertion was not enough: it retried the
+      // check and never the cause. Firing inside `waitFor` retries the event, so the
+      // test waits for the listener instead of for a lucky machine.
+      await waitFor(() => {
+        fireEvent.keyDown(document, { key: 'ArrowLeft' })
+        expect(mockPush).toHaveBeenCalledWith(
+          `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/1`
+        )
+      })
     })
 
     it('navigates to next image on ArrowRight keydown', async () => {
@@ -279,10 +286,13 @@ describe('<FraktalBatchImageDetail />', () => {
       renderComponent()
 
       await screen.findByRole('img')
-      fireEvent.keyDown(document, { key: 'ArrowRight' })
-      expect(mockPush).toHaveBeenCalledWith(
-        `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/3`
-      )
+      // Same race, same fix: the event has to be retried, not only the assertion.
+      await waitFor(() => {
+        fireEvent.keyDown(document, { key: 'ArrowRight' })
+        expect(mockPush).toHaveBeenCalledWith(
+          `/projects/${PROJECT_ID}/fraktal/batch/${BATCH_ID}/image/3`
+        )
+      })
     })
 
     it('does NOT navigate on ArrowLeft when prev_index is null', async () => {

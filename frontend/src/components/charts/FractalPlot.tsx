@@ -27,6 +27,24 @@ export interface LimitingCaseLine {
 
 interface FractalPlotProps {
   rgEvolution: number[]
+  /**
+   * Particle count of each `rgEvolution` point, as the engine recorded it (#275).
+   *
+   * One point is one successful merge, so the count after merge `i` is not `i`:
+   * it jumps by the size of the cluster that merged. When the record carries
+   * these, the N axis below is the record's own.
+   *
+   * The fit is not, and cannot be: this plot regresses ln N on ln(Rg/rp) and takes
+   * the slope, while `cca`, `dla`, `ballistic` and `ballistic_cc` report
+   * `fractal_dimension` as the reciprocal of the opposite regression. For those four
+   * a difference between the header and this line is the estimator, not the axis —
+   * which is why the note under the chart names the regression it fitted.
+   *
+   * Without counts (records written before #275, imported metrics, box-counting
+   * runs whose N is a box count) the axis is rebuilt from the series length, and the
+   * plot says so instead of drawing a line the header contradicts.
+   */
+  rgEvolutionN?: number[]
   /** Reported fractal dimension from simulation (for comparison) */
   fractalDimension: number
   /** Reported prefactor from simulation (for comparison) */
@@ -102,6 +120,7 @@ const legendPositionConfig: Record<LegendPosition, { x: number; y: number; xanch
 
 export function FractalPlot({
   rgEvolution,
+  rgEvolutionN,
   fractalDimension: reportedDf,
   prefactor: reportedKf,
   primaryParticleRadius = 1.0,
@@ -130,7 +149,13 @@ export function FractalPlot({
   }, [totalParticles, rgEvolution.length])
 
   // Data points: N vs Rg/rp
-  // Filter out points where Rg/rp is too small (< 0.1) to avoid log issues
+  //
+  // The counts come from the record whenever it carries them (#275). Only a
+  // record without them gets an axis rebuilt from the series length, and that
+  // fallback is announced under the chart: a line drawn on a rebuilt axis is not
+  // the fit the header quotes.
+  const countsMatch =
+    rgEvolutionN !== undefined && rgEvolutionN.length === rgEvolution.length
   const filteredData = useMemo(() => {
     const minRgRp = 0.1 // Minimum Rg/rp to include in regression
     const nVals: number[] = []
@@ -139,13 +164,12 @@ export function FractalPlot({
     for (let i = 0; i < rgEvolution.length; i++) {
       const rgRp = rgEvolution[i] / rp
       if (rgRp >= minRgRp) {
-        // Use correct N value based on sampling step
-        nVals.push((i + 1) * step)
+        nVals.push(countsMatch ? (rgEvolutionN as number[])[i] : (i + 1) * step)
         rgRpVals.push(rgRp)
       }
     }
     return { nValues: nVals, rgRpValues: rgRpVals }
-  }, [rgEvolution, rp, step])
+  }, [rgEvolution, rgEvolutionN, countsMatch, rp, step])
 
   const { nValues, rgRpValues } = filteredData
 
@@ -627,9 +651,20 @@ export function FractalPlot({
             <span>R² = {formatNumber(rSquared, 4)}</span>
           </div>
         </div>
-        {showComparison && (
+        {countsMatch ? (
+          showComparison && (
+            <div className="text-xs text-amber-600 dark:text-amber-400">
+              Reported Df = {formatNumber(reportedDf, 3)}; the slope of the line drawn here
+              (ln N on ln Rg/rp) = {formatNumber(actualDf, 3)}. They agree only when the record
+              used this same regression: cca, dla, ballistic and ballistic_cc report the
+              reciprocal fit instead.
+            </div>
+          )
+        ) : (
           <div className="text-xs text-amber-600 dark:text-amber-400">
-            Note: Reported Df = {formatNumber(reportedDf, 3)} differs from fitted Df = {formatNumber(actualDf, 3)}
+            This record carries no particle count per point, so the N axis is rebuilt from
+            the series length. The fit below is therefore drawn on a rebuilt axis: it is an
+            estimate, and it is not the Df the record reports.
           </div>
         )}
       </CardContent>

@@ -159,26 +159,48 @@ const SCALING_CAPTION =
   'Sampled Rg points the scaling plot draws: the particle count of each sample and the Rg/rp it puts on the horizontal axis.'
 
 /**
- * The pairs `FractalPlot` draws. The page derives them because the page owns the
- * table of them: the plot samples `rg_evolution` at a step of
- * totalParticles / length and drops ratios under 0.1 so its log axis stays
- * finite. Mirroring that sampling here keeps the table's N in step with the axis
- * and its rows equal to the points on screen.
+ * What the table says when the record carries no counts (#275).
+ *
+ * Said out loud because the alternative is a column of N values that look
+ * measured and are not: they are a stride over the series length, not the cluster
+ * sizes the run went through.
+ */
+const SCALING_CAPTION_REBUILT =
+  'This record carries no particle count per point, so every N below is rebuilt from the series length, not measured. The counts jump in a real run: treat the column as indicative.'
+
+/**
+ * The pairs `FractalPlot` draws, and the rows of the table behind it.
+ *
+ * The count of each point is the one the engine recorded (#275): one point is one
+ * successful merge, and the largest cluster after it is not the point's index, so
+ * these jump and repeat. A record arrives without them in three cases — written
+ * before #275, imported from a CSV, or produced by box counting, whose points are
+ * refinement levels sized in boxes rather than in particles — and then the axis is
+ * rebuilt at a step of totalParticles / length, which the chart announces under the
+ * plot instead of pretending it is the fit the header quotes.
+ *
+ * Both consumers read this one function on purpose: the table's N and the chart's
+ * axis cannot disagree, because they are the same array.
  */
 const scalingRows = (
   rgEvolution: number[],
   totalParticles: number | undefined,
+  recordedCounts?: number[],
 ): ScalingRow[] => {
   const step =
     totalParticles && rgEvolution.length > 0
       ? Math.round(totalParticles / rgEvolution.length)
       : 1
+  const counts =
+    recordedCounts && recordedCounts.length === rgEvolution.length
+      ? recordedCounts
+      : undefined
 
   const rows: ScalingRow[] = []
   rgEvolution.forEach((rg, index) => {
     const rgRp = rg / PRIMARY_PARTICLE_RADIUS
     if (rgRp < MIN_RG_RP) return
-    rows.push({ n: (index + 1) * step, rgRp })
+    rows.push({ n: counts ? counts[index] : (index + 1) * step, rgRp })
   })
   return rows
 }
@@ -545,9 +567,18 @@ export default function SimulationDetailPage({
     simulation.metrics.prefactor !== undefined
       ? {
           rgEvolution: simulation.metrics.rg_evolution,
+          rgEvolutionN: simulation.metrics.rg_evolution_n,
           fractalDimension: simulation.metrics.fractal_dimension,
           prefactor: simulation.metrics.prefactor,
-          rows: scalingRows(simulation.metrics.rg_evolution, npo),
+          rows: scalingRows(
+            simulation.metrics.rg_evolution,
+            npo,
+            simulation.metrics.rg_evolution_n,
+          ),
+          /** False when the axis had to be rebuilt: the table and the plot say so. */
+          countsRecorded:
+            simulation.metrics.rg_evolution_n?.length ===
+            simulation.metrics.rg_evolution.length,
         }
       : null
 
@@ -625,7 +656,8 @@ export default function SimulationDetailPage({
       {(() => {
         // SAFETY: same payload fact as above — the schema detector probes keys
         // that the narrow `SimulationParams` type does not enumerate.
-        const schemaVersion = getSchemaVersion(
+        const schemaVersion = getSchemaVersion(
+
           (simulation?.parameters ?? {}) as unknown as Record<string, unknown>,
         )
         if (schemaVersion === 'v2') return null
@@ -856,7 +888,9 @@ export default function SimulationDetailPage({
                 <ShowValues
                   columns={SCALING_COLUMNS}
                   rows={scaling.rows}
-                  caption={SCALING_CAPTION}
+                  caption={
+                    scaling.countsRecorded ? SCALING_CAPTION : SCALING_CAPTION_REBUILT
+                  }
                   maxHeight={SCALING_TABLE_MAX_HEIGHT}
                 >
                   {({ toggle, table }) => (
@@ -875,6 +909,7 @@ export default function SimulationDetailPage({
                       <div className={table ? 'hidden' : undefined}>
                         <FractalPlot
                           rgEvolution={scaling.rgEvolution}
+                          rgEvolutionN={scaling.rgEvolutionN}
                           fractalDimension={scaling.fractalDimension}
                           prefactor={scaling.prefactor}
                           primaryParticleRadius={PRIMARY_PARTICLE_RADIUS}

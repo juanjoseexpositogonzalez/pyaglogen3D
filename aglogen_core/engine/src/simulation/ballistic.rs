@@ -218,6 +218,7 @@ pub fn run_ballistic_internal(params: BallisticParams, seed: u64) -> SimulationR
         coordinates: coords,
         radii,
         rg_evolution,
+        rg_evolution_n: n_values,
         fractal_dimension: df,
         fractal_dimension_std: 0.02,
         prefactor: kf,

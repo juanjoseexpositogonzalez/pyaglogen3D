@@ -74,6 +74,10 @@ path = "examples/diagnostics/r58_prefactor_scan.rs"
 name = "rg_fit_variants_audit"
 path = "examples/diagnostics/rg_fit_variants_audit.rs"
 
+[[example]]
+name = "scaling_axis_audit"
+path = "examples/diagnostics/scaling_axis_audit.rs"
+
 # Phase 0 diagnostic for cc-tunable-bc-alignment (PYA-17): BC fit-window
 # alignment sweep (legacy robust fit vs candidate fixed windows, log2-axis
 # cross-check, recomputed-count byte-identity). Feeds design D1/D4 verdict.

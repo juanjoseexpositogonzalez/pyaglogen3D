@@ -327,30 +327,87 @@ describe('Admin users', () => {
     )
   })
 
-  it('keeps the account on screen when the delete fails', async () => {
+  it('says a refused delete failed, where the delete was asked', async () => {
     mockDeleteUser.mockRejectedValue(new Error('Still has data'))
     render(<AdminPage />)
 
-    fireEvent.click(await screen.findByRole('button', { name: /delete ada lovelace/i }))
-    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
+    // Scoped to the account's own card, not to the page: the state this change adds
+    // exists so one account's refusal cannot read as another's, and an unscoped
+    // `getByText` would pass with the message rendered anywhere (including the
+    // page-level error banner).
+    const card = (
+      await screen.findByRole('heading', { level: 3, name: /ada lovelace/i })
+    ).closest('article') as HTMLElement
+
+    fireEvent.click(within(card).getByRole('button', { name: /delete ada lovelace/i }))
+    fireEvent.click(within(card).getByRole('button', { name: /^delete$/i }))
 
     await waitFor(() => expect(mockDeleteUser).toHaveBeenCalledWith('u1'))
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /^deleting/i })).toBeNull(),
+      expect(within(card).queryByRole('button', { name: /^deleting/i })).toBeNull(),
     )
 
     // The row must survive a refused delete: removing it locally would claim a
     // deletion that did not happen.
-    expect(screen.getByRole('heading', { level: 3, name: /ada lovelace/i })).toBeTruthy()
+    expect(within(card).getByRole('heading', { level: 3, name: /ada lovelace/i })).toBeTruthy()
     expect(screen.getByText('Total Users').closest('article, section, div')?.textContent).toBe(
       'Total Users1',
     )
 
-    // Known defect, deliberately not fixed here: the catch block writes the
-    // message into `editError`, which only the edit form renders, so a refused
-    // delete is silent unless the form happens to be open. Repairing it would
-    // change behaviour inside a presentation port; it belongs in its own issue.
-    expect(screen.queryByText('Still has data')).toBeNull()
+    // Issue #265, and the reason this witness is inverted rather than kept: the
+    // catch block used to write the message into `editError`, which only the edit
+    // form renders, so a refused delete was silent. A destructive action that fails
+    // without saying so leaves the reader unable to tell "it worked" from "the
+    // server refused", and the only way out is to reload and check by hand.
+    // Both facts in one place: the reason, and which account. A danger callout is
+    // `role="alert"`, announced out of context, so with several accounts on screen
+    // "this user" would not say which one the server refused.
+    // Bound by its title, not by `role="alert"`: the delete confirmation is a danger
+    // callout too and is open on other paths, so the role alone would point at it.
+    const notice = within(card)
+      .getByText('Could not delete this user')
+      .closest('[role="alert"]') as HTMLElement
+    expect(notice.textContent).toContain('Still has data')
+    expect(notice.textContent).toContain('ada@example.com')
+  })
+
+  it('clears the refusal when the retry starts, not when it lands', async () => {
+    // Written twice: the first version asserted `null` after a successful retry, and
+    // that passed by *unmounting* — the account leaves the list, so the card and its
+    // state go with it and nothing was pinned. The retry is held open here, so the
+    // message has to disappear while the card is still on screen, which is the
+    // clearing the change actually adds.
+    let landRetry: (value: unknown) => void = () => {}
+    mockDeleteUser
+      .mockRejectedValueOnce(new Error('Still has data'))
+      .mockImplementationOnce(
+        () => new Promise((resolve) => {
+          landRetry = resolve
+        }),
+      )
+
+    render(<AdminPage />)
+    const card = (
+      await screen.findByRole('heading', { level: 3, name: /ada lovelace/i })
+    ).closest('article') as HTMLElement
+
+    fireEvent.click(within(card).getByRole('button', { name: /delete ada lovelace/i }))
+    fireEvent.click(within(card).getByRole('button', { name: /^delete$/i }))
+    expect(await within(card).findByText('Could not delete this user')).toBeTruthy()
+
+    fireEvent.click(within(card).getByRole('button', { name: /delete ada lovelace/i }))
+    fireEvent.click(within(card).getByRole('button', { name: /^delete$/i }))
+
+    await waitFor(() =>
+      expect(within(card).queryByText('Could not delete this user')).toBeNull(),
+    )
+    // Still mounted: the message left by clearing, not by the account disappearing.
+    expect(within(card).getByRole('button', { name: /^deleting/i })).toBeTruthy()
+
+    landRetry({ message: 'deleted' })
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { level: 3, name: /ada lovelace/i })).toBeNull(),
+    )
   })
 
   it('saves the edited account through the API and shows the result', async () => {

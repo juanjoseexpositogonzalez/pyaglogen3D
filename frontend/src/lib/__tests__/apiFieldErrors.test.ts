@@ -32,6 +32,32 @@ function mockRefusal(body: unknown, status = 400) {
   )
 }
 
+describe("a refusal written as Django's own `error` key reaches the reader", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses the message, not `Request failed: 404`', async () => {
+    // The admin user endpoints answer `{"error": "User not found."}`. The client read
+    // only `message`, `detail` and `details`, so the one wording that tells the reader
+    // what to do next (the row is stale: refresh) arrived as a bare status (#265).
+    mockRefusal({ error: 'User not found.' }, 404)
+
+    await expect(studiesApi.delete('p1', 's1')).rejects.toMatchObject({
+      message: 'User not found.',
+      status: 404,
+    })
+  })
+
+  it('still falls back to the status when the server names nothing', async () => {
+    mockRefusal({}, 500)
+
+    await expect(studiesApi.delete('p1', 's1')).rejects.toMatchObject({
+      message: 'Request failed: 500',
+    })
+  })
+})
+
 describe('a refused request keeps the fields the server named', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -88,5 +114,41 @@ describe('a refused request keeps the fields the server named', () => {
     expect(() => formatApiError(asString)).not.toThrow()
     expect(formatApiError(withNoise)).toContain('real message')
     expect(formatApiError(withNoise)).not.toContain('42')
+  })
+})
+
+
+describe('#236 - the failure that is not a field error is still news', () => {
+  // `compare/page.tsx` separates these five outcomes and this module used to
+  // collapse them into `Request failed: 500`, which tells a reader on a flaky
+  // connection that their work is broken when the truth may be "retry".
+  it('names an expired session as a session', () => {
+    const message = formatApiError(new ApiError('Request failed: 401', 401))
+    expect(message).toMatch(/session expired/i)
+    expect(message).toMatch(/sign in again/i)
+  })
+
+  it('names a missing record as gone, not as the reader\'s fault', () => {
+    const message = formatApiError(new ApiError('Request failed: 404', 404))
+    expect(message).toMatch(/gone or it is not yours/i)
+  })
+
+  it('tells the reader a 500 may be worth retrying', () => {
+    const message = formatApiError(new ApiError('Request failed: 500', 500))
+    expect(message).toMatch(/server failed/i)
+    expect(message).toMatch(/retrying/i)
+  })
+
+  it('says a request that never arrived never arrived', () => {
+    const message = formatApiError(new TypeError('Failed to fetch'))
+    expect(message).toMatch(/did not reach the server/i)
+    expect(message).toMatch(/connection/i)
+  })
+
+  it('keeps a refusal that names its field exactly as it is', () => {
+    const message = formatApiError(
+      new ApiError('Request failed: 400', 400, { name: ['This field may not be blank.'] })
+    )
+    expect(message).toBe('name: This field may not be blank.')
   })
 })

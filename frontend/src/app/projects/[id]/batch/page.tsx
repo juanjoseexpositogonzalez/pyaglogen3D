@@ -10,7 +10,11 @@ import { Panel } from '@/components/kit/Panel'
 import { Num } from '@/components/kit/Num'
 import { BatchSimulationForm, BatchResultsTable, BatchProjectionExportPanel } from '@/components/batch'
 import { SinteringWarning } from '@/components/batch/SinteringWarning'
-import { relaunchPayloadFor, studyMayHaveRunWithoutSintering } from '@/lib/sinteringWarning'
+import {
+  RELAUNCH_REFUSAL_MESSAGE,
+  relaunchPayloadFor,
+  studyMayHaveRunWithoutSintering,
+} from '@/lib/sinteringWarning'
 import type { SinteringConfig } from '@/lib/sinteringShape'
 import { FractalAnalysisTab } from '@/components/batch/FractalAnalysisTab'
 import { LoadingScreen } from '@/components/common/LoadingSpinner'
@@ -183,7 +187,15 @@ export default function BatchSimulationsPage({
     // Built and validated in one place: copying the study by hand dropped
     // the settings that decide what it measures, and resending an old grid
     // is rejected with a 400 this page cannot show.
-    if (!payload) return
+    // relaunchRefusal clears a payload exactly when one exists, so this is the same
+    // test it makes - and narrowing here is what lets mutate() see a non-null payload.
+    if (!payload) {
+      // Returning silently made this a dead button for the one case the page could
+      // not normalise (#236). The message itself is a pure function, tested on its own.
+      setCreateError(RELAUNCH_REFUSAL_MESSAGE)
+      setCreateErrorAttempt((attempt) => attempt + 1)
+      return
+    }
     createStudy.mutate(payload)
   }
 

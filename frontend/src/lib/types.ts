@@ -240,6 +240,21 @@ export interface SimulationMetrics {
   }
   // Absent from imported-metrics payloads; optional on the wire.
   rg_evolution?: number[]
+  /**
+   * Particle count of each `rg_evolution` point, same length and order (#275).
+   *
+   * For the algorithms that record a merge — tunable, tunable_cc, fracval, gcca,
+   * cca, dla, ballistic, ballistic_cc — these jump and repeat, because the count
+   * after merge `i` is not `i`. Three producers do not fit that description and are
+   * absent or regular on purpose: `box_rfa` ships no counts at all (its points are
+   * refinement levels sized in boxes, not particles), the analytic limiting cases
+   * ship a regular stride, and imports and records written before #275 ship nothing.
+   *
+   * When present and non-empty it has one entry per `rg_evolution` point. A reader
+   * that needs the scaling axis must handle its absence out loud instead of
+   * rebuilding it from the array length.
+   */
+  rg_evolution_n?: number[]
   // Inertia tensor analysis
   anisotropy: number
   asphericity: number

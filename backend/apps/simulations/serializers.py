@@ -78,11 +78,13 @@ def validate_box_counting_params_dict(value: dict[str, Any]) -> None:
             )
 
     points = value.get("points_per_sphere", 100)
-    if not (10 <= points <= 1000):
+    # `isinstance` first: a list reached the comparison, and the TypeError it
+    # raised answered 500 for a payload this validator exists to refuse (#231).
+    if not isinstance(points, (int, float)) or not (10 <= points <= 1000):
         raise ValidationError("points_per_sphere must be between 10 and 1000")
 
     precision = value.get("precision", 18)
-    if not (8 <= precision <= 21):
+    if not isinstance(precision, (int, float)) or not (8 <= precision <= 21):
         raise ValidationError("precision must be between 8 and 21")
 
     windowed = value.get("windowed")
@@ -216,7 +218,12 @@ class SimulationSerializer(serializers.ModelSerializer):
                 valid_choices = {
                     c[0] for c in Simulation._meta.get_field("seed_type").choices
                 }
-                if nested_seed_type not in valid_choices:
+                # `isinstance` first: `[["monomers"]] not in <set>` raised
+                # TypeError, a 500 where R17 wants a 400 (#231).
+                if (
+                    not isinstance(nested_seed_type, str)
+                    or nested_seed_type not in valid_choices
+                ):
                     raise serializers.ValidationError(
                         {
                             "seed_type": f"'{nested_seed_type}' is not a valid seed type. "
@@ -286,17 +293,29 @@ class SimulationSerializer(serializers.ModelSerializer):
                     raise serializers.ValidationError(
                         f"Missing required parameter: {field}"
                     )
-            if value["n_particles"] < 10:
+            n_particles = value["n_particles"]
+            # `isinstance` first: a list, a dict or a numeric string reached the
+            # comparison and answered 500 where the contract wants a 400. Same class
+            # as the nested seed_type above, and judgment day found it there (#231).
+            if not isinstance(n_particles, (int, float)):
+                raise serializers.ValidationError("n_particles must be a number")
+            if n_particles < 10:
                 raise serializers.ValidationError("n_particles must be at least 10")
-            if value["n_particles"] > 100000:
+            if n_particles > 100000:
                 raise serializers.ValidationError("n_particles must be at most 100,000")
 
         elif algorithm == "limiting":
             # Limiting cases allow any N >= 1
-            if "n_particles" in value and value["n_particles"] < 1:
-                raise serializers.ValidationError(
-                    "n_particles must be at least 1 for limiting cases"
-                )
+            if "n_particles" in value:
+                n_particles = value["n_particles"]
+                if not isinstance(n_particles, (int, float)):
+                    raise serializers.ValidationError(
+                        "n_particles must be a number"
+                    )
+                if n_particles < 1:
+                    raise serializers.ValidationError(
+                        "n_particles must be at least 1 for limiting cases"
+                    )
 
         elif algorithm == "imported":
             # Imported algorithm has minimal parameter requirements

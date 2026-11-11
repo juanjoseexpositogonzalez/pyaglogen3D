@@ -83,6 +83,8 @@ type SentLayout = {
 
 type SentTrace = {
   name?: string
+  /** The x data the component built — log10 of N for this chart. */
+  x?: number[]
   mode?: string
   line: { color: string; dash?: string }
   marker: { color: string; symbol?: string; size?: number | number[] }
@@ -370,5 +372,39 @@ describe('<RgEvolutionChart /> — the theme the plot is drawn in', () => {
     })
 
     expect(tracesSent()[0].line.color).toBe(DARK_TOKENS['--series-1'])
+  })
+})
+
+describe('<RgEvolutionChart /> — the N axis (#275)', () => {
+  it('draws the counts the record carries, not the sample index', async () => {
+    // One point is one successful merge: these counts jump (4 → 16 → 100), so an
+    // index axis (1, 2, 3) would put every point at the wrong aggregate size.
+    render(<RgEvolutionChart rgEvolution={[2, 4, 8]} n={[4, 16, 100]} parameters={{}} />)
+    await flushMicrotasks()
+
+    expect(tracesSent()[0].x).toEqual([4, 16, 100].map((v) => Math.log10(v)))
+    expect(screen.queryByTestId('rg-chart-rebuilt-axis')).toBeNull()
+  })
+
+  it('draws the index and says so when the record carries no counts', async () => {
+    render(<RgEvolutionChart rgEvolution={[2, 4, 8]} parameters={{}} />)
+    await flushMicrotasks()
+
+    expect(tracesSent()[0].x).toEqual([1, 2, 3].map((v) => Math.log10(v)))
+    const note = await screen.findByTestId('rg-chart-rebuilt-axis')
+    expect(note.textContent).toMatch(/carries no particle count per point/i)
+  })
+
+  it('names only the rebuilt curves when a comparison mixes both', async () => {
+    const series: RgSeries[] = [
+      { label: 'With counts', color: '#4E79A7', rgEvolution: [2, 4], n: [2, 4] },
+      { label: 'Legacy record', color: '#F28E2B', rgEvolution: [2, 4] },
+    ]
+    render(<RgEvolutionChart series={series} />)
+    await flushMicrotasks()
+
+    const note = await screen.findByTestId('rg-chart-rebuilt-axis')
+    expect(note.textContent).toContain('Legacy record')
+    expect(note.textContent).not.toContain('With counts')
   })
 })

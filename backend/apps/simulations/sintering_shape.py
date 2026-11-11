@@ -287,6 +287,22 @@ def check_algorithm_scope(
                     f"only, got '{config.get('distribution_type')}'",
                     surface=field,
                 )
+            # The flat half of this rule was enforced here and the dict half was not,
+            # so a `sintering_config` carrying `min`, `max` or `std` was accepted on all
+            # four dict surfaces for an algorithm that ignores them - measured on
+            # #233: 201 and a row written, where the flat `sintering_std` was 400. Same
+            # keys, same algorithm, same rule.
+            dict_shape_only = sorted(
+                key for key in config if key in {"min", "max", "std"}
+            )
+            if dict_shape_only:
+                raise AlgorithmScopeError(
+                    f"algorithm '{algorithm}' ignores "
+                    f"{', '.join(dict_shape_only)}: it accepts the fixed sintering "
+                    "shape only",
+                    surface=field,
+                    key=dict_shape_only[0],
+                )
         for field, mapping in flats:
             for value in _swept_values(mapping.get("sintering_type")):
                 if value != "fixed":

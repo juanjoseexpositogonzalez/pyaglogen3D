@@ -10,7 +10,6 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { useRouter } from 'next/navigation'
 
 import type {
-  AuthResponse,
   LoginCredentials,
   RegisterData,
   UpdateProfileData,
@@ -18,6 +17,64 @@ import type {
 } from '@/lib/auth-types'
 import { authApi, AuthApiError } from '@/lib/auth-api'
 import { tokenStorage } from '@/lib/token-storage'
+
+/**
+ * How a field the API named is written to the reader.
+ *
+ * Only the fields this screen shows, plus a fallback: the server is the authority on
+ * which fields exist, so an unlisted key is named by its own key rather than dropped
+ * (#248 — the list used to be four keys long, and a refused `first_name` was silent).
+ */
+const FIELD_LABELS: Record<string, string> = {
+  email: 'Email',
+  password: 'Password',
+  password_confirm: 'Password confirmation',
+  first_name: 'First name',
+  last_name: 'Last name',
+}
+
+/**
+ * Keys that are not fields, so they take no label.
+ *
+ * `detail`, `error`, `non_field_errors` and `messages` carry the sentence itself —
+ * `authFetch` already reads the first two as the message when there is no field
+ * error at all — and prefixing them turned `Token is invalid or expired` into
+ * `Detail: Token is invalid or expired`.
+ */
+const UNLABELLED_KEYS = new Set(['detail', 'error', 'non_field_errors', 'messages'])
+
+/**
+ * Keys whose value is a machine token, not copy. SimpleJWT sends `code` beside a
+ * refusal; showing it would put `token_not_valid` in front of a person.
+ */
+const MACHINE_KEYS = new Set(['code'])
+
+/**
+ * One sentence out of whatever shape DRF sends.
+ *
+ * An array of strings, a plain string (DRF wraps `detail` that way), or an array of
+ * objects such as SimpleJWT's `messages`, where only the inner `message` is prose.
+ * Anything that is not text is dropped rather than stringified: `[object Object]` is
+ * not a sentence, and `formatApiError` already refuses the same shapes for the same
+ * reason.
+ */
+const messageOf = (value: unknown): string => {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.map(messageOf).filter(Boolean).join(', ')
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    if (typeof record.message === 'string') return record.message
+    if (typeof record.detail === 'string') return record.detail
+    return Object.values(record).map(messageOf).filter(Boolean).join(', ')
+  }
+  return ''
+}
+
+const fieldLabel = (key: string) =>
+  // `Object.hasOwn`, not a bare lookup: a key called `constructor` or `toString`
+  // reads through the prototype and would put a native function in the alert.
+  (Object.hasOwn(FIELD_LABELS, key) ? FIELD_LABELS[key] : undefined) ??
+  key.replace(/_/g, ' ').replace(/^./, (char) => char.toUpperCase())
 
 interface AuthContextType {
   user: User | null
@@ -106,11 +163,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       if (err instanceof AuthApiError) {
         // Format field errors
         if (err.data) {
+          // Every key the server sent, in its order, not a fixed list of four.
           const errors: string[] = []
-          if (err.data.email) errors.push(`Email: ${err.data.email.join(', ')}`)
-          if (err.data.password) errors.push(`Password: ${err.data.password.join(', ')}`)
-          if (err.data.password_confirm) errors.push(`Password confirmation: ${err.data.password_confirm.join(', ')}`)
-          if (err.data.non_field_errors) errors.push(err.data.non_field_errors.join(', '))
+          for (const [field, value] of Object.entries(err.data)) {
+            if (MACHINE_KEYS.has(field)) continue
+            const messages = messageOf(value)
+            if (messages === '') continue
+            errors.push(UNLABELLED_KEYS.has(field) ? messages : `${fieldLabel(field)}: ${messages}`)
+          }
           setError(errors.join('; ') || err.message)
         } else {
           setError(err.message)

@@ -224,6 +224,23 @@ const withRgEvolution = (rgEvolution: number[] = [1.2, 2.4, 3.6, 4.8]) =>
   })
 
 /**
+ * The same four points, with the particle counts the engine recorded (#275).
+ *
+ * One point is one successful merge, so the counts jump and repeat: here they are
+ * 4, 9, 22 and the whole aggregate. The stride the page would rebuild
+ * (`totalParticles / length` = 300) is deliberately nothing like them, so a table
+ * that shows 300, 600, 900, 1,200 is reading the wrong source.
+ */
+const withRecordedCounts = (counts: number[] = [4, 9, 22, 1200]) =>
+  withSimulation({
+    metrics: {
+      ...simulation().metrics,
+      rg_evolution: [1.2, 2.4, 3.6, 4.8],
+      rg_evolution_n: counts,
+    },
+  })
+
+/**
  * The metric card that carries `label`, wherever else the same word appears.
  *
  * "Fractal dimension" is also a phrase in the analysis section further down, so
@@ -1065,13 +1082,53 @@ describe('the values behind the scaling plot', () => {
     expect(table.textContent).not.toMatch(/fit/i)
   })
 
-  it('says in the caption what the table holds', () => {
-    withRgEvolution()
+  it('tabulates the counts the engine recorded, not a stride over the series', () => {
+    withRecordedCounts()
+    renderPage()
+
+    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
+
+    const table = within(panelByTitle('Fractal scaling')).getByRole('table')
+    const nCells = within(table)
+      .getAllByRole('cell')
+      .map((node) => node.textContent ?? '')
+      .filter((_, index) => index % 2 === 0)
+
+    // The recorded counts, verbatim. Before #275 this column was 300/600/900/1,200
+    // in this fixture: a stride, not a measurement (#275).
+    expect(nCells).toEqual(['4', '9', '22', '1,200'])
+  })
+
+  it('hands the counts to the plot, so the line and the table share one axis', () => {
+    withRecordedCounts()
+    renderPage()
+
+    const props = mockFractalPlotProps.mock.calls.at(-1)?.[0] as {
+      rgEvolutionN?: number[]
+    }
+    expect(props.rgEvolutionN).toEqual([4, 9, 22, 1200])
+  })
+
+  it('says in the caption what the table holds when the counts are recorded', () => {
+    withRecordedCounts()
     renderPage()
 
     fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
 
     expect(screen.getByText(/sampled Rg points the scaling plot draws/i)).toBeTruthy()
+  })
+
+  it('says the axis was rebuilt when the record carries no counts', () => {
+    // A record written before #275, or imported. The table still fills, because
+    // an indicative column beats no column — but it says so, because the numbers
+    // in it are a stride over the series length and not cluster sizes.
+    withRgEvolution()
+    renderPage()
+
+    fireEvent.click(within(panelByTitle('Fractal scaling')).getByRole('button', { name: 'Show values' }))
+
+    expect(screen.getByText(/carries no particle count per point/i)).toBeTruthy()
+    expect(screen.queryByText(/sampled Rg points the scaling plot draws/i)).toBeNull()
   })
 
   it('leaves out the points the chart cannot plot', () => {
