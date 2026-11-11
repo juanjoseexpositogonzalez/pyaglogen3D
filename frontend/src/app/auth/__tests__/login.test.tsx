@@ -365,10 +365,25 @@ describe('#246 — the button does not claim a sign-in nobody asked for', () => 
     renderPage()
 
     const button = screen.getByRole('button', { name: /sign in/i })
-    // The idle copy, whole: no spinner and no "Signing in..." left beside it.
+    // The idle copy, whole.
     expect(button.textContent).toBe('Sign In')
+    // `textContent` cannot see the spinner: `Loader2` is an `<svg aria-hidden>` with
+    // no text node, so the copy assertion above would pass with one re-added.
+    expect(button.querySelector('svg')).toBeNull()
     // Still not pressable: nothing can be submitted until the context knows whether
     // there is a session. It just stops narrating a fiction.
     expect(button.hasAttribute('disabled')).toBe(true)
+    // And an inert control states why, in words that are not the submit's.
+    expect(screen.getByRole('status').textContent).toMatch(/checking your session/i)
+    expect(button.getAttribute('aria-busy')).toBe('true')
+  })
+
+  it('says nothing about a session once the context has decided', () => {
+    renderPage()
+
+    // The idle screen is idle: no announcement, and nothing claims the button is
+    // busy. A permanent status line is a permanent lie of a different shape.
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Sign In' }).getAttribute('aria-busy')).toBe('false')
   })
 })

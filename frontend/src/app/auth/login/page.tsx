@@ -36,9 +36,10 @@ import { Loader2 } from 'lucide-react'
  * copy of its own for a rejection.
  *
  * Nothing below the paint moves: the two fields, their types, placeholders and
- * `required` flags, the clear-then-submit order, the pending copy, the OAuth
- * round trip through `authApi.getOAuthUrl`, and the landing page after a
- * successful sign-in (owned by `AuthContext`, which pushes to `/dashboard`).
+ * `required` flags, the clear-then-submit order, the wording of the pending copy
+ * (when it appears is the one thing #246 changed), the OAuth round trip through
+ * `authApi.getOAuthUrl`, and the landing page after a successful sign-in (owned
+ * by `AuthContext`, which pushes to `/dashboard`).
  */
 
 /**
@@ -68,12 +69,14 @@ export default function LoginPage() {
   const { login, error, clearError, isLoading, isRestoring } = useAuth()
 
   /*
-    Two facts, two sentences (#246). `isRestoring` is true while the context
-    looks for a session behind a stored refresh token: nothing has been
-    submitted, so the button keeps the idle copy even though a request is in
-    flight. `submitting` is a sign-in this form actually sent. The button is
-    unpressable in both — there is nothing to send until the context knows
-    whether a session exists — but it narrates only the second.
+    Two facts, two sentences (#246). `isRestoring` is true until the context has
+    decided whether a session exists: nothing has been submitted, so the button
+    keeps the idle copy. `submitting` is a context request that is not that
+    decision — on this route, always a sign-in this form sent. `register` and
+    `logout` raise the same flag, but from screens that are not this one, and
+    `logout` clears it in the same batch as the redirect here, so neither can
+    reach this button. It is unpressable in both states and narrates only the
+    submit.
   */
   const submitting = isLoading && !isRestoring
 
@@ -152,7 +155,19 @@ export default function LoginPage() {
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={isRestoring || isLoading}>
+        {/*
+          Both flags, although `isRestoring` implies `isLoading` today — they
+          start true together and are cleared in the same synchronous block — so
+          the first operand cannot change the result. Written out because the
+          implication is the thing #246 separated, and a disabled rule that
+          quietly depends on it is a rule nobody can move later.
+        */}
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isRestoring || isLoading}
+          aria-busy={isRestoring}
+        >
           {submitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
@@ -162,6 +177,19 @@ export default function LoginPage() {
             'Sign In'
           )}
         </Button>
+
+        {/*
+          The restore in words, for a reader who cannot see a dimmed button and
+          guess why: the card is fully painted and nothing has been sent. Said as
+          "checking", not "restoring", because the flag is also true on a first
+          visit, where there is no stored session to restore — only a question
+          still unanswered.
+        */}
+        {isRestoring && (
+          <p role="status" className="sr-only">
+            Checking your session…
+          </p>
+        )}
 
         {/*
           The rule and the word that interrupts it. The mask matches the panel
