@@ -22,7 +22,7 @@ fn main() {
                     radius_max: 1.0,
                     ..Default::default()
                 };
-                let r = run_tunable_cc_internal(p, seed, None);
+                let r = run_tunable_cc_internal(p, seed, None).expect("tunable_cc should run for a valid payload");
                 let pf = r.prefactor;
                 println!(
                     "  Df={:.1} seed={} Df_real={:.4} prefactor={:.4}{}",

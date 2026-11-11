@@ -32,8 +32,8 @@ fn main() {
         };
         let params_b = params_a.clone();
 
-        let r_a = run_tunable_cc_internal(params_a, seed, None);
-        let r_b = run_tunable_cc_internal(params_b, seed, None);
+        let r_a = run_tunable_cc_internal(params_a, seed, None).expect("tunable_cc should run for a valid payload");
+        let r_b = run_tunable_cc_internal(params_b, seed, None).expect("tunable_cc should run for a valid payload");
 
         let coords_match = r_a.coordinates.len() == r_b.coordinates.len()
             && r_a

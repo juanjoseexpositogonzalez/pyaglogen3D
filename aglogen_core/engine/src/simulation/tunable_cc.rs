@@ -1111,7 +1111,7 @@ pub fn run_tunable_cc_internal(
     params: TunableCcParams,
     seed: u64,
     _py: Option<()>,
-) -> SimulationResult {
+) -> Result<SimulationResult, String> {
     let start_time = Instant::now();
     let mut rng = create_rng(seed);
 
@@ -1412,6 +1412,17 @@ pub fn run_tunable_cc_internal(
                             }
                         }
                     }
+                }
+                SmartPairResult::NoCandidates => {
+                    // Scenario 5.7: "an explicit error is returned (not a panic);
+                    // simulation terminates gracefully". The caller turns this into
+                    // an exception the Python binding raises with a message.
+                    return Err(
+                        "cannot merge: the cluster pool produced no candidate pair (a \
+                         degenerate required distance, e.g. from a non-positive kf, or \
+                         a pool smaller than two clusters)"
+                            .to_string(),
+                    );
                 }
                 SmartPairResult::AllInfeasible {
                     max_achievable_pair,
@@ -1804,7 +1815,7 @@ pub fn run_tunable_cc_internal(
 
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
-    SimulationResult {
+    Ok(SimulationResult {
         coordinates: coords,
         radii,
         rg_evolution,
@@ -1830,7 +1841,7 @@ pub fn run_tunable_cc_internal(
         dpo_used: Some(dpo_used),
         target_kf_used: Some(target_kf_used),
         merge_trace,
-    }
+    })
 }
 
 /// Calculate Df and kf from Rg evolution using power law fitting.
@@ -2230,6 +2241,11 @@ pub(crate) enum SmartPairResult {
     Feasible(PairCandidate),
     /// No feasible pair exists; the pair with the max achievable distance is returned.
     AllInfeasible { max_achievable_pair: PairCandidate },
+    /// Not one pair was recorded: the pool has fewer than two clusters, or every
+    /// comparison was rejected before a candidate existed (a degenerate
+    /// `required_distance`, e.g. from a non-positive kf). Scenario 5.7 asks for an
+    /// explicit error here, and this used to be a panic.
+    NoCandidates,
 }
 
 /// Compute the maximum achievable COM-COM distance between two clusters.
@@ -2391,8 +2407,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
         }
     }
 
-    SmartPairResult::AllInfeasible {
-        max_achievable_pair: best.expect("select_pair_smart called with empty pool"),
+    match best {
+        Some(max_achievable_pair) => SmartPairResult::AllInfeasible { max_achievable_pair },
+        None => SmartPairResult::NoCandidates,
     }
 }
 
@@ -2543,8 +2560,8 @@ mod tests {
             ..Default::default()
         };
 
-        let r1 = run_tunable_cc_internal(params.clone(), 42, None);
-        let r2 = run_tunable_cc_internal(params, 42, None);
+        let r1 = run_tunable_cc_internal(params.clone(), 42, None).expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.seed, r2.seed);
@@ -2559,7 +2576,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None);
+        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
 
         // Should produce all particles
         assert_eq!(result.coordinates.len(), 50);
@@ -2579,7 +2596,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 456, None);
+        let result = run_tunable_cc_internal(params, 456, None).expect("tunable_cc should run for a valid payload");
 
         // Verify no particles overlap
         for i in 0..result.coordinates.len() {
@@ -2611,7 +2628,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 321, None);
+        let result = run_tunable_cc_internal(params, 321, None).expect("tunable_cc should run for a valid payload");
 
         assert!(
             particles_form_connected_graph(&result.coordinates, &result.radii, 1.0),
@@ -2636,7 +2653,7 @@ mod tests {
                 dpo_distribution: DpoDistribution::Uniform { min: 0.8, max: 1.2 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= 0.8 - 1e-10 && dpo <= 1.2 + 1e-10,
@@ -2674,7 +2691,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
 
         // The Rg evolution should have enough data points for a fit
@@ -2741,7 +2758,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
         // Must still produce all particles (simulation completes)
         assert_eq!(result.coordinates.len(), 20);
@@ -2769,7 +2786,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None);
+        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
 
         // Fields exist and are sensible
         let total_merges = result.tunable_merges + result.ballistic_merges;
@@ -2793,7 +2810,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 777, None);
+        let result = run_tunable_cc_internal(params, 777, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         // For small N with standard params, most merges should succeed via tunable path
@@ -3738,7 +3755,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.coordinates.len(),
             20,
@@ -3799,7 +3816,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
         assert!(
             result.ballistic_merges > 0 || result.adaptive_merges > 0,
@@ -3881,7 +3898,7 @@ mod tests {
             n_particles: 10,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.dpo_used,
             Some(1.0),
@@ -3909,8 +3926,8 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None);
-        let r2 = run_tunable_cc_internal(params2, 42, None);
+        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.fractal_dimension, r2.fractal_dimension);
@@ -3939,8 +3956,8 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None);
-        let r2 = run_tunable_cc_internal(params2, 42, None);
+        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.dpo_used, r2.dpo_used);
         assert_eq!(r1.target_kf_used, r2.target_kf_used);
@@ -3966,7 +3983,7 @@ mod tests {
                 dpo_distribution: DpoDistribution::Normal { mean, std: std_dev },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= lower && dpo <= upper,
@@ -3991,7 +4008,7 @@ mod tests {
                 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let kf = result.target_kf_used.unwrap();
             assert!(
                 kf >= kf_min && kf <= kf_max,
@@ -4066,7 +4083,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
         // Must produce all 10 particles (not 1, not collapsed)
         assert_eq!(
@@ -4124,7 +4141,7 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None);
+        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         let sintered_cd = sintered_contact_distance(rp, rp, sintering_coeff); // 1.8
@@ -4181,7 +4198,7 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
         // n_initial_clusters - 1 merges (5 dimers → 4 merges)
         assert_eq!(
@@ -4202,7 +4219,7 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty(), "Trace must not be empty");
 
         // At least some should be tunable
@@ -4254,7 +4271,7 @@ mod tests {
             max_merge_retries: 5,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 50);
 
         // Phase 3: fallback merges are tagged "adaptive" instead of "ballistic"
@@ -4292,7 +4309,7 @@ mod tests {
             max_merge_retries: max_retries,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
                 entry.retries <= max_retries,
@@ -4312,7 +4329,7 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty());
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
@@ -4337,7 +4354,7 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None);
+        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert_eq!(
                 entry.step, i,
@@ -4366,8 +4383,8 @@ mod tests {
             ..Default::default() // default sintering is Fixed(1.0)
         };
 
-        let r1 = run_tunable_cc_internal(params_sintered, 42, None);
-        let r2 = run_tunable_cc_internal(params_baseline, 42, None);
+        let r1 = run_tunable_cc_internal(params_sintered, 42, None).expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params_baseline, 42, None).expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
@@ -4529,6 +4546,9 @@ mod tests {
             SmartPairResult::AllInfeasible { .. } => {
                 panic!("Expected Feasible for monomer pool, got AllInfeasible");
             }
+            SmartPairResult::NoCandidates => {
+                panic!("Expected Feasible for monomer pool, got NoCandidates");
+            }
         }
     }
 
@@ -4563,6 +4583,28 @@ mod tests {
             SmartPairResult::Feasible(_) => {
                 panic!("Expected AllInfeasible for compact clusters at low Df");
             }
+            SmartPairResult::NoCandidates => {
+                panic!("Expected AllInfeasible for compact clusters at low Df, got NoCandidates");
+            }
+        }
+    }
+
+    /// #292 / Scenario 5.7 — a pool with no candidate pair is *reported*, not panicked.
+    ///
+    /// Fewer than two clusters means no pair is even considered. Before this, the
+    /// function reached `expect("select_pair_smart called with empty pool")` and the
+    /// `PanicException` it raised escaped every `except Exception` in the worker.
+    #[test]
+    fn test_select_pair_smart_with_no_candidates_reports_instead_of_panicking() {
+        use crate::common::rng::create_rng;
+        let mut rng = create_rng(42);
+        let clusters: Vec<TunableCluster> = Vec::new();
+
+        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
+
+        match result {
+            SmartPairResult::NoCandidates => {}
+            _ => panic!("Expected NoCandidates for an empty pool, got another variant"),
         }
     }
 

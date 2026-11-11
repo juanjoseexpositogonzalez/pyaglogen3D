@@ -82,7 +82,7 @@ fn low_df_fix_flag_env_var() {
         unsafe {
             std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", val);
         }
-        let r = run_tunable_cc_internal(params_dimers.clone(), seed, None);
+        let r = run_tunable_cc_internal(params_dimers.clone(), seed, None).expect("tunable_cc should run for a valid payload");
         off_results.push(r.fractal_dimension);
     }
     unsafe {
@@ -123,12 +123,12 @@ fn low_df_fix_flag_env_var() {
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
     }
-    let result_on = run_tunable_cc_internal(params_mono.clone(), seed, None);
+    let result_on = run_tunable_cc_internal(params_mono.clone(), seed, None).expect("tunable_cc should run for a valid payload");
 
     unsafe {
         std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", "false");
     }
-    let result_off = run_tunable_cc_internal(params_mono.clone(), seed, None);
+    let result_off = run_tunable_cc_internal(params_mono.clone(), seed, None).expect("tunable_cc should run for a valid payload");
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
     }
@@ -177,7 +177,7 @@ fn build_pc_seeds_count() {
         seed_type: SeedType::Monomers,
         ..Default::default()
     };
-    let result = run_tunable_cc_internal(params, 42, None);
+    let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
     // R23.1: total particle count must remain 20 after pool construction.
     assert_eq!(
         result.coordinates.len(),
@@ -211,7 +211,7 @@ fn build_pc_seeds_non_divisible() {
         seed_type: SeedType::Monomers,
         ..Default::default()
     };
-    let result = run_tunable_cc_internal(params, 42, None);
+    let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
     // R23.2: leftover monomer brings total back to 21.
     assert_eq!(
         result.coordinates.len(),
@@ -247,7 +247,7 @@ fn build_pc_seeds_connectivity() {
         ..Default::default()
     };
     for seed in [1u64, 2, 3] {
-        let result = run_tunable_cc_internal(params.clone(), seed, None);
+        let result = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.coordinates.len(),
             n_particles,
@@ -324,7 +324,7 @@ fn low_df_convergence_band_mono() {
                 seed_type: SeedType::Monomers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             // R5.8: "no run reports prefactor < 1.0" — verified directly.
             // Empirical scan at N=2000 across {1.4, 1.5, 1.6, 1.7} × {1, 2, 3} seeds
             // shows min prefactor = 1.0687, all >= 1.0 (see examples/diagnostics/r58_prefactor_scan).
@@ -412,7 +412,7 @@ fn regression_df_1_4_monomers_best_effort() {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, seed, None);
+        let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
         assert!(
             result.prefactor >= 1.0,
             "regression_df_1_4 (a): seed {} prefactor={:.4} < 1.0 — physically impossible, \
@@ -495,7 +495,7 @@ fn low_df_band_bc_vs_rg_agreement() {
                 seed_type: SeedType::Monomers,
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None);
+            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
             let rg_df = result.fractal_dimension;
 
             // Run box-counting on final aggregate coordinates (precision=18, per design §Q4).
@@ -582,7 +582,7 @@ fn r22_flag_independent_of_phase3() {
         seed_type: SeedType::Monomers,
         ..Default::default()
     };
-    let result = run_tunable_cc_internal(params, 42, None);
+    let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
 
     eprintln!(
         "r22_flag_independent_of_phase3: Df={:.3} prefactor={:.3} N={}",
@@ -628,13 +628,13 @@ fn r23_seed_type_dimers_unaffected() {
         seed_type: SeedType::Dimers,
         ..Default::default()
     };
-    let result_on = run_tunable_cc_internal(params.clone(), 42, None);
+    let result_on = run_tunable_cc_internal(params.clone(), 42, None).expect("tunable_cc should run for a valid payload");
 
     // Run with flag OFF.
     unsafe {
         std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", "false");
     }
-    let result_off = run_tunable_cc_internal(params, 42, None);
+    let result_off = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
     }
@@ -775,7 +775,7 @@ fn rollback_byte_identity() {
             seed_type: SeedType::Monomers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, fixture.seed, None);
+        let result = run_tunable_cc_internal(params, fixture.seed, None).expect("tunable_cc should run for a valid payload");
 
         // Clean up env vars immediately after run.
         unsafe {
@@ -1001,8 +1001,8 @@ fn rollback_no_rng_fork() {
         ..Default::default()
     };
 
-    let r1 = run_tunable_cc_internal(params.clone(), 7, None);
-    let r2 = run_tunable_cc_internal(params.clone(), 7, None);
+    let r1 = run_tunable_cc_internal(params.clone(), 7, None).expect("tunable_cc should run for a valid payload");
+    let r2 = run_tunable_cc_internal(params.clone(), 7, None).expect("tunable_cc should run for a valid payload");
 
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
@@ -1072,13 +1072,13 @@ fn rollback_flag_false_monomers() {
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
     }
-    let result_on = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_on = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
 
     // Run B: flag-OFF (rollback path).
     unsafe {
         std::env::set_var("CC_TUNABLE_USE_LOW_DF_FIX", "false");
     }
-    let result_off = run_tunable_cc_internal(params.clone(), seed, None);
+    let result_off = run_tunable_cc_internal(params.clone(), seed, None).expect("tunable_cc should run for a valid payload");
     unsafe {
         std::env::remove_var("CC_TUNABLE_USE_LOW_DF_FIX");
     }

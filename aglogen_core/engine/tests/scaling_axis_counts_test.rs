@@ -65,7 +65,7 @@ fn tunable(
         },
         seed,
         None,
-    )
+    ).expect("tunable_cc should run for a valid payload")
 }
 
 #[test]

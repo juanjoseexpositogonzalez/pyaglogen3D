@@ -49,7 +49,7 @@ fn main() {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let before = run_tunable_cc_internal(params_before, seed, None);
+        let before = run_tunable_cc_internal(params_before, seed, None).expect("tunable_cc should run for a valid payload");
 
         // Count merge types in BEFORE run.
         let before_ballistic = before.merge_trace.iter().filter(|e| e.merge_type == "ballistic").count();
@@ -75,7 +75,7 @@ fn main() {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let after = run_tunable_cc_internal(params_after, seed, None);
+        let after = run_tunable_cc_internal(params_after, seed, None).expect("tunable_cc should run for a valid payload");
 
         // Count merge types in AFTER run.
         let after_ballistic = after.merge_trace.iter().filter(|e| e.merge_type == "ballistic").count();
