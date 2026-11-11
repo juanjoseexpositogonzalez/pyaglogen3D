@@ -14,6 +14,7 @@ Covers spec requirements:
 from __future__ import annotations
 
 from math import prod
+from typing import Any
 
 import pytest
 from rest_framework.exceptions import ValidationError
@@ -22,7 +23,7 @@ from apps.simulations.models import ParametricStudy, Simulation
 from apps.simulations.serializers import ParametricStudySerializer
 
 
-def _make_data(**overrides) -> dict:
+def _make_data(**overrides: Any) -> dict[str, Any]:
     """Minimal valid ParametricStudy payload."""
     data = {
         "name": "Test Study",
@@ -35,11 +36,14 @@ def _make_data(**overrides) -> dict:
     return data
 
 
-def _validate(data: dict) -> dict:
+def _validate(data: dict[str, Any]) -> dict[str, Any]:
     """Run serializer validation, return validated data."""
     serializer = ParametricStudySerializer(data=data)
     serializer.is_valid(raise_exception=True)
-    return serializer.validated_data
+    # `validated_data` is untyped in DRF, so the `Any` is pinned here instead of
+    # leaking out through every caller.
+    validated: dict[str, Any] = serializer.validated_data
+    return validated
 
 
 # ---------------------------------------------------------------------------
