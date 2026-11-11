@@ -89,3 +89,29 @@ describe('a bound has to be finite', () => {
     ).toBeNull()
   })
 })
+
+describe('an empty box is a condition of its own (#243)', () => {
+  it('asks for the missing field instead of a range it cannot violate', () => {
+    // `parseFloat('') || 0` made this 0, and the reader was told "'value' must be
+    // greater than 0" about a number they never typed.
+    expect(distributionValueError({ mode: 'fixed', value: null })).toEqual({
+      field: 'value',
+      message: "'value' is required",
+    })
+  })
+
+  it('still answers "finite" for a number that is not finite', () => {
+    // `1e999` is text the reader typed and the browser accepts; folding it into
+    // "empty" would blame the box for being absent while it holds something.
+    expect(distributionValueError({ mode: 'fixed', value: Infinity })).toEqual({
+      field: 'value',
+      message: "'value' must be a finite number",
+    })
+  })
+
+  it('never divides by an empty mean when checking the cap', () => {
+    expect(
+      distributionValueError({ mode: 'normal', mean: null, std: 0.1 }, 'dpo_distribution'),
+    ).toEqual({ field: 'mean', message: "'mean' is required" })
+  })
+})

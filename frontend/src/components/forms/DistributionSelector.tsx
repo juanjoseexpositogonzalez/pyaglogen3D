@@ -29,6 +29,24 @@ const modeOptions = [
 ]
 
 /**
+ * The number in a box, or `null` when the box is empty.
+ *
+ * `parseFloat(raw) || 0` made an emptied field indistinguishable from a typed zero,
+ * so leaving it produced a range error about a number nobody wrote (#243). A box
+ * with nothing in it is `null`, and the validator says so in its own words.
+ *
+ * Only unreadable text becomes `null`. `1e999` is a number the reader typed — it
+ * arrives as `Infinity` — and it must reach `requirePositive`, which answers "must
+ * be a finite number": folding it into "empty" would blame the box for being absent
+ * when it holds something.
+ */
+function parseInput(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const parsed = parseFloat(raw)
+  return Number.isNaN(parsed) ? null : parsed
+}
+
+/**
  * Reusable distribution selector component for parametric values.
  *
  * Renders a mode dropdown ("Determinista" / "Normal" / "Uniforme") and
@@ -84,6 +102,9 @@ export function DistributionSelector({
     if (newMode === value.mode) return
 
     if (newMode === 'fixed') {
+      // An empty source box carries no number to inherit, so the target is empty
+      // too. Inventing 1.0 here would put a plausible number the reader never typed
+      // in front of them — the substitution #243 removes (#243 review, both judges).
       const v =
         value.mode === 'normal' ? value.mean
         : value.mode === 'uniform' ? value.min
@@ -94,20 +115,29 @@ export function DistributionSelector({
         value.mode === 'fixed' ? value.value
         : value.mode === 'uniform' ? value.min
         : 1.0
-      onChange({ mode: 'normal', mean: m, std: 0.1 * m })
+      // `std` follows the mean only when there is a mean to follow.
+      onChange({ mode: 'normal', mean: m, std: m === null ? null : 0.1 * m })
     } else {
       const base =
-        value.mode === 'fixed' ? value.value
+        (value.mode === 'fixed' ? value.value
         : value.mode === 'normal' ? value.mean
-        : 1.0
+        : 1.0) ?? 1.0
       // R13.11: `min == base == max` was refused by the backend (`max must be
       // > min`), so switching an entry to uniform left a form that could not be
       // submitted until the user edited a bound by hand. A range around the
       // value already chosen is both submittable and the obvious starting point.
-      // A base of 0 comes from clearing the `fixed` input (`parseFloat('') || 0`),
-      // and bracketing it multiplicatively gives `{min: 0, max: 0}` - refused by
-      // the API for both `min > 0` and `min < max`. The range is built on a
-      // usable value instead, so the form stays submittable.
+      // A deliberately typed 0 (and an emptied box, which `base > 0` also catches)
+      // brackets to `{min: 0, max: 0}`, refused by the API for both `min > 0` and
+      // `min < max`, so the entry could not be submitted at all.
+      //
+      // **Accepted exception (#243, decided by the person, 2026-11-11).** This is
+      // the only place a number is chosen for the reader, and it stays: the two
+      // scalar switches above propagate emptiness, while a *range* cannot be empty
+      // — the API has no shape for it, and `{min: 0, max: 0}` is refused on
+      // arrival. The alternative would be an editable limit the user must type
+      // before the mode is usable at all. It is visible (both bounds are on screen
+      // and editable) and it is pinned by a witness, so it is a documented
+      // exception rather than a silent substitution.
       const anchor = base > 0 ? base : 1.0
       onChange({ mode: 'uniform', min: anchor * 0.9, max: anchor * 1.1 })
     }
@@ -127,10 +157,10 @@ export function DistributionSelector({
       {value.mode === 'fixed' && (
         <Input
           type="number"
-          value={value.value}
+          value={value.value ?? ''}
           aria-label="valor"
           onChange={(e) =>
-            onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
+            onChange({ mode: 'fixed', value: parseInput(e.target.value) })
           }
           onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -148,9 +178,9 @@ export function DistributionSelector({
             type="number"
             placeholder="μ"
             aria-label="media"
-            value={value.mean}
+            value={value.mean ?? ''}
             onChange={(e) =>
-              onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, mean: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -164,9 +194,9 @@ export function DistributionSelector({
             type="number"
             placeholder="σ"
             aria-label="desviación"
-            value={value.std}
+            value={value.std ?? ''}
             onChange={(e) =>
-              onChange({ ...value, std: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, std: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -185,9 +215,9 @@ export function DistributionSelector({
             type="number"
             placeholder="min"
             aria-label="mínimo"
-            value={value.min}
+            value={value.min ?? ''}
             onChange={(e) =>
-              onChange({ ...value, min: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, min: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -201,9 +231,9 @@ export function DistributionSelector({
             type="number"
             placeholder="max"
             aria-label="máximo"
-            value={value.max}
+            value={value.max ?? ''}
             onChange={(e) =>
-              onChange({ ...value, max: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, max: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}

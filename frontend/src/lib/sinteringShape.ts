@@ -1,4 +1,10 @@
-import type { DistributionValue, SimulationAlgorithm } from './types'
+import type {
+  CompleteDistributionValue,
+  DistributionValue,
+  SimulationAlgorithm,
+} from './types'
+
+export type { CompleteDistributionValue }
 
 /**
  * The sintering domain shape the API speaks (R3 of
@@ -13,14 +19,29 @@ export type SinteringConfig =
   | { distribution_type: 'uniform'; min: number; max: number }
 
 /**
+ * Whether every box of a distribution holds a number.
+ *
+ * The form allows an empty box (#243) and the API's shapes have no "missing number",
+ * so this is the gate between the form's state and a payload.
+ */
+export function isComplete(value: DistributionValue): value is CompleteDistributionValue {
+  if (value.mode === 'fixed') return value.value !== null
+  if (value.mode === 'normal') return value.mean !== null && value.std !== null
+  return value.min !== null && value.max !== null
+}
+
+/**
  * Translate the selector's vocabulary into the API's, in one place.
  *
  * Sending `{mode, …}` is defect D2 of this contract: the backend used to
  * accept it and silently run the child at 1.0 — no sintering at all — while
  * the stored parameters claimed otherwise. Since T1 it answers 400 instead,
  * which is honest but still a request the form should never make.
+ *
+ * It takes a `CompleteDistributionValue`: a `null` from an empty box is refused by
+ * the submit gate, and the type says so instead of trusting the caller.
  */
-export function toSinteringConfig(value: DistributionValue): SinteringConfig {
+export function toSinteringConfig(value: CompleteDistributionValue): SinteringConfig {
   switch (value.mode) {
     case 'fixed':
       return { distribution_type: 'fixed', coefficient: value.value }

@@ -273,3 +273,25 @@ describe('the tests must notice if the algorithm never changed', () => {
   )
 })
 
+describe('an empty box in the grid refuses the batch (#243)', () => {
+  it('blocks the request instead of silently sweeping fewer values', () => {
+    // Found in review: the grid entry was filtered out of the payload while the
+    // projected count still counted it, so the study ran with fewer children than
+    // the screen promised — or, with every entry empty, with none at all.
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+    selectAlgorithm('tunable_cc')
+    addVariation()
+
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'sintering_config' } })
+
+    fireEvent.change(screen.getByLabelText('valor'), { target: { value: '' } })
+    submit()
+
+    expect(onSubmit).not.toHaveBeenCalled()
+    const alert = screen.getAllByRole('alert').map((node) => node.textContent ?? '').join(' ')
+    expect(alert).toMatch(/sintering_config/)
+    expect(alert).toMatch(/is required/i)
+  })
+})

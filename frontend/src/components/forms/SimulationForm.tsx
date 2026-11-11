@@ -15,6 +15,9 @@ import {
   simulationAlgorithmDescriptions,
 } from '@/lib/simulation-algorithms'
 import type { SimulationAlgorithm, CreateSimulationInput } from '@/lib/types'
+import { Callout } from '@/components/kit/Callout'
+import { distributionValueError } from '@/lib/distributionShape'
+import { isComplete } from '@/lib/sinteringShape'
 import { DistributionSelector, type DistributionValue } from './DistributionSelector'
 
 /**
@@ -578,6 +581,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [seed, setSeed] = useState<string>('')
   const [csvFile, setCsvFile] = useState<File | null>(null)
   const [csvError, setCsvError] = useState<string | null>(null)
+  // #243, found in review: an empty box has no payload, and the selector's border
+  // is not a gate — `distributionValueError` was only ever called to paint it. The
+  // submit refuses here, with the message naming which distribution is incomplete.
+  const [distributionError, setDistributionError] = useState<string | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [dpoDistribution, setDpoDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.0 })
   const [targetKfDistribution, setTargetKfDistribution] = useState<DistributionValue>({ mode: 'fixed', value: 1.3 })
@@ -670,6 +677,24 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       return
     }
 
+    // #243, found in review: an empty box used to travel as `null` inside
+    // (after the import branch on purpose: importing a CSV carries no distribution,
+    // and gating it there refused an import over a box it never reads)
+    // `parameters`, which the backend's own validator never sees — the engine then
+    // fell back to a radius nobody typed or died in the worker with an internal
+    // message. The submit refuses here, and `isComplete` is what lets the compiler
+    // keep a `null` out of the payload's complete-only type.
+    const dpoBroken = distributionValueError(dpoDistribution, 'dpo_distribution')
+    const kfBroken = distributionValueError(targetKfDistribution, 'target_kf_distribution')
+    const incomplete = dpoBroken
+      ? `Primary particle size distribution: ${dpoBroken.message}`
+      : kfBroken
+        ? `Prefactor distribution: ${kfBroken.message}`
+        : null
+    setDistributionError(incomplete)
+    if (incomplete !== null) return
+    if (!isComplete(dpoDistribution) || !isComplete(targetKfDistribution)) return
+
     // Build algorithm-specific parameters
     // Backend uses dimensionless units (radius ~1.0); we persist the primary
     // particle DIAMETER in nm for result scaling (v2 schema). The legacy
@@ -713,11 +738,14 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
       ;(algorithmParams as Record<string, unknown>).target_kf_distribution = targetKfDistribution
       // Backward compat: include scalar fields when mode is fixed
-      if (dpoDistribution.mode === 'fixed') {
+      // `value` is `null` when its box is empty (#243): a scalar alias of an empty
+      // box would be a number nobody typed, so the key is left out and validation
+      // refuses the submission.
+      if (dpoDistribution.mode === 'fixed' && dpoDistribution.value !== null) {
         algorithmParams.radius_min = dpoDistribution.value
         algorithmParams.radius_max = dpoDistribution.value
       }
-      if (targetKfDistribution.mode === 'fixed') {
+      if (targetKfDistribution.mode === 'fixed' && targetKfDistribution.value !== null) {
         algorithmParams.target_kf = targetKfDistribution.value
       }
     } else if (algorithm === 'fracval') {
@@ -759,6 +787,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     onSubmit({
       name: name.trim() || undefined,
       algorithm,
+      // SAFETY: `algorithmParams` is assembled branch by branch — one object per
+      // algorithm — so no single literal type describes it. The branches are what
+      // pin the shape, and the server validates it on arrival; a cast is the only
+      // way to hand a per-algorithm union to a field typed as one of them.
       parameters: algorithmParams as unknown as CreateSimulationInput['parameters'],
       seed: seed ? parseInt(seed) : undefined,
     })
@@ -1620,6 +1652,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
           </div>
         </CardContent>
       </Card>
+
+      {distributionError && <Callout tone="danger" title={distributionError} className="mb-4" />}
 
       <Button type="submit" className="w-full" disabled={isLoading}>
         {isLoading ? 'Starting Simulation...' : 'Run Simulation'}
