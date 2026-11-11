@@ -32,6 +32,32 @@ function mockRefusal(body: unknown, status = 400) {
   )
 }
 
+describe("a refusal written as Django's own `error` key reaches the reader", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it('uses the message, not `Request failed: 404`', async () => {
+    // The admin user endpoints answer `{"error": "User not found."}`. The client read
+    // only `message`, `detail` and `details`, so the one wording that tells the reader
+    // what to do next (the row is stale: refresh) arrived as a bare status (#265).
+    mockRefusal({ error: 'User not found.' }, 404)
+
+    await expect(studiesApi.delete('p1', 's1')).rejects.toMatchObject({
+      message: 'User not found.',
+      status: 404,
+    })
+  })
+
+  it('still falls back to the status when the server names nothing', async () => {
+    mockRefusal({}, 500)
+
+    await expect(studiesApi.delete('p1', 's1')).rejects.toMatchObject({
+      message: 'Request failed: 500',
+    })
+  })
+})
+
 describe('a refused request keeps the fields the server named', () => {
   afterEach(() => {
     vi.unstubAllGlobals()

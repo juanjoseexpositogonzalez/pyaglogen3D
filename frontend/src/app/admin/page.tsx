@@ -325,7 +325,9 @@ function UserCard({
   const [editError, setEditError] = useState<string | null>(null)
   // A refused delete is its own error. It used to be written into `editError`,
   // which only the edit form renders — so a destructive action that failed said
-  // nothing at all (#265).
+  // nothing at all (#265). It is cleared where the confirmation is reopened, which
+  // is the only way back to a retry, so a stale refusal cannot sit beside a fresh
+  // "Delete this user?".
   const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Edit form state
@@ -370,7 +372,6 @@ function UserCard({
 
   const handleDelete = async () => {
     setIsDeleting(true)
-    setDeleteError(null)
     try {
       await adminApi.deleteUser(user.id)
       onDelete(user.id)
@@ -503,10 +504,7 @@ function UserCard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => {
-                  setDeleteError(null)
-                  setShowDeleteConfirm(false)
-                }}
+                onClick={() => setShowDeleteConfirm(false)}
                 disabled={isDeleting}
               >
                 Cancel
@@ -534,7 +532,12 @@ function UserCard({
       */}
       {deleteError && (
         <Callout tone="danger" title="Could not delete this user" className="mt-4">
-          {deleteError}
+          {/*
+            The email, because a danger callout is an assertive live region: with
+            several accounts on the page, "could not delete this user" alone does not
+            say which one the server refused (#265).
+          */}
+          <strong>{user.email}</strong> — {deleteError}
         </Callout>
       )}
 
