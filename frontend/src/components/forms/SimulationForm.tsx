@@ -782,7 +782,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
               onChange={(e) => setName(e.target.value)}
             />
             <p className="text-xs text-muted-foreground">
-              Custom name for this simulation. If left empty, a name will be auto-generated (e.g., "DLA Simulation - 2024-02-20 10:30").
+              Custom name for this simulation. If left empty, a name will be auto-generated (e.g., &quot;DLA Simulation - 2024-02-20 10:30&quot;).
             </p>
           </div>
         </CardContent>

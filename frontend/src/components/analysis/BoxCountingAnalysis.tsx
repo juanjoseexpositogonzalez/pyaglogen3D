@@ -11,7 +11,7 @@ import { formatNumber, exportData, type DataExportFormat } from '@/lib/utils'
 import { BoxCounting3DResult } from '@/lib/types'
 import { Slider } from '@/components/ui/slider'
 import { Label } from '@/components/ui/label'
-import { Box, Loader2, Download, FileSpreadsheet, RotateCcw, Image } from 'lucide-react'
+import { Box, Loader2, FileSpreadsheet, RotateCcw, Image as ImageIcon } from 'lucide-react'
 import type { PlotParams } from 'react-plotly.js'
 
 // Dynamic import for Plotly (client-side only)
@@ -172,6 +172,10 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
 
   // Export image function
   const handleImageExport = useCallback((format: 'svg' | 'png') => {
+    // SAFETY: `Plotly` is attached to `window` by the script tag this component
+    // renders; the DOM lib declares no such global, so the cast states the
+    // invariant TypeScript cannot check. If the script fails to load, the guard
+    // below returns before this is used.
     const Plotly = (window as unknown as { Plotly: {
       downloadImage: (el: HTMLElement, opts: { format: string; width: number; height: number; filename: string }) => void
     } }).Plotly
@@ -317,11 +321,11 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
                   TSV
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => handleImageExport('png')} title="Export plot as PNG">
-                  <Image className="h-3 w-3 mr-1" />
+                  <ImageIcon className="h-3 w-3 mr-1" />
                   PNG
                 </Button>
                 <Button variant="outline" size="sm" onClick={() => handleImageExport('svg')} title="Export plot as SVG">
-                  <Image className="h-3 w-3 mr-1" />
+                  <ImageIcon className="h-3 w-3 mr-1" />
                   SVG
                 </Button>
               </div>

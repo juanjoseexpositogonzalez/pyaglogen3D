@@ -48,7 +48,11 @@ function renderPanel(overrides?: Partial<BatchProjectionExportPanelProps>) {
 // T5.2: Sim list with checkboxes
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — sim list with checkboxes (T5.2)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('renders a title "Export Projections"', () => {
     renderPanel()
@@ -90,7 +94,11 @@ describe('BatchProjectionExportPanel — sim list with checkboxes (T5.2)', () =>
 // T5.3: Select all / Deselect all
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — Select all / Deselect all (T5.3)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('clicking "Select all" checks all sim checkboxes', () => {
     renderPanel()
@@ -118,7 +126,11 @@ describe('BatchProjectionExportPanel — Select all / Deselect all (T5.3)', () =
 // T5.4: Counter "N of M selected"
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — counter (T5.4)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('shows "0 of 3 selected" initially', () => {
     renderPanel()
@@ -143,7 +155,11 @@ describe('BatchProjectionExportPanel — counter (T5.4)', () => {
 // T5.5: Mode/config controls
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — mode controls (T5.5)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('renders a sampling mode selector', () => {
     renderPanel()
@@ -161,7 +177,11 @@ describe('BatchProjectionExportPanel — mode controls (T5.5)', () => {
 // T5.6: Generate button disabled when 0 selected
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — Generate button (T5.6)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('is disabled when no simulations are selected', () => {
     renderPanel()
@@ -244,7 +264,11 @@ describe('BatchProjectionExportPanel — POST body (T5.7)', () => {
 // T5.8: Polling progress "Processing sim X of Y"
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — polling progress (T5.8)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('shows progress text during polling', async () => {
     mockTriggerExport.mockResolvedValue({ job_id: 'job-1', status: 'queued', total_sims: 3 })
@@ -317,7 +341,11 @@ describe('BatchProjectionExportPanel — polling progress (T5.8)', () => {
 // T5.9: Auto-download on completion
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — auto-download (T5.9)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('creates a download anchor on completion', async () => {
     mockTriggerExport.mockResolvedValue({ job_id: 'job-1', status: 'queued', total_sims: 1 })
@@ -356,7 +384,11 @@ describe('BatchProjectionExportPanel — auto-download (T5.9)', () => {
 // T5.10: Partial failure warning
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — partial failure warning (T5.10)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('shows warning when some sims failed', async () => {
     mockTriggerExport.mockResolvedValue({ job_id: 'job-1', status: 'queued', total_sims: 3 })
@@ -405,7 +437,11 @@ describe('BatchProjectionExportPanel — partial failure warning (T5.10)', () =>
 // T5.11: Full failure error toast
 // ---------------------------------------------------------------------------
 describe('BatchProjectionExportPanel — full failure error (T5.11)', () => {
-  beforeEach(() => vi.clearAllMocks())
+  // Block body: `() => vi.clearAllMocks()` returns VitestUtils, and `beforeEach`
+  // reads a returned value as a cleanup callback.
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
 
   it('shows error message when export completely fails', async () => {
     mockTriggerExport.mockResolvedValue({ job_id: 'job-1', status: 'queued', total_sims: 3 })

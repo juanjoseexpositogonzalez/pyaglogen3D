@@ -181,13 +181,10 @@ describe("deriveGeneratedDirections", () => {
       elevation_end: 90,
       elevation_step: 45,
     });
-    // Legacy: az 0, 90 → 2 values; el 0, 45, 90 → 3 values
-    // But computeGrid with az_step=90, el_step=45:
-    //   el=0: az=0,90,180,270 (4), el=45: az=0,90,180,270 (4), pole: 1 → 9
-    // Wait — legacy mode uses the STEP directly, not the range.
-    // The legacy export has start/end ranges but computeGrid covers full 0-360/0-90.
-    // So the derive function should use the steps from the legacy payload.
-    expect(result.length).toBeGreaterThan(0);
+    // The legacy export carries start/end ranges, but the derivation rebuilds the
+    // full grid from the steps - asserted as a number, because "greater than zero"
+    // would pass for an empty start/end interpretation too.
+    expect(result.length).toBe(9);
     expect(result[0]).toHaveProperty("projectionId");
   });
 
