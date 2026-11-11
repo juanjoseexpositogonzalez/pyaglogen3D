@@ -297,13 +297,13 @@ type RelaunchableStudy = StudyLike & {
  * handler used to return silently: the button did nothing, which is indistinguishable
  * from a slow network (#236). Returns the message, or null when there is a payload.
  */
+export const RELAUNCH_REFUSAL_MESSAGE =
+  'This study cannot be relaunched from here: one of its grid entries is not a shape ' +
+  'this page can normalise, so re-sending it would be refused. Edit the study, or ' +
+  'create a new one with the settings you want.'
+
 export function relaunchRefusal(payload: unknown): string | null {
-  if (payload) return null
-  return (
-    'This study cannot be relaunched from here: one of its grid entries is not a shape ' +
-    'this page can normalise, so re-sending it would be refused. Edit the study, or ' +
-    'create a new one with the settings you want.'
-  )
+  return payload ? null : RELAUNCH_REFUSAL_MESSAGE
 }
 
 export function relaunchPayloadFor(
