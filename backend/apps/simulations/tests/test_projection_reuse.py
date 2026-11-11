@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import uuid
 from pathlib import Path
+from typing import Literal
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -62,7 +63,7 @@ class TestRenderOrReuseGridMode:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal render_call_count
             render_call_count += 1
@@ -105,7 +106,7 @@ class TestRenderOrReuseGridMode:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal render_call_count
             render_call_count += 1
@@ -159,7 +160,7 @@ class TestRenderOrReuseFibonacciMode:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal render_call_count
             render_call_count += 1
@@ -206,7 +207,7 @@ class TestRenderOrReuseLegacyMode:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal render_call_count
             render_call_count += 1
@@ -255,7 +256,7 @@ class TestReuseEfficiency:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal call_count
             call_count += 1
@@ -310,7 +311,7 @@ class TestRenderDirectionFailure:
             az: float,
             el: float,
             output_dir: Path,
-            img_format: str = "png",
+            img_format: Literal["png", "svg"] = "png",
         ) -> Path:
             nonlocal call_idx
             call_idx += 1
