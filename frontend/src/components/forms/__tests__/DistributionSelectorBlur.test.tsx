@@ -80,6 +80,57 @@ describe('R8.4 — an invalid value shows itself when the field loses focus', ()
   })
 })
 
+describe('R8.4 — an emptied field is empty, not a zero nobody typed (#243)', () => {
+  /** A selector that keeps the value it is handed, so clearing it is observable. */
+  function StatefulSelector({ initial }: { initial: DistributionValue }) {
+    const [value, setValue] = useState<DistributionValue>(initial)
+    return <DistributionSelector label="#1" value={value} onChange={setValue} />
+  }
+
+  it('reports the empty field instead of a zero the reader never entered', () => {
+    render(<StatefulSelector initial={{ mode: 'fixed', value: 1.5 }} />)
+
+    fireEvent.change(inputs()[0], { target: { value: '' } })
+    fireEvent.blur(inputs()[0])
+
+    // `parseFloat('') || 0` stored a 0, so leaving an empty field produced
+    // "'value' must be greater than 0": the error was manufactured by the act of
+    // clearing. The message has to be about the field being empty.
+    const message = screen.getByRole('alert').textContent ?? ''
+    expect(message).not.toMatch(/greater than 0/)
+    expect(message).toMatch(/required|empty/i)
+    expect(inputs()[0].getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('hands the parent an empty value rather than a zero', () => {
+    // The value is what the form submits: storing 0 for an empty box makes the
+    // screen claim a number that is not on it.
+    const onChange = vi.fn()
+    render(
+      <DistributionSelector
+        label="#1"
+        value={{ mode: 'fixed', value: 1.5 } as DistributionValue}
+        onChange={onChange}
+      />,
+    )
+
+    fireEvent.change(inputs()[0], { target: { value: '' } })
+
+    expect(onChange).toHaveBeenLastCalledWith({ mode: 'fixed', value: null })
+  })
+
+  it('keeps a real zero as a zero, and says what is wrong with it', () => {
+    // The other half of the rule: 0 typed on purpose is a number, and the range
+    // message is the right one for it.
+    render(<StatefulSelector initial={{ mode: 'fixed', value: 1.5 }} />)
+
+    fireEvent.change(inputs()[0], { target: { value: '0' } })
+    fireEvent.blur(inputs()[0])
+
+    expect(screen.getByRole('alert').textContent).toMatch(/greater than 0/)
+  })
+})
+
 describe('R8.4 — the field waits to be left alone', () => {
   it('says nothing while the value is being typed', () => {
     // The whole reason for the blur gate: `parseFloat('') || 0` makes every
@@ -163,7 +214,10 @@ describe('R8.4 — the state belongs to the entry, not to the position', () => {
     fireEvent.focus(inputs()[0])
     fireEvent.change(inputs()[0], { target: { value: '' } })
 
-    expect(inputs()[0].value).toBe('0')
+    // The box is empty and says so. It used to read `'0'`, because `parseFloat('')
+    // || 0` stored a zero for an emptied field — the substitution #243 removes. The
+    // property this witness protects is unchanged: no alert while correcting.
+    expect(inputs()[0].value).toBe('')
     expect(screen.queryByRole('alert')).toBeNull()
   })
 })

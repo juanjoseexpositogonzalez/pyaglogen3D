@@ -87,10 +87,18 @@ export interface TunableParams {
 
 // Distribution value types for parametric dpo / target_kf (PYA-15)
 export type DistributionMode = 'fixed' | 'normal' | 'uniform'
+/**
+ * One distribution entry as the form holds it.
+ *
+ * A numeric field is `null` when its box is **empty**, and that is not the same as
+ * `0`: clearing a field used to store a zero, so the screen then reported a range
+ * error for a number the reader never typed (#243). `null` never reaches the API —
+ * `distributionValueError` refuses it first — it only says "there is nothing here".
+ */
 export type DistributionValue =
-  | { mode: 'fixed'; value: number }
-  | { mode: 'normal'; mean: number; std: number }
-  | { mode: 'uniform'; min: number; max: number }
+  | { mode: 'fixed'; value: number | null }
+  | { mode: 'normal'; mean: number | null; std: number | null }
+  | { mode: 'uniform'; min: number | null; max: number | null }
 
 export interface TunableCcParams extends TunableParams {
   seed_cluster_size?: number

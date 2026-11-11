@@ -713,11 +713,14 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
       ;(algorithmParams as Record<string, unknown>).target_kf_distribution = targetKfDistribution
       // Backward compat: include scalar fields when mode is fixed
-      if (dpoDistribution.mode === 'fixed') {
+      // `value` is `null` when its box is empty (#243): a scalar alias of an empty
+      // box would be a number nobody typed, so the key is left out and validation
+      // refuses the submission.
+      if (dpoDistribution.mode === 'fixed' && dpoDistribution.value !== null) {
         algorithmParams.radius_min = dpoDistribution.value
         algorithmParams.radius_max = dpoDistribution.value
       }
-      if (targetKfDistribution.mode === 'fixed') {
+      if (targetKfDistribution.mode === 'fixed' && targetKfDistribution.value !== null) {
         algorithmParams.target_kf = targetKfDistribution.value
       }
     } else if (algorithm === 'fracval') {

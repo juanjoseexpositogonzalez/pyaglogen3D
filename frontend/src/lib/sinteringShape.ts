@@ -20,7 +20,25 @@ export type SinteringConfig =
  * the stored parameters claimed otherwise. Since T1 it answers 400 instead,
  * which is honest but still a request the form should never make.
  */
-export function toSinteringConfig(value: DistributionValue): SinteringConfig {
+/**
+ * A distribution whose every box holds a number.
+ *
+ * The form allows an empty box (#243) and the API's shapes have no "missing number",
+ * so this translation takes only complete values. `isComplete` is the gate: callers
+ * filter with it instead of casting a null into a payload.
+ */
+export type CompleteDistributionValue =
+  | { mode: 'fixed'; value: number }
+  | { mode: 'normal'; mean: number; std: number }
+  | { mode: 'uniform'; min: number; max: number }
+
+export function isComplete(value: DistributionValue): value is CompleteDistributionValue {
+  if (value.mode === 'fixed') return value.value !== null
+  if (value.mode === 'normal') return value.mean !== null && value.std !== null
+  return value.min !== null && value.max !== null
+}
+
+export function toSinteringConfig(value: CompleteDistributionValue): SinteringConfig {
   switch (value.mode) {
     case 'fixed':
       return { distribution_type: 'fixed', coefficient: value.value }

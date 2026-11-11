@@ -35,6 +35,19 @@ const modeOptions = [
  * conditional numeric inputs for each mode. Used for dpo and target_kf
  * distribution configuration.
  */
+/**
+ * The number in a box, or `null` when the box is empty.
+ *
+ * `parseFloat(raw) || 0` made an emptied field indistinguishable from a typed zero,
+ * so leaving it produced a range error about a number nobody wrote (#243). A box
+ * with nothing in it is `null`, and the validator says so in its own words.
+ */
+function parseInput(raw: string): number | null {
+  if (raw.trim() === '') return null
+  const parsed = parseFloat(raw)
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 export function DistributionSelector({
   label,
   value,
@@ -84,22 +97,24 @@ export function DistributionSelector({
     if (newMode === value.mode) return
 
     if (newMode === 'fixed') {
+      // An empty box upstream carries no number to inherit: `?? 1.0` keeps the
+      // entry usable instead of writing a null the reader did not ask for.
       const v =
-        value.mode === 'normal' ? value.mean
+        (value.mode === 'normal' ? value.mean
         : value.mode === 'uniform' ? value.min
-        : 1.0
+        : 1.0) ?? 1.0
       onChange({ mode: 'fixed', value: v })
     } else if (newMode === 'normal') {
       const m =
-        value.mode === 'fixed' ? value.value
+        (value.mode === 'fixed' ? value.value
         : value.mode === 'uniform' ? value.min
-        : 1.0
+        : 1.0) ?? 1.0
       onChange({ mode: 'normal', mean: m, std: 0.1 * m })
     } else {
       const base =
-        value.mode === 'fixed' ? value.value
+        (value.mode === 'fixed' ? value.value
         : value.mode === 'normal' ? value.mean
-        : 1.0
+        : 1.0) ?? 1.0
       // R13.11: `min == base == max` was refused by the backend (`max must be
       // > min`), so switching an entry to uniform left a form that could not be
       // submitted until the user edited a bound by hand. A range around the
@@ -127,10 +142,10 @@ export function DistributionSelector({
       {value.mode === 'fixed' && (
         <Input
           type="number"
-          value={value.value}
+          value={value.value ?? ''}
           aria-label="valor"
           onChange={(e) =>
-            onChange({ mode: 'fixed', value: parseFloat(e.target.value) || 0 })
+            onChange({ mode: 'fixed', value: parseInput(e.target.value) })
           }
           onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -148,9 +163,9 @@ export function DistributionSelector({
             type="number"
             placeholder="μ"
             aria-label="media"
-            value={value.mean}
+            value={value.mean ?? ''}
             onChange={(e) =>
-              onChange({ ...value, mean: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, mean: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -164,9 +179,9 @@ export function DistributionSelector({
             type="number"
             placeholder="σ"
             aria-label="desviación"
-            value={value.std}
+            value={value.std ?? ''}
             onChange={(e) =>
-              onChange({ ...value, std: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, std: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -185,9 +200,9 @@ export function DistributionSelector({
             type="number"
             placeholder="min"
             aria-label="mínimo"
-            value={value.min}
+            value={value.min ?? ''}
             onChange={(e) =>
-              onChange({ ...value, min: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, min: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}
@@ -201,9 +216,9 @@ export function DistributionSelector({
             type="number"
             placeholder="max"
             aria-label="máximo"
-            value={value.max}
+            value={value.max ?? ''}
             onChange={(e) =>
-              onChange({ ...value, max: parseFloat(e.target.value) || 0 })
+              onChange({ ...value, max: parseInput(e.target.value) })
             }
             onBlur={() => setBlurredValue(value)}
           onFocus={() => setBlurredValue(null)}

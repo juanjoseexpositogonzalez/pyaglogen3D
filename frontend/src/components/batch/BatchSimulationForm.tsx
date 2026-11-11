@@ -14,6 +14,7 @@ import {
   consumesDistribution,
   consumesSeedType,
   consumesSintering,
+  isComplete,
   rejectsVariation,
   toSinteringConfig,
 } from '@/lib/sinteringShape'
@@ -562,7 +563,10 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
           // `particle_radius_config` both answer 201 on `tunable_cc`.
           parameterGrid[variation.name] =
             variation.name === 'sintering_config'
-              ? variation.distributionValues.map(toSinteringConfig)
+              ? // An empty box is not a number, and the API has no shape for one:
+                // validation refuses it before submit, so this filter only keeps a
+                // null from travelling if that gate ever moves (#243).
+                variation.distributionValues.filter(isComplete).map(toSinteringConfig)
               : variation.distributionValues
         }
       } else if (variation.name === SEED_TYPE_PARAM) {
