@@ -6,7 +6,7 @@ import json
 import logging
 import time
 import zipfile
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 from django.http import HttpResponse
@@ -647,8 +647,14 @@ class SimulationViewSet(viewsets.ModelViewSet):
             image_data = render_projection_svg(proj.x, proj.y, proj.radii, bounds)
             content_type = "image/svg+xml"
 
+        # The branch above already decided: "svg" renders SVG and anything else
+        # renders PNG. The filename takes that same decision, so the extension
+        # and the bytes cannot disagree (#307).
+        decided_format: Literal["png", "svg"] = (
+            "svg" if img_format == "svg" else "png"
+        )
         filename = create_projection_filename(
-            str(simulation.id)[:8], azimuth, elevation, img_format
+            str(simulation.id)[:8], azimuth, elevation, decided_format
         )
 
         response = HttpResponse(image_data, content_type=content_type)
@@ -811,8 +817,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
             with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
                 for proj in projections:
                     image_data = _render_projection_bytes(proj, img_format)
+                    decided_format: Literal["png", "svg"] = (
+                        "svg" if img_format == "svg" else "png"
+                    )
                     filename = create_projection_filename(
-                        str(simulation.id)[:8], proj.azimuth, proj.elevation, img_format
+                        str(simulation.id)[:8], proj.azimuth,
+                        proj.elevation, decided_format
                     )
                     zf.writestr(filename, image_data)
                     legacy_filenames.append(filename)
