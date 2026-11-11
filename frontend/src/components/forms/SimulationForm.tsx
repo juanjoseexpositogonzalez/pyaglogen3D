@@ -646,22 +646,6 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // #243, found in review: an empty box used to travel as `null` inside
-    // `parameters`, which the backend's own validator never sees — the engine then
-    // fell back to a radius nobody typed or died in the worker with an internal
-    // message. The submit refuses here, and `isComplete` is what lets the compiler
-    // keep a `null` out of the payload's complete-only type.
-    const dpoBroken = distributionValueError(dpoDistribution, 'dpo_distribution')
-    const kfBroken = distributionValueError(targetKfDistribution, 'target_kf_distribution')
-    const incomplete = dpoBroken
-      ? `Primary particle size distribution: ${dpoBroken.message}`
-      : kfBroken
-        ? `Prefactor distribution: ${kfBroken.message}`
-        : null
-    setDistributionError(incomplete)
-    if (incomplete !== null) return
-    if (!isComplete(dpoDistribution) || !isComplete(targetKfDistribution)) return
-
     // Handle imported algorithm separately
     if (algorithm === 'imported') {
       if (!csvFile) {
@@ -692,6 +676,24 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       reader.readAsDataURL(csvFile)
       return
     }
+
+    // #243, found in review: an empty box used to travel as `null` inside
+    // (after the import branch on purpose: importing a CSV carries no distribution,
+    // and gating it there refused an import over a box it never reads)
+    // `parameters`, which the backend's own validator never sees — the engine then
+    // fell back to a radius nobody typed or died in the worker with an internal
+    // message. The submit refuses here, and `isComplete` is what lets the compiler
+    // keep a `null` out of the payload's complete-only type.
+    const dpoBroken = distributionValueError(dpoDistribution, 'dpo_distribution')
+    const kfBroken = distributionValueError(targetKfDistribution, 'target_kf_distribution')
+    const incomplete = dpoBroken
+      ? `Primary particle size distribution: ${dpoBroken.message}`
+      : kfBroken
+        ? `Prefactor distribution: ${kfBroken.message}`
+        : null
+    setDistributionError(incomplete)
+    if (incomplete !== null) return
+    if (!isComplete(dpoDistribution) || !isComplete(targetKfDistribution)) return
 
     // Build algorithm-specific parameters
     // Backend uses dimensionless units (radius ~1.0); we persist the primary
