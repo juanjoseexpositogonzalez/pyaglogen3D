@@ -323,6 +323,10 @@ function UserCard({
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [editError, setEditError] = useState<string | null>(null)
+  // A refused delete is its own error. It used to be written into `editError`,
+  // which only the edit form renders — so a destructive action that failed said
+  // nothing at all (#265).
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   // Edit form state
   const [firstName, setFirstName] = useState(user.first_name || '')
@@ -366,11 +370,14 @@ function UserCard({
 
   const handleDelete = async () => {
     setIsDeleting(true)
+    setDeleteError(null)
     try {
       await adminApi.deleteUser(user.id)
       onDelete(user.id)
     } catch (err) {
-      setEditError(err instanceof Error ? err.message : 'Failed to delete user')
+      // The row stays: removing it locally would claim a deletion that did not
+      // happen. The message is rendered next to the account (#265).
+      setDeleteError(err instanceof Error ? err.message : 'Failed to delete user')
       setIsDeleting(false)
       setShowDeleteConfirm(false)
     }
@@ -472,7 +479,10 @@ function UserCard({
                   variant="outline"
                   size="icon"
                   aria-label={`Delete ${displayName}`}
-                  onClick={() => setShowDeleteConfirm(true)}
+                  onClick={() => {
+                    setDeleteError(null)
+                    setShowDeleteConfirm(true)
+                  }}
                 >
                   <Trash2 className="h-4 w-4 text-danger" aria-hidden="true" />
                 </Button>
@@ -493,7 +503,10 @@ function UserCard({
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => setShowDeleteConfirm(false)}
+                onClick={() => {
+                  setDeleteError(null)
+                  setShowDeleteConfirm(false)
+                }}
                 disabled={isDeleting}
               >
                 Cancel
@@ -511,6 +524,17 @@ function UserCard({
         >
           This will permanently delete {user.email} and all their projects, simulations, and
           data.
+        </Callout>
+      )}
+
+      {/*
+        A refused delete. It sits in the account's own card because that is where
+        the reader pressed the button: the confirmation strip closes on failure, so
+        without this the screen looked exactly like a successful delete (#265).
+      */}
+      {deleteError && (
+        <Callout tone="danger" title="Could not delete this user" className="mt-4">
+          {deleteError}
         </Callout>
       )}
 

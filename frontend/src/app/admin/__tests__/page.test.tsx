@@ -327,7 +327,7 @@ describe('Admin users', () => {
     )
   })
 
-  it('keeps the account on screen when the delete fails', async () => {
+  it('says a refused delete failed, where the delete was asked', async () => {
     mockDeleteUser.mockRejectedValue(new Error('Still has data'))
     render(<AdminPage />)
 
@@ -346,10 +346,30 @@ describe('Admin users', () => {
       'Total Users1',
     )
 
-    // Known defect, deliberately not fixed here: the catch block writes the
-    // message into `editError`, which only the edit form renders, so a refused
-    // delete is silent unless the form happens to be open. Repairing it would
-    // change behaviour inside a presentation port; it belongs in its own issue.
+    // Issue #265, and the reason this witness is inverted rather than kept: the
+    // catch block used to write the message into `editError`, which only the edit
+    // form renders, so a refused delete was silent. A destructive action that fails
+    // without saying so leaves the reader unable to tell "it worked" from "the
+    // server refused", and the only way out is to reload and check by hand.
+    expect(screen.getByText('Still has data')).toBeTruthy()
+  })
+
+  it('clears the refusal once a retry succeeds', async () => {
+    // The banner must belong to the attempt, not to the account: a failure followed
+    // by a success cannot leave "Still has data" on screen over a user that is gone.
+    mockDeleteUser.mockRejectedValueOnce(new Error('Still has data'))
+    render(<AdminPage />)
+
+    fireEvent.click(await screen.findByRole('button', { name: /delete ada lovelace/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
+    expect(await screen.findByText('Still has data')).toBeTruthy()
+
+    fireEvent.click(screen.getByRole('button', { name: /delete ada lovelace/i }))
+    fireEvent.click(screen.getByRole('button', { name: /^delete$/i }))
+
+    await waitFor(() =>
+      expect(screen.queryByRole('heading', { level: 3, name: /ada lovelace/i })).toBeNull(),
+    )
     expect(screen.queryByText('Still has data')).toBeNull()
   })
 
