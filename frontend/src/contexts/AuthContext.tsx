@@ -78,7 +78,21 @@ const fieldLabel = (key: string) =>
 
 interface AuthContextType {
   user: User | null
+  /**
+   * A request this context owns is in flight: sign-in, registration, logout or a
+   * profile update.
+   */
   isLoading: boolean
+  /**
+   * The mount-time restore of a stored session is still running.
+   *
+   * Separate from `isLoading` because on a returning reader's first render both
+   * are true and they mean different things (#246): the sign-in button read
+   * `isLoading` alone and claimed a sign-in nobody sent. Additive on purpose —
+   * the route guards read `isLoading` and keep reading exactly what they read
+   * before.
+   */
+  isRestoring: boolean
   isAuthenticated: boolean
   error: string | null
   login: (credentials: LoginCredentials) => Promise<void>
@@ -95,6 +109,10 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isLoading, setIsLoading] = useState(true)
+  // True until the mount-time restore settles, with a token or without one.
+  // `isLoading` keeps starting true as well: a route guard must not paint a
+  // signed-out screen in the tick before the stored token is read.
+  const [isRestoring, setIsRestoring] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
@@ -107,6 +125,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const initAuth = async () => {
       if (!tokenStorage.hasRefreshToken()) {
         setIsLoading(false)
+        setIsRestoring(false)
         return
       }
 
@@ -126,6 +145,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // nothing left for this handler to decide.
       } finally {
         setIsLoading(false)
+        setIsRestoring(false)
       }
     }
 
@@ -244,6 +264,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         user,
         isLoading,
+        isRestoring,
         isAuthenticated,
         error,
         login,

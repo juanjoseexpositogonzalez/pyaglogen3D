@@ -65,7 +65,17 @@ function startOAuth(provider: 'google' | 'github') {
 }
 
 export default function LoginPage() {
-  const { login, error, clearError, isLoading } = useAuth()
+  const { login, error, clearError, isLoading, isRestoring } = useAuth()
+
+  /*
+    Two facts, two sentences (#246). `isRestoring` is true while the context
+    looks for a session behind a stored refresh token: nothing has been
+    submitted, so the button keeps the idle copy even though a request is in
+    flight. `submitting` is a sign-in this form actually sent. The button is
+    unpressable in both — there is nothing to send until the context knows
+    whether a session exists — but it narrates only the second.
+  */
+  const submitting = isLoading && !isRestoring
 
   /*
     The OAuth callback writes `?error=` into this route when the provider
@@ -142,8 +152,8 @@ export default function LoginPage() {
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? (
+        <Button type="submit" className="w-full" disabled={isRestoring || isLoading}>
+          {submitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
               Signing in...
