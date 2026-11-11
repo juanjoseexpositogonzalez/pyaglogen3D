@@ -12,9 +12,16 @@ panic the engine has never been enumerated and any new hole would produce the sa
 silent hang. #232 is the same root cause reached through `target_df`; a per-input
 range guard there fixes one door, this fixes the mechanism.
 
-The trigger below is deterministic (`target_df = 1e308` panics on every seed, as
-measured in #232); `kf_std = 100.0`, the one this point records, panics on 12 of
-20 seeds and would make a flaky witness.
+The panic is injected below with `_EnginePanic` rather than provoked. It used to be
+provoked with `target_df = 1e308`, which panicked on every seed; #232 then guarded
+the `target_df` and `target_kf` scalars, so those two no longer reach the binding
+through the task. Others still do - a `target_kf_distribution` carrying `value: 0.0`
+and a `radius_min` of 1e-300 both panic it - which is exactly why this handler stays
+the mechanism and not a per-input guard. The rule under test is about the base class,
+not about which input panics, and
+`test_the_binding_still_panics_for_target_kf_zero` in
+`apps/simulations/tests/test_tunable_cc_target_df_guard.py` keeps a real
+`PanicException` in the suite so its absence would still be noticed.
 """
 
 from __future__ import annotations
@@ -42,7 +49,7 @@ def simulation(db: None) -> Simulation:
         project=project,
         name="Panicking study",
         base_algorithm="tunable_cc",
-        base_parameters={"n_particles": 60, "target_df": 1e308, "target_kf": 1.3},
+        base_parameters={"n_particles": 60, "target_df": 1.8, "target_kf": 1.3},
         parameter_grid={},
         seeds_per_combination=1,
         status="running",
@@ -51,9 +58,11 @@ def simulation(db: None) -> Simulation:
         project=project,
         name="Panicking run",
         algorithm="tunable_cc",
-        # `1e308` is finite, passes every range check the engine has, and makes
-        # `run_tunable_cc` panic inside the Rust binding.
-        parameters={"n_particles": 60, "target_df": 1e308, "target_kf": 1.3},
+        # `1e308` used to live here: finite, past every range check the engine had,
+        # and it made `run_tunable_cc` panic inside the Rust binding. #232 added the
+        # range check that refuses it before the engine is called, so the fixture
+        # carries a valid value and each test injects the failure it is about.
+        parameters={"n_particles": 60, "target_df": 1.8, "target_kf": 1.3},
         seed=1,
         status=SimulationStatus.QUEUED,
         is_batch=True,
@@ -62,7 +71,21 @@ def simulation(db: None) -> Simulation:
     return simulation
 
 
-def test_a_rust_panic_leaves_a_failed_simulation(simulation: Simulation) -> None:
+def test_a_rust_panic_leaves_a_failed_simulation(
+    simulation: Simulation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A panic from the binding is recorded as a failure, not left running.
+
+    Injected rather than provoked: #232 refuses the value that used to make
+    `run_tunable_cc` panic for real, and the rule under test is about a
+    `BaseException` reaching the handler, not about which input causes it.
+    """
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise _EnginePanic("select_pair_smart called with empty pool")
+
+    monkeypatch.setattr("aglogen_core.run_tunable_cc", explode, raising=False)
+
     result = run_simulation_task(str(simulation.id))
 
     simulation.refresh_from_db()
