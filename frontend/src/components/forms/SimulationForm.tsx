@@ -796,6 +796,27 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     })
   }
 
+  /*
+    #311: from Df 2.7 up, the seed type decides whether the target is reachable.
+    Measured, five seeds, kf 1.3 — monomers 2.373 / dimers 2.798 at N=100, and
+    2.376 / 2.770 at N=1000, which is this form's default:
+
+        target 2.3  2.4  2.5  2.6   [2.7]  2.8  2.9
+        monomers   OK   OK   OK   OK   FALLA FALLA FALLA
+
+    So the gate starts at 2.7, not at the band's 2.5: at 2.6 monomers still lands
+    at 2.515, inside ±0.15, and warning there would scold a configuration that
+    passes. `target_kf` is part of the gate because the lever does not work on its
+    own — dimers measures 2.472 at kf 1.0, outside the band for the same target.
+
+    The default is left alone: monomers is a legitimate choice, and the form says
+    which option reaches the target instead of choosing for the reader.
+  */
+  const dimersRecommended =
+    params.seed_type === 'monomers' &&
+    params.target_df >= 2.7 &&
+    params.target_kf >= 1.3
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Simulation Name */}
@@ -1304,9 +1325,29 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   value={params.seed_type}
                   onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
                   options={seedTypeOptions}
+                  aria-describedby={dimersRecommended ? 'seed-type-note' : undefined}
                 />
                 <p className="text-xs text-muted-foreground">
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
+                </p>
+                {/*
+                  Mounted always, with only its text changing: a live region created
+                  together with its content — while the reader drags the Df slider —
+                  is not announced. Same shape as the batch form's status lines.
+                */}
+                <p
+                  id="seed-type-note"
+                  role="status"
+                  aria-live="polite"
+                  className="text-xs text-ink"
+                >
+                  {dimersRecommended ? (
+                    <>
+                      <strong>Dimers recommended</strong> for Df 2.7 and above with
+                      kf ≈ 1.3: measured, monomers stays at Df ≈ 2.37 where dimers
+                      reaches 2.77–2.80 (N=100 and N=1000, target 2.7).
+                    </>
+                  ) : null}
                 </p>
               </div>
 
