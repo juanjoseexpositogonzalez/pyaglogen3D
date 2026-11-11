@@ -42,7 +42,7 @@ def simulation(db: None) -> Simulation:
         project=project,
         name="Panicking study",
         base_algorithm="tunable_cc",
-        base_parameters={"n_particles": 60, "target_df": 1e308, "target_kf": 1.3},
+        base_parameters={"n_particles": 60, "target_df": 1.8, "target_kf": 1.3},
         parameter_grid={},
         seeds_per_combination=1,
         status="running",
@@ -51,9 +51,11 @@ def simulation(db: None) -> Simulation:
         project=project,
         name="Panicking run",
         algorithm="tunable_cc",
-        # `1e308` is finite, passes every range check the engine has, and makes
-        # `run_tunable_cc` panic inside the Rust binding.
-        parameters={"n_particles": 60, "target_df": 1e308, "target_kf": 1.3},
+        # `1e308` used to live here: finite, past every range check the engine had,
+        # and it made `run_tunable_cc` panic inside the Rust binding. #232 added the
+        # range check that refuses it before the engine is called, so the fixture
+        # carries a valid value and each test injects the failure it is about.
+        parameters={"n_particles": 60, "target_df": 1.8, "target_kf": 1.3},
         seed=1,
         status=SimulationStatus.QUEUED,
         is_batch=True,
@@ -62,7 +64,21 @@ def simulation(db: None) -> Simulation:
     return simulation
 
 
-def test_a_rust_panic_leaves_a_failed_simulation(simulation: Simulation) -> None:
+def test_a_rust_panic_leaves_a_failed_simulation(
+    simulation: Simulation, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A panic from the binding is recorded as a failure, not left running.
+
+    Injected rather than provoked: #232 refuses the value that used to make
+    `run_tunable_cc` panic for real, and the rule under test is about a
+    `BaseException` reaching the handler, not about which input causes it.
+    """
+
+    def explode(*args: object, **kwargs: object) -> None:
+        raise _EnginePanic("select_pair_smart called with empty pool")
+
+    monkeypatch.setattr("aglogen_core.run_tunable_cc", explode, raising=False)
+
     result = run_simulation_task(str(simulation.id))
 
     simulation.refresh_from_db()

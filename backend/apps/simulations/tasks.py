@@ -1694,6 +1694,18 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             )
         elif algorithm == "tunable_cc":
             # Tunable CC with controllable fractal dimension (cluster-cluster)
+            # Same guard as its siblings (`fracval`, `box_rfa`). Without it the
+            # value reached the engine, which panicked with "select_pair_smart
+            # called with empty pool"; a PanicException is a BaseException, so the
+            # child failed with a crash instead of naming the field it got wrong
+            # (#232). `isinstance` first, so a list is refused rather than raising
+            # TypeError in the comparison.
+            target_df = params.get("target_df", 1.8)
+            if (
+                not isinstance(target_df, (int, float))
+                or not (1.0 <= target_df <= 3.0)
+            ):
+                raise ValueError("target_df must be between 1.0 and 3.0")
             # seed_type: read from the model field (set via API/serializer).
             # The binding accepts None (→ monomers default) for backward compat.
             sim_seed_type: str | None = getattr(simulation, "seed_type", None)
@@ -1709,7 +1721,7 @@ def run_simulation_task(self, simulation_id: str) -> dict:
 
             result = aglogen_core.run_tunable_cc(
                 n_particles=params.get("n_particles", 1000),
-                target_df=params.get("target_df", 1.8),
+                target_df=target_df,
                 target_kf=params.get("target_kf", 1.3),
                 radius_min=radius_min,
                 radius_max=radius_max,
