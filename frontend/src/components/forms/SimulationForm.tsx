@@ -796,6 +796,17 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     })
   }
 
+  /*
+    #311: above the high-Df band the seed type decides whether the target is
+    reachable at all. Measured at N=100, target_df 2.7, target_kf 1.3: monomers
+    lands at 2.37, dimers at 2.80. The default is left alone — monomers is a
+    legitimate choice — and the form says which one reaches the target instead.
+  */
+  const dimersRecommended =
+    algorithm === 'tunable_cc' &&
+    params.seed_type === 'monomers' &&
+    params.target_df >= 2.5
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       {/* Simulation Name */}
@@ -1308,6 +1319,13 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 <p className="text-xs text-muted-foreground">
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
                 </p>
+                {dimersRecommended && (
+                  <p role="note" className="text-xs text-ink">
+                    <strong>Dimers recommended</strong> for a target above Df 2.5: with
+                    monomers the aggregate stays around Df 2.4 and does not reach the
+                    band, however long it runs.
+                  </p>
+                )}
               </div>
 
               {/* Distribution selectors for dpo and target_kf (PYA-15) */}

@@ -191,3 +191,56 @@ describe("SimulationForm — Comprehensive seed_type tests (T5.3)", () => {
     expect(helperText.textContent).toContain("FZR");
   });
 });
+
+// --------------------------------------------------------------------------
+// #311 — the form says which seed type reaches a high Df target
+// --------------------------------------------------------------------------
+
+describe("SimulationForm — dimers recommendation above the high-Df band (#311)", () => {
+  /**
+   * The target Df control is a range input under a label that carries its value,
+   * so it is addressed through that label instead of a guessed index.
+   */
+  const setTargetDf = (value: number) => {
+    const label = screen.getByText(/Target Fractal Dimension \(Df\)/);
+    const slider = label.closest("div")?.querySelector(
+      'input[type="range"]'
+    ) as HTMLInputElement;
+    fireEvent.change(slider, { target: { value: String(value) } });
+  };
+
+  it("recommends dimers when monomers is selected and the target is in the band", () => {
+    renderWithAlgorithm("tunable_cc");
+    setTargetDf(2.7);
+
+    // Measured at N=100, kf=1.3: monomers lands at 2.37 and dimers at 2.80 for a
+    // 2.70 target (#311). Saying nothing here promises a band the default does not
+    // reach; changing the default silently would take a legitimate choice away.
+    const note = screen.getByRole("note");
+    expect(note.textContent).toMatch(/dimers/i);
+    expect(note.textContent).toMatch(/2\.7|high df|2\.5/i);
+  });
+
+  it("says nothing once dimers is chosen", () => {
+    renderWithAlgorithm("tunable_cc");
+    setTargetDf(2.7);
+    fireEvent.change(screen.getByLabelText(/seed type/i), {
+      target: { value: "dimers" },
+    });
+
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("says nothing below the band", () => {
+    renderWithAlgorithm("tunable_cc");
+    setTargetDf(1.8);
+
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+
+  it("says nothing for the algorithm that has no seed type", () => {
+    renderWithAlgorithm("ballistic_cc");
+
+    expect(screen.queryByRole("note")).toBeNull();
+  });
+});
