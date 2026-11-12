@@ -97,6 +97,29 @@ def test_box_counting_rejects_a_non_number_with_400(key: str) -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("key", ["points_per_sphere", "precision"])
+def test_box_counting_rejects_a_null_with_400(key: str) -> None:
+    """#258: a `null` reached the comparison and answered 500 (`10 <= None`).
+
+    #231 put `isinstance` in front of the range check and it covers this too, since
+    `value.get(key)` returns None when the key is present and null - but nothing
+    pinned it. The old form always sent a number for these two keys, so the path was
+    unreachable from the UI; a script or a partial PATCH still reaches it.
+    """
+    project, client = _setup()
+
+    response = client.post(
+        _studies_url(project),
+        _study_payload(box_counting_params={key: None}),
+        format="json",
+    )
+
+    assert response.status_code == 400, getattr(response, "data", response.content)
+    assert f"{key} must be" in str(response.data)
+    assert ParametricStudy.objects.count() == 0
+
+
+@pytest.mark.django_db
 def test_box_counting_still_refuses_an_out_of_range_number() -> None:
     """The fix narrows the type check; the range rule itself is unchanged."""
     project, client = _setup()

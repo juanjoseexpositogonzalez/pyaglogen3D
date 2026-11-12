@@ -1,6 +1,7 @@
 'use client'
 
 import { useViewerStore, type BackgroundPreset } from '@/stores/viewerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
 import { Slider } from '@/components/ui/slider'
@@ -67,7 +68,37 @@ export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsPr
     cameraElevation,
     requestExport,
     reset,
-  } = useViewerStore()
+  } = useViewerStore(
+    // `useShallow`: the panel shows the camera angles, so it must re-render
+    // when they change - but not on *every* change of the store, which writes
+    // once per frame while the camera moves (#312).
+    useShallow((s) => ({
+      colorMode: s.colorMode,
+      setColorMode: s.setColorMode,
+      showAxes: s.showAxes,
+      toggleAxes: s.toggleAxes,
+      showGrid: s.showGrid,
+      toggleGrid: s.toggleGrid,
+      showBoundingSphere: s.showBoundingSphere,
+      toggleBoundingSphere: s.toggleBoundingSphere,
+      showPrincipalAxes: s.showPrincipalAxes,
+      togglePrincipalAxes: s.togglePrincipalAxes,
+      useOrthographic: s.useOrthographic,
+      toggleOrthographic: s.toggleOrthographic,
+      autoRotate: s.autoRotate,
+      toggleAutoRotate: s.toggleAutoRotate,
+      rotateSpeed: s.rotateSpeed,
+      setRotateSpeed: s.setRotateSpeed,
+      particleOpacity: s.particleOpacity,
+      setParticleOpacity: s.setParticleOpacity,
+      background: s.background,
+      setBackground: s.setBackground,
+      cameraAzimuth: s.cameraAzimuth,
+      cameraElevation: s.cameraElevation,
+      requestExport: s.requestExport,
+      reset: s.reset,
+    }))
+  )
 
   return (
     <div className="space-y-4 p-4 bg-card rounded-lg border">

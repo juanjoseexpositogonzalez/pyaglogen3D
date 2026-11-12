@@ -38,9 +38,10 @@ vi.mock('@/lib/auth-api', async () => {
 import { AuthApiError } from '@/lib/auth-api'
 
 import { AuthProvider, useAuth } from '../AuthContext'
+import { StorageBlockedError } from '@/lib/token-storage'
 
 function Probe() {
-  const { register, error } = useAuth()
+  const { register, login, error } = useAuth()
   return (
     <div>
       <button
@@ -51,6 +52,15 @@ function Probe() {
         }}
       >
         register
+      </button>
+      <button
+        onClick={() => {
+          void login({} as never).catch(() => {
+            // `login` rethrows too; the probe only cares about `error`.
+          })
+        }}
+      >
+        login
       </button>
       <p data-testid="error">{error ?? 'none'}</p>
     </div>
@@ -317,5 +327,30 @@ describe('the restore flag the sign-in button depends on', () => {
 
     release({ user: { email: 'ana@example.org' } })
     await settled('loading=false restoring=false user=ana@example.org')
+  })
+})
+
+describe('the message a blocked browser produces (#302)', () => {
+  beforeEach(() => {
+    localStorage.clear()
+    mockLogin.mockReset()
+    mockPush.mockReset()
+  })
+
+  it('names the storage instead of blaming the credential', async () => {
+    // The shape of the defect: the sign-in answered 200 and `setTokens` threw,
+    // because this browser refuses `localStorage`. The message said "Login failed.
+    // Please try again." - forever, to a reader whose password was correct.
+    mockLogin.mockRejectedValue(new StorageBlockedError())
+
+    renderWithProvider()
+    fireEvent.click(screen.getByRole('button', { name: 'login' }))
+    await waitFor(() =>
+      expect(screen.getByTestId('error').textContent).not.toBe('none'),
+    )
+
+    const message = screen.getByTestId('error').textContent ?? ''
+    expect(message).toMatch(/blocking local storage/i)
+    expect(message).not.toMatch(/Login failed/i)
   })
 })

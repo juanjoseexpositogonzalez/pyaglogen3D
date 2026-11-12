@@ -9,6 +9,7 @@ import {
   backgroundColors,
   DEFAULT_CAMERA_SCOPE,
 } from '@/stores/viewerStore'
+import { useShallow } from 'zustand/react/shallow'
 import { cn } from '@/lib/utils'
 import type { ColorMode } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
@@ -186,7 +187,23 @@ export function AgglomerateViewer({
     rotateSpeed,
     particleOpacity,
     background,
-  } = useViewerStore()
+  } = useViewerStore(
+    // `useShallow`: a subscriber with no selector re-renders on *any* store
+    // change, and the camera writes on every frame while it moves. This tree
+    // reads no angle, so it stops re-rendering for them (#312).
+    useShallow((s) => ({
+      colorMode: s.colorMode,
+      showAxes: s.showAxes,
+      showGrid: s.showGrid,
+      showBoundingSphere: s.showBoundingSphere,
+      showPrincipalAxes: s.showPrincipalAxes,
+      useOrthographic: s.useOrthographic,
+      autoRotate: s.autoRotate,
+      rotateSpeed: s.rotateSpeed,
+      particleOpacity: s.particleOpacity,
+      background: s.background,
+    }))
+  )
 
   const colorMode = propColorMode ?? storeColorMode
   const bgColor = backgroundColors[background]

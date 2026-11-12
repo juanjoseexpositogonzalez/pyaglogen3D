@@ -43,10 +43,12 @@ let mockAuthState: {
   error: string | null
   isLoading: boolean
   isRestoring: boolean
+  storageBlocked?: boolean
 } = {
   error: null,
   isLoading: false,
   isRestoring: false,
+  storageBlocked: false,
 }
 
 vi.mock('next/link', () => ({
@@ -61,6 +63,8 @@ vi.mock('@/contexts/AuthContext', () => ({
     clearError: mockClearError,
     isLoading: mockAuthState.isLoading,
     isRestoring: mockAuthState.isRestoring,
+    // Optional in the double: a witness that is not about storage omits it.
+    storageBlocked: mockAuthState.storageBlocked ?? false,
   }),
 }))
 
@@ -162,6 +166,10 @@ describe('sign-in screen', () => {
     expect(email.getAttribute('placeholder')).toBe('your@email.com')
     expect(email.hasAttribute('required')).toBe(true)
     expect(email.value).toBe('')
+    // #250: the attribute a password manager reads. Without it a manager cannot
+    // tell the credential pair from any other pair of boxes on the page, and the
+    // failure is silent — the form still works for anyone who types.
+    expect(email.getAttribute('autocomplete')).toBe('email')
 
     const password = screen.getByLabelText('Password') as HTMLInputElement
     expect(password.tagName).toBe('INPUT')
@@ -169,6 +177,7 @@ describe('sign-in screen', () => {
     expect(password.getAttribute('placeholder')).toBe('Your password')
     expect(password.hasAttribute('required')).toBe(true)
     expect(password.value).toBe('')
+    expect(password.getAttribute('autocomplete')).toBe('current-password')
 
     // No third field: this form asks for a credential pair and nothing else.
     expect(document.querySelectorAll('input')).toHaveLength(2)
@@ -326,6 +335,20 @@ describe('sign-in screen', () => {
     expect(page).toMatch(/@\/components\/kit\/Callout/)
     expect(page).toMatch(/@\/components\/kit\/Panel/)
   })
+  it('says the browser is blocking storage, before anyone types', () => {
+    // #302: this browser can never keep a session. Saying it up front is different
+    // from letting a *successful* sign-in fail afterwards and blaming the password.
+    mockAuthState = {
+      error: null,
+      isLoading: false,
+      isRestoring: false,
+      storageBlocked: true,
+    }
+    renderPage()
+
+    expect(screen.getByText(/blocking local storage/i)).toBeTruthy()
+  })
+
   it('says why an OAuth sign-in failed, instead of showing a blank form', () => {
     // The callback writes `?error=` and, until now, nothing read it: a provider
     // refusal landed here as a form with no explanation at all.

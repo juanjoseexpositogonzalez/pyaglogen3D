@@ -37,10 +37,9 @@
  *     history, any access log on the way, and the `Referer` of any
  *     third-party subresource loaded before the redirect. A fragment or a
  *     one-time server-side code would not. That is an auth-flow decision.
- *   - `'/auth/login?error=' + error` copies the provider's `error` value into
- *     a URL without `encodeURIComponent`, so `?error=a%26next%3D%2F%2Fevil`
- *     becomes `/auth/login?error=a&next=//evil` — the page can be handed
- *     query parameters it did not write.
+ *   - ~~`'/auth/login?error=' + error` copies the provider's `error` value into
+ *     a URL without `encodeURIComponent`~~ **fixed in #249**: the value is encoded,
+ *     so `?error=a%26next%3D%2F%2Fevil` arrives as one parameter and cannot add one.
  *   - none of those three `?error=` values is read by the login page, which
  *     takes its message from `AuthContext` and never looks at the query. A
  *     failed OAuth sign-in therefore lands on a blank login form with no
@@ -71,12 +70,23 @@ function OAuthCallbackContent() {
 
   useEffect(() => {
     const processOAuth = async () => {
-      const accessToken = searchParams.get('access')
-      const refreshToken = searchParams.get('refresh')
+      // The tokens arrive in the URL **fragment** (#249): a fragment is never
+      // sent to a server, so they stop reaching access logs and `Referer`.
+      // `error` stays on the query because it is not a secret and the login
+      // page reads it there.
+      const hashParams = new URLSearchParams(
+        window.location.hash.replace(/^#/, '')
+      )
+      const accessToken = hashParams.get('access')
+      const refreshToken = hashParams.get('refresh')
       const error = searchParams.get('error')
 
       if (error) {
-        router.push('/auth/login?error=' + error)
+        // `encodeURIComponent`: a provider error like `a&next=//evil.example`
+        // would otherwise arrive as two parameters, and the login page reads the
+        // query since #246 - so the callback would hand it one it never wrote
+        // (#249).
+        router.push('/auth/login?error=' + encodeURIComponent(error))
         return
       }
 

@@ -118,7 +118,11 @@ describe('<NeighborGraph /> — Container', () => {
     expect(screen.getByText(/Particle #2 Details/i)).toBeTruthy()
   })
 
-  it('shows large-graph warning when n_particles > 1000', async () => {
+  it('shows the large-graph warning in the page, not as a modal', async () => {
+    // #312: this used to be a `window.alert` inside a `useEffect`. An alert blocks
+    // the main thread - the last thing a page needs while it is trying to unmount -
+    // and it ran again whenever `data` changed identity. The sentence moved into the
+    // page, so this asserts both faces: the notice exists and the modal does not.
     const alertSpy = vi.spyOn(window, 'alert').mockImplementation(() => {})
     const largeData = makeData(1001)
 
@@ -126,9 +130,12 @@ describe('<NeighborGraph /> — Container', () => {
       render(<NeighborGraph data={largeData} isLoading={false} />)
     })
 
-    expect(alertSpy).toHaveBeenCalledWith(
-      expect.stringContaining('1001'),
-    )
+    const notices = screen
+      .getAllByRole('status')
+      .map((node) => node.textContent ?? '')
+    expect(notices.some((text) => text.includes('1001'))).toBe(true)
+    expect(alertSpy).not.toHaveBeenCalled()
+
     alertSpy.mockRestore()
   })
 })

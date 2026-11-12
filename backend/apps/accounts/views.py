@@ -346,12 +346,16 @@ class OAuthCallbackView(APIView):
         # Generate JWT tokens
         tokens = get_tokens_for_user(user)
 
-        # Redirect to frontend with tokens
+        # Redirect to frontend with tokens, in the URL **fragment** (#249).
+        # A fragment is never sent to a server, so the tokens stop appearing in
+        # access logs and in the `Referer` of any third-party resource loaded
+        # before the redirect. The query string stays for non-secrets: see the
+        # `?error=` redirect above.
         params = urlencode({
             "access": tokens["access"],
             "refresh": tokens["refresh"],
         })
-        return redirect(f"{frontend_url}/auth/oauth-callback?{params}")
+        return redirect(f"{frontend_url}/auth/oauth-callback#{params}")
 
 
 class AdminDashboardView(APIView):
