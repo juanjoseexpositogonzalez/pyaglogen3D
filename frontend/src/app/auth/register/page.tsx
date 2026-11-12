@@ -62,7 +62,16 @@ function startOAuth(provider: 'google' | 'github') {
 }
 
 export default function RegisterPage() {
-  const { register, error, clearError, isLoading } = useAuth()
+  const { register, error, clearError, isLoading, isRestoring } = useAuth()
+
+  /*
+    Two facts, two sentences (#300, the sibling of #246). `isRestoring` is true
+    until the context has decided whether a session exists: nothing has been
+    submitted, so the button keeps the idle copy instead of claiming it is
+    creating an account. `submitting` is a context request that is not that
+    decision - on this route, a registration this form sent.
+  */
+  const submitting = isLoading && !isRestoring
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -199,8 +208,12 @@ export default function RegisterPage() {
           />
         </div>
 
-        <Button type="submit" className="w-full" disabled={isLoading}>
-          {isLoading ? (
+        <Button
+          type="submit"
+          className="w-full"
+          disabled={isRestoring || isLoading}
+        >
+          {submitting ? (
             <>
               <Loader2 className="mr-2 h-4 w-4 animate-spin" aria-hidden="true" />
               Creating account...
