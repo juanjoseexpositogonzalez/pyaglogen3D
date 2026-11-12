@@ -13,6 +13,56 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+def _otsu_threshold(gray: np.ndarray) -> int:
+    """Otsu's threshold: the level that maximises the between-class variance.
+
+    A pure function over the 256-bin histogram, so the cut can be tested on its
+    own. The pipeline used `np.mean` here, which is a different number and lands
+    inside a class whenever the split is skewed (#331).
+    """
+    hist = np.bincount(gray.ravel(), minlength=256).astype(float)
+    total = hist.sum()
+    if total == 0:
+        return 0
+
+    levels = np.arange(256, dtype=float)
+    weight_background = np.cumsum(hist)
+    weight_foreground = total - weight_background
+    sum_total = float((hist * levels).sum())
+    sum_background = np.cumsum(hist * levels)
+
+    mean_background = np.divide(
+        sum_background,
+        weight_background,
+        out=np.zeros_like(sum_background),
+        where=weight_background > 0,
+    )
+    mean_foreground = np.divide(
+        sum_total - sum_background,
+        weight_foreground,
+        out=np.zeros_like(sum_background),
+        where=weight_foreground > 0,
+    )
+
+    between_class = (
+        weight_background * weight_foreground * (mean_background - mean_foreground) ** 2
+    )
+    return int(np.argmax(between_class))
+
+
+def _engine_version() -> str:
+    """The version of the wheel that actually ran, never a placeholder marker."""
+    from importlib.metadata import PackageNotFoundError, version
+
+    for distribution in ("aglogen-python", "aglogen-core"):
+        try:
+            return version(distribution)
+        except PackageNotFoundError:
+            continue
+    return "unknown"
+
+
+
 def _rasterize_projection_to_grayscale(
     proj_result,
     img_size: int = 512,
@@ -86,12 +136,14 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         # Thresholding
         threshold_method = preprocess.get("threshold_method", "otsu")
         if threshold_method == "otsu":
-            # Simple Otsu approximation
-            threshold = np.mean(img_array)
+            threshold = _otsu_threshold(img_array)
         elif threshold_method == "manual":
             threshold = preprocess.get("threshold_value", 128)
         else:
-            threshold = 128
+            raise ValueError(
+                f"Unknown threshold_method '{threshold_method}': "
+                "expected 'otsu' or 'manual'"
+            )
 
         binary = img_array > threshold
 
@@ -104,43 +156,34 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         processed_img.save(buffer, format="PNG")
         analysis.processed_image = buffer.getvalue()
 
-        # Import Rust module (will be available after building aglogen_core)
-        # import aglogen_core
-        #
-        # if analysis.method == "box_counting":
-        #     result = aglogen_core.box_counting(
-        #         binary_image=binary,
-        #         min_box_size=analysis.method_params.get("min_box_size", 2),
-        #         max_box_size=analysis.method_params.get("max_box_size", 512),
-        #         num_scales=analysis.method_params.get("num_scales", 20),
-        #     )
-        #     analysis.results = {
-        #         "fractal_dimension": result.dimension,
-        #         "r_squared": result.r_squared,
-        #         "log_sizes": result.log_scales.tolist(),
-        #         "log_counts": result.log_values.tolist(),
-        #     }
+        # Measure with the engine, or refuse: a method that does not exist must
+        # not answer with a plausible-looking number (#331). Before this, every
+        # method returned `1.65 ± 0.1` drawn from `np.random`.
+        if analysis.method != "box_counting":
+            raise ValueError(
+                f"method '{analysis.method}' is not implemented yet; only "
+                "'box_counting' measures a 2D image today"
+            )
 
-        # PLACEHOLDER: Generate dummy results
-        logger.info(f"Running fractal analysis {analysis_id}")
-
-        # Dummy box-counting results
-        num_scales = 15
-        log_sizes = np.linspace(0.5, 3.0, num_scales)
-        df = 1.65 + np.random.uniform(-0.1, 0.1)
-        log_counts = -df * log_sizes + 10 + np.random.normal(0, 0.02, num_scales)
+        params = analysis.method_params or {}
+        result = aglogen_core.box_counting(
+            binary_image=binary,
+            min_box_size=int(params.get("min_box_size", 2)),
+            max_box_size=int(params.get("max_box_size", 512)),
+            num_scales=int(params.get("num_scales", 20)),
+        )
 
         analysis.results = {
-            "fractal_dimension": df,
-            "r_squared": 0.9987 + np.random.uniform(-0.005, 0.005),
-            "std_error": 0.012,
-            "confidence_interval_95": [df - 0.024, df + 0.024],
-            "log_sizes": log_sizes.tolist(),
-            "log_counts": log_counts.tolist(),
-            "residuals": np.random.normal(0, 0.01, num_scales).tolist(),
+            "fractal_dimension": float(result.dimension),
+            "r_squared": float(result.r_squared),
+            "std_error": float(result.std_error),
+            "confidence_interval_95": [float(v) for v in result.confidence_interval],
+            "log_sizes": [float(v) for v in result.log_scales],
+            "log_counts": [float(v) for v in result.log_values],
+            "residuals": [float(v) for v in result.residuals],
         }
-        analysis.execution_time_ms = 500 + int(np.random.uniform(0, 500))
-        analysis.engine_version = "0.1.0-placeholder"
+        analysis.execution_time_ms = int(result.execution_time_ms)
+        analysis.engine_version = _engine_version()
 
         analysis.status = AnalysisStatus.COMPLETED
         analysis.completed_at = timezone.now()
