@@ -28,9 +28,10 @@ const mockRegister = vi.fn()
 const mockClearError = vi.fn()
 const mockGetOAuthUrl = vi.fn()
 
-let mockAuthState: { error: string | null; isLoading: boolean } = {
+let mockAuthState: { error: string | null; isLoading: boolean; isRestoring: boolean } = {
   error: null,
   isLoading: false,
+  isRestoring: false,
 }
 
 vi.mock('next/link', () => ({
@@ -44,6 +45,7 @@ vi.mock('@/contexts/AuthContext', () => ({
     error: mockAuthState.error,
     clearError: mockClearError,
     isLoading: mockAuthState.isLoading,
+    isRestoring: mockAuthState.isRestoring,
   }),
 }))
 
@@ -72,7 +74,7 @@ const submit = async () => {
 }
 
 beforeEach(() => {
-  mockAuthState = { error: null, isLoading: false }
+  mockAuthState = { error: null, isLoading: false, isRestoring: false }
   mockRegister.mockResolvedValue(undefined)
   mockClearError.mockReset()
   mockGetOAuthUrl.mockImplementation((provider: string) => `https://api.test/oauth/${provider}`)
@@ -162,6 +164,7 @@ describe('registration screen', () => {
     mockAuthState = {
       error: 'Email: A user with this email already exists.; Password: Too short.',
       isLoading: false,
+      isRestoring: false,
     }
     renderPage()
 
@@ -278,12 +281,27 @@ describe('registration screen', () => {
   })
 
   it('says it is creating the account while the request is in flight', () => {
-    mockAuthState = { error: null, isLoading: true }
+    mockAuthState = { error: null, isLoading: true, isRestoring: false }
     renderPage()
 
     const pending = screen.getByRole('button', { name: /Creating account/ }) as HTMLButtonElement
     expect(pending.disabled).toBe(true)
     expect(screen.queryByRole('button', { name: 'Create Account' })).toBeNull()
+  })
+
+  it('does not claim to be creating the account while the context restores', () => {
+    // #300, sibling of #246: opening /auth/register with a stored refresh token
+    // starts the context with both flags set. The button read `isLoading` as "this
+    // form submitted" and said "Creating account..." about a request nobody sent.
+    mockAuthState = { error: null, isLoading: true, isRestoring: true }
+    renderPage()
+
+    const button = screen.getByRole('button', { name: 'Create Account' })
+    // `textContent` cannot see the spinner: `Loader2` is an `<svg aria-hidden>` with
+    // no text node, so the copy assertion alone would pass with one re-added.
+    expect(button.querySelector('svg')).toBeNull()
+    // Still not pressable while the context decides, but it stops narrating a fiction.
+    expect((button as HTMLButtonElement).disabled).toBe(true)
   })
 
   it('points at the sign-in screen for someone who already has an account', () => {
