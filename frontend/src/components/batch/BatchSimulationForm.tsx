@@ -195,8 +195,13 @@ function getVariationValues(variation: ParameterVariation, isInteger: boolean): 
       const trimmed = v.trim()
       if (!trimmed) return null
       if (isInteger) {
-        const num = parseInt(trimmed, 10)
-        return isNaN(num) ? trimmed : num
+        // #244: `parseInt('20.7')` is 20, so the field said 20.7 and the payload
+        // said 20 without a word. A token this parameter cannot take is left as
+        // typed - the path a non-numeric token already takes - so the server
+        // refuses it by name instead of the form substituting a number nobody
+        // asked for. It also reads `1e3` as a thousand instead of as one.
+        const num = Number(trimmed)
+        return Number.isInteger(num) ? num : trimmed
       }
       const num = parseFloat(trimmed)
       return isNaN(num) ? trimmed : num

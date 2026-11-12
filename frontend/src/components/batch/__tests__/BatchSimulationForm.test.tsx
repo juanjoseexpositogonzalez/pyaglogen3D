@@ -506,17 +506,19 @@ describe('<BatchSimulationForm /> — the payload the migration must not change'
     )
   })
 
-  it('keeps the discrete-values contract for an integer parameter', () => {
+  it('does not truncate a fraction typed for an integer parameter (#244)', () => {
     const onSubmit = vi.fn()
     render(<BatchSimulationForm onSubmit={onSubmit} />)
 
     addScalarVariation('n_particles', '10, 20.7, 30')
     fireEvent.click(screen.getByRole('button', { name: /run/i }))
 
-    // `n_particles` is an integer parameter, so each token goes through
-    // `parseInt`: the fraction is truncated, not rounded.
+    // This witness used to pin the opposite: `parseInt` turned 20.7 into 20 and
+    // the payload said 20 while the field said 20.7. #244 is that difference being
+    // silent, so the fraction is left as typed and the server names the key. A
+    // substituted number nobody asked for is worse than a refusal that names it.
     expect(onSubmit.mock.calls[0][0].parameter_grid).toEqual({
-      n_particles: [10, 20, 30],
+      n_particles: [10, '20.7', 30],
     })
   })
 
