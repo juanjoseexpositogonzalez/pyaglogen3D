@@ -126,7 +126,7 @@ type GccaSplitStrategy = 'symmetric' | 'particle_cluster' | 'stochastic'
 type BoxRfaConnectivityMethod = 'random_walk' | 'nearest_neighbor'
 
 const seedTypeOptions: { value: SeedType; label: string }[] = [
-  { value: 'monomers', label: 'Monomers (default)' },
+  { value: 'monomers', label: 'Monomers' },
   { value: 'dimers', label: 'Dimers' },
   { value: 'trimers', label: 'Trimers' },
 ]
@@ -576,6 +576,10 @@ function LimitingGeometrySection({
 
 export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [name, setName] = useState<string>('')
+  // #311: whether the reader chose a seed type, as opposed to accepting the
+  // default. A ref, not state: it must not re-render, and it only matters at
+  // submit time and when deciding whether the warning applies.
+  const touchedSeedType = useRef(false)
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [seed, setSeed] = useState<string>('')
@@ -733,7 +737,9 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
-      algorithmParams.seed_type = params.seed_type
+      // `effectiveSeedType`, no `params.seed_type`: por encima de 2.7 el
+      // default sigue al objetivo salvo que el lector haya elegido (#311).
+      algorithmParams.seed_type = effectiveSeedType
       // Distribution configs (PYA-15)
       ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
       ;(algorithmParams as Record<string, unknown>).target_kf_distribution = targetKfDistribution
@@ -809,13 +815,22 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     passes. `target_kf` is part of the gate because the lever does not work on its
     own — dimers measures 2.472 at kf 1.0, outside the band for the same target.
 
-    The default is left alone: monomers is a legitimate choice, and the form says
-    which option reaches the target instead of choosing for the reader.
+    The default now follows the target, because the paragraph above described the
+    reader who never touches the dropdown: they asked for 2.7 and got 2.37. The
+    original reasoning - do not choose for the reader - still holds for an
+    *explicit* choice, and the warning below is kept for exactly that reader:
+    touching the dropdown wins over the default, and picking monomers by hand at
+    this target still says what it costs.
   */
+  const seedTypeTouched = touchedSeedType.current
+  const highDfNeedsDimers =
+    params.target_df >= 2.7 && params.target_kf >= 1.3
+  const effectiveSeedType: SeedType =
+    seedTypeTouched || !highDfNeedsDimers ? params.seed_type : 'dimers'
   const dimersRecommended =
+    seedTypeTouched &&
     params.seed_type === 'monomers' &&
-    params.target_df >= 2.7 &&
-    params.target_kf >= 1.3
+    highDfNeedsDimers
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -1322,8 +1337,11 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 <Label htmlFor="seed_type">Seed Type</Label>
                 <Select
                   id="seed_type"
-                  value={params.seed_type}
-                  onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
+                  value={effectiveSeedType}
+                  onChange={(e) => {
+                    touchedSeedType.current = true
+                    updateParam('seed_type', e.target.value as SeedType)
+                  }}
                   options={seedTypeOptions}
                   aria-describedby={dimersRecommended ? 'seed-type-note' : undefined}
                 />
