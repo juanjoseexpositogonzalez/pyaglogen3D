@@ -24,13 +24,21 @@ interface NeighborGraphProps {
 export function NeighborGraph({ data, isLoading, onExportAdjacency }: NeighborGraphProps) {
   const [selectedNodeId, setSelectedNodeId] = useState<number | null>(null)
 
-  // Large graph warning (spec R11)
+  // Large graph warning (spec R11).
+  //
+  // This was a `window.alert` inside a `useEffect`: it blocks the main thread, and
+  // `data` changing identity on a refetch runs it again. A blocking modal is the
+  // last thing a page needs while it is trying to unmount, so the same sentence is
+  // now a notice in the page (#312).
+  const [largeGraphWarning, setLargeGraphWarning] = useState<string | null>(null)
   useEffect(() => {
     if (data && data.stats.n_particles > 1000) {
-      window.alert(
+      setLargeGraphWarning(
         `Large graph warning: ${data.stats.n_particles} particles. The force-directed layout may take longer to stabilize.`,
       )
+      return
     }
+    setLargeGraphWarning(null)
   }, [data])
 
   // Reset selection when data changes
@@ -103,6 +111,11 @@ export function NeighborGraph({ data, isLoading, onExportAdjacency }: NeighborGr
         </div>
       </CardHeader>
       <CardContent className="space-y-6">
+        {largeGraphWarning && (
+          <p role="status" className="text-sm text-ink-muted">
+            {largeGraphWarning}
+          </p>
+        )}
         <StatsBanner stats={data.stats} />
 
         <NetworkCanvas
