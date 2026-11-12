@@ -31,13 +31,11 @@
  * The frame is deliberately not here: it comes from `app/auth/layout.tsx`,
  * because `<main>` in the shell is `display: contents`.
  *
- * Pinned behaviour this port found and was not allowed to change: with no
- * signed-in user the resend control is inert. `handleResend` returns before it
- * touches any state, so a click sends nothing, shows nothing, and leaves the
- * button enabled. The hint says "your email address" in that same breath. A
- * visitor who reaches this route directly gets a dead control with no
- * explanation; that is a behaviour fix, so it is reported rather than made.
- * The test file pins it, so a later slice has to invert it on purpose.
+ * Fixed in #251: with no signed-in user the resend control used to be inert - a
+ * click sent nothing, showed nothing and left the button enabled, while the hint
+ * said "your email address". It is disabled now and the screen says why, which
+ * is what the test file pins. The earlier witness asserted the inert behaviour
+ * and was inverted on purpose.
  */
 import { useState } from 'react'
 import Link from 'next/link'
@@ -96,11 +94,20 @@ export default function CheckEmailPage() {
 
       {error !== '' && <Callout tone="danger" title={error} />}
 
+      {!user?.email && (
+        <p role="status" className="text-center text-sm text-ink-muted">
+          Sign in to resend the verification email.
+        </p>
+      )}
+
       <Button
         variant="outline"
         className="w-full border-line bg-surface text-ink hover:bg-surface-soft"
         onClick={handleResend}
-        disabled={isResending}
+        // #251: with no signed-in user there is no address to send to. A control
+        // that is enabled and does nothing is a broken control; this one says so
+        // above instead.
+        disabled={isResending || !user?.email}
       >
         {isResending ? (
           <>

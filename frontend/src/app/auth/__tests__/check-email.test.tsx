@@ -159,21 +159,25 @@ describe('check-email page', () => {
     expect((resting as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('sends nothing and says nothing when nobody is signed in', async () => {
+  it('disables the resend and says why when nobody is signed in', async () => {
+    // #251 inverted this witness on purpose. It used to assert the opposite - an
+    // enabled button that sent nothing and said nothing - which is a broken control
+    // for a visitor who arrives from a stale email link.
     auth.user = null
 
     render(<CheckEmailPage />)
-    fireEvent.click(screen.getByRole('button', { name: 'Resend Verification Email' }))
+    const button = screen.getByRole('button', {
+      name: 'Resend Verification Email',
+    }) as HTMLButtonElement
 
+    expect(button.disabled).toBe(true)
+    expect(screen.getByRole('status').textContent).toContain('Sign in to resend')
+
+    fireEvent.click(button)
     await waitFor(() => {
       expect(mockResendVerification).not.toHaveBeenCalled()
     })
-    expect(screen.queryByRole('note')).toBeNull()
     expect(screen.queryByRole('alert')).toBeNull()
-    expect(
-      (screen.getByRole('button', { name: 'Resend Verification Email' }) as HTMLButtonElement)
-        .disabled,
-    ).toBe(false)
   })
 
   it('points the sign-in path at the login route with one tab stop', () => {
