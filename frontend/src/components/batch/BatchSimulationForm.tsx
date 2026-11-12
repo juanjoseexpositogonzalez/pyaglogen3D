@@ -703,9 +703,18 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
         )
       : []
   }
-  const highestDf = Math.max(0, ...numbersOf('target_df'))
+  // R3-001 from the review: this form has no base value for these three.
+  // `base_parameters` carries n_particles and sticking_probability (sintering_coeff
+  // for limiting) and nothing else; target_df, target_kf and seed_type exist only as
+  // sweep entries. When one is not swept the engine's own default applies, and the
+  // gate reads that default rather than a stand-in for it.
+  const ENGINE_DEFAULT_TARGET_DF = 1.8
+  const ENGINE_DEFAULT_TARGET_KF = 1.3
+  const highestDf = Math.max(ENGINE_DEFAULT_TARGET_DF, ...numbersOf('target_df'))
   const lowestKfSwept = numbersOf('target_kf')
-  const lowestKf = lowestKfSwept.length ? Math.min(...lowestKfSwept) : 1.3
+  const lowestKf = lowestKfSwept.length
+    ? Math.min(...lowestKfSwept)
+    : ENGINE_DEFAULT_TARGET_KF
   const dimersAdvice = seedIsMonomersOnly && needsDimers(highestDf, lowestKf)
 
   return (
