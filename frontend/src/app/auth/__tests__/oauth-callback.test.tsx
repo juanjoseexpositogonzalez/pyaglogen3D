@@ -90,6 +90,26 @@ describe('oauth-callback page', () => {
     expect(mockHandleOAuthCallback).not.toHaveBeenCalled()
   })
 
+  it('encodes a provider error so it cannot smuggle extra parameters', async () => {
+    // `?error=a%26next%3D%2F%2Fevil.example` decodes to `a&next=//evil.example`.
+    // Interpolated raw, the callback hands the login page a `next` parameter it
+    // never wrote - and since #246 the login page reads that query, so this stops
+    // being latent the moment it lands there.
+    mockParams.set('error', 'a&next=//evil.example')
+
+    render(<OAuthCallbackPage />)
+
+    await waitFor(() => {
+      expect(mockPush).toHaveBeenCalledWith(
+        '/auth/login?error=' + encodeURIComponent('a&next=//evil.example')
+      )
+    })
+    // And the raw form must NOT be what it pushed.
+    expect(mockPush).not.toHaveBeenCalledWith(
+      '/auth/login?error=a&next=//evil.example'
+    )
+  })
+
   it('sends a tokenless visit to the missing_tokens branch', async () => {
     render(<OAuthCallbackPage />)
 
