@@ -70,7 +70,8 @@ function startOAuth(provider: 'google' | 'github') {
 }
 
 export default function LoginPage() {
-  const { login, error, clearError, isLoading, isRestoring } = useAuth()
+  const { login, error, clearError, isLoading, isRestoring, storageBlocked } =
+    useAuth()
 
   /*
     Two facts, two sentences (#246). `isRestoring` is true until the context has
@@ -112,6 +113,19 @@ export default function LoginPage() {
   return (
     <Panel title="Sign In" hint="Enter your credentials to access your account">
       <form onSubmit={handleSubmit} className="space-y-4">
+        {/* #302: a browser that refuses storage cannot keep a session, and the
+            form would otherwise fail after a *successful* sign-in. Said before
+            anything is typed, and separately from the credential's verdict. */}
+        {storageBlocked && (
+          <Callout
+            tone="danger"
+            title={
+              'This browser is blocking local storage, so a session cannot be saved. ' +
+              'Allow site data for this site and try again.'
+            }
+          />
+        )}
+
         {error ? (
           <Callout tone="danger" title={error} />
         ) : (

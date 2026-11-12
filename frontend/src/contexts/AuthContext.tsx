@@ -16,7 +16,7 @@ import type {
   User,
 } from '@/lib/auth-types'
 import { authApi, AuthApiError } from '@/lib/auth-api'
-import { tokenStorage } from '@/lib/token-storage'
+import { StorageBlockedError, tokenStorage } from '@/lib/token-storage'
 
 /**
  * How a field the API named is written to the reader.
@@ -102,6 +102,8 @@ interface AuthContextType {
    * guards read `isLoading` and keep reading exactly what they read before.
    */
   isRestoring: boolean
+  /** True when the browser refuses local storage, so no session can be kept (#302). */
+  storageBlocked: boolean
   isAuthenticated: boolean
   error: string | null
   login: (credentials: LoginCredentials) => Promise<void>
@@ -122,6 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   // `isLoading` keeps starting true as well: a route guard must not paint a
   // signed-out screen in the tick before the stored token is read.
   const [isRestoring, setIsRestoring] = useState(true)
+  const [storageBlocked, setStorageBlocked] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const router = useRouter()
 
@@ -139,6 +142,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // and left both flags true for as long as the tab lived — the app behind
         // its loading gate and the sign-in button dead, saying "Sign In" with no
         // reason on the screen (#246).
+        // #302: a browser that refuses storage can never keep a session. Probe
+        // once, so the form can say so instead of blaming the credential.
+        setStorageBlocked(!tokenStorage.isAvailable())
         if (!tokenStorage.hasRefreshToken()) return
 
         // Try to refresh the access token
@@ -173,6 +179,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     } catch (err) {
       if (err instanceof AuthApiError) {
         setError(err.message)
+      } else if (err instanceof StorageBlockedError) {
+        // #302: the credential was fine - the 200 came back and storing the
+        // tokens threw. Telling this reader their sign-in failed, forever, is a
+        // sentence that blames them for the browser's setting.
+        setError(
+          'This browser is blocking local storage, so a session cannot be saved. '
+            + 'Allow site data for this site and try again.'
+        )
       } else {
         setError('Login failed. Please try again.')
       }
@@ -276,6 +290,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         user,
         isLoading,
         isRestoring,
+        storageBlocked,
         isAuthenticated,
         error,
         login,
