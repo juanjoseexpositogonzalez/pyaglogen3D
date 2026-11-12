@@ -43,10 +43,12 @@ let mockAuthState: {
   error: string | null
   isLoading: boolean
   isRestoring: boolean
+  storageBlocked?: boolean
 } = {
   error: null,
   isLoading: false,
   isRestoring: false,
+  storageBlocked: false,
 }
 
 vi.mock('next/link', () => ({
@@ -61,6 +63,8 @@ vi.mock('@/contexts/AuthContext', () => ({
     clearError: mockClearError,
     isLoading: mockAuthState.isLoading,
     isRestoring: mockAuthState.isRestoring,
+    // Optional in the double: a witness that is not about storage omits it.
+    storageBlocked: mockAuthState.storageBlocked ?? false,
   }),
 }))
 
@@ -331,6 +335,20 @@ describe('sign-in screen', () => {
     expect(page).toMatch(/@\/components\/kit\/Callout/)
     expect(page).toMatch(/@\/components\/kit\/Panel/)
   })
+  it('says the browser is blocking storage, before anyone types', () => {
+    // #302: this browser can never keep a session. Saying it up front is different
+    // from letting a *successful* sign-in fail afterwards and blaming the password.
+    mockAuthState = {
+      error: null,
+      isLoading: false,
+      isRestoring: false,
+      storageBlocked: true,
+    }
+    renderPage()
+
+    expect(screen.getByText(/blocking local storage/i)).toBeTruthy()
+  })
+
   it('says why an OAuth sign-in failed, instead of showing a blank form', () => {
     // The callback writes `?error=` and, until now, nothing read it: a provider
     // refusal landed here as a form with no explanation at all.
