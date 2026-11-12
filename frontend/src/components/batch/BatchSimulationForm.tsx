@@ -2,6 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
+import { DIMERS_ADVICE, needsDimers } from '@/lib/seedTypeAdvice'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -689,6 +690,24 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setAlgorithm(next)
   }
 
+  const seedVariation = variations.find((v) => v.name === SEED_TYPE_PARAM)
+  const seedIsMonomersOnly =
+    !seedVariation ||
+    seedVariation.seedTypeValues.length === 0 ||
+    seedVariation.seedTypeValues.every((value) => value === 'monomers')
+  const numbersOf = (name: string): number[] => {
+    const variation = variations.find((v) => v.name === name)
+    return variation
+      ? getVariationValues(variation, false).filter(
+          (value): value is number => typeof value === 'number',
+        )
+      : []
+  }
+  const highestDf = Math.max(0, ...numbersOf('target_df'))
+  const lowestKfSwept = numbersOf('target_kf')
+  const lowestKf = lowestKfSwept.length ? Math.min(...lowestKfSwept) : 1.3
+  const dimersAdvice = seedIsMonomersOnly && needsDimers(highestDf, lowestKf)
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* What the study is called */}
@@ -1164,6 +1183,16 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       {/* Submit */}
       {submitAttempted && distributionRefusal && (
         <Callout tone="danger" title={distributionRefusal} />
+      )}
+
+      {/* #315: the same advice as #311, read from the same module so the two screens
+          cannot drift. It matters more here: in a sweep the target is missed after
+          every child has run. The gate takes the *highest* Df the grid reaches and the
+          *lowest* kf it sweeps, because that pair is the one that misses. */}
+      {dimersAdvice && (
+        <p role="status" className="text-sm text-ink-muted">
+          {DIMERS_ADVICE}
+        </p>
       )}
 
       <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
