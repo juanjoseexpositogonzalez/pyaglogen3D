@@ -45,8 +45,18 @@ vi.mock('@/contexts/AuthContext', () => ({
 
 import OAuthCallbackPage from '../oauth-callback/page'
 
+/**
+ * The tokens arrive in the URL **fragment** since #249: a fragment is never sent
+ * to a server, so they stop reaching access logs and `Referer`. The query keeps
+ * only `error`, which is not a secret.
+ */
+function setTokens(access: string, refresh: string) {
+  window.location.hash = `#access=${encodeURIComponent(access)}&refresh=${encodeURIComponent(refresh)}`
+}
+
 beforeEach(() => {
   mockParams.clear()
+  window.location.hash = ''
   order.length = 0
   mockPush.mockReset()
   mockPush.mockImplementation((url: string) => {
@@ -61,13 +71,13 @@ beforeEach(() => {
 
 afterEach(() => {
   mockParams.clear()
+  window.location.hash = ''
   vi.restoreAllMocks()
 })
 
 describe('oauth-callback page', () => {
   it('stores the tokens from the URL, then lands on the dashboard', async () => {
-    mockParams.set('access', 'access-123')
-    mockParams.set('refresh', 'refresh-456')
+    setTokens('access-123', 'refresh-456')
 
     render(<OAuthCallbackPage />)
 
@@ -79,8 +89,7 @@ describe('oauth-callback page', () => {
 
   it('lets a provider error win over tokens that are also in the URL', async () => {
     mockParams.set('error', 'access_denied')
-    mockParams.set('access', 'access-123')
-    mockParams.set('refresh', 'refresh-456')
+    setTokens('access-123', 'refresh-456')
 
     render(<OAuthCallbackPage />)
 
@@ -120,7 +129,7 @@ describe('oauth-callback page', () => {
   })
 
   it('treats a half-delivered token pair as no tokens at all', async () => {
-    mockParams.set('access', 'access-123')
+    window.location.hash = '#access=access-123'
 
     render(<OAuthCallbackPage />)
 
@@ -131,8 +140,7 @@ describe('oauth-callback page', () => {
   })
 
   it('reports a failed token exchange instead of stranding the visitor', async () => {
-    mockParams.set('access', 'access-123')
-    mockParams.set('refresh', 'refresh-456')
+    setTokens('access-123', 'refresh-456')
     mockHandleOAuthCallback.mockRejectedValue(new Error('profile unavailable'))
 
     render(<OAuthCallbackPage />)
@@ -145,8 +153,7 @@ describe('oauth-callback page', () => {
   })
 
   it('announces the wait instead of leaving the screen silent', () => {
-    mockParams.set('access', 'access-123')
-    mockParams.set('refresh', 'refresh-456')
+    setTokens('access-123', 'refresh-456')
 
     render(<OAuthCallbackPage />)
 
