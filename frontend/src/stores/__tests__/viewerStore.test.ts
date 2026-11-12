@@ -9,7 +9,7 @@
  *     sync with the `"single"` scope so existing consumers
  *     (ViewerControls, ProjectionControls) don't regress.
  */
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
   useViewerStore,
   useViewerCamera,
@@ -110,5 +110,126 @@ describe('viewerStore camera scoping (R-DELTA-1)', () => {
     // Writing to compare scope must not leak into the single scope.
     expect(useViewerStore.getState().cameraAzimuth).toBe(10)
     expect(useViewerStore.getState().cameraElevation).toBe(10)
+  })
+})
+
+/**
+ * #312 — the viewer wrote to the store, and so to `localStorage`, on every frame.
+ *
+ * `CameraTracker` calls `setCameraAngles` from `useFrame`, sixty times a second,
+ * and the setter rebuilt the state object every call, so `persist` serialized the
+ * whole store and called `setItem` each time — whether or not the rounded angle
+ * had moved. Two halves make that stop, and both are pinned here: an unchanged
+ * angle is a no-op, and the camera is not persisted at all.
+ */
+describe('viewerStore — no write without a change (#312)', () => {
+  it('does not notify subscribers when the rounded angles are unchanged', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    let notifications = 0
+    const unsubscribe = useViewerStore.subscribe(() => {
+      notifications += 1
+    })
+
+    setCameraAngles(45, 30) // a real change
+    setCameraAngles(45, 30) // the next frame, same rounded angle
+    setCameraAngles(45, 30)
+    unsubscribe()
+
+    // One notification for the change; the repeats are not changes, and a
+    // subscriber that re-renders a heavy panel notices the difference.
+    expect(notifications).toBe(1)
+  })
+
+  it('does not touch localStorage when the rounded angles are unchanged', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    // On the instance: `src/test/setup.ts` replaces `window.localStorage` with its
+    // own implementation, so a `Storage` prototype spy never fires.
+    const setItem = vi.spyOn(window.localStorage, 'setItem')
+
+    setCameraAngles(45, 30)
+    const writesAfterChange = setItem.mock.calls.length
+    for (let frame = 0; frame < 10; frame += 1) setCameraAngles(45, 30)
+    const writesAfterRepeats = setItem.mock.calls.length
+    setItem.mockRestore()
+
+    expect(writesAfterChange).toBeGreaterThan(0)
+    expect(writesAfterRepeats).toBe(writesAfterChange)
+  })
+
+  it('keeps the camera out of the persisted state', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    setCameraAngles(45, 30)
+
+    const raw = window.localStorage.getItem('viewer-settings')
+    expect(raw).toBeTruthy()
+    const persisted = JSON.parse(raw as string)
+
+    // A camera angle is where the reader was looking, not a preference that should
+    // survive a reload. This assertion is about the payload, not about the write:
+    // zustand calls `setItem` on every `set()` regardless of `partialize`, so the
+    // write is stopped by the guard above, not by this.
+    expect(persisted.state.cameraScopes).toBeUndefined()
+    expect(persisted.state.cameraAzimuth).toBeUndefined()
+    expect(persisted.state.cameraElevation).toBeUndefined()
+    // A real preference still persists, so the store did not stop persisting.
+    expect(persisted.state.background).toBeDefined()
+  })
+
+  it('writes nothing for a repeated angle on a non-default scope either', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    setCameraAngles(45, 30, 'compare/session-a')
+
+    let notifications = 0
+    const unsubscribe = useViewerStore.subscribe(() => {
+      notifications += 1
+    })
+    setCameraAngles(45, 30, 'compare/session-a')
+    setCameraAngles(45, 30, 'compare/session-a')
+    unsubscribe()
+
+    // The guard is per scope: a compare cell repeating its own angle is the same
+    // no-op as the single viewer's, and a fresh scope still writes once.
+    expect(notifications).toBe(0)
+  })
+
+  it('still writes when the camera actually moves', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    const setItem = vi.spyOn(window.localStorage, 'setItem')
+
+    // Documented, not wished away: the guard closes the *idle* camera. A reader who
+    // orbits — or leaves auto-rotation on, which moves the camera every frame —
+    // still pays one write per degree, because `persist` has no per-change filter.
+    for (const angle of [10, 20, 30, 40]) setCameraAngles(angle, 15)
+    const writes = setItem.mock.calls.length
+    setItem.mockRestore()
+
+    expect(writes).toBeGreaterThanOrEqual(4)
+  })
+
+  it('drops the camera and a pending export from a stored payload it reads', () => {
+    // A payload written before #312: it carried the camera, and it could carry an
+    // export request that the export handler replays on mount.
+    window.localStorage.setItem(
+      'viewer-settings',
+      JSON.stringify({
+        state: {
+          background: 'white',
+          cameraScopes: { single: { azimuth: 90, elevation: 45 } },
+          cameraAzimuth: 90,
+          cameraElevation: 45,
+          exportRequest: 'png',
+        },
+        version: 1,
+      }),
+    )
+    useViewerStore.persist.rehydrate()
+
+    const state = useViewerStore.getState()
+    // The preference survives; the camera and the pending download do not, so a
+    // reload cannot replay an export the reader asked for on another screen.
+    expect(state.background).toBe('white')
+    expect(state.exportRequest).toBeNull()
+    expect(state.cameraScopes[DEFAULT_CAMERA_SCOPE]).toBeDefined()
+    expect(state.cameraAzimuth).toBe(0)
   })
 })
