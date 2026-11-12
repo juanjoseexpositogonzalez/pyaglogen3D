@@ -35,7 +35,7 @@ describe("SimulationForm — Seed Type dropdown (T5.1)", () => {
 
     // Check option labels
     const labels = options.map((o) => o.textContent);
-    expect(labels).toContain("Monomers (default)");
+    expect(labels).toContain("Monomers");
     expect(labels).toContain("Dimers");
     expect(labels).toContain("Trimers");
   });
@@ -205,6 +205,17 @@ describe("SimulationForm — Comprehensive seed_type tests (T5.3)", () => {
 const recommendation = (): string =>
   document.getElementById("seed-type-note")?.textContent ?? "";
 
+/**
+ * Choose a seed type the way a reader does.
+ *
+ * Since #311's second half the *default* follows the target: above Df 2.7 the form
+ * sends `dimers` unless the reader touches the dropdown. The recommendation only
+ * fires when they pick `monomers` **by hand**, so a test that wants to see it has to
+ * make that choice - and one that wants to see the default has to avoid it.
+ */
+const chooseSeedType = (value: "monomers" | "dimers" | "trimers") =>
+  fireEvent.change(screen.getByLabelText(/seed type/i), { target: { value } });
+
 describe("SimulationForm — dimers recommendation above the high-Df band (#311)", () => {
   /**
    * The target Df control is a native range input under a label that carries its
@@ -228,9 +239,10 @@ describe("SimulationForm — dimers recommendation above the high-Df band (#311)
       target: { value: String(value) },
     });
 
-  it("recommends dimers from the target monomers stops reaching, with its numbers", () => {
+  it("recommends dimers when the reader picks monomers where it stops reaching", () => {
     renderWithAlgorithm("tunable_cc");
     setTargetDf(2.7);
+    chooseSeedType("monomers");
 
     // Measured: monomers lands at 2.37 and dimers at 2.77–2.80 for a 2.7 target
     // (N=100 and N=1000, kf 1.3). The numbers are asserted, not just the word:
@@ -265,6 +277,7 @@ describe("SimulationForm — dimers recommendation above the high-Df band (#311)
     renderWithAlgorithm("tunable_cc");
     setTargetDf(2.7);
     setTargetKf(1.0);
+    chooseSeedType("monomers");
 
     // Dimers measures 2.472 at kf 1.0 — outside the band for a 2.7 target. Advice
     // that sent the reader to a lever that does not fix their run is worse than
@@ -275,8 +288,38 @@ describe("SimulationForm — dimers recommendation above the high-Df band (#311)
   it("says nothing below the band", () => {
     renderWithAlgorithm("tunable_cc");
     setTargetDf(1.8);
+    chooseSeedType("monomers");
 
     expect(recommendation()).toBe("");
+  });
+
+  it("sends dimers by default where monomers cannot reach the target", async () => {
+    // The half this issue added. A reader who sets Df 2.7 and submits without
+    // touching the dropdown used to get 2.37; the payload now carries the seed type
+    // that reaches the band, and no warning is shown because there is nothing to
+    // warn about.
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+    setTargetDf(2.7);
+
+    expect(recommendation()).toBe("");
+    fireEvent.click(screen.getByRole("button", { name: /run simulation/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("dimers");
+  });
+
+  it("keeps the reader's choice when they pick monomers explicitly", async () => {
+    // The original reasoning - do not choose for the reader - still holds once they
+    // have chosen: the payload carries theirs, and the warning names the cost.
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+    setTargetDf(2.7);
+    chooseSeedType("monomers");
+
+    expect(recommendation()).toMatch(/dimers/i);
+    fireEvent.click(screen.getByRole("button", { name: /run simulation/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("monomers");
   });
 
   it("keeps the note inside the only branch that has a seed type", () => {
@@ -291,6 +334,7 @@ describe("SimulationForm — dimers recommendation above the high-Df band (#311)
   it("links the sentence to the control it is about", () => {
     renderWithAlgorithm("tunable_cc");
     setTargetDf(2.7);
+    chooseSeedType("monomers");
 
     // A note that appears while the slider moves is not announced on its own, so
     // the control it is about names it: the container is a live region and the
