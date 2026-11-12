@@ -137,7 +137,27 @@ export const useViewerStore = create<ViewerState>()(
       toggleOrthographic: () => set((s) => ({ useOrthographic: !s.useOrthographic })),
       toggleAutoRotate: () => set((s) => ({ autoRotate: !s.autoRotate })),
       setRotateSpeed: (speed) => set({ rotateSpeed: speed }),
-      setCameraAngles: (azimuth, elevation, scope = DEFAULT_CAMERA_SCOPE) =>
+      setCameraAngles: (azimuth, elevation, scope = DEFAULT_CAMERA_SCOPE) => {
+        /*
+          #312: this runs from `useFrame`, sixty times a second, with rounded
+          angles. Rebuilding the state for an unchanged angle is not free — every
+          notification re-renders the subscribers, and `persist` rewrites the whole
+          store to `localStorage` — so an angle that has not moved returns early.
+
+          The scope is compared, not the legacy mirror: the mirror is written in
+          the same `set` that writes the scope, so a disagreeing pair cannot exist
+          here. A `setCameraAngles` for a scope the store does not hold yet always
+          writes, which is what seeds `compare/*` and a stripped payload.
+        */
+        const current = get().cameraScopes[scope]
+        if (
+          current !== undefined &&
+          current.azimuth === azimuth &&
+          current.elevation === elevation
+        ) {
+          return
+        }
+
         set((state) => {
           const nextScopes = {
             ...state.cameraScopes,
@@ -154,7 +174,8 @@ export const useViewerStore = create<ViewerState>()(
             }
           }
           return { cameraScopes: nextScopes }
-        }),
+        })
+      },
       getCameraAngles: (scope = DEFAULT_CAMERA_SCOPE) => {
         const scoped = get().cameraScopes[scope]
         if (scoped) return scoped
@@ -171,26 +192,49 @@ export const useViewerStore = create<ViewerState>()(
     }),
     {
       name: 'viewer-settings',
-      // Migrate older persisted states that predate `cameraScopes`.
-      version: 1,
+      /*
+        #312: a camera angle is where the reader was looking, not a preference
+        that should survive a reload. Two things this does *not* do, because the
+        measurement said so: it does not remove any write — zustand calls
+        `setItem` on every `set()` regardless of `partialize` — and it does not
+        stop the store from notifying. The guard in `setCameraAngles` is what
+        stops the write; this bounds the payload.
+
+        The export fields are a request in flight, not state: persisted, a reload
+        could replay a download.
+      */
+      partialize: (state) => {
+        // The rest-destructure is the whole mechanism: the omitted names never
+        // reach the payload. TypeScript exempts them as rest siblings.
+        const {
+          cameraScopes,
+          cameraAzimuth,
+          cameraElevation,
+          exportRequest,
+          exportFilename,
+          ...persisted
+        } = state
+        return persisted
+      },
+      /*
+        Version 2 is the payload without the camera and without an export request
+        (#312). Bumping it is what makes the cleanup happen once for an existing
+        reader: a stored `exportRequest` used to be replayed by the export handler
+        on the next load, and after this version it is dropped on the way in.
+      */
+      version: 2,
       migrate: (persistedState, version) => {
         if (!persistedState || typeof persistedState !== 'object') return persistedState
-        const s = persistedState as Partial<ViewerState> & {
-          cameraAzimuth?: number
-          cameraElevation?: number
-        }
-        if (version < 1 || !s.cameraScopes) {
-          return {
-            ...s,
-            cameraScopes: {
-              [DEFAULT_CAMERA_SCOPE]: {
-                azimuth: s.cameraAzimuth ?? 0,
-                elevation: s.cameraElevation ?? 0,
-              },
-            },
-          }
-        }
-        return s
+        const {
+          cameraScopes,
+          cameraAzimuth,
+          cameraElevation,
+          exportRequest,
+          exportFilename,
+          ...persisted
+        } = persistedState as Record<string, unknown>
+        void version
+        return persisted
       },
     }
   )
