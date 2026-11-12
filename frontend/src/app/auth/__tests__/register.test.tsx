@@ -109,14 +109,14 @@ describe('registration screen', () => {
     renderPage()
 
     const expected = [
-      ['First Name', 'first_name', 'text', 'John', false],
-      ['Last Name', 'last_name', 'text', 'Doe', false],
-      ['Email', 'email', 'email', 'your@email.com', true],
-      ['Password', 'password', 'password', 'Create a strong password', true],
-      ['Confirm Password', 'password_confirm', 'password', 'Confirm your password', true],
+      ['First Name', 'first_name', 'text', 'John', false, 'given-name'],
+      ['Last Name', 'last_name', 'text', 'Doe', false, 'family-name'],
+      ['Email', 'email', 'email', 'your@email.com', true, 'email'],
+      ['Password', 'password', 'password', 'Create a strong password', true, 'new-password'],
+      ['Confirm Password', 'password_confirm', 'password', 'Confirm your password', true, 'new-password'],
     ] as const
 
-    for (const [label, name, type, placeholder, required] of expected) {
+    for (const [label, name, type, placeholder, required, autocomplete] of expected) {
       const field = screen.getByLabelText(label) as HTMLInputElement
       expect(field.tagName, label).toBe('INPUT')
       expect(field.getAttribute('name'), label).toBe(name)
@@ -124,6 +124,9 @@ describe('registration screen', () => {
       expect(field.getAttribute('placeholder'), label).toBe(placeholder)
       expect(field.hasAttribute('required'), label).toBe(required)
       expect(field.value, label).toBe('')
+      // #250: a manager has to know this is a *new* password, not the current one,
+      // and the confirmation is the same password typed twice — not a second secret.
+      expect(field.getAttribute('autocomplete'), label).toBe(autocomplete)
     }
 
     expect(document.querySelectorAll('input')).toHaveLength(5)
