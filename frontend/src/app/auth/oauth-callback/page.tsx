@@ -70,8 +70,15 @@ function OAuthCallbackContent() {
 
   useEffect(() => {
     const processOAuth = async () => {
-      const accessToken = searchParams.get('access')
-      const refreshToken = searchParams.get('refresh')
+      // The tokens arrive in the URL **fragment** (#249): a fragment is never
+      // sent to a server, so they stop reaching access logs and `Referer`.
+      // `error` stays on the query because it is not a secret and the login
+      // page reads it there.
+      const hashParams = new URLSearchParams(
+        window.location.hash.replace(/^#/, '')
+      )
+      const accessToken = hashParams.get('access')
+      const refreshToken = hashParams.get('refresh')
       const error = searchParams.get('error')
 
       if (error) {
