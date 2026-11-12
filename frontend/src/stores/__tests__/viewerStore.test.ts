@@ -165,12 +165,71 @@ describe('viewerStore — no write without a change (#312)', () => {
     const persisted = JSON.parse(raw as string)
 
     // A camera angle is where the reader was looking, not a preference that should
-    // survive a reload — and keeping it out of the payload is what removes the
-    // write from the frame path entirely.
+    // survive a reload. This assertion is about the payload, not about the write:
+    // zustand calls `setItem` on every `set()` regardless of `partialize`, so the
+    // write is stopped by the guard above, not by this.
     expect(persisted.state.cameraScopes).toBeUndefined()
     expect(persisted.state.cameraAzimuth).toBeUndefined()
     expect(persisted.state.cameraElevation).toBeUndefined()
     // A real preference still persists, so the store did not stop persisting.
     expect(persisted.state.background).toBeDefined()
+  })
+
+  it('writes nothing for a repeated angle on a non-default scope either', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    setCameraAngles(45, 30, 'compare/session-a')
+
+    let notifications = 0
+    const unsubscribe = useViewerStore.subscribe(() => {
+      notifications += 1
+    })
+    setCameraAngles(45, 30, 'compare/session-a')
+    setCameraAngles(45, 30, 'compare/session-a')
+    unsubscribe()
+
+    // The guard is per scope: a compare cell repeating its own angle is the same
+    // no-op as the single viewer's, and a fresh scope still writes once.
+    expect(notifications).toBe(0)
+  })
+
+  it('still writes when the camera actually moves', () => {
+    const { setCameraAngles } = useViewerStore.getState()
+    const setItem = vi.spyOn(window.localStorage, 'setItem')
+
+    // Documented, not wished away: the guard closes the *idle* camera. A reader who
+    // orbits — or leaves auto-rotation on, which moves the camera every frame —
+    // still pays one write per degree, because `persist` has no per-change filter.
+    for (const angle of [10, 20, 30, 40]) setCameraAngles(angle, 15)
+    const writes = setItem.mock.calls.length
+    setItem.mockRestore()
+
+    expect(writes).toBeGreaterThanOrEqual(4)
+  })
+
+  it('drops the camera and a pending export from a stored payload it reads', () => {
+    // A payload written before #312: it carried the camera, and it could carry an
+    // export request that the export handler replays on mount.
+    window.localStorage.setItem(
+      'viewer-settings',
+      JSON.stringify({
+        state: {
+          background: 'white',
+          cameraScopes: { single: { azimuth: 90, elevation: 45 } },
+          cameraAzimuth: 90,
+          cameraElevation: 45,
+          exportRequest: 'png',
+        },
+        version: 1,
+      }),
+    )
+    useViewerStore.persist.rehydrate()
+
+    const state = useViewerStore.getState()
+    // The preference survives; the camera and the pending download do not, so a
+    // reload cannot replay an export the reader asked for on another screen.
+    expect(state.background).toBe('white')
+    expect(state.exportRequest).toBeNull()
+    expect(state.cameraScopes[DEFAULT_CAMERA_SCOPE]).toBeDefined()
+    expect(state.cameraAzimuth).toBe(0)
   })
 })
