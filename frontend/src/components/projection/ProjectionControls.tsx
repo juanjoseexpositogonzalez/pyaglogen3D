@@ -95,7 +95,10 @@ export function ProjectionControls({
   isLoading,
   isBatchLoading,
 }: ProjectionControlsProps) {
-  const { cameraAzimuth, cameraElevation } = useViewerStore()
+  // Selectors, one per key: a subscriber without one re-renders on every store
+  // change, and the camera writes sixty times a second while it moves (#312).
+  const cameraAzimuth = useViewerStore((s) => s.cameraAzimuth)
+  const cameraElevation = useViewerStore((s) => s.cameraElevation)
   const [azimuth, setAzimuth] = useState(45)
   const [elevation, setElevation] = useState(30)
   const [format, setFormat] = useState<'png' | 'svg'>('png')
