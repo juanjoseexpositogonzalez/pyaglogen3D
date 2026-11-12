@@ -25,7 +25,6 @@ def mock_user():
     """Create a mock user."""
     user = MagicMock()
     user.id = 1
-    user.username = "testuser"
     return user
 
 
