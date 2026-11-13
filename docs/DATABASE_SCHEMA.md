@@ -453,7 +453,8 @@ CREATE INDEX idx_comparison_sets_project_id ON comparison_sets(project_id);
   "properties": {
     "threshold_method": {
       "type": "string",
-      "enum": ["otsu", "manual", "adaptive", "isodata"]
+      "enum": ["otsu", "manual"],
+      "note": "adaptive and isodata are declared in the model but not implemented; the analysis fails naming the method"
     },
     "threshold_value": {
       "type": "integer",

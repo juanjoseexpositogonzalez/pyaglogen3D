@@ -13,6 +13,36 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+#: The classic image methods that have no implementation in the engine. The two
+#: FRAKTAL models are not in this set: they *are* implemented, in the sibling
+#: `FraktalAnalysis` pipeline, which takes a different payload (`npix`, `dpo`, ...).
+UNIMPLEMENTED_IMAGE_METHODS = frozenset(
+    {"sandbox", "correlation", "lacunarity", "multifractal"}
+)
+
+#: The models that belong to the other pipeline.
+FRAKTAL_MODELS = frozenset({"fraktal_granulated_2012", "fraktal_voxel_2018"})
+
+
+def _unsupported_method_message(method: str) -> str:
+    """Why this method cannot run here, in the words that are true for it."""
+    if method in FRAKTAL_MODELS:
+        return (
+            f"method '{method}' is a FRAKTAL model, not a classic image method: it "
+            "runs through the FRAKTAL analysis pipeline (FraktalAnalysis), which "
+            "takes npix and dpo, not the box-counting parameters"
+        )
+    if method in UNIMPLEMENTED_IMAGE_METHODS:
+        return (
+            f"method '{method}' is not implemented yet; only 'box_counting' "
+            "measures a 2D image today"
+        )
+    return (
+        f"method '{method}' cannot be measured by the image analysis; only "
+        "'box_counting' is implemented here"
+    )
+
+
 def _otsu_threshold(gray: np.ndarray) -> int:
     """Otsu's threshold: the level that maximises the between-class variance.
 
@@ -22,9 +52,6 @@ def _otsu_threshold(gray: np.ndarray) -> int:
     """
     hist = np.bincount(gray.ravel(), minlength=256).astype(float)
     total = hist.sum()
-    if total == 0:
-        return 0
-
     levels = np.arange(256, dtype=float)
     weight_background = np.cumsum(hist)
     weight_foreground = total - weight_background
@@ -48,18 +75,6 @@ def _otsu_threshold(gray: np.ndarray) -> int:
         weight_background * weight_foreground * (mean_background - mean_foreground) ** 2
     )
     return int(np.argmax(between_class))
-
-
-def _engine_version() -> str:
-    """The version of the wheel that actually ran, never a placeholder marker."""
-    from importlib.metadata import PackageNotFoundError, version
-
-    for distribution in ("aglogen-python", "aglogen-core"):
-        try:
-            return version(distribution)
-        except PackageNotFoundError:
-            continue
-    return "unknown"
 
 
 
@@ -160,18 +175,51 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         # not answer with a plausible-looking number (#331). Before this, every
         # method returned `1.65 ± 0.1` drawn from `np.random`.
         if analysis.method != "box_counting":
+            raise ValueError(_unsupported_method_message(analysis.method))
+
+        # `method_params` is free-form JSON that the serializer does not validate,
+        # and these three reach the engine: `min_box_size: 0` makes it divide by
+        # zero *inside Rust*, and a PyO3 `PanicException` derives from
+        # `BaseException`, so the handler below would not catch it and the row would
+        # stay `running` forever. Validate here instead of at the panic.
+        params = analysis.method_params or {}
+        min_box_size = int(params.get("min_box_size", 2))
+        max_box_size = int(params.get("max_box_size", 512))
+        num_scales = int(params.get("num_scales", 20))
+        if min_box_size < 1 or max_box_size < min_box_size:
             raise ValueError(
-                f"method '{analysis.method}' is not implemented yet; only "
-                "'box_counting' measures a 2D image today"
+                "min_box_size and max_box_size must satisfy "
+                f"1 <= min_box_size <= max_box_size (got {min_box_size} and "
+                f"{max_box_size})"
+            )
+        if num_scales < 2:
+            raise ValueError(
+                f"num_scales must be at least 2 (got {num_scales})"
             )
 
-        params = analysis.method_params or {}
         result = aglogen_core.box_counting(
             binary_image=binary,
-            min_box_size=int(params.get("min_box_size", 2)),
-            max_box_size=int(params.get("max_box_size", 512)),
-            num_scales=int(params.get("num_scales", 20)),
+            min_box_size=min_box_size,
+            max_box_size=max_box_size,
+            num_scales=num_scales,
         )
+
+        # A mask with no structure is not a measurement. An empty mask leaves the
+        # curve with no usable scale (the fit answers 0.00) and a uniform mask makes
+        # every box occupied (it answers 2.00 with R² 1.0) — both were stored as
+        # `completed`, which is the same defect this issue closed, without `random`.
+        foreground = int(binary.sum())
+        if foreground == 0:
+            raise ValueError(
+                "the threshold left no foreground pixels, so there is nothing to "
+                "measure; check threshold_method and invert"
+            )
+        if len(result.log_scales) < 3:
+            raise ValueError(
+                f"box counting found {len(result.log_scales)} usable scales on this "
+                "image and a fit needs at least 3; check min_box_size, max_box_size "
+                "and num_scales"
+            )
 
         analysis.results = {
             "fractal_dimension": float(result.dimension),
@@ -183,7 +231,10 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
             "residuals": [float(v) for v in result.residuals],
         }
         analysis.execution_time_ms = int(result.execution_time_ms)
-        analysis.engine_version = _engine_version()
+        # Compiled into the cdylib that ran, which is the authority: asking
+        # `importlib.metadata` for a distribution name can answer "unknown" and
+        # store it as a completed analysis' version.
+        analysis.engine_version = aglogen_core.version()[:20]
 
         analysis.status = AnalysisStatus.COMPLETED
         analysis.completed_at = timezone.now()
@@ -198,7 +249,16 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         }
 
     except Exception as e:
-        logger.exception(f"Analysis {analysis_id} failed: {e}")
+        # A refusal is user input, not a server fault; `logger.exception` for it
+        # turns every unsupported method into a Sentry-visible error.
+        if isinstance(e, ValueError):
+            logger.warning(f"Analysis {analysis_id} refused: {e}")
+        else:
+            logger.exception(f"Analysis {analysis_id} failed: {e}")
+        # A failed row must not keep a payload: an older row can still carry the
+        # placeholder's fabricated number, and the serializer exposes it without
+        # looking at the status.
+        analysis.results = None
         analysis.status = AnalysisStatus.FAILED
         analysis.error_message = str(e)
         analysis.completed_at = timezone.now()
