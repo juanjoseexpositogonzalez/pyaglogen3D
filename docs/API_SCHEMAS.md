@@ -326,10 +326,12 @@ GET /simulations/{id}/export/{format}/
 
 | Value | Description |
 |-------|-------------|
-| `otsu` | Otsu automatic threshold |
-| `manual` | Manual threshold value |
-| `adaptive` | Adaptive local threshold |
-| `isodata` | ISODATA/IJ threshold |
+| `otsu` | Otsu automatic threshold (maximises the between-class variance) |
+| `manual` | Manual threshold value, taken from `threshold_value` |
+
+`adaptive` and `isodata` are declared in the model but are **not implemented**: the
+pipeline answers `status: "failed"` with a message naming the method, instead of
+silently thresholding at 128 as it used to.
 
 ### Upload Image
 
@@ -454,22 +456,27 @@ GET /projects/{project_id}/analyses/{id}/
     "num_scales": 20
   },
   "results": {
-    "fractal_dimension": 1.65,
-    "r_squared": 0.9987,
-    "std_error": 0.012,
-    "confidence_interval_95": [1.626, 1.674],
-    "log_sizes": [0.693, 1.099, 1.386, 1.609, 1.792, ...],
-    "log_counts": [8.294, 7.901, 7.521, 7.163, 6.832, ...],
-    "residuals": [-0.002, 0.005, -0.003, 0.001, ...]
+    "fractal_dimension": 1.6903,
+    "r_squared": 0.9522,
+    "std_error": 0.1012,
+    "confidence_interval_95": [1.492, 1.8886],
+    "log_sizes": [-0.6931, -1.0986, -1.3863, -1.6094, -1.7918, "..."],
+    "log_counts": [5.1475, 4.1589, 3.8712, 3.5553, 3.1781, "..."],
+    "residuals": [0.1495, -0.1538, 0.0448, 0.1061, 0.037, "..."]
   },
-  "execution_time_ms": 3200,
+  "execution_time_ms": 41,
   "engine_version": "0.1.0",
   "created_at": "2026-02-17T16:00:00Z",
   "completed_at": "2026-02-17T16:00:03Z"
 }
 ```
 
-**Response 200 (Multifractal completed):**
+**`log_sizes` is `ln(1 / box_size)`, not `ln(box_size)`.** It is therefore negative
+and **descending**, and the slope of `log_counts` against it *is* the fractal
+dimension. A client that plots `ln(box_size)` ascending and negates the slope plots
+a mirrored curve and gets the same number by two sign errors.
+
+**Response 422 / `status: "failed"` for an unimplemented method:**
 ```json
 {
   "id": "990e8400-e29b-41d4-a716-446655440000",

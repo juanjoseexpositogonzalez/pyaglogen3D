@@ -327,7 +327,7 @@ export interface ImageAnalysis {
 }
 
 export interface PreprocessingParams {
-  threshold_method: 'otsu' | 'manual' | 'adaptive'
+  threshold_method: 'otsu' | 'manual'
   threshold_value?: number
   invert: boolean
   remove_small_objects: number
