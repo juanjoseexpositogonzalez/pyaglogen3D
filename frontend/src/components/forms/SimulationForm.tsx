@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useRef } from 'react'
-import { DIMERS_ADVICE, needsDimers } from '@/lib/seedTypeAdvice'
+import { DIMERS_ADVICE, DIMERS_HELD, needsDimers } from '@/lib/seedTypeAdvice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -731,7 +731,11 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
     } else if (algorithm === 'tunable_cc') {
       algorithmParams.target_df = params.target_df
-      algorithmParams.target_kf = params.target_kf
+      // The same number the gate reads (#342, S7): the distribution's fixed
+      // value when there is one. An open distribution leaves the slider scalar
+      // in place as the legacy alias it always was — the worker expands the
+      // distribution and ignores it.
+      algorithmParams.target_kf = effectiveTargetKf ?? params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
       // `effectiveSeedType`, not `params.seed_type`: above the gate the payload has
@@ -747,9 +751,6 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       if (dpoDistribution.mode === 'fixed' && dpoDistribution.value !== null) {
         algorithmParams.radius_min = dpoDistribution.value
         algorithmParams.radius_max = dpoDistribution.value
-      }
-      if (targetKfDistribution.mode === 'fixed' && targetKfDistribution.value !== null) {
-        algorithmParams.target_kf = targetKfDistribution.value
       }
     } else if (algorithm === 'fracval') {
       algorithmParams.target_df = params.target_df
@@ -820,7 +821,30 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     it stays in `params.seed_type`, so lowering the target below the gate hands the
     reader back exactly what they had. The sentence explains why it changed.
   */
-  const highDfNeedsDimers = needsDimers(params.target_df, params.target_kf)
+  /*
+    #342 (S7): the gate reads the kf the request carries, not the slider. For
+    `tunable_cc` the payload overwrites `target_kf` with the distribution's
+    value when the mode is `fixed`, and the worker expands `normal`/`uniform`
+    and ignores the scalar — a gate on the slider could disable a control over
+    a number that never travels. The ONE number below feeds both the gate and
+    the payload:
+
+    - `tunable_cc` with a `fixed` distribution → the distribution's value
+      (`null` only when the box is empty, and then the submit is refused
+      before any payload exists);
+    - `tunable_cc` with an open distribution (`normal`/`uniform`) → `null`: no
+      single kf can be promised, so the gate abstains — no override, no held
+      control, no sentence. No mean and no minimum is invented for it;
+    - the other algorithms → the slider, which is all they carry.
+  */
+  const effectiveTargetKf: number | null =
+    algorithm === 'tunable_cc'
+      ? targetKfDistribution.mode === 'fixed'
+        ? targetKfDistribution.value
+        : null
+      : params.target_kf
+  const highDfNeedsDimers =
+    effectiveTargetKf !== null && needsDimers(params.target_df, effectiveTargetKf)
   const effectiveSeedType: SeedType = highDfNeedsDimers ? 'dimers' : params.seed_type
   const dimersForced = highDfNeedsDimers && params.seed_type !== 'dimers'
 
@@ -1336,7 +1360,10 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   disabled={highDfNeedsDimers}
                   onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
                   options={seedTypeOptions}
-                  aria-describedby={dimersForced ? 'seed-type-note' : undefined}
+                  // Always, not only when something was overridden: a held control
+                  // with no reason is a disabled control that does not explain
+                  // itself (JD-A-005, #342). The note says which of the two it is.
+                  aria-describedby="seed-type-note"
                 />
                 <p className="text-xs text-muted-foreground">
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
@@ -1352,7 +1379,9 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   aria-live="polite"
                   className="text-xs text-ink"
                 >
-                  {dimersForced ? DIMERS_ADVICE : null}
+                  {/* Two sentences, one per state the gate can leave the control
+                      in: a change claims a change, a hold claims a hold. */}
+                  {dimersForced ? DIMERS_ADVICE : highDfNeedsDimers ? DIMERS_HELD : null}
                 </p>
               </div>
 

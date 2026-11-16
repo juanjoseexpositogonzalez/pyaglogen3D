@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   DIMERS_ADVICE,
+  DIMERS_HELD,
   HIGH_DF_KF_FLOOR,
   HIGH_DF_NEEDS_DIMERS,
   needsDimers,
@@ -27,6 +28,24 @@ describe('DIMERS_ADVICE (#341)', () => {
     expect(DIMERS_ADVICE).toMatch(/2\.37/)
     expect(DIMERS_ADVICE).toMatch(/2\.77/)
     expect(DIMERS_ADVICE).toMatch(/2\.80/)
+  })
+})
+
+describe('DIMERS_HELD (#342, JD-A-005)', () => {
+  it('explains the hold, not a change, and claims none', () => {
+    // A reader who already stored `dimers` and then raised Df gets a held
+    // control: the sentence must explain the gate without claiming a change
+    // that never happened.
+    expect(DIMERS_HELD).toMatch(/held/i)
+    expect(DIMERS_HELD).not.toMatch(/changed/i)
+    expect(DIMERS_HELD).not.toMatch(/recommend/i)
+  })
+
+  it('keeps the measured numbers', () => {
+    // Same reason as DIMERS_ADVICE: a sentence without the numbers cannot be
+    // checked by the reader it is addressed to.
+    expect(DIMERS_HELD).toMatch(/2\.37/)
+    expect(DIMERS_HELD).toMatch(/2\.7[789]|2\.8/)
   })
 })
 

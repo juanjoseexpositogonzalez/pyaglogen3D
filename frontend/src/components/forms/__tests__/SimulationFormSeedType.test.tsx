@@ -216,6 +216,27 @@ const recommendation = (): string =>
 const chooseSeedType = (value: "monomers" | "dimers" | "trimers") =>
   fireEvent.change(screen.getByLabelText(/seed type/i), { target: { value } });
 
+/**
+ * The value that actually travels (#342, S7): for `tunable_cc` the payload's
+ * `target_kf` is the distribution's fixed value, not the slider. The dpo
+ * selector renders the same "valor" box first, so the prefactor's is the
+ * second one.
+ */
+const setCarriedKf = (value: string) =>
+  fireEvent.change(screen.getAllByLabelText("valor")[1], {
+    target: { value },
+  });
+
+/**
+ * Open the prefactor distribution. A `normal` entry is the open case: no
+ * single kf can be promised for it, so the gate abstains instead of
+ * inventing a mean or a minimum.
+ */
+const openKfDistribution = () =>
+  fireEvent.change(screen.getByLabelText("target_kf: modo de distribución"), {
+    target: { value: "normal" },
+  });
+
 describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)", () => {
   /**
    * The target Df control is a native range input under a label that carries its
@@ -265,19 +286,30 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
     expect(recommendation()).toBe("");
   });
 
-  it("says nothing once dimers is chosen", () => {
+  it("explains the hold when the reader already stored dimers", () => {
+    // JD-A-005 (#342): the reader stored `dimers` and then raised the target —
+    // nothing was changed, but the gate holds the control all the same, and a
+    // held control with no reason is a disabled control that does not explain
+    // itself. The sentence may claim a change only when one happened.
     renderWithAlgorithm("tunable_cc");
     chooseSeedType("dimers");
     setTargetDf(2.7);
 
-    // Nothing was overridden: the reader's choice and the gate agree.
-    expect(recommendation()).toBe("");
+    const control = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    expect(control.value).toBe("dimers");
+    expect(control.disabled).toBe(true);
+    expect(recommendation()).toMatch(/held/i);
+    expect(recommendation()).not.toMatch(/changed/i);
+    expect(control.getAttribute("aria-describedby")).toBe("seed-type-note");
   });
 
   it("says nothing at a kf where dimers misses the band too", () => {
     renderWithAlgorithm("tunable_cc");
+    // #342 (S7): the value that travels is the distribution's, so that is the
+    // one lowered here. The previous witness moved the slider while the
+    // request still carried the distribution's 1.3.
+    setCarriedKf("1.0");
     setTargetDf(2.7);
-    setTargetKf(1.0);
     chooseSeedType("monomers");
 
     // Dimers measures 2.472 at kf 1.0 — outside the band for a 2.7 target. Advice
@@ -354,6 +386,8 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("dimers");
+    // The gate and the payload read the same kf (#342, S7).
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.3);
   });
 
   it("overrides a hand-picked monomers in the control and in the request body", async () => {
@@ -380,6 +414,7 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("dimers");
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.3);
   });
 
   it("respects monomers at 2.6, where it still lands inside the band", async () => {
@@ -398,16 +433,21 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("monomers");
+    // The witness asserts the kf that travels, not only the seed type (#342).
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.3);
   });
 
   it("respects monomers at kf 1.2, where dimers misses the band too", async () => {
     // S3, second half: the gate needs both halves. At kf 1.2 the lever does not
     // work for either seed type (dimers measures 2.472 at kf 1.0), so overriding
     // the reader there would buy nothing and scold a configuration that passes.
+    // #342 (S7): the witness lowers the value that travels — the distribution's
+    // — and asserts it in the request body. The previous witness moved the
+    // slider while the payload still carried the distribution's 1.3.
     const { onSubmit } = renderWithAlgorithm("tunable_cc");
     chooseSeedType("monomers");
     setTargetDf(2.7);
-    setTargetKf(1.2);
+    setCarriedKf("1.2");
 
     const control = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
     expect(control.value).toBe("monomers");
@@ -418,6 +458,7 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("monomers");
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.2);
   });
 
   it("gives the reader their choice back when the target drops below the gate", () => {
@@ -456,5 +497,79 @@ describe("SimulationForm — the dimers gate above the high-Df band (#311, #341)
 
     await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("dimers");
+  });
+});
+
+// ------------------------------------------------------------------------
+// #342 (S7) — the gate reads the kf the request carries, not the slider.
+// JD-A-002 + JD-B-001 (both major): for `tunable_cc` the payload overwrites
+// `target_kf` with the distribution's value when the mode is `fixed`, and
+// the worker expands `normal`/`uniform` and ignores the scalar — so a gate
+// on the slider could disable a control over a number that never travels.
+// ------------------------------------------------------------------------
+
+describe("SimulationForm — the gate reads the kf the request carries (#342, S7)", () => {
+  const sliderUnder = (label: RegExp) => {
+    const node = screen.getByText(label).closest("div")?.querySelector(
+      'input[type="range"]'
+    );
+    if (!node) throw new Error(`no range input under ${label}`);
+    return node as HTMLInputElement;
+  };
+
+  const setTargetDf = (value: number) =>
+    fireEvent.change(sliderUnder(/Target Fractal Dimension \(Df\)/), {
+      target: { value: String(value) },
+    });
+
+  const setTargetKf = (value: number) =>
+    fireEvent.change(sliderUnder(/Target Prefactor \(kf\)/), {
+      target: { value: String(value) },
+    });
+
+  it("holds the gate on the fixed value the request carries, whatever the slider says", async () => {
+    // One derivation feeds both the gate and the payload: with a `fixed`
+    // distribution, the number that travels is the distribution's value — a
+    // slider parked at 1.0 cannot open a gate the request's 1.5 closes.
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+    setTargetDf(2.7);
+    setTargetKf(1.0); // the slider, which nothing reads here
+    setCarriedKf("1.5"); // the distribution's value, which travels
+
+    const control = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    expect(control.value).toBe("dimers");
+    expect(control.disabled).toBe(true);
+    expect(recommendation()).toMatch(/changed to dimers/i);
+
+    fireEvent.click(screen.getByRole("button", { name: /run simulation/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("dimers");
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.5);
+  });
+
+  it("abstains on an open distribution: no override, no held control, no sentence", async () => {
+    // An open distribution cannot promise that the kf which travels respects
+    // the floor, so the gate asserts nothing — no mean and no minimum is
+    // invented for it. A mean of 1.5 is deliberately placed above the floor
+    // so a later "fix" that reads it is caught here.
+    const { onSubmit } = renderWithAlgorithm("tunable_cc");
+    chooseSeedType("monomers");
+    setTargetDf(2.7);
+    openKfDistribution();
+    fireEvent.change(screen.getByLabelText("media"), { target: { value: "1.5" } });
+
+    const control = screen.getByLabelText(/seed type/i) as HTMLSelectElement;
+    expect(control.value).toBe("monomers");
+    expect(control.disabled).toBe(false);
+    expect(recommendation()).toBe("");
+
+    fireEvent.click(screen.getByRole("button", { name: /run simulation/i }));
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    expect(onSubmit.mock.calls[0][0].parameters.seed_type).toBe("monomers");
+    expect(
+      onSubmit.mock.calls[0][0].parameters.target_kf_distribution.mode
+    ).toBe("normal");
   });
 });
