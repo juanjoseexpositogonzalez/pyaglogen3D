@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, within } from '@testing-library/react'
 import { BatchSimulationForm } from '../BatchSimulationForm'
 
 // ---------------------------------------------------------------------------
@@ -320,26 +320,189 @@ describe('BatchSimulationForm — R2 cap on the primary size', () => {
 
 /** Fill a scalar variation with a discrete-values list. */
 describe('the dimers advice on a sweep (#315)', () => {
-  it('appears when the grid reaches the target monomers cannot hit', () => {
-    // In a sweep the target is missed after every child has run, so the warning is
-    // worth more here than on a single simulation. The condition and the sentence
-    // come from `seedTypeAdvice`, the same module the single form reads.
+  /**
+   * The study has to run an algorithm that reads `seed_type`, or the sentence would
+   * describe a setting the study does not have - and #341's grid entry would be a
+   * payload the server refuses (#115). `tunable_cc` is the one that does.
+   */
+  function renderSeedAwareStudy() {
     render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'tunable_cc' },
+    })
+  }
+
+  it('appears when the grid reaches the target monomers cannot hit', () => {
+    // In a sweep the target is missed after every child has run, so the sentence is
+    // worth more here than on a single simulation. The condition and the sentence
+    // come from `seedTypeAdvice`, the same module the single form reads. Since #341
+    // the sentence names a change, because the form now makes it.
+    renderSeedAwareStudy()
     addScalarVariation('target_df', '2.7')
 
-    expect(screen.getByText(/Dimers recommended/i)).toBeTruthy()
+    expect(screen.getByText(/changed to dimers/i)).toBeTruthy()
   })
 
   it('says nothing for a sweep that stays inside the band', () => {
-    // 2.0 is inside ±0.15 with monomers; advising there would scold a configuration
+    // 2.0 is inside ±0.15 with monomers; a notice there would scold a configuration
     // that passes, which is why the gate starts at 2.7 and not at the band's 2.5.
-    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    renderSeedAwareStudy()
     addScalarVariation('target_df', '2.0')
 
-    expect(screen.queryByText(/Dimers recommended/i)).toBeNull()
+    expect(screen.queryByText(/changed to dimers/i)).toBeNull()
+  })
+
+  it('says nothing on an algorithm that does not read the seed type', () => {
+    // Triangulation for #341: the gate now *acts*, and there is no `seed_type` grid
+    // entry to act on where the server refuses one - so the sentence would be about
+    // a setting this study does not have.
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    addScalarVariation('target_df', '2.7')
+
+    expect(screen.queryByText(/changed to dimers/i)).toBeNull()
   })
 })
 
+// ---------------------------------------------------------------------------
+// #341 — the sweep selects dimers instead of only advising it.
+//
+// A note next to a grid that still runs `monomers` is a grid that misses the
+// target 100% of the time; the single form was fixed the same way.
+// ---------------------------------------------------------------------------
+
+describe('the sweep crosses the gate (#341)', () => {
+  /** Add a seed-type variation and leave its selection at the form's default. */
+  function addSeedTypeVariation() {
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: 'seed_type' } })
+  }
+
+  /**
+   * Fill a discrete scalar variation, scoped to its own card.
+   *
+   * The shared helper above reaches for the only `Discrete` button on the page,
+   * which stops being true as soon as a second variation is added - and this
+   * describe needs two.
+   */
+  function addScalarVariationTo(parameter: string, values: string) {
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: parameter } })
+    const cards = screen.getAllByRole('button', { name: /remove variation/i })
+    const card = cards[cards.length - 1].closest('.border-line') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /discrete/i }))
+    fireEvent.change(within(card).getByPlaceholderText(/e\.g\., 100/i), {
+      target: { value: values },
+    })
+  }
+
+  function renderTunableCc() {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'tunable_cc' },
+    })
+    return { onSubmit }
+  }
+
+  it('sweeps dimers when the grid reaches the target monomers cannot hit', () => {
+    // S4: highest target_df 2.7, lowest kf 1.3 — the pair that misses — and a seed
+    // variation holding only `monomers`. The variation must carry `dimers`.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'dimers',
+    ])
+  })
+
+  it('leaves the sweep on monomers when it stays inside the band', () => {
+    // The counterpart: an override that fired for every sweep would take a lever
+    // away from the reader who does not need it.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.0')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+  })
+
+  it('leaves the sweep on monomers when its kf floor closes the gate', () => {
+    // Both halves of the gate, as in the single form: at kf 1.2 dimers misses the
+    // band too, so switching seed types there buys nothing.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+    addScalarVariationTo('target_kf', '1.2')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+  })
+
+  it('counts the added seed type in the projected total', () => {
+    // The projection reads the same values as the payload, so a sweep whose count
+    // ignored the added `dimers` would promise fewer runs than it starts.
+    renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    const load = screen
+      .getByRole('heading', { name: /total simulations/i })
+      .closest('section')!
+    const readings = Array.from(load.querySelectorAll('.num')).map(
+      (node) => node.textContent,
+    )
+    // two seed types × one target = 2 combinations, one seed each.
+    expect(readings.slice(0, 2)).toEqual(['2', '2'])
+  })
+
+  it('does not let the reader remove the seed type the gate added', () => {
+    // Triangulation: the added `dimers` is shown as selected, so a chip that still
+    // toggled it off would be a control disagreeing with the grid it describes.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    const dimers = screen.getByRole('button', { name: /^dimers$/i })
+    expect(dimers).toHaveProperty('disabled', true)
+
+    fireEvent.click(dimers)
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'dimers',
+    ])
+  })
+
+  it('runs dimers when the sweep never varies the seed type at all', () => {
+    // The gate is read from the grid; a grid that does not sweep `seed_type` runs
+    // the engine default (`monomers`) and misses in every child. The sentence above
+    // the form says the selection changed, so the study has to have changed it: the
+    // key is added with the one seed type that reaches.
+    const { onSubmit } = renderTunableCc()
+    addScalarVariationTo('target_df', '2.7')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit).toHaveBeenCalledTimes(1)
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['dimers'])
+  })
+})
+
+/**
+ * Fill a discrete scalar variation with a values list.
+ */
 function addScalarVariation(parameter: string, values: string) {
   fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
   const selects = screen.getAllByRole('combobox')
