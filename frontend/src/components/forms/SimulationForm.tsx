@@ -577,10 +577,6 @@ function LimitingGeometrySection({
 
 export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [name, setName] = useState<string>('')
-  // #311: whether the reader chose a seed type, as opposed to accepting the
-  // default. A ref, not state: it must not re-render, and it only matters at
-  // submit time and when deciding whether the warning applies.
-  const touchedSeedType = useRef(false)
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [seed, setSeed] = useState<string>('')
@@ -738,8 +734,8 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
-      // `effectiveSeedType`, no `params.seed_type`: por encima de 2.7 el
-      // default sigue al objetivo salvo que el lector haya elegido (#311).
+      // `effectiveSeedType`, not `params.seed_type`: above the gate the payload has
+      // to carry what the control shows (#341).
       algorithmParams.seed_type = effectiveSeedType
       // Distribution configs (PYA-15)
       ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
@@ -812,25 +808,21 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
         monomers   OK   OK   OK   OK   FALLA FALLA FALLA
 
     So the gate starts at 2.7, not at the band's 2.5: at 2.6 monomers still lands
-    at 2.515, inside ±0.15, and warning there would scold a configuration that
+    at 2.515, inside ±0.15, and overriding there would scold a configuration that
     passes. `target_kf` is part of the gate because the lever does not work on its
     own — dimers measures 2.472 at kf 1.0, outside the band for the same target.
 
-    The default now follows the target, because the paragraph above described the
-    reader who never touches the dropdown: they asked for 2.7 and got 2.37. The
-    original reasoning - do not choose for the reader - still holds for an
-    *explicit* choice, and the warning below is kept for exactly that reader:
-    touching the dropdown wins over the default, and picking monomers by hand at
-    this target still says what it costs.
+    #341 finished the job #311 started: the gate is the only gate. Before it, the
+    default followed the target but an explicit choice won, so a reader who picked
+    monomers at 2.7 got a 2.37 run and a sentence saying so. Now the control shows
+    `dimers` and is disabled there - a control you can set to a value the payload
+    will not send is a control that lies. The choice is *overridden*, not destroyed:
+    it stays in `params.seed_type`, so lowering the target below the gate hands the
+    reader back exactly what they had. The sentence explains why it changed.
   */
-  const seedTypeTouched = touchedSeedType.current
   const highDfNeedsDimers = needsDimers(params.target_df, params.target_kf)
-  const effectiveSeedType: SeedType =
-    seedTypeTouched || !highDfNeedsDimers ? params.seed_type : 'dimers'
-  const dimersRecommended =
-    seedTypeTouched &&
-    params.seed_type === 'monomers' &&
-    highDfNeedsDimers
+  const effectiveSeedType: SeedType = highDfNeedsDimers ? 'dimers' : params.seed_type
+  const dimersForced = highDfNeedsDimers && params.seed_type !== 'dimers'
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -1338,12 +1330,13 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 <Select
                   id="seed_type"
                   value={effectiveSeedType}
-                  onChange={(e) => {
-                    touchedSeedType.current = true
-                    updateParam('seed_type', e.target.value as SeedType)
-                  }}
+                  // Inert above the gate: the payload sends `dimers` whether the
+                  // reader changes it or not, so letting the control move would
+                  // only make it disagree with the request.
+                  disabled={highDfNeedsDimers}
+                  onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
                   options={seedTypeOptions}
-                  aria-describedby={dimersRecommended ? 'seed-type-note' : undefined}
+                  aria-describedby={dimersForced ? 'seed-type-note' : undefined}
                 />
                 <p className="text-xs text-muted-foreground">
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
@@ -1359,7 +1352,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   aria-live="polite"
                   className="text-xs text-ink"
                 >
-                  {dimersRecommended ? DIMERS_ADVICE : null}
+                  {dimersForced ? DIMERS_ADVICE : null}
                 </p>
               </div>
 
