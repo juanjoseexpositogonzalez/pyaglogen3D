@@ -500,6 +500,257 @@ describe('the sweep crosses the gate (#341)', () => {
   })
 })
 
+// ---------------------------------------------------------------------------
+// #342 (judgment day) — the batch gate reads the sweep the request actually
+// runs.
+//
+// - C2 / JD-A-001 + JD-B-003: a seed variation of `['trimers']` or a mix
+//   without `dimers` escaped the gate entirely — the batch was more forgiving
+//   than the single form.
+// - C3 / JD-A-003 + JD-B-002: a swept `kf_distribution` was invisible to the
+//   gate, which read only a `target_kf` variation or the 1.3 stand-in.
+// - C4 / JD-A-004 + JD-B-004: the sentence mounted together with its content,
+//   the exact shape the single form's own comment documents as unannounced.
+// - C6 / JD-A-006: no witness that the gate ever releases what it holds.
+// ---------------------------------------------------------------------------
+
+describe('the batch gate matches the request it sends (#342)', () => {
+  function renderTunableCc() {
+    const onSubmit = vi.fn()
+    render(<BatchSimulationForm onSubmit={onSubmit} />)
+    fireEvent.change(screen.getAllByRole('combobox')[0], {
+      target: { value: 'tunable_cc' },
+    })
+    return { onSubmit }
+  }
+
+  function addVariation(parameter: string) {
+    fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
+    const selects = screen.getAllByRole('combobox')
+    fireEvent.change(selects[selects.length - 1], { target: { value: parameter } })
+  }
+
+  /** A scalar variation filled with discrete values, scoped to its own card. */
+  function addScalarVariationTo(parameter: string, values: string) {
+    addVariation(parameter)
+    const cards = screen.getAllByRole('button', { name: /remove variation/i })
+    const card = cards[cards.length - 1].closest('.border-line') as HTMLElement
+    fireEvent.click(within(card).getByRole('button', { name: /discrete/i }))
+    fireEvent.change(within(card).getByPlaceholderText(/e\.g\., 100/i), {
+      target: { value: values },
+    })
+    return card
+  }
+
+  function addSeedTypeVariation() {
+    addVariation('seed_type')
+  }
+
+  /** The mode select of the only `kf_distribution` entry (`#1`). */
+  const entryMode = () =>
+    screen.getByLabelText('#1: modo de distribución') as HTMLSelectElement
+
+  const chip = (name: RegExp) =>
+    screen.getByRole('button', { name }) as HTMLButtonElement
+
+  const projectedReadings = () => {
+    const load = screen
+      .getByRole('heading', { name: /total simulations/i })
+      .closest('section')!
+    return Array.from(load.querySelectorAll('.num')).map((n) => n.textContent)
+  }
+
+  it("sweeps dimers when the seed variation holds trimers, not just monomers", () => {
+    // C2: the gate is about the target being missed, and a trimers-only sweep
+    // misses it exactly like a monomers-only one. `['trimers']` used to escape
+    // the gate entirely — zero dimers children above it, no message.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    // monomers is selected by default; swap it for trimers.
+    fireEvent.click(chip(/^trimers$/i))
+    fireEvent.click(chip(/^monomers$/i))
+    addScalarVariationTo('target_df', '2.7')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'trimers',
+      'dimers',
+    ])
+  })
+
+  it('sweeps dimers when the seed variation holds a mix without dimers', () => {
+    // C2, the second half of the amended S4: "does not include `dimers`",
+    // whatever else it holds.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    fireEvent.click(chip(/^trimers$/i))
+    addScalarVariationTo('target_df', '2.7')
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'trimers',
+      'dimers',
+    ])
+  })
+
+  it('locks every seed-type chip while the gate holds, so a click cannot release the held dimers', () => {
+    // C2, amended S4: the conflicting chips are locked like the dimers chip
+    // already was. jsdom dispatches the click on a disabled button all the
+    // same, which is the point: the handler must find nothing it can move.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    for (const name of [/^monomers$/i, /^dimers$/i, /^trimers$/i]) {
+      expect(chip(name)).toHaveProperty('disabled', true)
+    }
+
+    fireEvent.click(chip(/^monomers$/i))
+    fireEvent.click(chip(/^trimers$/i))
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'dimers',
+    ])
+  })
+
+  it('reads the floor a swept kf_distribution supplies: a fixed entry below the floor closes the gate', () => {
+    // C3: the gate used to read only a `target_kf` variation or the 1.3
+    // stand-in, so this sweep — every child at kf 1.0 — held the gate on a
+    // number no child runs.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+    addVariation('kf_distribution') // default entry: fixed 1.0, below the floor
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+  })
+
+  it('reads the minimum a uniform kf entry supplies, and closes the gate below the floor', () => {
+    // C3: a uniform entry supplies kf in [min, max], so the minimum the sweep
+    // can promise is the entry's `min` — here 0.9, below the floor.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+    addVariation('kf_distribution')
+    // fixed 1.0 → uniform U(0.9, 1.1)
+    fireEvent.change(entryMode(), { target: { value: 'uniform' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+  })
+
+  it('holds the gate on a uniform kf entry whose minimum is above the floor', () => {
+    // C3, the other side: the minimum a uniform entry supplies is a floor the
+    // gate can promise, so a sweep whose every child draws kf ≥ 1.35 holds.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+    addVariation('kf_distribution')
+    fireEvent.change(screen.getByLabelText('valor'), { target: { value: '1.5' } })
+    fireEvent.change(entryMode(), { target: { value: 'uniform' } }) // U(1.35, 1.65)
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'dimers',
+    ])
+  })
+
+  it('abstains when a normal kf entry supplies no floor', () => {
+    // C3, the single form's rule (S7) applied to the sweep: a `normal` entry
+    // can draw a kf below any floor, so the gate asserts nothing instead of
+    // inventing a mean. The mean is deliberately above the floor so a later
+    // "fix" that reads it is caught here.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+    addVariation('kf_distribution')
+    fireEvent.change(entryMode(), { target: { value: 'normal' } })
+    fireEvent.change(screen.getByLabelText('media'), { target: { value: '1.5' } })
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+    expect(screen.queryByText(/changed to dimers/i)).toBeNull()
+  })
+
+  it('mounts the gate sentence as a live region that only changes its text', () => {
+    // C4: a live region created together with its content — while the reader
+    // fills the sweep — is not announced. The container stays mounted and only
+    // its text changes, the same shape as the single form's note.
+    renderTunableCc()
+    addSeedTypeVariation()
+    const card = addScalarVariationTo('target_df', '2.0')
+
+    const note = document.getElementById('seed-type-note')
+    expect(note).toBeTruthy()
+    expect(note!.getAttribute('role')).toBe('status')
+    expect(note!.getAttribute('aria-live')).toBe('polite')
+    expect(note!.textContent).toBe('')
+
+    fireEvent.change(within(card).getByPlaceholderText(/e\.g\., 100/i), {
+      target: { value: '2.7' },
+    })
+
+    expect(document.getElementById('seed-type-note')).toBe(note)
+    expect(note!.textContent).toMatch(/changed to dimers/i)
+  })
+
+  it('points the seed-type chips at the note while the gate holds them', () => {
+    // C4: the reason is programmatically attached to the thing it explains —
+    // the chip group names the live region while the gate holds it.
+    renderTunableCc()
+    addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    const group = screen.getByRole('group', { name: /seed types/i })
+    const describedBy = group.getAttribute('aria-describedby')
+    expect(describedBy).toBeTruthy()
+    const note = document.getElementById(describedBy!)
+    expect(note?.getAttribute('role')).toBe('status')
+    expect(note?.textContent).toMatch(/changed to dimers/i)
+  })
+
+  it('releases the held dimers when the sweep drops back below the gate', () => {
+    // C6: every witness so far only raised the gate. This one moves the sweep
+    // back below it and asserts the release in all three places the gate
+    // touches: the chips, the projected count and the payload.
+    const { onSubmit } = renderTunableCc()
+    addSeedTypeVariation()
+    fireEvent.click(chip(/^trimers$/i))
+    const card = addScalarVariationTo('target_df', '2.7')
+
+    // Held: the chips show the gate's dimers and the projection counts it.
+    expect(screen.getByText(/selected/).textContent).toBe('3 selected')
+    expect(chip(/^dimers$/i)).toHaveProperty('disabled', true)
+    expect(projectedReadings().slice(0, 2)).toEqual(['3', '3'])
+
+    // Released: chips, projection and payload all drop the gate's dimers.
+    fireEvent.change(within(card).getByPlaceholderText(/e\.g\., 100/i), {
+      target: { value: '2.0' },
+    })
+
+    expect(screen.getByText(/selected/).textContent).toBe('2 selected')
+    expect(chip(/^dimers$/i)).toHaveProperty('disabled', false)
+    expect(projectedReadings().slice(0, 2)).toEqual(['2', '2'])
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'trimers',
+    ])
+  })
+})
+
 /**
  * Fill a discrete scalar variation with a values list.
  */
@@ -761,11 +1012,17 @@ describe('<BatchSimulationForm /> — the payload the migration must not change'
 
     // The live region is what tells the user why the variation vanished; the
     // batch page shows no submit error (issue #115, point 6).
-    const live = screen.getByRole('status')
-    expect(live.textContent).toContain(
+    // #342: the form mounts a second, always-present `status` region for the
+    // seed-type gate, so the dropped-variation announcement is found by its
+    // content, not by being the only one.
+    const live = screen
+      .getAllByRole('status')
+      .find((region) => /was removed because fracval/i.test(region.textContent ?? ''))
+    expect(live).toBeTruthy()
+    expect(live!.textContent).toContain(
       'Sintering coefficient distribution was removed because fracval does not accept it.',
     )
-    expect(live.querySelector('[role="note"]')).toBeTruthy()
+    expect(live!.querySelector('[role="note"]')).toBeTruthy()
   })
 })
 

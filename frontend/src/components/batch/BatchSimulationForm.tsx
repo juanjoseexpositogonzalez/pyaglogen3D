@@ -556,10 +556,12 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const effectiveSeeds = algorithm === 'limiting' ? 1 : seedsForDisplay
 
   const seedVariation = variations.find((v) => v.name === SEED_TYPE_PARAM)
-  const seedIsMonomersOnly =
-    !seedVariation ||
-    seedVariation.seedTypeValues.length === 0 ||
-    seedVariation.seedTypeValues.every((value) => value === 'monomers')
+  // L7 (#342, JD-A-001 + JD-B-003): "does not include `dimers`", not "is
+  // monomers only" — `['trimers']` and `['monomers','trimers']` miss the band
+  // exactly like a monomers-only sweep and escaped the gate entirely, which
+  // made the batch more forgiving than the single form.
+  const seedSweepLacksDimers =
+    !seedVariation || !seedVariation.seedTypeValues.includes('dimers')
   const numbersOf = (name: string): number[] => {
     const variation = variations.find((v) => v.name === name)
     return variation
@@ -576,9 +578,24 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   const ENGINE_DEFAULT_TARGET_DF = 1.8
   const ENGINE_DEFAULT_TARGET_KF = 1.3
   const highestDf = Math.max(ENGINE_DEFAULT_TARGET_DF, ...numbersOf('target_df'))
-  const lowestKfSwept = numbersOf('target_kf')
-  const lowestKf = lowestKfSwept.length
-    ? Math.min(...lowestKfSwept)
+  // #342 (JD-A-003 + JD-B-002): the floor the sweep can promise is the lowest
+  // kf any child can run — a scalar `target_kf` value, a `fixed` entry's value,
+  // or the minimum a `uniform` entry supplies. The gate used to read only the
+  // scalar variation or the 1.3 stand-in, so a swept `kf_distribution` was
+  // invisible to it.
+  const kfEntries =
+    variations.find((v) => v.name === 'kf_distribution')?.distributionValues ?? []
+  // A `normal` entry supplies kf with no lower bound, so no floor can be
+  // promised for the sweep: the gate abstains instead of inventing one — the
+  // same rule the single form follows for an open distribution (S7).
+  const kfSweepIsOpen = kfEntries.some((entry) => entry.mode === 'normal')
+  const kfFloors = [...numbersOf('target_kf')]
+  for (const entry of kfEntries) {
+    if (entry.mode === 'fixed' && entry.value !== null) kfFloors.push(entry.value)
+    if (entry.mode === 'uniform' && entry.min !== null) kfFloors.push(entry.min)
+  }
+  const lowestKf = kfFloors.length
+    ? Math.min(...kfFloors)
     : ENGINE_DEFAULT_TARGET_KF
   // #315: the gate takes the *highest* Df the grid reaches and the *lowest* kf it
   // sweeps, because that pair is the one that misses. #341 makes the answer act:
@@ -588,9 +605,9 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
   // Only where the algorithm reads the key: on the ones that do not, the server
   // refuses a `seed_type` grid entry (#115) and the sentence would describe a
   // setting the study does not have.
-  const sweepNeedsDimers = needsDimers(highestDf, lowestKf)
+  const sweepNeedsDimers = !kfSweepIsOpen && needsDimers(highestDf, lowestKf)
   const dimersForced =
-    sweepNeedsDimers && seedIsMonomersOnly && consumesSeedType(algorithm)
+    sweepNeedsDimers && seedSweepLacksDimers && consumesSeedType(algorithm)
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -993,13 +1010,20 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               ) : variation.name === SEED_TYPE_PARAM ? (
                 /* Seed type multi-select chips. #341: the chips show the types the
                    sweep will really run, so the gate's added `dimers` is selected
-                   here too - and cannot be un-picked while the gate holds it. */
+                   here too. #342 (amended S4): while the gate holds, the whole
+                   control is inert — the conflicting chips are locked like the
+                   `dimers` chip already was, so a click cannot silently release
+                   the held `dimers`. */
                 <div className="space-y-2">
                   <Label className="text-[11px]">Select seed types</Label>
-                  <div className="flex gap-2">
+                  <div
+                    role="group"
+                    aria-label="Seed types"
+                    aria-describedby={dimersForced ? 'seed-type-note' : undefined}
+                    className="flex gap-2"
+                  >
                     {SEED_TYPE_OPTIONS.map((st) => {
                       const isSelected = seedTypes.includes(st)
-                      const isHeldByGate = dimersForced && st === 'dimers'
                       return (
                         <Button
                           key={st}
@@ -1007,7 +1031,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                           variant={isSelected ? 'default' : 'outline'}
                           size="sm"
                           className="flex-1 capitalize"
-                          disabled={isHeldByGate}
+                          disabled={dimersForced}
                           onClick={() => {
                             const newValues = isSelected
                               ? variation.seedTypeValues.filter((v) => v !== st)
@@ -1244,12 +1268,19 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
           every child has run. The gate takes the *highest* Df the grid reaches and the
           *lowest* kf it sweeps, because that pair is the one that misses.
           Since #341 it explains a change rather than recommending one: `dimers` is
-          already in the grid by the time this is read. */}
-      {dimersForced && (
-        <p role="status" className="text-sm text-ink-muted">
-          {DIMERS_ADVICE}
-        </p>
-      )}
+          already in the grid by the time this is read.
+          #342 (JD-A-004 + JD-B-004): mounted always, with only its text changing
+          — a live region created together with its content, while the reader
+          fills the sweep, is not announced. Same shape as the single form's
+          note, and the chip group points at it while the gate holds. */}
+      <p
+        id="seed-type-note"
+        role="status"
+        aria-live="polite"
+        className="text-sm text-ink-muted"
+      >
+        {dimersForced ? DIMERS_ADVICE : null}
+      </p>
 
       <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
         <Play className="h-4 w-4 mr-2" aria-hidden="true" />
