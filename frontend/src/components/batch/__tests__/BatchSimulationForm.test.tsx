@@ -336,11 +336,13 @@ describe('the dimers advice on a sweep (#315)', () => {
     // In a sweep the target is missed after every child has run, so the sentence is
     // worth more here than on a single simulation. The condition and the sentence
     // come from `seedTypeAdvice`, the same module the single form reads. Since #341
-    // the sentence names a change, because the form now makes it.
+    // the sentence names what the form did. Review round 2 (F4): this sweep varies
+    // no seed type, so there is no control to change — the sentence says the
+    // study will run dimers.
     renderSeedAwareStudy()
     addScalarVariation('target_df', '2.7')
 
-    expect(screen.getByText(/changed to dimers/i)).toBeTruthy()
+    expect(screen.getByText(/will run dimers/i)).toBeTruthy()
   })
 
   it('says nothing for a sweep that stays inside the band', () => {
@@ -497,6 +499,13 @@ describe('the sweep crosses the gate (#341)', () => {
 
     expect(onSubmit).toHaveBeenCalledTimes(1)
     expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['dimers'])
+    // Review round 2 (F4): with no seed-type variation there is no control on
+    // screen to change, so the sentence says the study will run dimers rather
+    // than claiming a change — and no chip group exists to point at the note.
+    expect(screen.queryByRole('group', { name: /seed types/i })).toBeNull()
+    const note = document.getElementById('seed-type-note')
+    expect(note?.textContent).toMatch(/will run dimers/i)
+    expect(note?.textContent).not.toMatch(/changed/i)
   })
 })
 
@@ -542,8 +551,11 @@ describe('the batch gate matches the request it sends (#342)', () => {
     return card
   }
 
-  function addSeedTypeVariation() {
+  /** Add a seed-type variation and return its card, chips included. */
+  function addSeedTypeVariation(): HTMLElement {
     addVariation('seed_type')
+    const cards = screen.getAllByRole('button', { name: /remove variation/i })
+    return cards[cards.length - 1].closest('.border-line') as HTMLElement
   }
 
   /** The mode select of the only `kf_distribution` entry (`#1`). */
@@ -596,6 +608,37 @@ describe('the batch gate matches the request it sends (#342)', () => {
     ])
   })
 
+  it('reads the same seed variation the payload keeps when the name is duplicated', () => {
+    // Review round 2 (F1): the parameter dropdown does not retire a name
+    // already in use, so two variations can bear `seed_type` — and the payload
+    // keeps the last one, because `handleSubmit` writes `parameterGrid[name]`
+    // inside a loop, so the last write wins. The gate used to read the first,
+    // so a duplicate whose first copy held `dimers` and whose second did not
+    // left the gate open while the request ran monomers-only above it. The
+    // gate reads the same variation the payload keeps: the last one.
+    const { onSubmit } = renderTunableCc()
+    const firstCard = addSeedTypeVariation()
+    // The first copy holds dimers; the second keeps the default: monomers only.
+    fireEvent.click(within(firstCard).getByRole('button', { name: /^dimers$/i }))
+    const secondCard = addSeedTypeVariation()
+    addScalarVariationTo('target_df', '2.7')
+
+    // The gate is held: the sentence appears and the second card's chips lock.
+    expect(screen.getByText(/changed to dimers/i)).toBeTruthy()
+    expect(
+      within(secondCard).getByRole('button', { name: /^dimers$/i }),
+    ).toHaveProperty('disabled', true)
+
+    fireEvent.click(screen.getByRole('button', { name: /run/i }))
+
+    // The payload keeps the last variation bearing the name, and it carries
+    // the dimers the gate added to it.
+    expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual([
+      'monomers',
+      'dimers',
+    ])
+  })
+
   it('locks every seed-type chip while the gate holds, so a click cannot release the held dimers', () => {
     // C2, amended S4: the conflicting chips are locked like the dimers chip
     // already was. jsdom dispatches the click on a disabled button all the
@@ -630,6 +673,11 @@ describe('the batch gate matches the request it sends (#342)', () => {
     fireEvent.click(screen.getByRole('button', { name: /run/i }))
 
     expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+    // S7: the witness also asserts the kf the sweep carries — the request's
+    // own `kf_distribution` entry, the fixed 1.0 the floor was read from.
+    expect(onSubmit.mock.calls[0][0].parameter_grid.kf_distribution).toEqual([
+      { mode: 'fixed', value: 1 },
+    ])
   })
 
   it('reads the minimum a uniform kf entry supplies, and closes the gate below the floor', () => {
@@ -645,6 +693,11 @@ describe('the batch gate matches the request it sends (#342)', () => {
     fireEvent.click(screen.getByRole('button', { name: /run/i }))
 
     expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+    // S7: the kf the sweep carries is the uniform entry itself, whose minimum
+    // is the floor the gate read.
+    expect(onSubmit.mock.calls[0][0].parameter_grid.kf_distribution).toEqual([
+      { mode: 'uniform', min: 0.9, max: 1.1 },
+    ])
   })
 
   it('holds the gate on a uniform kf entry whose minimum is above the floor', () => {
@@ -663,6 +716,14 @@ describe('the batch gate matches the request it sends (#342)', () => {
       'monomers',
       'dimers',
     ])
+    // S7: the kf the sweep carries is the uniform entry whose minimum is the
+    // floor the gate held. The mode switch's own arithmetic (`anchor * 1.1`)
+    // is not exactly 1.65 in floating point, so the bounds are read as
+    // numbers rather than as one literal.
+    const kfEntry = onSubmit.mock.calls[0][0].parameter_grid.kf_distribution[0]
+    expect(kfEntry.mode).toBe('uniform')
+    expect(kfEntry.min).toBeCloseTo(1.35)
+    expect(kfEntry.max).toBeCloseTo(1.65)
   })
 
   it('abstains when a normal kf entry supplies no floor', () => {
@@ -680,6 +741,11 @@ describe('the batch gate matches the request it sends (#342)', () => {
     fireEvent.click(screen.getByRole('button', { name: /run/i }))
 
     expect(onSubmit.mock.calls[0][0].parameter_grid.seed_type).toEqual(['monomers'])
+    // S7: the kf the sweep carries is the open entry the gate abstained on —
+    // asserted, so the witness pins the distribution the abstention read.
+    expect(onSubmit.mock.calls[0][0].parameter_grid.kf_distribution).toEqual([
+      { mode: 'normal', mean: 1.5, std: 0.1 },
+    ])
     expect(screen.queryByText(/changed to dimers/i)).toBeNull()
   })
 

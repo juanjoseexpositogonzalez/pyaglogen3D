@@ -47,6 +47,17 @@ export const DIMERS_HELD =
   'The seed type is held at dimers for Df 2.7 and above with kf ≈ 1.3: measured, ' +
   'monomers stays at Df ≈ 2.37 where dimers reaches 2.77–2.80 (N=100 and N=1000, target 2.7).'
 
+/**
+ * The sentence for a study the gate sets with no control on screen to change: the
+ * sweep never varies `seed_type`, so the gate adds the one seed type that reaches
+ * and no selection was changed — there was no control to change. A sentence that
+ * said "changed" would describe a control this screen never rendered (#341,
+ * review round 2). The measured numbers are the same sentence's.
+ */
+export const DIMERS_RUNS =
+  'The study will run dimers for Df 2.7 and above with kf ≈ 1.3: measured, ' +
+  'monomers stays at Df ≈ 2.37 where dimers reaches 2.77–2.80 (N=100 and N=1000, target 2.7).'
+
 /** Whether a run at this target will miss the band unless the seed type is not monomers. */
 export function needsDimers(targetDf: number, targetKf: number): boolean {
   return targetDf >= HIGH_DF_NEEDS_DIMERS && targetKf >= HIGH_DF_KF_FLOOR

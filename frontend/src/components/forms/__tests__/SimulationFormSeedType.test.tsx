@@ -571,5 +571,10 @@ describe("SimulationForm — the gate reads the kf the request carries (#342, S7
     expect(
       onSubmit.mock.calls[0][0].parameters.target_kf_distribution.mode
     ).toBe("normal");
+    // S7: the witness also asserts the kf the request carries. With an open
+    // distribution there is no single promised kf — that is why the gate
+    // abstains — so the scalar that travels is the slider's legacy alias,
+    // left at its default.
+    expect(onSubmit.mock.calls[0][0].parameters.target_kf).toBe(1.3);
   });
 });
