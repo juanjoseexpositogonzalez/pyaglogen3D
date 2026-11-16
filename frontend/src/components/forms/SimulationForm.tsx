@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useMemo, useRef } from 'react'
-import { DIMERS_ADVICE, needsDimers } from '@/lib/seedTypeAdvice'
+import { DIMERS_ADVICE, DIMERS_HELD, needsDimers } from '@/lib/seedTypeAdvice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -577,10 +577,6 @@ function LimitingGeometrySection({
 
 export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
   const [name, setName] = useState<string>('')
-  // #311: whether the reader chose a seed type, as opposed to accepting the
-  // default. A ref, not state: it must not re-render, and it only matters at
-  // submit time and when deciding whether the warning applies.
-  const touchedSeedType = useRef(false)
   const [algorithm, setAlgorithm] = useState<SimulationAlgorithm>('dla')
   const [params, setParams] = useState<FormParams>(defaultParams)
   const [seed, setSeed] = useState<string>('')
@@ -735,11 +731,15 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       algorithmParams.target_kf = params.target_kf
     } else if (algorithm === 'tunable_cc') {
       algorithmParams.target_df = params.target_df
-      algorithmParams.target_kf = params.target_kf
+      // The same number the gate reads (#342, S7): the distribution's fixed
+      // value when there is one. An open distribution leaves the slider scalar
+      // in place as the legacy alias it always was — the worker expands the
+      // distribution and ignores it.
+      algorithmParams.target_kf = effectiveTargetKf ?? params.target_kf
       algorithmParams.seed_cluster_size = params.seed_cluster_size ?? undefined
       algorithmParams.max_rotation_attempts = params.max_rotation_attempts
-      // `effectiveSeedType`, no `params.seed_type`: por encima de 2.7 el
-      // default sigue al objetivo salvo que el lector haya elegido (#311).
+      // `effectiveSeedType`, not `params.seed_type`: above the gate the payload has
+      // to carry what the control shows (#341).
       algorithmParams.seed_type = effectiveSeedType
       // Distribution configs (PYA-15)
       ;(algorithmParams as Record<string, unknown>).dpo_distribution = dpoDistribution
@@ -751,9 +751,6 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
       if (dpoDistribution.mode === 'fixed' && dpoDistribution.value !== null) {
         algorithmParams.radius_min = dpoDistribution.value
         algorithmParams.radius_max = dpoDistribution.value
-      }
-      if (targetKfDistribution.mode === 'fixed' && targetKfDistribution.value !== null) {
-        algorithmParams.target_kf = targetKfDistribution.value
       }
     } else if (algorithm === 'fracval') {
       algorithmParams.target_df = params.target_df
@@ -812,25 +809,44 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
         monomers   OK   OK   OK   OK   FALLA FALLA FALLA
 
     So the gate starts at 2.7, not at the band's 2.5: at 2.6 monomers still lands
-    at 2.515, inside ±0.15, and warning there would scold a configuration that
+    at 2.515, inside ±0.15, and overriding there would scold a configuration that
     passes. `target_kf` is part of the gate because the lever does not work on its
     own — dimers measures 2.472 at kf 1.0, outside the band for the same target.
 
-    The default now follows the target, because the paragraph above described the
-    reader who never touches the dropdown: they asked for 2.7 and got 2.37. The
-    original reasoning - do not choose for the reader - still holds for an
-    *explicit* choice, and the warning below is kept for exactly that reader:
-    touching the dropdown wins over the default, and picking monomers by hand at
-    this target still says what it costs.
+    #341 finished the job #311 started: the gate is the only gate. Before it, the
+    default followed the target but an explicit choice won, so a reader who picked
+    monomers at 2.7 got a 2.37 run and a sentence saying so. Now the control shows
+    `dimers` and is disabled there - a control you can set to a value the payload
+    will not send is a control that lies. The choice is *overridden*, not destroyed:
+    it stays in `params.seed_type`, so lowering the target below the gate hands the
+    reader back exactly what they had. The sentence explains why it changed.
   */
-  const seedTypeTouched = touchedSeedType.current
-  const highDfNeedsDimers = needsDimers(params.target_df, params.target_kf)
-  const effectiveSeedType: SeedType =
-    seedTypeTouched || !highDfNeedsDimers ? params.seed_type : 'dimers'
-  const dimersRecommended =
-    seedTypeTouched &&
-    params.seed_type === 'monomers' &&
-    highDfNeedsDimers
+  /*
+    #342 (S7): the gate reads the kf the request carries, not the slider. For
+    `tunable_cc` the payload overwrites `target_kf` with the distribution's
+    value when the mode is `fixed`, and the worker expands `normal`/`uniform`
+    and ignores the scalar — a gate on the slider could disable a control over
+    a number that never travels. The ONE number below feeds both the gate and
+    the payload:
+
+    - `tunable_cc` with a `fixed` distribution → the distribution's value
+      (`null` only when the box is empty, and then the submit is refused
+      before any payload exists);
+    - `tunable_cc` with an open distribution (`normal`/`uniform`) → `null`: no
+      single kf can be promised, so the gate abstains — no override, no held
+      control, no sentence. No mean and no minimum is invented for it;
+    - the other algorithms → the slider, which is all they carry.
+  */
+  const effectiveTargetKf: number | null =
+    algorithm === 'tunable_cc'
+      ? targetKfDistribution.mode === 'fixed'
+        ? targetKfDistribution.value
+        : null
+      : params.target_kf
+  const highDfNeedsDimers =
+    effectiveTargetKf !== null && needsDimers(params.target_df, effectiveTargetKf)
+  const effectiveSeedType: SeedType = highDfNeedsDimers ? 'dimers' : params.seed_type
+  const dimersForced = highDfNeedsDimers && params.seed_type !== 'dimers'
 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
@@ -1338,12 +1354,16 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                 <Select
                   id="seed_type"
                   value={effectiveSeedType}
-                  onChange={(e) => {
-                    touchedSeedType.current = true
-                    updateParam('seed_type', e.target.value as SeedType)
-                  }}
+                  // Inert above the gate: the payload sends `dimers` whether the
+                  // reader changes it or not, so letting the control move would
+                  // only make it disagree with the request.
+                  disabled={highDfNeedsDimers}
+                  onChange={(e) => updateParam('seed_type', e.target.value as SeedType)}
                   options={seedTypeOptions}
-                  aria-describedby={dimersRecommended ? 'seed-type-note' : undefined}
+                  // Always, not only when something was overridden: a held control
+                  // with no reason is a disabled control that does not explain
+                  // itself (JD-A-005, #342). The note says which of the two it is.
+                  aria-describedby="seed-type-note"
                 />
                 <p className="text-xs text-muted-foreground">
                   Initial particle grouping. Monomers gives more freedom; dimers/trimers are closer to canonical FZR.
@@ -1359,7 +1379,9 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   aria-live="polite"
                   className="text-xs text-ink"
                 >
-                  {dimersRecommended ? DIMERS_ADVICE : null}
+                  {/* Two sentences, one per state the gate can leave the control
+                      in: a change claims a change, a hold claims a hold. */}
+                  {dimersForced ? DIMERS_ADVICE : highDfNeedsDimers ? DIMERS_HELD : null}
                 </p>
               </div>
 
