@@ -2,7 +2,7 @@
 
 import { useState, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
-import { DIMERS_ADVICE, needsDimers } from '@/lib/seedTypeAdvice'
+import { DIMERS_ADVICE, DIMERS_RUNS, needsDimers } from '@/lib/seedTypeAdvice'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Select } from '@/components/ui/select'
@@ -208,6 +208,43 @@ function getVariationValues(variation: ParameterVariation, isInteger: boolean): 
       return isNaN(num) ? trimmed : num
     }).filter((v): v is number | string => v !== null)
   }
+}
+
+/**
+ * The seed types a variation will really sweep (#341).
+ *
+ * In a sweep the target is missed after every child has run, so a grid that
+ * does not include `dimers` past the gate is a grid that misses it 100% of
+ * the time. There the variation carries `dimers` as well.
+ *
+ * The reader's own selection is left untouched: the addition is applied where the grid,
+ * the projection and the chips read it, so moving the sweep back below the gate takes
+ * it away again - the same "override, do not destroy" rule the single form follows.
+ */
+function seedTypesAfterGate(variation: ParameterVariation, forced: boolean): string[] {
+  if (!forced || variation.seedTypeValues.includes('dimers')) {
+    return variation.seedTypeValues
+  }
+  return [...variation.seedTypeValues, 'dimers']
+}
+
+/**
+ * The variation of `name` the payload keeps when the name is duplicated
+ * (review round 2, F1).
+ *
+ * `parameterOptions` does not retire a name already in use, so two variations
+ * can bear the same one — and `handleSubmit` writes `parameterGrid[name]`
+ * inside a loop, so the last write wins. Every reader that decides what the
+ * request will run reads the same one: the last bearing the name. The previous
+ * readers used `find`, which reads the first, so a duplicated `seed_type` whose
+ * first copy held `dimers` and whose second did not left the gate open while
+ * the payload ran monomers-only above it.
+ */
+function lastVariationNamed(
+  variations: ParameterVariation[],
+  name: string,
+): ParameterVariation | undefined {
+  return variations.findLast((variation) => variation.name === name)
 }
 
 /**
@@ -537,6 +574,72 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
       : DEFAULT_SEEDS_PER_COMBINATION
   const effectiveSeeds = algorithm === 'limiting' ? 1 : seedsForDisplay
 
+  const seedVariation = lastVariationNamed(variations, SEED_TYPE_PARAM)
+  // L7 (#342, JD-A-001 + JD-B-003): "does not include `dimers`", not "is
+  // monomers only" — `['trimers']` and `['monomers','trimers']` miss the band
+  // exactly like a monomers-only sweep and escaped the gate entirely, which
+  // made the batch more forgiving than the single form. The variation read is
+  // the one the payload keeps: the last bearing the name (review round 2, F1).
+  const seedSweepLacksDimers =
+    !seedVariation || !seedVariation.seedTypeValues.includes('dimers')
+  const numbersOf = (name: string): number[] => {
+    const variation = lastVariationNamed(variations, name)
+    return variation
+      ? getVariationValues(variation, false).filter(
+          (value): value is number => typeof value === 'number',
+        )
+      : []
+  }
+  // R3-001 from the review: this form has no base value for these three.
+  // `base_parameters` carries n_particles and sticking_probability (sintering_coeff
+  // for limiting) and nothing else; target_df, target_kf and seed_type exist only as
+  // sweep entries. When one is not swept the engine's own default applies, and the
+  // gate reads that default rather than a stand-in for it.
+  const ENGINE_DEFAULT_TARGET_DF = 1.8
+  const ENGINE_DEFAULT_TARGET_KF = 1.3
+  const highestDf = Math.max(ENGINE_DEFAULT_TARGET_DF, ...numbersOf('target_df'))
+  // #342 (JD-A-003 + JD-B-002): the floor the sweep can promise is the lowest
+  // kf any child can run — a scalar `target_kf` value, a `fixed` entry's value,
+  // or the minimum a `uniform` entry supplies. The gate used to read only the
+  // scalar variation or the 1.3 stand-in, so a swept `kf_distribution` was
+  // invisible to it. Read through the same last-bearing-the-name helper as the
+  // payload, so a duplicated name cannot split the two (review round 2, F1).
+  const kfEntries =
+    lastVariationNamed(variations, 'kf_distribution')?.distributionValues ?? []
+  // A `normal` entry supplies kf with no lower bound, so no floor can be
+  // promised for the sweep: the gate abstains instead of inventing one — the
+  // same rule the single form follows for an open distribution (S7).
+  const kfSweepIsOpen = kfEntries.some((entry) => entry.mode === 'normal')
+  const kfFloors = [...numbersOf('target_kf')]
+  for (const entry of kfEntries) {
+    if (entry.mode === 'fixed' && entry.value !== null) kfFloors.push(entry.value)
+    if (entry.mode === 'uniform' && entry.min !== null) kfFloors.push(entry.min)
+  }
+  const lowestKf = kfFloors.length
+    ? Math.min(...kfFloors)
+    : ENGINE_DEFAULT_TARGET_KF
+  // #315: the gate takes the *highest* Df the grid reaches and the *lowest* kf it
+  // sweeps, because that pair is the one that misses. #341 makes the answer act:
+  // a variation that does not include `dimers` above the gate sweeps `dimers` too,
+  // instead of merely saying it should (#342, L7: any variation lacking dimers,
+  // not only a monomers-only one).
+  //
+  // Only where the algorithm reads the key: on the ones that do not, the server
+  // refuses a `seed_type` grid entry (#115) and the sentence would describe a
+  // setting the study does not have.
+  const sweepNeedsDimers = !kfSweepIsOpen && needsDimers(highestDf, lowestKf)
+  const dimersForced =
+    sweepNeedsDimers && seedSweepLacksDimers && consumesSeedType(algorithm)
+  // Review round 2 (F4): with no seed-type variation there is no control on
+  // screen to change, so the sentence says the study will run dimers instead
+  // of claiming a change that no control made — and nothing points at the
+  // note, because the group that would is not rendered either.
+  const dimersSentence = !dimersForced
+    ? null
+    : seedVariation
+      ? DIMERS_ADVICE
+      : DIMERS_RUNS
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -593,8 +696,9 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
               : variation.distributionValues
         }
       } else if (variation.name === SEED_TYPE_PARAM) {
-        if (variation.seedTypeValues.length > 0) {
-          parameterGrid[variation.name] = variation.seedTypeValues
+        const seedTypes = seedTypesAfterGate(variation, dimersForced)
+        if (seedTypes.length > 0) {
+          parameterGrid[variation.name] = seedTypes
         }
       } else {
         const isInteger = integerParams.has(variation.name)
@@ -603,6 +707,15 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
           parameterGrid[variation.name] = values
         }
       }
+    }
+
+    // #341: a sweep that reaches the gate without varying `seed_type` runs the
+    // engine's default - `monomers` - and misses in every child, so the gate adds
+    // the one seed type that reaches. Without this the note below would claim a
+    // change the study does not make. The projection is unchanged: an absent key is
+    // also one combination, and `dimers` is one value.
+    if (dimersForced && !parameterGrid[SEED_TYPE_PARAM]) {
+      parameterGrid[SEED_TYPE_PARAM] = ['dimers']
     }
 
     const data: CreateParametricStudyInput = {
@@ -640,13 +753,14 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
         return { values: v.distributionValues as unknown as (number | string)[], count: v.distributionValues.length || 1 }
       }
       if (v.name === SEED_TYPE_PARAM) {
-        return { values: v.seedTypeValues as (number | string)[], count: v.seedTypeValues.length || 1 }
+        const seedTypes = seedTypesAfterGate(v, dimersForced)
+        return { values: seedTypes as (number | string)[], count: seedTypes.length || 1 }
       }
       const isInteger = integerParams.has(v.name)
       const values = getVariationValues(v, isInteger)
       return { values, count: values.length || 1 }
     })
-  }, [variations, integerParams])
+  }, [variations, integerParams, dimersForced])
 
   const totalCombinations = variationCounts.reduce((acc, v) => acc * v.count, 1)
   const totalSimulations = totalCombinations * effectiveSeeds
@@ -689,33 +803,6 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
     setDroppedVariations(dropped.map((v) => labels.get(v.name) ?? v.name))
     setAlgorithm(next)
   }
-
-  const seedVariation = variations.find((v) => v.name === SEED_TYPE_PARAM)
-  const seedIsMonomersOnly =
-    !seedVariation ||
-    seedVariation.seedTypeValues.length === 0 ||
-    seedVariation.seedTypeValues.every((value) => value === 'monomers')
-  const numbersOf = (name: string): number[] => {
-    const variation = variations.find((v) => v.name === name)
-    return variation
-      ? getVariationValues(variation, false).filter(
-          (value): value is number => typeof value === 'number',
-        )
-      : []
-  }
-  // R3-001 from the review: this form has no base value for these three.
-  // `base_parameters` carries n_particles and sticking_probability (sintering_coeff
-  // for limiting) and nothing else; target_df, target_kf and seed_type exist only as
-  // sweep entries. When one is not swept the engine's own default applies, and the
-  // gate reads that default rather than a stand-in for it.
-  const ENGINE_DEFAULT_TARGET_DF = 1.8
-  const ENGINE_DEFAULT_TARGET_KF = 1.3
-  const highestDf = Math.max(ENGINE_DEFAULT_TARGET_DF, ...numbersOf('target_df'))
-  const lowestKfSwept = numbersOf('target_kf')
-  const lowestKf = lowestKfSwept.length
-    ? Math.min(...lowestKfSwept)
-    : ENGINE_DEFAULT_TARGET_KF
-  const dimersAdvice = seedIsMonomersOnly && needsDimers(highestDf, lowestKf)
 
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
@@ -912,6 +999,8 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
         {variations.map((variation, index) => {
           const isInteger = integerParams.has(variation.name)
           const { values, count } = variationCounts[index] || { values: [], count: 0 }
+          // #341: the types this variation will really sweep, gate included.
+          const seedTypes = seedTypesAfterGate(variation, dimersForced)
 
           return (
             <div
@@ -950,12 +1039,21 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                   parameterName={variation.name}
                 />
               ) : variation.name === SEED_TYPE_PARAM ? (
-                /* Seed type multi-select chips */
+                /* Seed type multi-select chips. #341: the chips show the types the
+                   sweep will really run, so the gate's added `dimers` is selected
+                   here too. #342 (amended S4): while the gate holds, the whole
+                   control is inert — every chip is locked, so a click cannot
+                   silently release the held `dimers`. */
                 <div className="space-y-2">
                   <Label className="text-[11px]">Select seed types</Label>
-                  <div className="flex gap-2">
+                  <div
+                    role="group"
+                    aria-label="Seed types"
+                    aria-describedby={dimersForced ? 'seed-type-note' : undefined}
+                    className="flex gap-2"
+                  >
                     {SEED_TYPE_OPTIONS.map((st) => {
-                      const isSelected = variation.seedTypeValues.includes(st)
+                      const isSelected = seedTypes.includes(st)
                       return (
                         <Button
                           key={st}
@@ -963,6 +1061,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                           variant={isSelected ? 'default' : 'outline'}
                           size="sm"
                           className="flex-1 capitalize"
+                          disabled={dimersForced}
                           onClick={() => {
                             const newValues = isSelected
                               ? variation.seedTypeValues.filter((v) => v !== st)
@@ -981,7 +1080,7 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
                   {/* The count is a `Num`, so the number and the word that
                       qualifies it are separate nodes. */}
                   <p className="hint">
-                    <Num value={variation.seedTypeValues.length} digits={0} size="sm" /> selected
+                    <Num value={seedTypes.length} digits={0} size="sm" /> selected
                   </p>
                 </div>
               ) : (
@@ -1194,15 +1293,27 @@ export function BatchSimulationForm({ onSubmit, isLoading }: BatchSimulationForm
         <Callout tone="danger" title={distributionRefusal} />
       )}
 
-      {/* #315: the same advice as #311, read from the same module so the two screens
-          cannot drift. It matters more here: in a sweep the target is missed after
-          every child has run. The gate takes the *highest* Df the grid reaches and the
-          *lowest* kf it sweeps, because that pair is the one that misses. */}
-      {dimersAdvice && (
-        <p role="status" className="text-sm text-ink-muted">
-          {DIMERS_ADVICE}
-        </p>
-      )}
+      {/* #315: the sentence both seed-aware screens read from the same module,
+          so the two cannot drift. It matters more here: in a sweep the target
+          is missed after every child has run. The gate takes the *highest* Df
+          the grid reaches and the *lowest* kf it sweeps, because that pair is
+          the one that misses.
+          Since #341 it explains a change rather than recommending one: `dimers`
+          is already in the grid by the time this is read. Review round 2 (F4):
+          with no seed-type variation there is no control to change, so the
+          sentence says the study will run dimers instead.
+          #342 (JD-A-004 + JD-B-004): mounted always, with only its text changing
+          — a live region created together with its content, while the reader
+          fills the sweep, is not announced. Same shape as the single form's
+          note, and the chip group points at it while the gate holds. */}
+      <p
+        id="seed-type-note"
+        role="status"
+        aria-live="polite"
+        className="text-sm text-ink-muted"
+      >
+        {dimersSentence}
+      </p>
 
       <Button type="submit" disabled={isLoading || totalSimulations === 0 || totalSimulations > 1000} className="w-full">
         <Play className="h-4 w-4 mr-2" aria-hidden="true" />
