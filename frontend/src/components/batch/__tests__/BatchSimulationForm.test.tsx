@@ -319,6 +319,27 @@ describe('BatchSimulationForm — R2 cap on the primary size', () => {
 // ---------------------------------------------------------------------------
 
 /** Fill a scalar variation with a discrete-values list. */
+describe('the dimers advice on a sweep (#315)', () => {
+  it('appears when the grid reaches the target monomers cannot hit', () => {
+    // In a sweep the target is missed after every child has run, so the warning is
+    // worth more here than on a single simulation. The condition and the sentence
+    // come from `seedTypeAdvice`, the same module the single form reads.
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    addScalarVariation('target_df', '2.7')
+
+    expect(screen.getByText(/Dimers recommended/i)).toBeTruthy()
+  })
+
+  it('says nothing for a sweep that stays inside the band', () => {
+    // 2.0 is inside ±0.15 with monomers; advising there would scold a configuration
+    // that passes, which is why the gate starts at 2.7 and not at the band's 2.5.
+    render(<BatchSimulationForm onSubmit={vi.fn()} />)
+    addScalarVariation('target_df', '2.0')
+
+    expect(screen.queryByText(/Dimers recommended/i)).toBeNull()
+  })
+})
+
 function addScalarVariation(parameter: string, values: string) {
   fireEvent.click(screen.getByRole('button', { name: /add variation/i }))
   const selects = screen.getAllByRole('combobox')

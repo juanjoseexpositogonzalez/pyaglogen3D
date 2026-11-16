@@ -1,6 +1,7 @@
 'use client'
 
 import { useState, useMemo, useRef } from 'react'
+import { DIMERS_ADVICE, needsDimers } from '@/lib/seedTypeAdvice'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -823,8 +824,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
     this target still says what it costs.
   */
   const seedTypeTouched = touchedSeedType.current
-  const highDfNeedsDimers =
-    params.target_df >= 2.7 && params.target_kf >= 1.3
+  const highDfNeedsDimers = needsDimers(params.target_df, params.target_kf)
   const effectiveSeedType: SeedType =
     seedTypeTouched || !highDfNeedsDimers ? params.seed_type : 'dimers'
   const dimersRecommended =
@@ -1359,13 +1359,7 @@ export function SimulationForm({ onSubmit, isLoading }: SimulationFormProps) {
                   aria-live="polite"
                   className="text-xs text-ink"
                 >
-                  {dimersRecommended ? (
-                    <>
-                      <strong>Dimers recommended</strong> for Df 2.7 and above with
-                      kf ≈ 1.3: measured, monomers stays at Df ≈ 2.37 where dimers
-                      reaches 2.77–2.80 (N=100 and N=1000, target 2.7).
-                    </>
-                  ) : null}
+                  {dimersRecommended ? DIMERS_ADVICE : null}
                 </p>
               </div>
 

@@ -13,6 +13,71 @@ from PIL import Image
 logger = logging.getLogger(__name__)
 
 
+#: The classic image methods that have no implementation in the engine. The two
+#: FRAKTAL models are not in this set: they *are* implemented, in the sibling
+#: `FraktalAnalysis` pipeline, which takes a different payload (`npix`, `dpo`, ...).
+UNIMPLEMENTED_IMAGE_METHODS = frozenset(
+    {"sandbox", "correlation", "lacunarity", "multifractal"}
+)
+
+#: The models that belong to the other pipeline.
+FRAKTAL_MODELS = frozenset({"fraktal_granulated_2012", "fraktal_voxel_2018"})
+
+
+def _unsupported_method_message(method: str) -> str:
+    """Why this method cannot run here, in the words that are true for it."""
+    if method in FRAKTAL_MODELS:
+        return (
+            f"method '{method}' is a FRAKTAL model, not a classic image method: it "
+            "runs through the FRAKTAL analysis pipeline (FraktalAnalysis), which "
+            "takes npix and dpo, not the box-counting parameters"
+        )
+    if method in UNIMPLEMENTED_IMAGE_METHODS:
+        return (
+            f"method '{method}' is not implemented yet; only 'box_counting' "
+            "measures a 2D image today"
+        )
+    return (
+        f"method '{method}' cannot be measured by the image analysis; only "
+        "'box_counting' is implemented here"
+    )
+
+
+def _otsu_threshold(gray: np.ndarray) -> int:
+    """Otsu's threshold: the level that maximises the between-class variance.
+
+    A pure function over the 256-bin histogram, so the cut can be tested on its
+    own. The pipeline used `np.mean` here, which is a different number and lands
+    inside a class whenever the split is skewed (#331).
+    """
+    hist = np.bincount(gray.ravel(), minlength=256).astype(float)
+    total = hist.sum()
+    levels = np.arange(256, dtype=float)
+    weight_background = np.cumsum(hist)
+    weight_foreground = total - weight_background
+    sum_total = float((hist * levels).sum())
+    sum_background = np.cumsum(hist * levels)
+
+    mean_background = np.divide(
+        sum_background,
+        weight_background,
+        out=np.zeros_like(sum_background),
+        where=weight_background > 0,
+    )
+    mean_foreground = np.divide(
+        sum_total - sum_background,
+        weight_foreground,
+        out=np.zeros_like(sum_background),
+        where=weight_foreground > 0,
+    )
+
+    between_class = (
+        weight_background * weight_foreground * (mean_background - mean_foreground) ** 2
+    )
+    return int(np.argmax(between_class))
+
+
+
 def _rasterize_projection_to_grayscale(
     proj_result,
     img_size: int = 512,
@@ -86,12 +151,14 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         # Thresholding
         threshold_method = preprocess.get("threshold_method", "otsu")
         if threshold_method == "otsu":
-            # Simple Otsu approximation
-            threshold = np.mean(img_array)
+            threshold = _otsu_threshold(img_array)
         elif threshold_method == "manual":
             threshold = preprocess.get("threshold_value", 128)
         else:
-            threshold = 128
+            raise ValueError(
+                f"Unknown threshold_method '{threshold_method}': "
+                "expected 'otsu' or 'manual'"
+            )
 
         binary = img_array > threshold
 
@@ -104,43 +171,70 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         processed_img.save(buffer, format="PNG")
         analysis.processed_image = buffer.getvalue()
 
-        # Import Rust module (will be available after building aglogen_core)
-        # import aglogen_core
-        #
-        # if analysis.method == "box_counting":
-        #     result = aglogen_core.box_counting(
-        #         binary_image=binary,
-        #         min_box_size=analysis.method_params.get("min_box_size", 2),
-        #         max_box_size=analysis.method_params.get("max_box_size", 512),
-        #         num_scales=analysis.method_params.get("num_scales", 20),
-        #     )
-        #     analysis.results = {
-        #         "fractal_dimension": result.dimension,
-        #         "r_squared": result.r_squared,
-        #         "log_sizes": result.log_scales.tolist(),
-        #         "log_counts": result.log_values.tolist(),
-        #     }
+        # Measure with the engine, or refuse: a method that does not exist must
+        # not answer with a plausible-looking number (#331). Before this, every
+        # method returned `1.65 ± 0.1` drawn from `np.random`.
+        if analysis.method != "box_counting":
+            raise ValueError(_unsupported_method_message(analysis.method))
 
-        # PLACEHOLDER: Generate dummy results
-        logger.info(f"Running fractal analysis {analysis_id}")
+        # `method_params` is free-form JSON that the serializer does not validate,
+        # and these three reach the engine: `min_box_size: 0` makes it divide by
+        # zero *inside Rust*, and a PyO3 `PanicException` derives from
+        # `BaseException`, so the handler below would not catch it and the row would
+        # stay `running` forever. Validate here instead of at the panic.
+        params = analysis.method_params or {}
+        min_box_size = int(params.get("min_box_size", 2))
+        max_box_size = int(params.get("max_box_size", 512))
+        num_scales = int(params.get("num_scales", 20))
+        if min_box_size < 1 or max_box_size < min_box_size:
+            raise ValueError(
+                "min_box_size and max_box_size must satisfy "
+                f"1 <= min_box_size <= max_box_size (got {min_box_size} and "
+                f"{max_box_size})"
+            )
+        if num_scales < 2:
+            raise ValueError(
+                f"num_scales must be at least 2 (got {num_scales})"
+            )
 
-        # Dummy box-counting results
-        num_scales = 15
-        log_sizes = np.linspace(0.5, 3.0, num_scales)
-        df = 1.65 + np.random.uniform(-0.1, 0.1)
-        log_counts = -df * log_sizes + 10 + np.random.normal(0, 0.02, num_scales)
+        result = aglogen_core.box_counting(
+            binary_image=binary,
+            min_box_size=min_box_size,
+            max_box_size=max_box_size,
+            num_scales=num_scales,
+        )
+
+        # A mask with no structure is not a measurement. An empty mask leaves the
+        # curve with no usable scale (the fit answers 0.00) and a uniform mask makes
+        # every box occupied (it answers 2.00 with R² 1.0) — both were stored as
+        # `completed`, which is the same defect this issue closed, without `random`.
+        foreground = int(binary.sum())
+        if foreground == 0:
+            raise ValueError(
+                "the threshold left no foreground pixels, so there is nothing to "
+                "measure; check threshold_method and invert"
+            )
+        if len(result.log_scales) < 3:
+            raise ValueError(
+                f"box counting found {len(result.log_scales)} usable scales on this "
+                "image and a fit needs at least 3; check min_box_size, max_box_size "
+                "and num_scales"
+            )
 
         analysis.results = {
-            "fractal_dimension": df,
-            "r_squared": 0.9987 + np.random.uniform(-0.005, 0.005),
-            "std_error": 0.012,
-            "confidence_interval_95": [df - 0.024, df + 0.024],
-            "log_sizes": log_sizes.tolist(),
-            "log_counts": log_counts.tolist(),
-            "residuals": np.random.normal(0, 0.01, num_scales).tolist(),
+            "fractal_dimension": float(result.dimension),
+            "r_squared": float(result.r_squared),
+            "std_error": float(result.std_error),
+            "confidence_interval_95": [float(v) for v in result.confidence_interval],
+            "log_sizes": [float(v) for v in result.log_scales],
+            "log_counts": [float(v) for v in result.log_values],
+            "residuals": [float(v) for v in result.residuals],
         }
-        analysis.execution_time_ms = 500 + int(np.random.uniform(0, 500))
-        analysis.engine_version = "0.1.0-placeholder"
+        analysis.execution_time_ms = int(result.execution_time_ms)
+        # Compiled into the cdylib that ran, which is the authority: asking
+        # `importlib.metadata` for a distribution name can answer "unknown" and
+        # store it as a completed analysis' version.
+        analysis.engine_version = aglogen_core.version()[:20]
 
         analysis.status = AnalysisStatus.COMPLETED
         analysis.completed_at = timezone.now()
@@ -155,7 +249,16 @@ def run_fractal_analysis_task(self, analysis_id: str) -> dict:
         }
 
     except Exception as e:
-        logger.exception(f"Analysis {analysis_id} failed: {e}")
+        # A refusal is user input, not a server fault; `logger.exception` for it
+        # turns every unsupported method into a Sentry-visible error.
+        if isinstance(e, ValueError):
+            logger.warning(f"Analysis {analysis_id} refused: {e}")
+        else:
+            logger.exception(f"Analysis {analysis_id} failed: {e}")
+        # A failed row must not keep a payload: an older row can still carry the
+        # placeholder's fabricated number, and the serializer exposes it without
+        # looking at the status.
+        analysis.results = None
         analysis.status = AnalysisStatus.FAILED
         analysis.error_message = str(e)
         analysis.completed_at = timezone.now()
