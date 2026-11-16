@@ -679,6 +679,41 @@ describe('the 3D stage and the values behind it', () => {
     expect(viewerPanel().textContent).toMatch(/nm/)
   })
 
+  it('shows an nm import at its own scale: radius 12 reads 12, not 144 (#197)', () => {
+    // An import whose coordinates already come in nanometres. The record
+    // carries exactly what the import stamps: diameter 2 × mean radius = 24
+    // and import_metadata.unit "nm". Before #197 the unit declaration was
+    // unread and the scale came from the diameter: 12 × 12 = 144, an
+    // agglomerate multiplied by its own mean radius.
+    withSimulation({
+      parameters: {
+        primary_particle_diameter_nm: 24,
+        n_particles: 2,
+        import_metadata: { unit: 'nm' },
+      },
+    })
+    withGeometry(
+      geometry({
+        coordinates: [
+          [10, -20, 40],
+          [30, 40, 50],
+        ],
+        radii: [12, 12],
+      }),
+    )
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // First data row: the file's own nanometres, verbatim. A radius cell of
+    // 144.0 here is the bug; the scale is the unit declaration, not the
+    // diameter the import derived from the same radii it is scaling.
+    const rows = screen.getAllByRole('row')
+    expect(rows).toHaveLength(3)
+    const firstRow = within(rows[1]).getAllByRole('cell').map((node) => node.textContent ?? '')
+    expect(firstRow).toEqual(['1', '10.0nm', '-20.0nm', '40.0nm', '12.0nm'])
+  })
+
   it('takes the table from the primitive, caption and scroll region included', () => {
     withGeometry()
     renderPage()

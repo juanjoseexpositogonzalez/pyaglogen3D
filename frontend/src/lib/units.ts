@@ -18,6 +18,7 @@
 export const PARAM_KEY_DIAMETER = "primary_particle_diameter_nm";
 export const PARAM_KEY_RADIUS_LEGACY = "primary_particle_radius_nm";
 export const PARAM_KEY_SCHEMA_VERSION = "parameters_schema_version";
+export const PARAM_KEY_IMPORT_METADATA = "import_metadata";
 export const DEFAULT_DIAMETER_NM = 50.0;
 export const SCHEMA_VERSION_CURRENT = "v2" as const;
 
@@ -63,10 +64,46 @@ export function getPrimaryParticleDiameterNm(
 /**
  * Return the scale factor (nm per dimensionless Rg unit): `diameter / 2`.
  * Single source of truth for nm scaling on the frontend.
+ *
+ * The one exception (#197): an imported agglomerate whose declared unit is
+ * the physical nanometre — `params.import_metadata.unit === "nm"` — already
+ * carries coordinates and radii in nm, so its scale factor is exactly 1.
+ * Without this, an nm import was scaled by its own mean radius (the import
+ * stamps `diameter = 2 * mean radius` as the fallback), multiplying every
+ * reading by itself: a uniform radius of 12 read as 144.
+ *
+ * All other inputs keep the diameter/2 path, including a dimensionless import
+ * (whose diameter the import stamps as the 50 nm default) and a native engine
+ * run, which never carries `import_metadata` at all.
  */
 export function getScaleFactorNm(
   params: Record<string, unknown> | null | undefined,
 ): number {
+  if (
+    params !== null &&
+    params !== undefined &&
+    typeof params === "object" &&
+    !Array.isArray(params)
+  ) {
+    const metadata = (params as Record<string, unknown>)[PARAM_KEY_IMPORT_METADATA];
+    // Only the physical unit "nm" counts: strict and case-sensitive, because
+    // the CSV parser writes exactly that token (and "dimensionless" is a
+    // different contract that keeps the diameter-derived scale on purpose).
+    // Non-objects (a JSON string, an array, a number) and a missing or
+    // non-string `unit` all fall through to the diameter path.
+    if (
+      metadata !== null &&
+      metadata !== undefined &&
+      typeof metadata === "object" &&
+      !Array.isArray(metadata)
+    ) {
+      const unit = (metadata as Record<string, unknown>)["unit"];
+      if (unit === "nm") {
+        return 1;
+      }
+    }
+  }
+
   return getPrimaryParticleDiameterNm(params) / 2;
 }
 

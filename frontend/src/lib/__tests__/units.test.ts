@@ -147,6 +147,107 @@ describe("getScaleFactorNm", () => {
   it("returns default / 2 = 25 for null params", () => {
     expect(getScaleFactorNm(null)).toBe(25.0);
   });
+
+  // #197: an imported agglomerate whose declared unit is the physical
+  // nanometre already carries coordinates and radii in nm. Scaling it again
+  // by its own mean radius (the import stamps diameter = 2 * mean radius)
+  // multiplied every reading by itself: a uniform radius of 12 read as 144.
+  it("nm import returns 1: the array is already in nanometres", () => {
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 24,
+        import_metadata: { unit: "nm" },
+      }),
+    ).toBe(1);
+  });
+
+  it("native run (no import_metadata) keeps scaling by diameter / 2", () => {
+    expect(getScaleFactorNm({ primary_particle_diameter_nm: 50.0 })).toBe(25.0);
+  });
+
+  it("dimensionless import keeps the default-diameter scale of 25", () => {
+    // The backend stamps the default 50 nm diameter for dimensionless imports;
+    // the contract calls that arbitrary but consistent, not a unit error.
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: { unit: "dimensionless" },
+      }),
+    ).toBe(25.0);
+  });
+
+  it("import_metadata without a unit falls back to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: {},
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: { source: "micrograph" },
+      }),
+    ).toBe(25.0);
+  });
+
+  it("import_metadata with a unit other than nm falls back to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: { unit: "um" },
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        // Case-sensitive on purpose: the parser writes lowercase "nm" only.
+        import_metadata: { unit: "NM" },
+      }),
+    ).toBe(25.0);
+  });
+
+  it("import_metadata with a non-string unit falls back to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: { unit: 5 },
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: { unit: null },
+      }),
+    ).toBe(25.0);
+  });
+
+  it("non-object import_metadata falls back to diameter / 2 without crashing", () => {
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: "nm",
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: null,
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: ["nm"],
+      }),
+    ).toBe(25.0);
+    expect(
+      getScaleFactorNm({
+        primary_particle_diameter_nm: 50.0,
+        import_metadata: 42,
+      }),
+    ).toBe(25.0);
+  });
 });
 
 describe("getSchemaVersion", () => {
