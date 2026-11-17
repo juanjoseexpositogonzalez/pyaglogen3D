@@ -30,6 +30,7 @@ from .serializers import (
 from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
+    PARAM_KEY_SCALE_NM,
     get_scale_factor_nm,
 )
 from .services.projection import (
@@ -337,6 +338,30 @@ class SimulationViewSet(viewsets.ModelViewSet):
         else:
             mean_radius = float(np.mean(geometry_array[:, 3]))
             params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
+
+        # #197 (S2): an import whose geometry is already in nm must not be
+        # rescaled by its own mean radius. Both shims read ``scale_nm`` first
+        # (same priority, same acceptance rule), so the import pins the
+        # engine→nm factor at 1.0. The physical diameter above is untouched:
+        # the parameters panel keeps telling the real diameter (2 × mean
+        # radius), and a dimensionless import keeps the default-diameter path
+        # by carrying no ``scale_nm`` at all (S3).
+        if fmt == "mat":
+            # ``.mat`` has no metadata dict: mat_parser.py documents that all
+            # distances share the radius column's physical unit, so the array
+            # is never dimensionless — it is already in the file's unit.
+            params[PARAM_KEY_SCALE_NM] = 1.0
+        else:
+            # The parser stores the author-written unit verbatim (``#unit=NM``
+            # exists in the wild) and defaults to ``"nm"`` when the header
+            # omits it, so a CSV without metadata is nm geometry too. Normalize
+            # before comparing so case and stray whitespace cannot smuggle a
+            # dimensionless file onto the scale_nm path.
+            declared_unit = (
+                meta_unit.strip().lower() if isinstance(meta_unit, str) else None
+            )
+            if declared_unit != "dimensionless":
+                params[PARAM_KEY_SCALE_NM] = 1.0
         params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
         params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"

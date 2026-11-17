@@ -2,14 +2,20 @@
  * Unit scaling helpers for Rg display (frontend boundary).
  *
  * The engine emits dimensionless Rg. Display/export paths multiply by
+ *   scale = params.scale_nm (explicit factor, if positive finite) — #197
+ * or, when scale_nm is absent/invalid:
  *   scale = primary_particle_diameter_nm / 2
  * to produce nm.
  *
  * This module MUST match backend/apps/simulations/services/params.py
- * byte-for-byte on every input. Fallback order:
+ * byte-for-byte on every input. Diameter fallback order (unchanged):
  *   1. v2: params.primary_particle_diameter_nm (if positive finite)
  *   2. v1: params.primary_particle_radius_nm * 2 (if positive finite)
  *   3. default 50.0 nm (historical legacy default radius 25 × 2)
+ *
+ * Scale-factor resolution order (mirrors the Python shim, same position):
+ *   1. params.scale_nm (if positive finite)
+ *   2. getPrimaryParticleDiameterNm(params) / 2
  *
  * Non-positive values (0, negatives) and non-finite values (NaN, ±Infinity)
  * fall through to the next step.
@@ -18,6 +24,7 @@
 export const PARAM_KEY_DIAMETER = "primary_particle_diameter_nm";
 export const PARAM_KEY_RADIUS_LEGACY = "primary_particle_radius_nm";
 export const PARAM_KEY_SCHEMA_VERSION = "parameters_schema_version";
+export const PARAM_KEY_SCALE_NM = "scale_nm";
 export const DEFAULT_DIAMETER_NM = 50.0;
 export const SCHEMA_VERSION_CURRENT = "v2" as const;
 
@@ -61,12 +68,25 @@ export function getPrimaryParticleDiameterNm(
 }
 
 /**
- * Return the scale factor (nm per dimensionless Rg unit): `diameter / 2`.
+ * Return the scale factor (nm per dimensionless Rg unit).
  * Single source of truth for nm scaling on the frontend.
+ *
+ * Resolution order (mirrors the Python shim's `get_scale_factor_nm`, same
+ * position — `scale_nm` is an input field read identically on both sides,
+ * not an import special case):
+ *   1. `params.scale_nm` if positive finite (#197: stamped 1.0 on imports
+ *      whose geometry is already in nm)
+ *   2. `getPrimaryParticleDiameterNm(params) / 2`
  */
 export function getScaleFactorNm(
   params: Record<string, unknown> | null | undefined,
 ): number {
+  if (params !== null && params !== undefined && typeof params === "object") {
+    const scale = (params as Record<string, unknown>)[PARAM_KEY_SCALE_NM];
+    if (isPositiveFiniteNumber(scale)) {
+      return scale;
+    }
+  }
   return getPrimaryParticleDiameterNm(params) / 2;
 }
 
