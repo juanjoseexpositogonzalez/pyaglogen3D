@@ -64,6 +64,72 @@ impl fmt::Display for BoxCountingError {
 
 impl std::error::Error for BoxCountingError {}
 
+/// Choice of box-counting fit window returned by [`select_fit_window`]
+/// (task #332 S2, criterion R5).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FitWindowChoice {
+    /// Inclusive `(start, end)` indices into the effective (count-valid)
+    /// level sequence, finest-first — directly consumable by
+    /// [`box_counting_3d_windowed`]. `None` means **no measured window**: the
+    /// caller must use the legacy path ([`box_counting_3d_morton`]), NOT
+    /// `(0, effective_levels - 1)` on the windowed path. Those are not the same
+    /// thing: with fewer than 3 count-valid levels the windowed path rejects the
+    /// range outright, so mapping `None` that way turns a fallback into an error.
+    pub window: Option<(usize, usize)>,
+    /// Whether the window is a measured choice. `false` means no measured window
+    /// (see [`FitWindowChoice::window`]): the declared fallback where R5 refuses.
+    pub reliable: bool,
+    /// Number of count-valid levels (`0 < count < n_points`).
+    pub effective_levels: usize,
+}
+
+/// Select the box-counting fit window from the raw per-level counts
+/// (task #332 S2, criterion R5 — locked in task Log L9).
+///
+/// # Criterion (R5, "coarse window")
+/// Among the count-valid levels — those with `0 < count < n_points`, kept in
+/// their natural order (finest-first, the order `box_counting_3d_windowed`
+/// indexes them) — the window is `(1, len-1)` when there are at least 3
+/// count-valid levels from index 1 onward (i.e. `len >= 4`). Index 0 is dropped
+/// as the finest **non-saturated** level, the noisiest end of the usable curve.
+/// (Saturated levels are not "index 0" of anything here: the filter above drops
+/// them, so the saturation transition sits *above* the effective sequence.)
+/// Otherwise the window is `None` with `reliable = false`, and the caller falls
+/// back to the legacy estimator rather than to a windowed fit of everything.
+///
+/// # Measured evidence
+/// R5 was chosen by measuring five candidate rules on engine clouds (task
+/// #332 Log L9): max |Δ| 0.359, mean 0.185 — better than the oracle's mean
+/// 0.306. It refuses on short curves (< 4 count-valid levels, e.g. all
+/// N = 100 runs), which is why the fallback is the current behaviour: where
+/// R5 refuses it cannot make anything worse.
+///
+/// This is a pure function: it does not touch the estimator. `n_points` is
+/// the number of points of the run the counts come from, used only to filter
+/// saturated levels (`count == n_points`).
+pub fn select_fit_window(counts: &[usize], n_points: usize) -> FitWindowChoice {
+    let effective_levels = counts.iter().filter(|&&c| 0 < c && c < n_points).count();
+
+    if effective_levels >= 4 {
+        // At least 3 count-valid levels from index 1 onward: fit 1..=last,
+        // dropping only the noisiest (finest) non-saturated level.
+        FitWindowChoice {
+            window: Some((1, effective_levels - 1)),
+            reliable: true,
+            effective_levels,
+        }
+    } else {
+        // No measured window. The caller keeps `box_counting_3d_morton`: the
+        // windowed path would reject fewer than 3 levels, so `None` is not a
+        // range to be rebuilt as (0, len-1).
+        FitWindowChoice {
+            window: None,
+            reliable: false,
+            effective_levels,
+        }
+    }
+}
+
 /// Interleave bits of x into a 64-bit integer, spreading them apart for Morton code.
 /// Places bits of x at positions 0, 3, 6, 9, ... (every 3rd bit for 3D).
 #[inline]
@@ -736,5 +802,176 @@ mod tests {
             let dist = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
             assert!((dist - 1.0).abs() < 1e-10);
         }
+    }
+
+    // ── select_fit_window (task #332 S2, criterion R5) ─────────────────────
+
+    /// Raw per-level box counts for `points`, computed exactly as
+    /// `morton_core` does (public helpers only): one count per Morton level,
+    /// finest-first, including saturated levels. This is the input contract
+    /// of `select_fit_window`.
+    fn raw_level_counts(points: &[[f64; 3]], precision: u32) -> Vec<usize> {
+        let precision = precision.min(MAX_PRECISION);
+        let (min_coords, max_coords) = find_bounding_box(points);
+        let scale = compute_scale(&min_coords, &max_coords);
+        let max_val = (1u64 << precision) - 1;
+        let mut codes: Vec<u64> = points
+            .iter()
+            .map(|p| {
+                morton_encode_3d(
+                    normalize_coord(p[0], min_coords[0], scale, max_val),
+                    normalize_coord(p[1], min_coords[1], scale, max_val),
+                    normalize_coord(p[2], min_coords[2], scale, max_val),
+                )
+            })
+            .collect();
+        codes.sort_unstable();
+        (0..precision)
+            .map(|level| count_unique_masked(&codes, 3 * level))
+            .collect()
+    }
+
+    /// Deterministic pseudo-random points in the unit cube (small LCG, no
+    /// external RNG dependency).
+    fn lcg_points(n: usize) -> Vec<[f64; 3]> {
+        let mut state = 0x2545_F491_4F6C_DD1Du64;
+        let mut next_unit = |state: &mut u64| {
+            *state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            ((*state >> 33) & 0xFFFFF) as f64 / 0xFFFFF as f64
+        };
+        (0..n)
+            .map(|_| {
+                [
+                    next_unit(&mut state),
+                    next_unit(&mut state),
+                    next_unit(&mut state),
+                ]
+            })
+            .collect()
+    }
+
+    #[test]
+    fn test_select_fit_window_four_plus_valid_levels() {
+        // Saturated levels (== n_points) and zero levels are filtered out;
+        // the 4 remaining count-valid levels yield the R5 coarse window
+        // (1, len-1), excluding only the index-0 saturation transition.
+        let counts = [1000, 800, 400, 200, 100, 1000];
+        let choice = select_fit_window(&counts, 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: Some((1, 3)),
+                reliable: true,
+                effective_levels: 4
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_exactly_three_valid_levels() {
+        // Only 2 count-valid levels from index 1 onward: no measured window.
+        let counts = [1000, 800, 400, 200];
+        let choice = select_fit_window(&counts, 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: None,
+                reliable: false,
+                effective_levels: 3
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_two_valid_levels() {
+        let counts = [800, 200];
+        let choice = select_fit_window(&counts, 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: None,
+                reliable: false,
+                effective_levels: 2
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_all_counts_saturated() {
+        // Every level has count == n_points: nothing is count-valid.
+        let counts = [1000; 8];
+        let choice = select_fit_window(&counts, 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: None,
+                reliable: false,
+                effective_levels: 0
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_monotone_non_saturated_curve() {
+        // Strictly decreasing counts, none equal to n_points: the rule is
+        // the same, proving it does not depend on saturation being present.
+        let counts = [500, 250, 125, 60, 30];
+        let choice = select_fit_window(&counts, 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: Some((1, 4)),
+                reliable: true,
+                effective_levels: 5
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_empty_input() {
+        let choice = select_fit_window(&[], 1000);
+        assert_eq!(
+            choice,
+            FitWindowChoice {
+                window: None,
+                reliable: false,
+                effective_levels: 0
+            }
+        );
+    }
+
+    #[test]
+    fn test_select_fit_window_accepted_by_windowed_estimator() {
+        // Witness that the selected window is consumable by
+        // `box_counting_3d_windowed` and that it actually matters: on a
+        // uniform random cloud the finest count-valid level (index 0) bends
+        // the curve, so fitting all levels differs from the R5 window.
+        let points = lcg_points(1000);
+        let precision = 16;
+        let counts = raw_level_counts(&points, precision);
+        let choice = select_fit_window(&counts, points.len());
+        let (start, end) = choice
+            .window
+            .expect("uniform cloud must yield a reliable window");
+        assert!(choice.reliable, "uniform cloud window must be reliable");
+        assert!(choice.effective_levels >= 4);
+
+        let windowed = box_counting_3d_windowed(&points, precision, (start, end))
+            .expect("selected window must be accepted by the windowed estimator");
+        assert_eq!(windowed.linear_region_start, start);
+        assert_eq!(windowed.effective_levels, choice.effective_levels);
+
+        let eff = choice.effective_levels;
+        let all_levels = box_counting_3d_windowed(&points, precision, (0, eff - 1))
+            .expect("full effective window is valid");
+        assert!(
+            (windowed.dimension - all_levels.dimension).abs() > 1e-3,
+            "window must change the dimension on a non-straight curve: \
+             windowed {} vs all-levels {}",
+            windowed.dimension,
+            all_levels.dimension
+        );
     }
 }
