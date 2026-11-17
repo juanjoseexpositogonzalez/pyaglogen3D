@@ -181,6 +181,27 @@ pub struct BoxCountingResult3D {
     /// count is NOT derivable from the returned vectors. The windowed fit
     /// `(s, e)` is derived from this count by the backend (design D2).
     pub effective_levels: usize,
+    /// Inclusive `(start, end)` indices into the EFFECTIVE level sequence —
+    /// the count-valid levels, finest-first, BEFORE the Step 4b saturation
+    /// truncation; the same sequence `box_counting_3d_windowed` indexes —
+    /// over which the reported fit was actually computed (task #332 S3,
+    /// S1/S2). `None` when fewer than 3 effective levels were fitted (S6):
+    /// no window to promise.
+    ///
+    /// Legacy path arithmetic (S2): the robust fit runs on the POST-
+    /// truncation sequence, so both ends are translated back by the number
+    /// of fine levels Step 4b dropped (`truncation_offset`). The start is
+    /// `linear_region_start` (a truncated-sequence index) shifted by that
+    /// offset. `linear_regression_robust` always fits through the coarsest
+    /// level (a suffix of its input) and Step 4b only drops FINE levels, so
+    /// the end is the last effective level. Additive: no existing consumer
+    /// changes behaviour.
+    pub fit_window: Option<(usize, usize)>,
+    /// Origin of the published window (S3): `"legacy"` when the default
+    /// robust path (or an explicit window nobody measured) chose it, `"r5"`
+    /// when a measured window from `select_fit_window` chose it. Always
+    /// `"legacy"` in this step — R5 is not wired (S3b connects it).
+    pub window_source: &'static str,
 }
 
 /// Fast 3D box-counting using Morton codes (default legacy fit path).
@@ -253,6 +274,9 @@ fn morton_core(
             num_points: n_points,
             linear_region_start: 0,
             effective_levels: 0,
+            // S6: degenerate input, no window to promise.
+            fit_window: None,
+            window_source: "legacy",
         });
     }
 
@@ -354,6 +378,12 @@ fn morton_core(
             num_points: n_points,
             linear_region_start: start,
             effective_levels,
+            // S1: the window is exactly what the caller passed.
+            fit_window: Some((start, end)),
+            // S3: "legacy" until R5 is wired (S3b) — no caller passes a
+            // measured window yet, so even an explicit window is not a
+            // measured choice.
+            window_source: "legacy",
         });
     }
 
@@ -363,6 +393,12 @@ fn morton_core(
     // Saturation = consecutive fine-scale levels with SAME count (no new boxes
     // appear when refining further). Scan from coarse→fine (high→low index)
     // and truncate at the first plateau.
+    //
+    // `truncation_offset` (task #332 S3): number of FINE levels this step
+    // dropped, needed to translate the fitted window back to effective
+    // indices below. Zero when no truncation happened (short curve, no
+    // plateau, or a plateau that would leave < 3 levels).
+    let truncation_offset;
     if log_counts.len() > 6 {
         let mut truncate_before = 0;
         // Scan from second-finest towards coarsest
@@ -377,7 +413,12 @@ fn morton_core(
         if truncate_before > 0 && log_counts.len() - truncate_before >= 3 {
             log_scales = log_scales[truncate_before..].to_vec();
             log_counts = log_counts[truncate_before..].to_vec();
+            truncation_offset = truncate_before;
+        } else {
+            truncation_offset = 0;
         }
+    } else {
+        truncation_offset = 0;
     }
 
     // Step 5: Robust linear regression to find fractal dimension
@@ -388,6 +429,10 @@ fn morton_core(
     let dimension = slope;
     let ci_half = 1.96 * std_error;
     let confidence_interval = (dimension - ci_half, dimension + ci_half);
+
+    // S1/S2 (task #332 S3): publish the window this fit actually used, in
+    // EFFECTIVE level indices (the sequence the windowed path indexes).
+    let fit_window = legacy_fit_window(log_scales.len(), truncation_offset, linear_start);
 
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
 
@@ -403,7 +448,37 @@ fn morton_core(
         num_points: n_points,
         linear_region_start: linear_start,
         effective_levels,
+        fit_window,
+        // S3: the default robust path is the legacy choice by definition;
+        // `"r5"` appears only when S3b wires the measured selector in.
+        window_source: "legacy",
     })
+}
+
+/// Legacy-path fit window in EFFECTIVE level indices (task #332 S3, S1/S2).
+///
+/// `linear_start` is the robust fit's first index IN TRUNCATED coordinates;
+/// `truncation_offset` is the number of FINE levels Step 4b dropped (0 when
+/// no truncation happened); `fitted_levels` is the length of the truncated
+/// sequence the fit actually ran on. Both ends are translated back to
+/// effective indices: the start by the full offset (this is the part a naive
+/// `(linear_region_start, effective_levels - 1)` report would get wrong),
+/// the end lands on `truncation_offset + fitted_levels - 1` because
+/// `linear_regression_robust` always fits through the coarsest level (a
+/// suffix of its input). S6: fewer than 3 fitted levels → `None`.
+fn legacy_fit_window(
+    fitted_levels: usize,
+    truncation_offset: usize,
+    linear_start: usize,
+) -> Option<(usize, usize)> {
+    if fitted_levels >= 3 {
+        Some((
+            truncation_offset + linear_start,
+            truncation_offset + fitted_levels - 1,
+        ))
+    } else {
+        None
+    }
 }
 
 /// Count unique values after masking off `shift` low bits.
@@ -631,6 +706,207 @@ pub fn generate_sphere_points(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── Published fit window (task #332 S3: P1/P3) ─────────────────────
+
+    /// The saturation-plateau fixture used by the truncation witnesses:
+    /// an 8x8x8 lattice of distinct positions, each repeated with tiny
+    /// jitter so all replicas collapse into one voxel. Every level finer
+    /// than the lattice spacing counts 512 boxes, so the effective sequence
+    /// opens with a long plateau and the legacy Step 4b truncation fires.
+    fn plateau_fixture() -> Vec<[f64; 3]> {
+        let mut points: Vec<[f64; 3]> = Vec::new();
+        for i in 0..8 {
+            for j in 0..8 {
+                for k in 0..8 {
+                    for r in 0..20 {
+                        let jitter = r as f64 * 1e-9;
+                        points.push([i as f64 + jitter, j as f64 + jitter, k as f64 + jitter]);
+                    }
+                }
+            }
+        }
+        points
+    }
+
+    #[test]
+    fn test_legacy_numbers_match_pre_change_baseline() {
+        // S4 witness: these values were captured by running THIS code on the
+        // unmodified legacy path (before `fit_window`/`window_source` existed)
+        // and are pinned bit-exact, so publishing the window cannot silently
+        // change the numbers. Update only with diagnostic evidence (see
+        // AGENTS.md: tolerances are never weakened in silence).
+        let cases: [(&str, Vec<[f64; 3]>, f64, f64, f64); 4] = [
+            // line1000: dimension=1.0000000000000004 r2=1 se=2.0093743462551408e-16
+            (
+                "line1000",
+                (0..1000).map(|i| [i as f64, 0.0, 0.0]).collect(),
+                1.0000000000000004,
+                1.0,
+                0.00000000000000020093743462551408,
+            ),
+            // plateau: dimension=3.000000000000002 r2=1 se=2.43965694143653e-15
+            (
+                "plateau",
+                plateau_fixture(),
+                3.000000000000002,
+                1.0,
+                0.00000000000000243965694143653,
+            ),
+            // lcg1000: dimension=2.314832040302268 r2=0.9592699460019857 se=0.3372807546638281
+            (
+                "lcg1000",
+                lcg_points(1000),
+                2.314832040302268,
+                0.9592699460019857,
+                0.3372807546638281,
+            ),
+            // lcg100: dimension=1.1781154656322332 r2=0.8127289832869107 se=0.39988514360755445
+            (
+                "lcg100",
+                lcg_points(100),
+                1.1781154656322332,
+                0.8127289832869107,
+                0.39988514360755445,
+            ),
+        ];
+        for (name, points, dimension, r_squared, std_error) in cases {
+            let r = box_counting_3d_morton(&points, 16);
+            assert_eq!(r.dimension, dimension, "{name}: dimension moved");
+            assert_eq!(r.r_squared, r_squared, "{name}: r_squared moved");
+            assert_eq!(r.std_error, std_error, "{name}: std_error moved");
+        }
+    }
+
+    #[test]
+    fn test_fit_window_describes_what_was_fitted_under_truncation() {
+        // S1/S2 witness on the case where Step 4b truncation actually fires:
+        // the published window must index the EFFECTIVE sequence, not the
+        // truncated one, and re-fitting the slice it names must reproduce
+        // the reported dimension.
+        let points = plateau_fixture();
+        let result = box_counting_3d_morton(&points, 16);
+
+        // Truncation fired: the offset (levels dropped from the fine end) is
+        // recoverable from public fields as effective_levels - vector length.
+        assert!(
+            result.effective_levels > result.log_scales.len(),
+            "fixture must truncate: effective_levels={}, vec_len={}",
+            result.effective_levels,
+            result.log_scales.len()
+        );
+        let offset = result.effective_levels - result.log_scales.len();
+
+        let (start, end) = result
+            .fit_window
+            .expect("truncated sequence keeps >= 3 levels, so a window exists");
+
+        // The robust fit runs on the truncated sequence, so the start is
+        // `linear_region_start` shifted by the truncation offset. The raw
+        // `linear_region_start` (a truncated-sequence index) is exactly the
+        // naive value the translation must fix.
+        assert_eq!(start, offset + result.linear_region_start);
+        assert_ne!(start, result.linear_region_start);
+
+        // End: Step 4b drops FINE levels and `linear_regression_robust`
+        // always fits through the coarsest level (a suffix of its input),
+        // so the last fitted effective index IS effective_levels - 1 — here
+        // that is truly what was fitted (see task report: this replaces the
+        // witness phrase "end is not effective_levels - 1", which the
+        // truncation direction makes unsatisfiable).
+        assert_eq!(end, result.effective_levels - 1);
+
+        // The decisive S1/S2 witness: slice the EFFECTIVE sequence at the
+        // reported window and run the same plain OLS the final robust step
+        // uses — the slope must reproduce the reported dimension. The
+        // windowed path with (0, eff-1) returns the full untruncated
+        // effective sequence.
+        let eff = result.effective_levels;
+        let full = box_counting_3d_windowed(&points, 16, (0, eff - 1))
+            .expect("full effective window is valid");
+        assert_eq!(full.log_scales.len(), eff);
+        let (slope, _, _, _, _) =
+            linear_regression(&full.log_scales[start..=end], &full.log_counts[start..=end]);
+        assert!(
+            (slope - result.dimension).abs() < 1e-12,
+            "slice [{start}, {end}] slope {slope} != reported dimension {}",
+            result.dimension
+        );
+
+        // Counterfactual (the translation matters): the naive untranslated
+        // window (raw linear_region_start as an effective index) includes
+        // the saturation plateau and does NOT reproduce the dimension.
+        let naive_start = result.linear_region_start;
+        let (naive_slope, _, _, _, _) = linear_regression(
+            &full.log_scales[naive_start..=end],
+            &full.log_counts[naive_start..=end],
+        );
+        assert!(
+            (naive_slope - result.dimension).abs() > 1e-9,
+            "naive window [{naive_start}, {end}] must not reproduce the fit: \
+             slope {naive_slope} vs dimension {}",
+            result.dimension
+        );
+    }
+
+    #[test]
+    fn test_window_source_is_legacy_on_default_path() {
+        // S3 witness: in this step every published window is legacy — R5 is
+        // not wired — on both the default robust path and the explicit-window
+        // path (no caller passes a measured window yet).
+        let points = lcg_points(1000);
+        let result = box_counting_3d_morton(&points, 16);
+        assert_eq!(result.window_source, "legacy");
+
+        // No truncation in this fixture (vector length == effective count),
+        // so the window is the untranslated robust range: start =
+        // linear_region_start, end = last fitted level = effective_levels - 1.
+        assert_eq!(result.log_scales.len(), result.effective_levels);
+        let (start, end) = result
+            .fit_window
+            .expect("6 effective levels -> a window exists");
+        assert_eq!(start, result.linear_region_start);
+        assert_eq!(end, result.effective_levels - 1);
+
+        // S1/S2 witness on the untruncated path too: re-fitting the named
+        // slice of the effective sequence reproduces the dimension.
+        let eff = result.effective_levels;
+        let full = box_counting_3d_windowed(&points, 16, (0, eff - 1))
+            .expect("full effective window is valid");
+        let (slope, _, _, _, _) =
+            linear_regression(&full.log_scales[start..=end], &full.log_counts[start..=end]);
+        assert!((slope - result.dimension).abs() < 1e-12);
+
+        // Explicit-window path: the window is exactly what the caller passed,
+        // and the origin stays "legacy" until R5 is wired (S3b).
+        let windowed = box_counting_3d_windowed(&points, 16, (1, 4)).expect("window valid");
+        assert_eq!(windowed.fit_window, Some((1, 4)));
+        assert_eq!(windowed.window_source, "legacy");
+        assert_eq!(windowed.linear_region_start, 1);
+    }
+
+    #[test]
+    fn test_fit_window_none_below_three_effective_levels() {
+        // S6 witness: fewer than 3 effective levels -> fit_window: None,
+        // window_source: "legacy", no panic. Three collinear points at
+        // precision 2: level 0 separates all three (count == n_points ->
+        // saturated, filtered) and only coarser levels are count-valid.
+        let points = [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [2.0, 0.0, 0.0]];
+        let r = box_counting_3d_morton(&points, 2);
+        assert!(r.effective_levels < 3, "got {}", r.effective_levels);
+        assert_eq!(r.fit_window, None);
+        assert_eq!(r.window_source, "legacy");
+
+        // Degenerate inputs take the early return: no panic, no window,
+        // still legacy.
+        let one = [[0.5, 0.5, 0.5]];
+        let r1 = box_counting_3d_morton(&one, 16);
+        assert_eq!(r1.fit_window, None);
+        assert_eq!(r1.window_source, "legacy");
+        let r0 = box_counting_3d_morton(&[], 16);
+        assert_eq!(r0.fit_window, None);
+        assert_eq!(r0.window_source, "legacy");
+    }
 
     #[test]
     fn test_morton_encode() {
