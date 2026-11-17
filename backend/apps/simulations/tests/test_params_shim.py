@@ -15,13 +15,13 @@ from apps.simulations.services.params import (
     DEFAULT_DIAMETER_NM,
     PARAM_KEY_DIAMETER,
     PARAM_KEY_RADIUS_LEGACY,
+    PARAM_KEY_SCALE_NM,
     PARAM_KEY_SCHEMA_VERSION,
     SCHEMA_VERSION_CURRENT,
     get_primary_particle_diameter_nm,
     get_scale_factor_nm,
     get_schema_version,
 )
-
 
 # ---------------------------------------------------------------------------
 # get_primary_particle_diameter_nm — fallback order
@@ -136,6 +136,74 @@ def test_get_scale_factor_default() -> None:
 
 
 # ---------------------------------------------------------------------------
+# get_scale_factor_nm — explicit scale_nm (issue #197)
+#
+# Every case here is mirrored, with the same expected values, in
+# frontend/src/lib/__tests__/units.test.ts. That mirror is the test the first
+# attempt at #197 lacked: a guard added to only one shim made the screen and
+# the CSV export disagree.
+# ---------------------------------------------------------------------------
+
+
+def test_get_scale_factor_scale_nm_present() -> None:
+    """Explicit scale_nm is the factor itself — first priority (S1)."""
+    assert get_scale_factor_nm({PARAM_KEY_SCALE_NM: 1.0}) == 1.0
+
+
+def test_get_scale_factor_scale_nm_outranks_diameter() -> None:
+    """scale_nm wins over the v2 diameter key, in both shims, same order."""
+    params = {PARAM_KEY_SCALE_NM: 1.0, PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 1.0
+
+
+def test_get_scale_factor_scale_nm_absent_unchanged() -> None:
+    """No scale_nm: the historical diameter/2 behaviour is unchanged."""
+    assert get_scale_factor_nm({PARAM_KEY_DIAMETER: 30.0}) == 15.0
+    assert get_scale_factor_nm({PARAM_KEY_RADIUS_LEGACY: 12.5}) == 12.5
+
+
+def test_get_scale_factor_scale_nm_zero_falls_through() -> None:
+    """scale_nm = 0 is non-positive: fall through to diameter / 2."""
+    params = {PARAM_KEY_SCALE_NM: 0, PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 12.0
+
+
+def test_get_scale_factor_scale_nm_negative_falls_through() -> None:
+    """Negative scale_nm: fall through to diameter / 2."""
+    params = {PARAM_KEY_SCALE_NM: -2.0, PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 12.0
+
+
+def test_get_scale_factor_scale_nm_string_falls_through() -> None:
+    """A string scale_nm is not a number: fall through to diameter / 2."""
+    params = {PARAM_KEY_SCALE_NM: "1.0", PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 12.0
+
+
+def test_get_scale_factor_scale_nm_nan_falls_through() -> None:
+    """NaN scale_nm is not finite: fall through to diameter / 2."""
+    params = {PARAM_KEY_SCALE_NM: float("nan"), PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 12.0
+
+
+def test_get_scale_factor_scale_nm_infinity_falls_through() -> None:
+    """Infinite scale_nm is not finite: fall through to diameter / 2."""
+    params = {PARAM_KEY_SCALE_NM: math.inf, PARAM_KEY_DIAMETER: 24.0}
+    assert get_scale_factor_nm(params) == 12.0
+
+
+def test_get_scale_factor_dimensionless_import_keeps_default_path() -> None:
+    """A dimensionless import carries no scale_nm: default diameter path.
+
+    What the import stamps for ``unit=dimensionless`` is exactly these
+    parameters — default diameter, no explicit factor — so the shim must
+    keep resolving the factor as 50.0 / 2.
+    """
+    params = {PARAM_KEY_DIAMETER: DEFAULT_DIAMETER_NM}
+    assert get_scale_factor_nm(params) == DEFAULT_DIAMETER_NM / 2.0
+
+
+# ---------------------------------------------------------------------------
 # get_schema_version
 # ---------------------------------------------------------------------------
 
@@ -192,6 +260,7 @@ def test_public_constants_are_stable() -> None:
     """Lock the constant values to catch accidental renames."""
     assert PARAM_KEY_DIAMETER == "primary_particle_diameter_nm"
     assert PARAM_KEY_RADIUS_LEGACY == "primary_particle_radius_nm"
+    assert PARAM_KEY_SCALE_NM == "scale_nm"
     assert PARAM_KEY_SCHEMA_VERSION == "parameters_schema_version"
     assert SCHEMA_VERSION_CURRENT == "v2"
     assert DEFAULT_DIAMETER_NM == 50.0

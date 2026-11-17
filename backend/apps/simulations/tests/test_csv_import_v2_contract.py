@@ -31,10 +31,11 @@ from apps.accounts.models import User
 from apps.projects.models import Project
 from apps.simulations.models import Simulation
 from apps.simulations.services.params import (
+    DEFAULT_DIAMETER_NM,
     PARAM_KEY_DIAMETER,
+    PARAM_KEY_SCALE_NM,
     PARAM_KEY_SCHEMA_VERSION,
 )
-
 
 # --- Fixture helpers ---------------------------------------------------------
 
@@ -168,6 +169,94 @@ def test_csv_import_stamps_source_filename_and_format() -> None:
     assert "locale_warning" in meta
 
 
+# --- #197: nm-geometry imports stamp scale_nm = 1.0 -------------------------
+
+
+@pytest.mark.django_db
+def test_csv_import_without_unit_metadata_stamps_scale_nm() -> None:
+    """A CSV with no ``#unit`` metadata is nm geometry (parser defaults to nm).
+
+    S2: the import stamps ``scale_nm = 1.0`` so the shims stop rescaling nm
+    geometry by its own mean radius, while the physical diameter stays
+    ``2 * mean(radius)``.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    rows = [(float(i), 0.0, 0.0, 12.0) for i in range(5)]
+    response = _post_import(client, project, rows)
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert sim.parameters[PARAM_KEY_SCALE_NM] == 1.0
+    # The physical diameter keeps telling the truth: 2 * mean radius.
+    assert sim.parameters[PARAM_KEY_DIAMETER] == pytest.approx(24.0)
+
+
+@pytest.mark.django_db
+def test_csv_import_unit_nm_stamps_scale_nm() -> None:
+    """An explicit ``#unit=nm`` header is nm geometry: scale_nm = 1.0."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"#unit=nm\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n"
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert sim.parameters[PARAM_KEY_SCALE_NM] == 1.0
+
+
+@pytest.mark.django_db
+def test_csv_import_unit_nm_uppercase_stamps_scale_nm() -> None:
+    """``#unit=NM`` is an author-written value stored verbatim by the parser.
+
+    The declared unit is normalized with ``.strip().lower()`` before the
+    ``dimensionless`` comparison, so ``NM`` behaves like ``nm``.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"#unit=NM\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n"
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    # The verbatim unit is still stamped in the metadata for traceability.
+    assert sim.parameters["import_metadata"]["unit"] == "NM"
+    assert sim.parameters[PARAM_KEY_SCALE_NM] == 1.0
+
+
+@pytest.mark.django_db
+def test_csv_import_dimensionless_carries_no_scale_nm() -> None:
+    """S3: a dimensionless import keeps the default-diameter path.
+
+    ``unit=dimensionless`` is the one declared unit that must NOT carry
+    ``scale_nm``: the geometry is normalized, so the shims keep falling back
+    to the default diameter (50.0) for the scale factor.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"#unit=dimensionless\nx,y,z,radius\n0,0,0,1\n2,0,0,1\n4,0,0,1\n"
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert PARAM_KEY_SCALE_NM not in sim.parameters
+    assert sim.parameters[PARAM_KEY_DIAMETER] == DEFAULT_DIAMETER_NM
+
+
 # --- Content-validation rejections (400, not 500) ---------------------------
 
 
@@ -232,10 +321,16 @@ def test_csv_import_parses_exactly_once() -> None:
 
     import apps.simulations.views as views_module
 
+    # ``parse_csv_geometry`` lives in ``utils`` and is imported into the view
+    # module; reading it back off that module is not an explicit export, so mypy
+    # flags it (attr-defined). Patch the name where the view looks it up, but
+    # wrap the real function from the module that defines it.
+    from apps.simulations.utils import parse_csv_geometry
+
     with patch.object(
         views_module,
         "parse_csv_geometry",
-        wraps=views_module.parse_csv_geometry,
+        wraps=parse_csv_geometry,
     ) as spy:
         response = _post_import(client, project, rows)
 
@@ -394,3 +489,39 @@ def test_csv_import_accepts_filename_and_format_inside_parameters() -> None:
     # stamped simulation (not an empty string from the missing top-level).
     assert sim.parameters["original_filename"] == "from-ui.csv"
     assert sim.parameters["original_format"] == "csv"
+
+
+# --- #197: the dimensionless gate is normalised ONCE -------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "unit_token",
+    ["Dimensionless", "DIMENSIONLESS", " dimensionless "],
+)
+def test_csv_import_dimensionless_capitalised_carries_no_scale_nm(
+    unit_token: str,
+) -> None:
+    """A capitalised or padded ``dimensionless`` is still dimensionless.
+
+    The declared unit is normalised ONCE, and that same value decides both the
+    diameter and ``scale_nm``. When only the ``scale_nm`` branch normalised it,
+    a file declaring ``Dimensionless`` got a mean-radius diameter *and* no
+    ``scale_nm`` - the #197 rescaling again, for a file that differs only in
+    capitalisation. Both halves are asserted together so they cannot drift.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = f"#unit={unit_token}\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n".encode()
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    # No measured scale: the shims keep the default-diameter path (S3).
+    assert PARAM_KEY_SCALE_NM not in sim.parameters
+    # And the diameter really took the dimensionless branch, not the mean radius.
+    assert sim.parameters[PARAM_KEY_DIAMETER] == pytest.approx(DEFAULT_DIAMETER_NM)
