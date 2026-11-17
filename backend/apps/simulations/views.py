@@ -156,8 +156,10 @@ def _stamp_scale_metadata(
     - ``pixels_per_100nm`` (float | None): how many pixels correspond to
       100 nm in the rendered PNGs. ``None`` when the aggregate is empty
       or the engine→nm conversion is degenerate.
-    - ``scale_factor_nm`` (float): ``primary_particle_diameter_nm / 2``,
-      the engine→nm multiplier used for Rg display across the app.
+    - ``scale_factor_nm`` (float): the engine→nm multiplier used for Rg
+      display across the app, as resolved by ``get_scale_factor_nm`` —
+      ``scale_nm`` when the parameters carry it (an import already in nm),
+      otherwise ``primary_particle_diameter_nm / 2``.
 
     Scale is constant per aggregate (NOT per direction) because we use
     the 3D bounding-box extent + particle-radius margin as the reference

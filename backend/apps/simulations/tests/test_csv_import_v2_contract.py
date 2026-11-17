@@ -321,10 +321,16 @@ def test_csv_import_parses_exactly_once() -> None:
 
     import apps.simulations.views as views_module
 
+    # ``parse_csv_geometry`` lives in ``utils`` and is imported into the view
+    # module; reading it back off that module is not an explicit export, so mypy
+    # flags it (attr-defined). Patch the name where the view looks it up, but
+    # wrap the real function from the module that defines it.
+    from apps.simulations.utils import parse_csv_geometry
+
     with patch.object(
         views_module,
         "parse_csv_geometry",
-        wraps=views_module.parse_csv_geometry,
+        wraps=parse_csv_geometry,
     ) as spy:
         response = _post_import(client, project, rows)
 

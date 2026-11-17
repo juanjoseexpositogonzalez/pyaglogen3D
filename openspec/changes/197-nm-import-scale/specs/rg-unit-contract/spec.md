@@ -197,3 +197,22 @@ show the same numeric Rg on every surface within display rounding.
 - THEN the y-axis label includes `nm`
 - AND plotted values are scaled by the shim-resolved factor `F`
   (`scale_nm` when present and positive finite, else `D_nm / 2`)
+
+### Requirement: Documentation contract
+
+A single contributor-oriented document MUST describe the unit convention and
+schema versioning so the question is not reopened in future changes.
+
+#### Scenario: Doc exists and covers required topics
+
+- GIVEN the repository after this change is applied
+- WHEN a contributor opens `docs/unit-convention.md`
+- THEN the document exists
+- AND it explains that the engine is dimensionless
+- AND it explains that display/export scale by the factor the shim resolves:
+  `scale_nm` when it is present and positive finite, else
+  `primary_particle_diameter_nm / 2`
+- AND it explains that an import whose geometry already is in nm carries
+  `scale_nm = 1.0`, so nothing rescales it
+- AND it explains the `parameters_schema_version` scheme (`v1` legacy vs `v2` current)
+- AND its length is at most one page
