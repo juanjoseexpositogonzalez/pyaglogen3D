@@ -731,11 +731,18 @@ mod tests {
 
     #[test]
     fn test_legacy_numbers_match_pre_change_baseline() {
-        // S4 witness: these values were captured by running THIS code on the
-        // unmodified legacy path (before `fit_window`/`window_source` existed)
-        // and are pinned bit-exact, so publishing the window cannot silently
-        // change the numbers. Update only with diagnostic evidence (see
-        // AGENTS.md: tolerances are never weakened in silence).
+        // S4 witness. PROVENANCE (task Log L5): these four values were
+        // captured BEFORE this branch touched anything — by a temporary
+        // print test run against the pre-change code (develop, before
+        // `fit_window`/`window_source` existed) — and are pinned bit-exact
+        // here, so publishing the window cannot silently change the
+        // numbers. The citation matters because the test alone cannot
+        // distinguish "captured before the change" from "regenerated after
+        // it": a silent numeric change plus a re-pin would pass
+        // identically. The independent evidence is the branch diff: zero
+        // deletions, with every added line outside the numeric path.
+        // Update only with diagnostic evidence (see AGENTS.md: tolerances
+        // are never weakened in silence).
         let cases: [(&str, Vec<[f64; 3]>, f64, f64, f64); 4] = [
             // line1000: dimension=1.0000000000000004 r2=1 se=2.0093743462551408e-16
             (
@@ -906,6 +913,97 @@ mod tests {
         let r0 = box_counting_3d_morton(&[], 16);
         assert_eq!(r0.fit_window, None);
         assert_eq!(r0.window_source, "legacy");
+    }
+
+    /// Task #332 S3 P3 witness for the review gap (task Log L6): every
+    /// truncating fixture used to have `linear_region_start == 0`, so the S2
+    /// sum `truncation_offset + linear_region_start` was only ever exercised
+    /// as `13 + 0`. This fixture makes BOTH terms non-zero.
+    ///
+    /// Construction: the `lcg_points(1000)` cloud (the same deterministic
+    /// generator as the S4 baseline fixture) with every point duplicated
+    /// exactly. Both replicas map to the same Morton code at every level, so
+    /// the fine end of the effective sequence is a count-valid plateau
+    /// (count 1000 < 2000 points) and Step 4b truncation fires; the
+    /// post-truncation head (counts 1000, 998, 983 — the cloud's own
+    /// point-saturation region) bends relative to the coarse anchor, so
+    /// `linear_regression_robust` rejects it and picks a start above zero.
+    fn duplicated_lcg_fixture() -> Vec<[f64; 3]> {
+        let mut points: Vec<[f64; 3]> = Vec::with_capacity(2000);
+        for p in &lcg_points(1000) {
+            points.push(*p);
+            points.push(*p);
+        }
+        points
+    }
+
+    #[test]
+    fn test_fit_window_start_is_sum_of_two_nonzero_terms() {
+        // Fixture shape (measured, deterministic): 16 count-valid levels with
+        // raw counts [1000 x10, 998, 983, 882, 444, 64, 8]. The ten-level
+        // exact-1000 plateau makes Step 4b drop 9 fine levels (its guard
+        // keeps the last plateau level), and the robust fit on the truncated
+        // sequence [1000, 998, 983, 882, 444, 64, 8] rejects the head,
+        // picking linear_region_start = 3.
+        let points = duplicated_lcg_fixture();
+        let result = box_counting_3d_morton(&points, 16);
+
+        // Step 4b fired: recover the offset from public fields (S2).
+        assert!(
+            result.effective_levels > result.log_scales.len(),
+            "fixture must truncate: effective_levels={}, vec_len={}",
+            result.effective_levels,
+            result.log_scales.len()
+        );
+        let offset = result.effective_levels - result.log_scales.len();
+        assert!(offset > 0, "truncation must fire, offset={offset}");
+        assert!(
+            result.linear_region_start > 0,
+            "robust fit must reject the truncated head, got linear_region_start=0"
+        );
+
+        // The L6 witness: the reported start is the sum of two NON-zero
+        // terms. Measured: offset 9 + linear_region_start 3 = 12.
+        let (start, end) = result
+            .fit_window
+            .expect("truncated sequence keeps >= 3 levels, so a window exists");
+        assert_eq!(result.effective_levels, 16);
+        assert_eq!(result.log_scales.len(), 7);
+        assert_eq!(offset, 9);
+        assert_eq!(result.linear_region_start, 3);
+        assert_eq!(start, offset + result.linear_region_start);
+        assert_eq!(start, 12, "expected offset 9 + linear_region_start 3");
+        assert_eq!(end, result.effective_levels - 1);
+
+        // S1/S2 witness: slicing the EFFECTIVE sequence at the published
+        // window reproduces the reported dimension — here over a window
+        // whose start is a genuine two-term sum.
+        let eff = result.effective_levels;
+        let full = box_counting_3d_windowed(&points, 16, (0, eff - 1))
+            .expect("full effective window is valid");
+        let (slope, _, _, _, _) =
+            linear_regression(&full.log_scales[start..=end], &full.log_counts[start..=end]);
+        assert!(
+            (slope - result.dimension).abs() < 1e-12,
+            "slice [{start}, {end}] slope {slope} != reported dimension {}",
+            result.dimension
+        );
+
+        // Counterfactual (the sum matters): the naive untranslated window
+        // (raw linear_region_start as an effective index) reaches into the
+        // plateau and the saturation head, so it must NOT reproduce the fit.
+        let naive_start = result.linear_region_start;
+        assert_ne!(naive_start, start);
+        let (naive_slope, _, _, _, _) = linear_regression(
+            &full.log_scales[naive_start..=end],
+            &full.log_counts[naive_start..=end],
+        );
+        assert!(
+            (naive_slope - result.dimension).abs() > 1e-9,
+            "naive window [{naive_start}, {end}] must not reproduce the fit: \
+             slope {naive_slope} vs dimension {}",
+            result.dimension
+        );
     }
 
     #[test]

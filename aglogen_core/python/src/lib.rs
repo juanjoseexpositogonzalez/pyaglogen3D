@@ -76,6 +76,21 @@ pub struct PyFractalResult {
     /// semantics: the 2D `From` impl populates it as 0.
     #[pyo3(get)]
     pub effective_levels: usize,
+    /// Inclusive `(start, end)` indices into the EFFECTIVE level sequence
+    /// over which the reported fit was actually computed (task #332 S3,
+    /// S1/S2/S5) — the same sequence `box_counting_3d_windowed` indexes.
+    /// Exposed to Python as a tuple of ints or `None` when fewer than 3
+    /// levels were fitted (S6). 3D-only semantics: the 2D `From` impl
+    /// populates it as `None`.
+    #[pyo3(get)]
+    pub fit_window: Option<(usize, usize)>,
+    /// Origin of the published window (task #332 S3): `"legacy"` (the
+    /// default robust path) or `"r5"` (a measured choice, once S3b wires
+    /// the selector). `"legacy"` in this step. The 2D `From` impl reports
+    /// `"legacy"` alongside `fit_window: None`, mirroring the engine's own
+    /// degenerate-case convention (S6).
+    #[pyo3(get)]
+    pub window_source: &'static str,
     pub log_scales_data: Vec<f64>,
     pub log_values_data: Vec<f64>,
     pub residuals_data: Vec<f64>,
@@ -107,6 +122,8 @@ impl From<FractalResult> for PyFractalResult {
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
             effective_levels: 0,
+            fit_window: None,
+            window_source: "legacy",
             log_scales_data: r.log_scales,
             log_values_data: r.log_values,
             residuals_data: r.residuals,
@@ -124,6 +141,8 @@ impl From<BoxCountingResult3D> for PyFractalResult {
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
             effective_levels: r.effective_levels,
+            fit_window: r.fit_window,
+            window_source: r.window_source,
             log_scales_data: r.log_scales,
             log_values_data: r.log_counts,
             residuals_data: r.residuals,
@@ -2774,5 +2793,65 @@ mod tests {
                 r.index
             );
         }
+    }
+
+    // ── Task #332 S5: fit_window/window_source reach the Python result ──
+
+    #[test]
+    fn box_counting_3d_result_carries_fit_window_into_py_result() {
+        // S5 witness (conversion layer): the window the engine actually
+        // fitted and its origin must survive the From<BoxCountingResult3D>
+        // conversion that every 3D binding entry point uses.
+        use aglogen_engine::fractal::box_counting_3d::BoxCountingResult3D;
+
+        let engine_result = BoxCountingResult3D {
+            dimension: 2.31,
+            r_squared: 0.96,
+            std_error: 0.34,
+            confidence_interval: (1.64, 2.98),
+            log_scales: vec![3.0, 2.0, 1.0, 0.0],
+            log_counts: vec![7.0, 6.0, 4.0, 2.0],
+            residuals: vec![0.0; 4],
+            execution_time_ms: 12,
+            num_points: 2000,
+            linear_region_start: 3,
+            effective_levels: 16,
+            // The S2 shape with both terms non-zero: offset 9 + start 3.
+            fit_window: Some((12, 15)),
+            window_source: "legacy",
+        };
+        let py_result: super::PyFractalResult = engine_result.into();
+        assert_eq!(py_result.fit_window, Some((12, 15)));
+        assert_eq!(py_result.window_source, "legacy");
+        // Additive conversion: the pre-existing fields are untouched.
+        assert_eq!(py_result.linear_region_start, 3);
+        assert_eq!(py_result.effective_levels, 16);
+        assert_eq!(py_result.log_scales_data.len(), 4);
+    }
+
+    #[test]
+    fn fit_window_none_survives_conversion_as_none() {
+        // S6 through the conversion layer: no window to promise -> Python
+        // None, while the origin marker stays the string "legacy".
+        use aglogen_engine::fractal::box_counting_3d::BoxCountingResult3D;
+
+        let engine_result = BoxCountingResult3D {
+            dimension: 0.0,
+            r_squared: 0.0,
+            std_error: f64::INFINITY,
+            confidence_interval: (0.0, 0.0),
+            log_scales: vec![],
+            log_counts: vec![],
+            residuals: vec![],
+            execution_time_ms: 0,
+            num_points: 1,
+            linear_region_start: 0,
+            effective_levels: 0,
+            fit_window: None,
+            window_source: "legacy",
+        };
+        let py_result: super::PyFractalResult = engine_result.into();
+        assert_eq!(py_result.fit_window, None);
+        assert_eq!(py_result.window_source, "legacy");
     }
 }
