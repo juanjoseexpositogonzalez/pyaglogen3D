@@ -483,3 +483,39 @@ def test_csv_import_accepts_filename_and_format_inside_parameters() -> None:
     # stamped simulation (not an empty string from the missing top-level).
     assert sim.parameters["original_filename"] == "from-ui.csv"
     assert sim.parameters["original_format"] == "csv"
+
+
+# --- #197: the dimensionless gate is normalised ONCE -------------------------
+
+
+@pytest.mark.django_db
+@pytest.mark.parametrize(
+    "unit_token",
+    ["Dimensionless", "DIMENSIONLESS", " dimensionless "],
+)
+def test_csv_import_dimensionless_capitalised_carries_no_scale_nm(
+    unit_token: str,
+) -> None:
+    """A capitalised or padded ``dimensionless`` is still dimensionless.
+
+    The declared unit is normalised ONCE, and that same value decides both the
+    diameter and ``scale_nm``. When only the ``scale_nm`` branch normalised it,
+    a file declaring ``Dimensionless`` got a mean-radius diameter *and* no
+    ``scale_nm`` - the #197 rescaling again, for a file that differs only in
+    capitalisation. Both halves are asserted together so they cannot drift.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = f"#unit={unit_token}\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n".encode()
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    # No measured scale: the shims keep the default-diameter path (S3).
+    assert PARAM_KEY_SCALE_NM not in sim.parameters
+    # And the diameter really took the dimensionless branch, not the mean radius.
+    assert sim.parameters[PARAM_KEY_DIAMETER] == pytest.approx(DEFAULT_DIAMETER_NM)

@@ -323,13 +323,21 @@ class SimulationViewSet(viewsets.ModelViewSet):
         meta_unit = (
             import_metadata.get("unit") if isinstance(import_metadata, dict) else None
         )
+        # The parser stores the author-written unit verbatim (``#unit=NM`` exists
+        # in the wild) and defaults to ``"nm"`` when the header omits it, so a
+        # CSV without metadata is nm geometry too. ONE normalised value decides
+        # BOTH the diameter below and ``scale_nm`` further down: normalising in
+        # one place and not the other is how ``#unit=Dimensionless`` would get a
+        # mean-radius diameter and no ``scale_nm`` — the #197 bug again, for a
+        # file that differs only in capitalisation.
+        declared_unit = meta_unit.strip().lower() if isinstance(meta_unit, str) else None
         if (
             isinstance(meta_diameter, (int, float))
             and not isinstance(meta_diameter, bool)
             and meta_diameter > 0
         ):
             params[PARAM_KEY_DIAMETER] = float(meta_diameter)
-        elif meta_unit == "dimensionless":
+        elif declared_unit == "dimensionless":
             # Import a normalized-radius geometry: use the historical default
             # diameter so downstream nm-scaling stays sensible.
             from .services.params import DEFAULT_DIAMETER_NM
@@ -352,14 +360,7 @@ class SimulationViewSet(viewsets.ModelViewSet):
             # is never dimensionless — it is already in the file's unit.
             params[PARAM_KEY_SCALE_NM] = 1.0
         else:
-            # The parser stores the author-written unit verbatim (``#unit=NM``
-            # exists in the wild) and defaults to ``"nm"`` when the header
-            # omits it, so a CSV without metadata is nm geometry too. Normalize
-            # before comparing so case and stray whitespace cannot smuggle a
-            # dimensionless file onto the scale_nm path.
-            declared_unit = (
-                meta_unit.strip().lower() if isinstance(meta_unit, str) else None
-            )
+            # ``declared_unit`` is already normalised above (S3).
             if declared_unit != "dimensionless":
                 params[PARAM_KEY_SCALE_NM] = 1.0
         params["source"] = source_stamp
