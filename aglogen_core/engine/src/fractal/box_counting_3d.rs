@@ -70,12 +70,14 @@ impl std::error::Error for BoxCountingError {}
 pub struct FitWindowChoice {
     /// Inclusive `(start, end)` indices into the effective (count-valid)
     /// level sequence, finest-first — directly consumable by
-    /// [`box_counting_3d_windowed`]. `None` means "fit all count-valid
-    /// levels", the current (legacy) behaviour.
+    /// [`box_counting_3d_windowed`]. `None` means **no measured window**: the
+    /// caller must use the legacy path ([`box_counting_3d_morton`]), NOT
+    /// `(0, effective_levels - 1)` on the windowed path. Those are not the same
+    /// thing: with fewer than 3 count-valid levels the windowed path rejects the
+    /// range outright, so mapping `None` that way turns a fallback into an error.
     pub window: Option<(usize, usize)>,
-    /// Whether the window is a measured choice. `false` means the window is
-    /// the current behaviour (fit all count-valid levels), not a measured
-    /// choice — the declared fallback where R5 refuses.
+    /// Whether the window is a measured choice. `false` means no measured window
+    /// (see [`FitWindowChoice::window`]): the declared fallback where R5 refuses.
     pub reliable: bool,
     /// Number of count-valid levels (`0 < count < n_points`).
     pub effective_levels: usize,
@@ -88,10 +90,12 @@ pub struct FitWindowChoice {
 /// Among the count-valid levels — those with `0 < count < n_points`, kept in
 /// their natural order (finest-first, the order `box_counting_3d_windowed`
 /// indexes them) — the window is `(1, len-1)` when there are at least 3
-/// count-valid levels from index 1 onward (i.e. `len >= 4`), excluding only
-/// index 0, the saturation transition. Otherwise the window is `None`
-/// ("fit all count-valid levels", the current behaviour) and the choice is
-/// marked `reliable = false`.
+/// count-valid levels from index 1 onward (i.e. `len >= 4`). Index 0 is dropped
+/// as the finest **non-saturated** level, the noisiest end of the usable curve.
+/// (Saturated levels are not "index 0" of anything here: the filter above drops
+/// them, so the saturation transition sits *above* the effective sequence.)
+/// Otherwise the window is `None` with `reliable = false`, and the caller falls
+/// back to the legacy estimator rather than to a windowed fit of everything.
 ///
 /// # Measured evidence
 /// R5 was chosen by measuring five candidate rules on engine clouds (task
@@ -107,16 +111,17 @@ pub fn select_fit_window(counts: &[usize], n_points: usize) -> FitWindowChoice {
     let effective_levels = counts.iter().filter(|&&c| 0 < c && c < n_points).count();
 
     if effective_levels >= 4 {
-        // At least 3 count-valid levels from index 1 onward: fit indices
-        // 1..=last, excluding only the index-0 saturation transition.
+        // At least 3 count-valid levels from index 1 onward: fit 1..=last,
+        // dropping only the noisiest (finest) non-saturated level.
         FitWindowChoice {
             window: Some((1, effective_levels - 1)),
             reliable: true,
             effective_levels,
         }
     } else {
-        // Declared fallback: the current behaviour (fit all count-valid
-        // levels), not a measured choice.
+        // No measured window. The caller keeps `box_counting_3d_morton`: the
+        // windowed path would reject fewer than 3 levels, so `None` is not a
+        // range to be rebuilt as (0, len-1).
         FitWindowChoice {
             window: None,
             reliable: false,
