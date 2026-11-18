@@ -56,6 +56,7 @@ pub fn box_counting_internal(
     let confidence_interval = (dimension - ci_half, dimension + ci_half);
 
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
+    let fit_window = (log_scales.len() >= 2).then_some((0, log_scales.len() - 1));
 
     FractalResult {
         dimension,
@@ -67,6 +68,8 @@ pub fn box_counting_internal(
         residuals,
         execution_time_ms,
         linear_region_start: 0, // 2D box-counting uses all points
+        fit_window,
+        window_source: "all_levels",
     }
 }
 
@@ -167,7 +170,17 @@ mod tests {
         }
 
         let result = box_counting_internal(&image, 2, 64, 10);
-        assert!(result.dimension > 0.8 && result.dimension < 1.2);
+
+        // Captured before publishing fit_window/window_source.
+        assert_eq!(result.dimension, 0.9229186612294056);
+        assert_eq!(result.r_squared, 0.997277367872145);
+        assert_eq!(result.std_error, 0.017049236485001732);
+        assert_eq!(
+            result.fit_window,
+            Some((0, result.log_scales.len() - 1)),
+            "2D fits every counted scale"
+        );
+        assert_eq!(result.window_source, "all_levels");
     }
 
     #[test]
@@ -176,7 +189,22 @@ mod tests {
         let image = vec![vec![true; 64]; 64];
 
         let result = box_counting_internal(&image, 2, 32, 8);
-        assert!(result.dimension > 1.8 && result.dimension < 2.2);
+
+        // Captured before publishing fit_window/window_source.
+        assert_eq!(result.dimension, 1.9821624249632475);
+        assert_eq!(result.r_squared, 0.9982062283976406);
+        assert_eq!(result.std_error, 0.03430339059380585);
+    }
+
+    #[test]
+    fn test_box_counting_fewer_than_two_scales_has_no_fit_window() {
+        let image = vec![vec![false; 1]; 1];
+
+        let result = box_counting_internal(&image, 1, 1, 2);
+
+        assert!(result.log_scales.len() < 2);
+        assert_eq!(result.fit_window, None);
+        assert_eq!(result.window_source, "all_levels");
     }
 
     #[test]
