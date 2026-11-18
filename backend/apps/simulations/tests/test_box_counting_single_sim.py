@@ -167,8 +167,8 @@ class TestR8SingleSimWindowed:
         assert mock_bc.call_count == 1
 
     def test_legacy_response_publishes_applied_window_without_moving_numbers(
-        self, user, project, sim
-    ):
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
         """The direct producer carries the same audit metadata as stored metrics."""
         client = _authed_client(user)
 

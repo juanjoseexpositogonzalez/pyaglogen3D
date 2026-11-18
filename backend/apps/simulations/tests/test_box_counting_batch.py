@@ -297,8 +297,8 @@ class TestR1WindowedParameter:
 @pytest.mark.django_db
 class TestIssue351FitWindowPublication:
     def test_persists_applied_window_and_preserves_numeric_legacy_witness(
-        self, user, project
-    ):
+        self, user: User, project: Project
+    ) -> None:
         """Publishing audit metadata cannot change legacy fit values."""
         study = _make_study(project)
         sim = _make_sim(project, study)
@@ -331,8 +331,8 @@ class TestIssue351FitWindowPublication:
         assert windowed["requested_window"] == [1, 4]
 
     def test_old_windowed_block_keeps_its_pair_when_results_are_read(
-        self, user, project
-    ):
+        self, user: User, project: Project
+    ) -> None:
         """Old rows omit new keys but retain the historical requested pair."""
         study = _make_study(project)
         old_windowed = {
