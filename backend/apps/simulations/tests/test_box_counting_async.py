@@ -110,8 +110,7 @@ def _authed_client(user: User) -> APIClient:
 class TestR31SyncPath:
     def test_small_work_set_runs_synchronously(self, user, project):
         study = _make_study(project)
-        for _ in range(2):
-            _make_sim(project, study)
+        simulations = [_make_sim(project, study) for _ in range(2)]
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
@@ -125,6 +124,8 @@ class TestR31SyncPath:
                 execution_time_ms=1,
                 linear_region_start=0,
                 effective_levels=5,
+                fit_window=None,
+                window_source="legacy",
             )
             response = client.post(_run_url(study), {}, format="json")
 
@@ -133,6 +134,13 @@ class TestR31SyncPath:
         assert response.data["results"]["total"] == 2
         assert response.data["results"]["processed"] == 2
         assert "task_id" not in response.data
+        for sim in simulations:
+            sim.refresh_from_db()
+            assert isinstance(sim.metrics, dict)
+            box_counting = sim.metrics["box_counting"]
+            assert isinstance(box_counting, dict)
+            assert box_counting["fit_window"] is None
+            assert box_counting["window_source"] == "legacy"
 
     def test_geometry_less_sims_do_not_count_toward_boundary(self, user, project):
         """≤30 sims WITH geometry plus geometry-less sims stay synchronous
@@ -155,6 +163,8 @@ class TestR31SyncPath:
                 execution_time_ms=1,
                 linear_region_start=0,
                 effective_levels=5,
+                fit_window=None,
+                window_source="legacy",
             )
             response = client.post(_run_url(study), {}, format="json")
 
@@ -579,6 +589,8 @@ class TestAsyncTaskProducer:
                 execution_time_ms=1,
                 linear_region_start=0,
                 effective_levels=5,
+                fit_window=None,
+                window_source="legacy",
             )
             summary = run_box_counting_async.run(
                 str(study.id),

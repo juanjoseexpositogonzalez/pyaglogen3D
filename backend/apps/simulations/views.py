@@ -1611,6 +1611,14 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "residuals": result.residuals.tolist(),
             "linear_region_start": result.linear_region_start,
             "execution_time_ms": result.execution_time_ms,
+            # Same None guard as the persisted producer in tasks.py: the window
+            # is None whenever the fit had fewer than three effective levels, which
+            # is the COMMON case. Without this, list(None) raises and the direct
+            # endpoint returns no analysis at all instead of fit_window: null.
+            "fit_window": (
+                list(result.fit_window) if result.fit_window is not None else None
+            ),
+            "window_source": result.window_source,
             "parameters": {
                 "points_per_sphere": points_per_sphere,
                 "precision": precision,
