@@ -70,7 +70,9 @@ def _url(project: Project, sim: Simulation) -> str:
 def _fake_result(
     effective_levels: int,
     dimension: float = 2.5,
-    fit_window: tuple[int, int] = (0, 4),
+    # None is the COMMON case: fewer than three effective levels means there is
+    # no window to publish, and the endpoint must serialise it as null.
+    fit_window: tuple[int, int] | None = (0, 4),
     window_source: str = "legacy",
 ) -> MagicMock:
     return MagicMock(
@@ -182,6 +184,28 @@ class TestR8SingleSimWindowed:
         assert response.data["std_error"] == pytest.approx(0.01)
         assert response.data["fit_window"] == [0, 4]
         assert response.data["window_source"] == "legacy"
+
+    def test_legacy_response_without_window_publishes_null(
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
+        """A fit with fewer than three effective levels has no window to publish.
+
+        `fit_window` is None in that case - the COMMON one, not an edge - and the
+        direct endpoint must serialise it as null rather than raising on
+        list(None). Both blind reviewers caught this path unguarded in views.py
+        while tasks.py already guarded it, and no test covered it: every existing
+        witness used a cloud WITH a window.
+        """
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.return_value = _fake_result(2, fit_window=None)
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["fit_window"] is None
+        assert response.data["window_source"] == "legacy"
+        assert response.data["dimension"] == pytest.approx(2.5)
 
     def test_windowed_true_adds_ok_block(self, user, project, sim):
         """windowed=true adds the R2 11-key block; eff=5 → window [1, 4]."""

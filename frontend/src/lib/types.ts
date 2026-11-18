@@ -480,8 +480,12 @@ export interface BoxCountingResult {
   log_scales?: number[]
   log_values?: number[]
   execution_time_ms?: number
-  /** Applied engine fit window, absent from historical rows. */
-  fit_window?: [number, number]
+  /**
+   * Applied engine fit window, absent from historical rows. `null` when the fit
+   * had fewer than three effective levels - the common case, not an edge - so
+   * consumers must not index it without checking.
+   */
+  fit_window?: [number, number] | null
   /** Origin of the applied engine fit window, absent from historical rows. */
   window_source?: BoxCountingWindowSource
 }
@@ -763,8 +767,12 @@ export interface BoxCounting3DResult {
   /** Start index of linear region (points before this are excluded as outliers) */
   linear_region_start: number
   execution_time_ms: number
-  /** Applied engine fit window, absent from responses saved before issue #351. */
-  fit_window?: [number, number]
+  /**
+   * Applied engine fit window, absent from responses saved before issue #351.
+   * `null` when the fit had fewer than three effective levels: the direct
+   * endpoint publishes `null`, so this must not be typed as always present.
+   */
+  fit_window?: [number, number] | null
   /** Origin of the applied engine fit window, absent from older responses. */
   window_source?: BoxCountingWindowSource
 }

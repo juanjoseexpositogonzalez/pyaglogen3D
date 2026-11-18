@@ -154,12 +154,12 @@ def project(user):
 class TestDeriveFitWindow:
     """Window derivation from effective_levels, hand-computed (T2)."""
 
-    def test_below_three_levels_derives_no_window(self):
+    def test_below_three_levels_derives_no_window(self) -> None:
         assert derive_fit_window(0) is None
         assert derive_fit_window(1) is None
         assert derive_fit_window(2) is None
 
-    def test_three_levels_gives_full_window(self):
+    def test_three_levels_gives_full_window(self) -> None:
         assert derive_fit_window(3) == (0, 2)
 
     def test_four_levels_clamps_start_to_one(self):
