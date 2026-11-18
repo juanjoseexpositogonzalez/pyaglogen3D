@@ -232,6 +232,11 @@ pub struct TunableCcParams {
     pub seed_type: SeedType,
     pub max_rotation_attempts: usize,
     pub max_particle_selection_attempts: usize,
+    /// Deterministic cap on merge evaluations, particle-selection retries, and
+    /// rotation attempts. Defaults to 300,000,000 operations: calibrated at
+    /// roughly 2.0–2.8 million operations/s, or about 110–150 seconds. `None`
+    /// preserves the unbounded legacy behavior.
+    pub operation_budget: Option<u64>,
     /// Maximum number of retry attempts per merge step before falling back
     /// to ballistic merge. Each retry selects a new random sub-cluster pair
     /// and samples fresh azimuth + elevation (spec R3).
@@ -264,11 +269,47 @@ impl Default for TunableCcParams {
             seed_type: SeedType::default(),
             max_rotation_attempts: 50,
             max_particle_selection_attempts: 25,
+            // 300M / 2.0–2.8M operations/s ≈ 110–150 seconds (T3 calibration).
+            operation_budget: Some(300_000_000),
             max_merge_retries: 100,
             sintering: SinteringDistribution::default(),
             dpo_distribution: DpoDistribution::default(),
             target_kf_distribution: TargetKfDistribution::default(),
         }
+    }
+}
+
+/// Tracks the deterministic operation budget for a Tunable CC run.
+struct OperationBudget {
+    limit: Option<u64>,
+    used: u64,
+    exhausted: bool,
+}
+
+impl OperationBudget {
+    fn new(limit: Option<u64>) -> Self {
+        Self {
+            limit,
+            used: 0,
+            exhausted: false,
+        }
+    }
+
+    /// Charges one operation and reports whether work may continue.
+    fn consume(&mut self) -> bool {
+        if self.exhausted {
+            return false;
+        }
+        if self.limit.is_some_and(|limit| self.used >= limit) {
+            self.exhausted = true;
+            return false;
+        }
+
+        self.used += 1;
+        if self.limit.is_some_and(|limit| self.used >= limit) {
+            self.exhausted = true;
+        }
+        !self.exhausted
     }
 }
 
@@ -786,12 +827,18 @@ fn resolve_overlap_by_rotation<R: Rng>(
     max_attempts: usize,
     sintering_coeff: f64,
     rng: &mut R,
+    operations: &mut OperationBudget,
 ) -> bool {
     // Rotation axis: line from cluster2 CoM through particle m2
     let p2_pos = cluster2.particles[m2].center;
     let rotation_axis = (p2_pos - cluster2.center_of_mass).normalize();
 
     for _ in 0..max_attempts {
+        // Each rotation attempt is part of the deterministic budget.
+        if !operations.consume() {
+            return false;
+        }
+
         // Random rotation angle
         let angle = rng.gen_range(0.0..2.0 * PI);
 
@@ -1180,8 +1227,13 @@ pub fn run_tunable_cc_internal(
     //   [Phase 3 flag=false]: Legacy random pair + retry + ballistic (Phase 2)
     let mut iterations = 0;
     let max_iterations = params.n_particles * 1000;
+    let mut operation_budget = OperationBudget::new(params.operation_budget);
 
     while clusters.len() > 1 && iterations < max_iterations {
+        // Count each merge evaluation before selecting a pair.
+        if !operation_budget.consume() {
+            break;
+        }
         iterations += 1;
 
         let sintering_coeff = params.sintering.sample(&mut rng);
@@ -1220,6 +1272,11 @@ pub fn run_tunable_cc_internal(
                     // Try placement up to max_merge_retries (fresh direction each time)
                     let mut attempt_succeeded = false;
                     for attempt in 0..=params.max_merge_retries {
+                        // Each retry evaluates a candidate merge.
+                        if !operation_budget.consume() {
+                            break;
+                        }
+
                         // Re-clone for each attempt to get fresh positioning
                         let mut imp_try = clusters[impacted_idx].clone();
                         let mut imr_try = clusters[impactor_idx].clone();
@@ -1236,6 +1293,11 @@ pub fn run_tunable_cc_internal(
 
                         let mut inner_success = false;
                         for _ in 0..params.max_particle_selection_attempts {
+                            // Each particle-selection retry is budgeted.
+                            if !operation_budget.consume() {
+                                break;
+                            }
+
                             if let Some((m1, m2)) = select_contact_particles(
                                 &imp_try,
                                 &imr_try,
@@ -1275,6 +1337,7 @@ pub fn run_tunable_cc_internal(
                                             params.max_rotation_attempts,
                                             sintering_coeff,
                                             &mut rng,
+                                            &mut operation_budget,
                                         )
                                         && has_intercluster_contact(
                                             &imp_try,
@@ -1299,7 +1362,9 @@ pub fn run_tunable_cc_internal(
                         retries_this_merge = attempt;
                     }
 
-                    if attempt_succeeded {
+                    if operation_budget.exhausted {
+                        // Stop cleanly with the aggregate before the budgeted attempt.
+                    } else if attempt_succeeded {
                         // Tunable merge succeeded
                         tunable_merges += 1;
                         let actual_distance = impacted
@@ -1543,6 +1608,11 @@ pub fn run_tunable_cc_internal(
 
             // Retry loop: each retry picks a NEW random pair (R3 spec)
             for attempt in 0..=params.max_merge_retries {
+                // Each retry evaluates a candidate merge.
+                if !operation_budget.consume() {
+                    break;
+                }
+
                 // Select two clusters randomly (fresh pair each attempt)
                 let indices: Vec<usize> = (0..clusters.len()).collect();
                 let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
@@ -1590,6 +1660,11 @@ pub fn run_tunable_cc_internal(
                 // Inner particle-selection loop (within this attempt)
                 let mut attempt_succeeded = false;
                 for _ in 0..params.max_particle_selection_attempts {
+                    // Each particle-selection retry is budgeted.
+                    if !operation_budget.consume() {
+                        break;
+                    }
+
                     if let Some((m1, m2)) = select_contact_particles(
                         &impacted,
                         &impactor,
@@ -1625,6 +1700,7 @@ pub fn run_tunable_cc_internal(
                                     params.max_rotation_attempts,
                                     sintering_coeff,
                                     &mut rng,
+                                    &mut operation_budget,
                                 )
                                 && has_intercluster_contact(&impacted, &impactor, sintering_coeff)
                             {
@@ -1684,7 +1760,7 @@ pub fn run_tunable_cc_internal(
             }
 
             // Ballistic fallback after all retries exhausted (R3 scenario 3.3)
-            if !merge_success {
+            if !merge_success && !operation_budget.exhausted {
                 // Pick a fresh pair for ballistic
                 let indices: Vec<usize> = (0..clusters.len()).collect();
                 let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
@@ -1834,6 +1910,8 @@ pub fn run_tunable_cc_internal(
         coordination_std: coord_std,
         execution_time_ms,
         seed,
+        budget_exhausted: operation_budget.exhausted,
+        operations_used: operation_budget.used,
         anisotropy: inertia.anisotropy,
         asphericity: inertia.asphericity,
         acylindricity: inertia.acylindricity,
@@ -2571,6 +2649,136 @@ mod tests {
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.seed, r2.seed);
+    }
+
+    #[test]
+    fn operation_budget_default_preserves_baseline() {
+        assert_eq!(
+            TunableCcParams::default().operation_budget,
+            Some(300_000_000)
+        );
+
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+
+        assert_eq!(result.fractal_dimension, 2.26903772584001);
+        assert_eq!(result.fractal_dimension_std, 0.05);
+        assert_eq!(result.prefactor, 0.7857052094847528);
+        assert_eq!(result.porosity, 0.957457611829695);
+        assert_eq!(result.coordination_mean, 1.8);
+        assert_eq!(result.coordination_std, 0.7483314773547883);
+        assert_eq!(result.anisotropy, 2.9556464131382802);
+        assert_eq!(result.asphericity, 0.21291355657276076);
+        assert_eq!(result.acylindricity, 0.2031190438741277);
+        assert_eq!(
+            result.principal_moments,
+            [28.69342695154503, 64.93774458171018, 84.80762444997933]
+        );
+        assert_eq!(result.rg_evolution, vec![2.2635773456923, 2.9082772754370625, 3.0857640543569964]);
+        assert_eq!(result.rg_evolution_n, vec![5, 9, 10]);
+        assert_eq!(result.radii, vec![1.0; 10]);
+        assert_eq!(
+            result.coordinates,
+            vec![
+                [-1.4829694310875317, 0.2470289522892426, -4.143905935103276],
+                [-0.7900252138755577, 2.0260735342169753, -4.739580919760233],
+                [-0.3797695582593783, 2.8657215372434295, -2.9713384228021305],
+                [-1.9917804579733254, -1.6634175658583767, -3.8417380343972716],
+                [1.3109076528435257, 2.6113255800973922, -4.009073102209672],
+                [-3.481711170208275, 1.483774599548204, -1.505425837791918],
+                [-3.5547205469869123, 1.8924847386997017, 0.451006029934931],
+                [-2.2366308883503065, 2.1236576864629226, -2.933825196097914],
+                [-5.336612159510587, 1.9491271463930666, -0.9199437056731783],
+                [-3.0880852052091194, 3.742042883552954, 1.0526460813892626],
+            ]
+        );
+        assert_eq!(result.merge_trace.len(), 3);
+        assert!(!result.budget_exhausted);
+    }
+
+    #[test]
+    fn operation_budget_marks_tiny_budget_as_exhausted() {
+        let params = TunableCcParams {
+            n_particles: 100,
+            operation_budget: Some(100),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("a budget-exhausted simulation should return a partial aggregate");
+
+        assert!(result.budget_exhausted);
+        assert!(result.operations_used >= 100);
+    }
+
+    #[test]
+    fn operation_budget_is_deterministic() {
+        let params = TunableCcParams {
+            n_particles: 100,
+            operation_budget: Some(100),
+            ..Default::default()
+        };
+
+        let first = run_tunable_cc_internal(params.clone(), 42, None)
+            .expect("budgeted simulation should run");
+        let second = run_tunable_cc_internal(params, 42, None)
+            .expect("budgeted simulation should run");
+
+        assert_eq!(first.coordinates, second.coordinates);
+        assert_eq!(first.radii, second.radii);
+        assert_eq!(first.rg_evolution, second.rg_evolution);
+        assert_eq!(first.rg_evolution_n, second.rg_evolution_n);
+        assert_eq!(first.fractal_dimension, second.fractal_dimension);
+        assert_eq!(first.prefactor, second.prefactor);
+        assert_eq!(first.porosity, second.porosity);
+        assert_eq!(first.coordination_mean, second.coordination_mean);
+        assert_eq!(first.coordination_std, second.coordination_std);
+        assert_eq!(first.anisotropy, second.anisotropy);
+        assert_eq!(first.asphericity, second.asphericity);
+        assert_eq!(first.acylindricity, second.acylindricity);
+        assert_eq!(first.principal_moments, second.principal_moments);
+        assert_eq!(first.principal_axes, second.principal_axes);
+        assert_eq!(first.tunable_merges, second.tunable_merges);
+        assert_eq!(first.ballistic_merges, second.ballistic_merges);
+        assert_eq!(first.adaptive_merges, second.adaptive_merges);
+        assert_eq!(first.no_feasible_pair_events, second.no_feasible_pair_events);
+        assert_eq!(first.max_retries_per_merge, second.max_retries_per_merge);
+        assert_eq!(first.budget_exhausted, second.budget_exhausted);
+        assert_eq!(first.operations_used, 100);
+        assert_eq!(second.operations_used, 100);
+        assert_eq!(first.operations_used, second.operations_used);
+    }
+
+    #[test]
+    fn operation_budget_usage_is_monotonic() {
+        let smaller = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 100,
+                operation_budget: Some(100),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budgeted simulation should run");
+        let larger = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 100,
+                operation_budget: Some(200),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budgeted simulation should run");
+
+        assert!(larger.operations_used >= smaller.operations_used);
     }
 
     #[test]
