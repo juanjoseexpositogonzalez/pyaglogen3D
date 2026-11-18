@@ -113,3 +113,9 @@ path = "examples/diagnostics/high_df_feasibility_audit.rs"
 [[example]]
 name = "bc_fit_window_curve"
 path = "examples/diagnostics/bc_fit_window_curve.rs"
+
+# Phase 0 diagnostic for issue #310: measures current CC-tunable runtime with
+# a per-configuration watchdog; it does not change engine behavior.
+[[example]]
+name = "cc_time_budget"
+path = "examples/diagnostics/cc_time_budget.rs"
