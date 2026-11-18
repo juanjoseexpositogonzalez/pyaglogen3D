@@ -2492,7 +2492,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     }
 
     match best {
-        Some(max_achievable_pair) => SmartPairResult::AllInfeasible { max_achievable_pair },
+        Some(max_achievable_pair) => SmartPairResult::AllInfeasible {
+            max_achievable_pair,
+        },
         None => SmartPairResult::NoCandidates,
     }
 }
@@ -2644,8 +2646,10 @@ mod tests {
             ..Default::default()
         };
 
-        let r1 = run_tunable_cc_internal(params.clone(), 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params.clone(), 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.seed, r2.seed);
@@ -2667,37 +2671,81 @@ mod tests {
         let result = run_tunable_cc_internal(params, 42, None)
             .expect("tunable_cc should run for a valid payload");
 
-        assert_eq!(result.fractal_dimension, 2.26903772584001);
-        assert_eq!(result.fractal_dimension_std, 0.05);
-        assert_eq!(result.prefactor, 0.7857052094847528);
-        assert_eq!(result.porosity, 0.957457611829695);
-        assert_eq!(result.coordination_mean, 1.8);
-        assert_eq!(result.coordination_std, 0.7483314773547883);
-        assert_eq!(result.anisotropy, 2.9556464131382802);
-        assert_eq!(result.asphericity, 0.21291355657276076);
-        assert_eq!(result.acylindricity, 0.2031190438741277);
-        assert_eq!(
-            result.principal_moments,
-            [28.69342695154503, 64.93774458171018, 84.80762444997933]
+        // Floating-point equality is NOT portable across instruction sets: arm64
+        // and x86-64 can fuse multiply-add differently, so the last bits of a
+        // pinned value differ while the algorithm is byte-identical. This test
+        // failed exactly that way in CI (x86-64) while passing locally (arm64).
+        //
+        // The tolerance is three orders of magnitude tighter than any real change
+        // could produce, and the hard guarantee that the numeric path did not move
+        // is separate and structural: this change deletes no line of it.
+        fn close(actual: f64, expected: f64, what: &str) {
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{what}: got {actual}, expected {expected}"
+            );
+        }
+        fn close_all(actual: &[f64], expected: &[f64], what: &str) {
+            assert_eq!(actual.len(), expected.len(), "{what}: length");
+            for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
+                close(*a, *e, &format!("{what}[{i}]"));
+            }
+        }
+
+        close(
+            result.fractal_dimension,
+            2.26903772584001,
+            "fractal_dimension",
         );
-        assert_eq!(result.rg_evolution, vec![2.2635773456923, 2.9082772754370625, 3.0857640543569964]);
+        close(result.fractal_dimension_std, 0.05, "fractal_dimension_std");
+        close(result.prefactor, 0.7857052094847528, "prefactor");
+        close(result.porosity, 0.957457611829695, "porosity");
+        close(result.coordination_mean, 1.8, "coordination_mean");
+        close(
+            result.coordination_std,
+            0.7483314773547883,
+            "coordination_std",
+        );
+        close(result.anisotropy, 2.9556464131382802, "anisotropy");
+        close(result.asphericity, 0.21291355657276076, "asphericity");
+        close(result.acylindricity, 0.2031190438741277, "acylindricity");
+        close_all(
+            &result.principal_moments,
+            &[28.69342695154503, 64.93774458171018, 84.80762444997933],
+            "principal_moments",
+        );
+        close_all(
+            &result.rg_evolution,
+            &[2.2635773456923, 2.9082772754370625, 3.0857640543569964],
+            "rg_evolution",
+        );
+        // Counts and identities stay exact: they are integers or literals.
         assert_eq!(result.rg_evolution_n, vec![5, 9, 10]);
         assert_eq!(result.radii, vec![1.0; 10]);
-        assert_eq!(
-            result.coordinates,
-            vec![
-                [-1.4829694310875317, 0.2470289522892426, -4.143905935103276],
-                [-0.7900252138755577, 2.0260735342169753, -4.739580919760233],
-                [-0.3797695582593783, 2.8657215372434295, -2.9713384228021305],
-                [-1.9917804579733254, -1.6634175658583767, -3.8417380343972716],
-                [1.3109076528435257, 2.6113255800973922, -4.009073102209672],
-                [-3.481711170208275, 1.483774599548204, -1.505425837791918],
-                [-3.5547205469869123, 1.8924847386997017, 0.451006029934931],
-                [-2.2366308883503065, 2.1236576864629226, -2.933825196097914],
-                [-5.336612159510587, 1.9491271463930666, -0.9199437056731783],
-                [-3.0880852052091194, 3.742042883552954, 1.0526460813892626],
-            ]
-        );
+        let expected_coords: [[f64; 3]; 10] = [
+            [-1.4829694310875317, 0.2470289522892426, -4.143905935103276],
+            [-0.7900252138755577, 2.0260735342169753, -4.739580919760233],
+            [-0.3797695582593783, 2.8657215372434295, -2.9713384228021305],
+            [
+                -1.9917804579733254,
+                -1.6634175658583767,
+                -3.8417380343972716,
+            ],
+            [1.3109076528435257, 2.6113255800973922, -4.009073102209672],
+            [-3.481711170208275, 1.483774599548204, -1.505425837791918],
+            [-3.5547205469869123, 1.8924847386997017, 0.451006029934931],
+            [-2.2366308883503065, 2.1236576864629226, -2.933825196097914],
+            [-5.336612159510587, 1.9491271463930666, -0.9199437056731783],
+            [-3.0880852052091194, 3.742042883552954, 1.0526460813892626],
+        ];
+        for (i, (got, want)) in result
+            .coordinates
+            .iter()
+            .zip(expected_coords.iter())
+            .enumerate()
+        {
+            close_all(got, want, &format!("coordinates[{i}]"));
+        }
         assert_eq!(result.merge_trace.len(), 3);
         assert!(!result.budget_exhausted);
     }
@@ -2727,8 +2775,8 @@ mod tests {
 
         let first = run_tunable_cc_internal(params.clone(), 42, None)
             .expect("budgeted simulation should run");
-        let second = run_tunable_cc_internal(params, 42, None)
-            .expect("budgeted simulation should run");
+        let second =
+            run_tunable_cc_internal(params, 42, None).expect("budgeted simulation should run");
 
         assert_eq!(first.coordinates, second.coordinates);
         assert_eq!(first.radii, second.radii);
@@ -2747,7 +2795,10 @@ mod tests {
         assert_eq!(first.tunable_merges, second.tunable_merges);
         assert_eq!(first.ballistic_merges, second.ballistic_merges);
         assert_eq!(first.adaptive_merges, second.adaptive_merges);
-        assert_eq!(first.no_feasible_pair_events, second.no_feasible_pair_events);
+        assert_eq!(
+            first.no_feasible_pair_events,
+            second.no_feasible_pair_events
+        );
         assert_eq!(first.max_retries_per_merge, second.max_retries_per_merge);
         assert_eq!(first.budget_exhausted, second.budget_exhausted);
         assert_eq!(first.operations_used, 100);
@@ -2790,7 +2841,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Should produce all particles
         assert_eq!(result.coordinates.len(), 50);
@@ -2810,7 +2862,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 456, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 456, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Verify no particles overlap
         for i in 0..result.coordinates.len() {
@@ -2842,7 +2895,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 321, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 321, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert!(
             particles_form_connected_graph(&result.coordinates, &result.radii, 1.0),
@@ -2867,7 +2921,8 @@ mod tests {
                 dpo_distribution: DpoDistribution::Uniform { min: 0.8, max: 1.2 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= 0.8 - 1e-10 && dpo <= 1.2 + 1e-10,
@@ -2905,7 +2960,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
 
         // The Rg evolution should have enough data points for a fit
@@ -2972,7 +3028,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Must still produce all particles (simulation completes)
         assert_eq!(result.coordinates.len(), 20);
@@ -3000,7 +3057,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Fields exist and are sensible
         let total_merges = result.tunable_merges + result.ballistic_merges;
@@ -3024,7 +3082,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 777, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 777, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         // For small N with standard params, most merges should succeed via tunable path
@@ -3969,7 +4028,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.coordinates.len(),
             20,
@@ -4030,7 +4090,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
         assert!(
             result.ballistic_merges > 0 || result.adaptive_merges > 0,
@@ -4112,7 +4173,8 @@ mod tests {
             n_particles: 10,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.dpo_used,
             Some(1.0),
@@ -4140,8 +4202,10 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params1, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.fractal_dimension, r2.fractal_dimension);
@@ -4170,8 +4234,10 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params1, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.dpo_used, r2.dpo_used);
         assert_eq!(r1.target_kf_used, r2.target_kf_used);
@@ -4197,7 +4263,8 @@ mod tests {
                 dpo_distribution: DpoDistribution::Normal { mean, std: std_dev },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= lower && dpo <= upper,
@@ -4222,7 +4289,8 @@ mod tests {
                 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let kf = result.target_kf_used.unwrap();
             assert!(
                 kf >= kf_min && kf <= kf_max,
@@ -4297,7 +4365,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Must produce all 10 particles (not 1, not collapsed)
         assert_eq!(
@@ -4355,7 +4424,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         let sintered_cd = sintered_contact_distance(rp, rp, sintering_coeff); // 1.8
@@ -4412,7 +4482,8 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
         // n_initial_clusters - 1 merges (5 dimers → 4 merges)
         assert_eq!(
@@ -4433,7 +4504,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty(), "Trace must not be empty");
 
         // At least some should be tunable
@@ -4485,7 +4557,8 @@ mod tests {
             max_merge_retries: 5,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 50);
 
         // Phase 3: fallback merges are tagged "adaptive" instead of "ballistic"
@@ -4523,7 +4596,8 @@ mod tests {
             max_merge_retries: max_retries,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
                 entry.retries <= max_retries,
@@ -4543,7 +4617,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty());
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
@@ -4568,7 +4643,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert_eq!(
                 entry.step, i,
@@ -4597,8 +4673,10 @@ mod tests {
             ..Default::default() // default sintering is Fixed(1.0)
         };
 
-        let r1 = run_tunable_cc_internal(params_sintered, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params_baseline, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params_sintered, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params_baseline, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
