@@ -320,6 +320,10 @@ pub struct PySimulationResult {
     #[pyo3(get)]
     pub seed: u64,
     #[pyo3(get)]
+    pub budget_exhausted: bool,
+    #[pyo3(get)]
+    pub operations_used: u64,
+    #[pyo3(get)]
     pub anisotropy: f64,
     #[pyo3(get)]
     pub asphericity: f64,
@@ -427,6 +431,8 @@ impl From<SimulationResult> for PySimulationResult {
             coordination_std: r.coordination_std,
             execution_time_ms: r.execution_time_ms,
             seed: r.seed,
+            budget_exhausted: r.budget_exhausted,
+            operations_used: r.operations_used,
             anisotropy: r.anisotropy,
             asphericity: r.asphericity,
             acylindricity: r.acylindricity,
@@ -1362,7 +1368,7 @@ fn parse_seed_type(
 
 // Tunable CC
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None, dpo_mode=None, dpo_value=None, dpo_mean=None, dpo_std=None, dpo_min=None, dpo_max=None, kf_mode=None, kf_value=None, kf_mean=None, kf_std=None, kf_min=None, kf_max=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None, dpo_mode=None, dpo_value=None, dpo_mean=None, dpo_std=None, dpo_min=None, dpo_max=None, kf_mode=None, kf_value=None, kf_mean=None, kf_std=None, kf_min=None, kf_max=None, operation_budget=Some(300_000_000)))]
 fn run_tunable_cc(
     py: Python<'_>,
     n_particles: usize,
@@ -1393,6 +1399,7 @@ fn run_tunable_cc(
     kf_std: Option<f64>,
     kf_min: Option<f64>,
     kf_max: Option<f64>,
+    operation_budget: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
@@ -1440,6 +1447,7 @@ fn run_tunable_cc(
         seed_strategy,
         seed_type: seed_type_enum,
         max_rotation_attempts,
+        operation_budget,
         sintering,
         dpo_distribution,
         target_kf_distribution,
@@ -2599,6 +2607,8 @@ mod tests {
             coordination_std: 0.5,
             execution_time_ms: 100,
             seed: 42,
+            budget_exhausted: true,
+            operations_used: 100,
             anisotropy: 0.1,
             asphericity: 0.05,
             acylindricity: 0.02,
@@ -2616,6 +2626,8 @@ mod tests {
         let py_result: super::PySimulationResult = sim_result.into();
         // Must have 2 entries
         assert_eq!(py_result.merge_trace_data.len(), 2);
+        assert!(py_result.budget_exhausted);
+        assert_eq!(py_result.operations_used, 100);
         // First entry: tunable
         assert_eq!(py_result.merge_trace_data[0].step, 0);
         assert_eq!(py_result.merge_trace_data[0].merge_type, "tunable");
@@ -2642,6 +2654,8 @@ mod tests {
             coordination_std: 0.0,
             execution_time_ms: 10,
             seed: 1,
+            budget_exhausted: false,
+            operations_used: 0,
             anisotropy: 0.0,
             asphericity: 0.0,
             acylindricity: 0.0,

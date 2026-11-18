@@ -69,6 +69,10 @@ pub struct SimulationResult {
     pub coordination_std: f64,
     pub execution_time_ms: u64,
     pub seed: u64,
+    /// Whether CC-tunable stopped after exhausting its deterministic operation budget.
+    pub budget_exhausted: bool,
+    /// Number of operations consumed by the CC-tunable operation budget.
+    pub operations_used: u64,
     // Inertia tensor results
     pub anisotropy: f64,
     pub asphericity: f64,
@@ -137,6 +141,8 @@ mod tests {
             coordination_std: 0.0,
             execution_time_ms: 0,
             seed: 0,
+            budget_exhausted: false,
+            operations_used: 0,
             anisotropy: 0.0,
             asphericity: 0.0,
             acylindricity: 0.0,
@@ -249,6 +255,8 @@ mod tests {
             coordination_std: 0.0,
             execution_time_ms: 0,
             seed: 0,
+            budget_exhausted: false,
+            operations_used: 0,
             anisotropy: 0.0,
             asphericity: 0.0,
             acylindricity: 0.0,
