@@ -1,6 +1,5 @@
 """Base Django settings for pyAgloGen3D."""
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -188,8 +187,17 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
-CELERY_TASK_TIME_LIMIT = 3600
-CELERY_TASK_SOFT_TIME_LIMIT = 3300
+# Safety net for the engine's deterministic operation budget (#310). That budget
+# caps a tunable-cc run at roughly 110-150 s, so a 600 s hard limit leaves a 4x
+# margin for a loaded host without letting a pathological merge run for an hour,
+# which is what the previous ceiling allowed. The soft limit fires first so the
+# task can record why it stopped.
+#
+# Note for the record: these two settings already existed at 3600/3300, so the
+# issue's "today it is not configured" was out of date. What changed is the value,
+# not the existence.
+CELERY_TASK_TIME_LIMIT = 600
+CELERY_TASK_SOFT_TIME_LIMIT = 540
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXPIRES = 86400
 
