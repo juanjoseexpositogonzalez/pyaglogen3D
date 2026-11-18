@@ -76,19 +76,15 @@ pub struct PyFractalResult {
     /// semantics: the 2D `From` impl populates it as 0.
     #[pyo3(get)]
     pub effective_levels: usize,
-    /// Inclusive `(start, end)` indices into the EFFECTIVE level sequence
-    /// over which the reported fit was actually computed (task #332 S3,
-    /// S1/S2/S5) — the same sequence `box_counting_3d_windowed` indexes.
-    /// Exposed to Python as a tuple of ints or `None` when fewer than 3
-    /// levels were fitted (S6). 3D-only semantics: the 2D `From` impl
-    /// populates it as `None`.
+    /// Inclusive `(start, end)` indices into the sequence fitted to report
+    /// the dimension (task #332 S3). The 3D path indexes its effective level
+    /// sequence; the 2D path publishes every counted scale as `(0, n - 1)`
+    /// or `None` when fewer than two scales were counted.
     #[pyo3(get)]
     pub fit_window: Option<(usize, usize)>,
-    /// Origin of the published window (task #332 S3): `"legacy"` (the
-    /// default robust path) or `"r5"` (a measured choice, once S3b wires
-    /// the selector). `"legacy"` in this step. The 2D `From` impl reports
-    /// `"legacy"` alongside `fit_window: None`, mirroring the engine's own
-    /// degenerate-case convention (S6).
+    /// Origin of the published window: `"legacy"` for the 3D default robust
+    /// path, `"r5"` for a future measured 3D selection, or `"all_levels"`
+    /// for 2D box-counting, which fits every counted scale without selection.
     #[pyo3(get)]
     pub window_source: &'static str,
     pub log_scales_data: Vec<f64>,
@@ -122,8 +118,8 @@ impl From<FractalResult> for PyFractalResult {
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
             effective_levels: 0,
-            fit_window: None,
-            window_source: "legacy",
+            fit_window: r.fit_window,
+            window_source: r.window_source,
             log_scales_data: r.log_scales,
             log_values_data: r.log_values,
             residuals_data: r.residuals,
@@ -2827,6 +2823,23 @@ mod tests {
         assert_eq!(py_result.linear_region_start, 3);
         assert_eq!(py_result.effective_levels, 16);
         assert_eq!(py_result.log_scales_data.len(), 4);
+    }
+
+    #[test]
+    fn box_counting_2d_result_carries_fit_window_into_py_result() {
+        use aglogen_engine::fractal::box_counting::box_counting_internal;
+
+        let mut image = vec![vec![false; 64]; 64];
+        for x in 0..64 {
+            image[32][x] = true;
+        }
+
+        let engine_result = box_counting_internal(&image, 2, 32, 8);
+        let expected_window = Some((0, engine_result.log_scales.len() - 1));
+        let py_result: super::PyFractalResult = engine_result.into();
+
+        assert_eq!(py_result.fit_window, expected_window);
+        assert_eq!(py_result.window_source, "all_levels");
     }
 
     #[test]
