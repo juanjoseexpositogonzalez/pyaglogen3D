@@ -470,6 +470,8 @@ export interface CreateParametricStudyInput {
   sintering_config?: unknown
 }
 
+export type BoxCountingWindowSource = 'legacy' | 'r5' | 'all_levels'
+
 export interface BoxCountingResult {
   dimension: number
   r_squared: number
@@ -478,9 +480,13 @@ export interface BoxCountingResult {
   log_scales?: number[]
   log_values?: number[]
   execution_time_ms?: number
+  /** Applied engine fit window, absent from historical rows. */
+  fit_window?: [number, number]
+  /** Origin of the applied engine fit window, absent from historical rows. */
+  window_source?: BoxCountingWindowSource
 }
 
-// Windowed box-counting block (R2 — one 11-key schema for all three statuses).
+// Windowed box-counting block (R2 — historical rows have an 11-key schema).
 export type WindowedBlockStatus = 'ok' | 'insufficient_levels' | 'error'
 
 export interface WindowedBlock {
@@ -497,6 +503,8 @@ export interface WindowedBlock {
   status: WindowedBlockStatus
   /** [s, e] only when status === 'ok'; null otherwise. */
   fit_window_used: [number, number] | null
+  /** Requested [s, e], absent from historical rows; null for non-ok statuses. */
+  requested_window?: [number, number] | null
   /** String only when status === 'error'; null otherwise. */
   error_message: string | null
 }
@@ -755,6 +763,10 @@ export interface BoxCounting3DResult {
   /** Start index of linear region (points before this are excluded as outliers) */
   linear_region_start: number
   execution_time_ms: number
+  /** Applied engine fit window, absent from responses saved before issue #351. */
+  fit_window?: [number, number]
+  /** Origin of the applied engine fit window, absent from older responses. */
+  window_source?: BoxCountingWindowSource
 }
 
 // Project Sharing

@@ -67,11 +67,18 @@ def _url(project: Project, sim: Simulation) -> str:
     )
 
 
-def _fake_result(effective_levels: int, dimension: float = 2.5) -> MagicMock:
+def _fake_result(
+    effective_levels: int,
+    dimension: float = 2.5,
+    fit_window: tuple[int, int] = (0, 4),
+    window_source: str = "legacy",
+) -> MagicMock:
     return MagicMock(
         dimension=dimension,
         r_squared=0.99,
         std_error=0.01,
+        fit_window=fit_window,
+        window_source=window_source,
         confidence_interval=(dimension - 0.1, dimension + 0.1),
         log_scales=np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
         log_values=np.array([6.9, 5.2, 3.4, 1.7, 0.0]),
@@ -93,6 +100,7 @@ _ELEVEN_KEYS = {
     "parameters",
     "status",
     "fit_window_used",
+    "requested_window",
     "error_message",
 }
 
@@ -139,6 +147,8 @@ class TestR8SingleSimWindowed:
             "residuals",
             "linear_region_start",
             "execution_time_ms",
+            "fit_window",
+            "window_source",
             "parameters",
         }
 
@@ -153,6 +163,25 @@ class TestR8SingleSimWindowed:
         assert response.status_code == 200
         assert "box_counting_windowed" not in response.data
         assert mock_bc.call_count == 1
+
+    def test_legacy_response_publishes_applied_window_without_moving_numbers(
+        self, user, project, sim
+    ):
+        """The direct producer carries the same audit metadata as stored metrics."""
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.return_value = _fake_result(
+                5, fit_window=(0, 4), window_source="legacy"
+            )
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["dimension"] == pytest.approx(2.5)
+        assert response.data["r_squared"] == pytest.approx(0.99)
+        assert response.data["std_error"] == pytest.approx(0.01)
+        assert response.data["fit_window"] == [0, 4]
+        assert response.data["window_source"] == "legacy"
 
     def test_windowed_true_adds_ok_block(self, user, project, sim):
         """windowed=true adds the R2 11-key block; eff=5 → window [1, 4]."""
@@ -171,6 +200,7 @@ class TestR8SingleSimWindowed:
         assert set(block.keys()) == _ELEVEN_KEYS
         assert block["status"] == "ok"
         assert block["fit_window_used"] == [1, 4]
+        assert block["requested_window"] == [1, 4]
         assert block["dimension"] == 2.7
         assert block["error_message"] is None
         assert block["parameters"] == {"points_per_sphere": 100, "precision": 18}

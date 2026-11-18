@@ -1611,6 +1611,8 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "residuals": result.residuals.tolist(),
             "linear_region_start": result.linear_region_start,
             "execution_time_ms": result.execution_time_ms,
+            "fit_window": list(result.fit_window),
+            "window_source": result.window_source,
             "parameters": {
                 "points_per_sphere": points_per_sphere,
                 "precision": precision,
