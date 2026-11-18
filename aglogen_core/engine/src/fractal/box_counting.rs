@@ -56,7 +56,12 @@ pub fn box_counting_internal(
     let confidence_interval = (dimension - ci_half, dimension + ci_half);
 
     let execution_time_ms = start_time.elapsed().as_millis() as u64;
-    let fit_window = (log_scales.len() >= 2).then_some((0, log_scales.len() - 1));
+    // `then_some` evaluates its argument EAGERLY, so `len() - 1` is computed
+    // even when the condition is false: a blank image yields zero counted scales,
+    // `usize` underflows and debug builds panic - which --release hides by
+    // wrapping. `then` is lazy: nothing is computed unless there is a window.
+    // Both blind reviewers caught this independently.
+    let fit_window = (log_scales.len() >= 2).then(|| (0, log_scales.len() - 1));
 
     FractalResult {
         dimension,
