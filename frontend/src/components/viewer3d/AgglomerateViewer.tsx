@@ -15,13 +15,20 @@ import { cn } from '@/lib/utils'
 import type { ColorMode } from '@/lib/types'
 import type { OrbitControls as OrbitControlsImpl } from 'three-stdlib'
 
-/**
- * Identifies which scope in `useViewerStore` a viewer should read/write its
- * camera angles from. Undefined → the default `"single"` scope (legacy
- * behavior, single-sim detail page).
- */
+export interface CameraPose {
+  azimuth: number
+  elevation: number
+  distance: number
+}
+
+/** Optional coordination channel for multi-viewer camera synchronization. */
 export interface CameraSource {
   scope: string
+  canWrite?: boolean
+  pose?: CameraPose | null
+  onStart?: () => void
+  onCameraChange?: (pose: CameraPose) => void
+  onEnd?: () => void
 }
 
 // Colors for principal axes (similar to coordinate axes but distinguishable)
@@ -67,13 +74,14 @@ function ExportHandler() {
  */
 function CameraTracker({
   controlsRef,
-  scope = DEFAULT_CAMERA_SCOPE,
+  cameraSource,
 }: {
   controlsRef: React.RefObject<OrbitControlsImpl | null>
-  scope?: string
+  cameraSource?: CameraSource
 }) {
   const setCameraAngles = useCameraStore((state) => state.setCameraAngles)
   const { camera } = useThree()
+  const scope = cameraSource?.scope ?? DEFAULT_CAMERA_SCOPE
 
   useFrame(() => {
     if (!controlsRef.current) return
@@ -97,12 +105,47 @@ function CameraTracker({
     // Normalize azimuth to 0-360
     const normalizedAzimuth = azimuth < 0 ? azimuth + 360 : azimuth
 
-    setCameraAngles(
-      Math.round(normalizedAzimuth),
-      Math.round(elevation),
-      scope,
-    )
+    if (cameraSource?.canWrite === false) return
+
+    const pose = {
+      azimuth: Math.round(normalizedAzimuth),
+      elevation: Math.round(elevation),
+      distance,
+    }
+    setCameraAngles(pose.azimuth, pose.elevation, scope)
+    cameraSource?.onCameraChange?.(pose)
   })
+
+  return null
+}
+
+function CameraPoseApplier({
+  controlsRef,
+  cameraSource,
+}: {
+  controlsRef: React.RefObject<OrbitControlsImpl | null>
+  cameraSource?: CameraSource
+}) {
+  const setCameraAngles = useCameraStore((state) => state.setCameraAngles)
+  const { camera } = useThree()
+
+  useEffect(() => {
+    const pose = cameraSource?.pose
+    const controls = controlsRef.current
+    if (!pose || cameraSource?.canWrite !== false || !controls) return
+
+    const azimuth = pose.azimuth * (Math.PI / 180)
+    const elevation = pose.elevation * (Math.PI / 180)
+    const horizontalDistance = pose.distance * Math.cos(elevation)
+    const target = controls.target
+
+    camera.position.x = target.x + horizontalDistance * Math.sin(azimuth)
+    camera.position.y = target.y + pose.distance * Math.sin(elevation)
+    camera.position.z = target.z + horizontalDistance * Math.cos(azimuth)
+    camera.lookAt(target)
+    controls.update()
+    setCameraAngles(pose.azimuth, pose.elevation, cameraSource.scope)
+  }, [camera, cameraSource, controlsRef, setCameraAngles])
 
   return null
 }
@@ -365,10 +408,13 @@ export function AgglomerateViewer({
             target={[0, 0, 0]}
             autoRotate={autoRotate}
             autoRotateSpeed={rotateSpeed}
+            onStart={cameraSource?.onStart}
+            onEnd={cameraSource?.onEnd}
           />
 
-          {/* Track camera position for Az/El display */}
-          <CameraTracker controlsRef={controlsRef} scope={cameraSource?.scope} />
+          {/* Track writers and apply the accepted writer's pose to passive cells. */}
+          <CameraTracker controlsRef={controlsRef} cameraSource={cameraSource} />
+          <CameraPoseApplier controlsRef={controlsRef} cameraSource={cameraSource} />
 
           {/* Handle export requests */}
           <ExportHandler />
