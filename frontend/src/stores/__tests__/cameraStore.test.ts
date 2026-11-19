@@ -55,3 +55,24 @@ describe('volatile camera state (#319)', () => {
     expect(useViewerStore.getState().background).toBe('white')
   })
 })
+
+describe('session-only auto rotation (#319)', () => {
+  it('does not restore autoRotate after reload while ordinary preferences survive', () => {
+    useViewerStore.getState().toggleAutoRotate()
+    useViewerStore.getState().setBackground('white')
+
+    const raw = window.localStorage.getItem('viewer-settings')
+    expect(raw).toBeTruthy()
+    const persisted = JSON.parse(raw as string)
+    expect(persisted.state.autoRotate).toBeUndefined()
+    expect(persisted.state.background).toBe('white')
+
+    const storedBeforeReload = window.localStorage.getItem('viewer-settings')
+    useViewerStore.getState().reset()
+    window.localStorage.setItem('viewer-settings', storedBeforeReload as string)
+    useViewerStore.persist.rehydrate()
+
+    expect(useViewerStore.getState().autoRotate).toBe(false)
+    expect(useViewerStore.getState().background).toBe('white')
+  })
+})

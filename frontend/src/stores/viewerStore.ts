@@ -150,6 +150,7 @@ interface ViewerState {
 
   // Camera
   useOrthographic: boolean  // true = orthographic (no perspective), false = perspective
+  /** Session state: never restored from persisted settings. */
   autoRotate: boolean
   rotateSpeed: number
   /**
@@ -287,48 +288,40 @@ export const useViewerStore = create<ViewerState>()(
     }),
     {
       name: 'viewer-settings',
-      /*
-        #312: a camera angle is where the reader was looking, not a preference
-        that should survive a reload. Two things this does *not* do, because the
-        measurement said so: it does not remove any write — zustand calls
-        `setItem` on every `set()` regardless of `partialize` — and it does not
-        stop the store from notifying. The guard in `setCameraAngles` is what
-        stops the write; this bounds the payload.
-
-        The export fields are a request in flight, not state: persisted, a reload
-        could replay a download.
-      */
+      // Camera position, auto-rotation, and export requests are session state.
       partialize: (state) => {
-        // The rest-destructure is the whole mechanism: the omitted names never
-        // reach the payload. TypeScript exempts them as rest siblings.
         const {
           cameraScopes,
           cameraAzimuth,
           cameraElevation,
+          autoRotate,
           exportRequest,
           exportFilename,
           ...persisted
         } = state
         return persisted
       },
-      /*
-        Version 2 is the payload without the camera and without an export request
-        (#312). Bumping it is what makes the cleanup happen once for an existing
-        reader: a stored `exportRequest` used to be replayed by the export handler
-        on the next load, and after this version it is dropped on the way in.
-      */
-      version: 2,
-      migrate: (persistedState, version) => {
-        if (!persistedState || typeof persistedState !== 'object') return persistedState
+      /* Version 3 also makes auto-rotation session-only. */
+      version: 3,
+      migrate: (persistedState) => {
+        if (!persistedState || typeof persistedState !== 'object') {
+          return persistedState
+        }
         const {
           cameraScopes,
           cameraAzimuth,
           cameraElevation,
+          autoRotate,
           exportRequest,
           exportFilename,
           ...persisted
         } = persistedState as Record<string, unknown>
-        void version
+        void cameraScopes
+        void cameraAzimuth
+        void cameraElevation
+        void autoRotate
+        void exportRequest
+        void exportFilename
         return persisted
       },
     }
