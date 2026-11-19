@@ -1,0 +1,30 @@
+# #319 — Camera frame paths
+
+Approved contract: [GitHub #319](https://github.com/juanjoseexpositogonzalez/pyaglogen3D/issues/319). Jira: **AGLO-20**. Source branch: `fix/319-camera-frame-path`. Tracker branch: `fix/319-camera-frame-path-tracker`.
+This task record links the contract; it does not replace it.
+
+## Specs
+
+1. **S1 — Volatile camera state.** Implement the selected complete design: camera angles live outside the persisted viewer settings, camera movement does not call `localStorage.setItem`, and `autoRotate` does not restore as active after reload. Ordinary viewer preferences remain persisted.
+2. **S2 — Real synchronized comparison.** In synchronized grid mode, the cell the user manipulates is the sole temporary writer and the other cells apply that camera. Idle cells must not overwrite the shared pose. Unsynchronized cells remain independent.
+3. **S3 — Lifecycle cleanup.** Remove every `compare/{sessionId}` camera scope, including per-cell subscopes, when `CompareCameraProvider` unmounts.
+4. **S4 — Preserve observable behavior.** Keep 1° camera precision (no 5° quantization), the `single` scope and legacy angle consumers, `autoRotate`/`rotateSpeed` controls, export filenames, projection controls, and current non-camera preference persistence.
+5. **S5 — Public-interface witnesses.** Tests cover storage writes and rehydration, active-writer arbitration and passive camera application, synchronized and unsynchronized grids, scope cleanup, and the existing viewer/store behaviors touched by the shared code.
+
+## Tasks
+
+- [x] **V1** — S1, S4, S5 — Separate volatile camera state from persisted viewer preferences; RED/GREEN store and rehydration witnesses. Route: inline. Commit: `dcc56c4`.
+- [x] **V2** — S2, S4, S5 — Apply camera poses to viewers and arbitrate one temporary writer in synchronized comparison; RED/GREEN viewer/grid witnesses. Route: inline. Commits: `ad2d0f6`, `81df664`, `1112071`.
+- [ ] **V3** — S3, S5 — Clean compare scopes on provider unmount, run the focused and frontend suites, then close delivery records. Route: inline + independent verification. Commit: `581e861`; delivery pending review-slice decision.
+
+## Log
+
+- **L1 — User request, verbatim:** «vamos con 319».
+- **L2 — Approved issue:** GitHub #319 has `status:approved`; its body identifies the remaining `autoRotate`, compare-grid writer race, and in-memory scope-growth paths.
+- **L3 — Product decision:** the user selected **«Aplicar la recomendación completa»**: volatile camera state; `autoRotate` not restored on reload; the manipulated comparison cell is the sole temporary writer and other cells apply its camera; cleanup on unmount; no 5° quantization.
+- **L4 — Exploration evidence:** `partialize` still writes storage on every persisted-store `set`; `CameraTracker` writes from `useFrame`; compare viewers currently share a write scope but never apply its stored pose; the provider only clears its debounce timer.
+- **L5 — V1 RED/GREEN:** the initial witness failed because `useCameraStore` did not exist. The focused V1 set then passed 62 tests. Independent verification found that Viewer Controls Reset no longer cleared camera state and that public wiring witnesses bypassed the tracker/current-view/export paths. A Reset witness reproduced the stale `(47, 23)` camera; the fix plus real tracker, projection-current-view, and export-filename witnesses pass 65 tests. LSP reported zero errors on the changed paths. `npm run type-check` timed out once at the mandatory 30-second bound and was not retried.
+- **L6 — V1 independent verdict:** S1 PASS, S4 PASS, S5 PASS; the verifier independently reran the authorized six-file command and observed 65/65 tests passing. Non-failing jsdom custom-element/navigation warnings remain baseline noise.
+- **L7 — V2 RED/GREEN and independent verdict:** passive viewers initially overwrote shared camera state and ignored accepted poses. The first implementation isolated scopes and added temporary writer ownership, but independent verification found that restart-on-frame debouncing could starve publication above 62.5 Hz. A continuous 8 ms-frame witness reproduced `cameraState === null`; the fix uses a latest-value 16 ms throttle. Follow-up public witnesses cover unsynchronized grids, real `CameraTracker` publication, OrbitControls ownership callbacks, and passive camera position/control application. Final independent verdict: S2 PASS, S4 PASS, S5 PASS; 24/24 authorized focused tests passed.
+- **L8 — V3 RED/GREEN and independent verdict:** provider unmount initially left the `compare/{sessionId}` root and both per-cell scopes in memory. Cleanup now cancels pending publication, clears its pending pose, and removes the exact root plus descendants while preserving another comparison session and `single`. Independent verdict: S3 PASS, S5 PASS; 9/9 authorized provider tests passed. The cumulative focused set passed 85/85, the full frontend suite passed 118 files and 1499/1499 tests, LSP reported zero errors, and `git diff --check` passed.
+- **L9 — Delivery budget:** the complete source branch differs from `develop` by 829 additions and 485 deletions (1314 changed lines), exceeding the repository's 400-line PR cap without an issue exception. The user selected the feature/tracker branch chain; every child PR must remain at or below 400 changed lines. No unrelated untracked `odd/tasks/*` files are included.
