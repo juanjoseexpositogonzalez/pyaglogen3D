@@ -505,7 +505,9 @@ export interface WindowedBlock {
   execution_time_ms: number
   parameters: Record<string, unknown>
   status: WindowedBlockStatus
-  /** [s, e] only when status === 'ok'; null otherwise. */
+  /** Applied engine fit window, absent from historical windowed blocks. */
+  fit_window?: [number, number] | null
+  /** Requested [s, e] retained for historical compatibility. */
   fit_window_used: [number, number] | null
   /** Requested [s, e], absent from historical rows; null for non-ok statuses. */
   requested_window?: [number, number] | null

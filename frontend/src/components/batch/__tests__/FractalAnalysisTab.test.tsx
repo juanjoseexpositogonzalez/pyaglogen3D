@@ -67,6 +67,7 @@ function makeWindowedOk(): WindowedBlock {
     execution_time_ms: 12,
     parameters: { points_per_sphere: 100, precision: 18 },
     status: 'ok',
+    fit_window: [0, 2],
     fit_window_used: [0, 2],
     error_message: null,
   }
@@ -83,6 +84,7 @@ function makeWindowedInsufficient(): WindowedBlock {
     execution_time_ms: 3,
     parameters: { points_per_sphere: 100, precision: 18 },
     status: 'insufficient_levels',
+    fit_window: null,
     fit_window_used: null,
     error_message: null,
   }
@@ -99,6 +101,7 @@ function makeWindowedError(): WindowedBlock {
     execution_time_ms: 5,
     parameters: { points_per_sphere: 100, precision: 18 },
     status: 'error',
+    fit_window: null,
     fit_window_used: null,
     error_message: 'engine failure during windowed fit',
   }
@@ -250,6 +253,37 @@ describe('FractalAnalysisTab — comparison table', () => {
     await waitFor(() =>
       expect(screen.queryByTestId('fa-distributions-error')).toBeNull(),
     )
+  })
+
+  it('renders the windowed canonical applied window instead of the legacy one', async () => {
+    fetchMock.mockResolvedValue(jsonResponse(200, oneConfig([1.8, 1.82, 1.83, 1.81, 1.84])))
+    const windowed = {
+      ...makeWindowedOk(),
+      requested_window: [1, 3] as [number, number],
+      fit_window_used: [2, 4] as [number, number],
+      fit_window: [3, 4] as [number, number],
+    }
+
+    renderTab(
+      makeResults([
+        makeRow('sim-windowed', {
+          box_counting: {
+            dimension: 1.79,
+            r_squared: 0.995,
+            std_error: 0.01,
+            execution_time_ms: 10,
+            fit_window: [8, 9],
+          },
+          box_counting_windowed: windowed,
+          bc_delta: 0.02,
+        }),
+      ]),
+    )
+
+    expect(await screen.findByText('[1, 3]')).toBeTruthy()
+    expect(screen.getByText('[3, 4]')).toBeTruthy()
+    expect(screen.queryByText('[2, 4]')).toBeNull()
+    expect(screen.queryByText('[8, 9]')).toBeNull()
   })
 
   it('renders windowed columns with values, Δ, and distinct statuses', async () => {
