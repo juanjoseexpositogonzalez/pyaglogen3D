@@ -106,7 +106,6 @@ export function CompareGrid({
     publishCamera,
   } = useCompareCamera()
   const layout = getCompareGridLayout(simulations.length)
-  const primaryWriterId = simulations.find((sim) => sim.geometry)?.id ?? null
 
   return (
     <div
@@ -169,9 +168,7 @@ export function CompareGrid({
                 colorOverride={color}
                 cameraSource={{
                   scope: scopeFor(sim.id),
-                  canWrite:
-                    !synchronised ||
-                    (activeWriterId ?? primaryWriterId) === sim.id,
+                  canWrite: !synchronised || activeWriterId === sim.id,
                   pose: synchronised ? cameraState : null,
                   onStart: synchronised
                     ? () => beginCameraWrite(sim.id)

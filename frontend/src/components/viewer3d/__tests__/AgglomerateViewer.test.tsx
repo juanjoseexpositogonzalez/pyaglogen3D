@@ -19,7 +19,9 @@ import { act, render, screen } from '@testing-library/react'
 const mockViewer = vi.hoisted(() => ({
   camera: {
     position: { x: 1, y: 1, z: 1 },
+    zoom: 1,
     lookAt: vi.fn(),
+    updateProjectionMatrix: vi.fn(),
   },
   controls: {
     target: { x: 0, y: 0, z: 0 },
@@ -102,7 +104,12 @@ beforeEach(() => {
   mockViewer.camera.position.x = 1
   mockViewer.camera.position.y = 1
   mockViewer.camera.position.z = 1
+  mockViewer.camera.zoom = 1
+  mockViewer.controls.target.x = 0
+  mockViewer.controls.target.y = 0
+  mockViewer.controls.target.z = 0
   mockViewer.camera.lookAt.mockClear()
+  mockViewer.camera.updateProjectionMatrix.mockClear()
   mockViewer.controls.update.mockClear()
   useViewerStore.getState().reset()
   useCameraStore.getState().resetCameraState()
@@ -175,6 +182,8 @@ describe('<AgglomerateViewer /> new props (T3)', () => {
       azimuth: 45,
       elevation: 35,
       distance: Math.sqrt(3),
+      target: [0, 0, 0],
+      zoom: 1,
     })
   })
 
@@ -227,7 +236,13 @@ describe('<AgglomerateViewer /> new props (T3)', () => {
         cameraSource={{
           scope,
           canWrite: false,
-          pose: { azimuth: 37, elevation: 12, distance: 8 },
+          pose: {
+            azimuth: 37,
+            elevation: 12,
+            distance: 8,
+            target: [3, 4, 5],
+            zoom: 1.5,
+          },
         } as never}
       />
     )
@@ -236,9 +251,12 @@ describe('<AgglomerateViewer /> new props (T3)', () => {
       azimuth: 37,
       elevation: 12,
     })
-    expect(mockViewer.camera.position.x).toBeCloseTo(4.71, 2)
-    expect(mockViewer.camera.position.y).toBeCloseTo(1.66, 2)
-    expect(mockViewer.camera.position.z).toBeCloseTo(6.25, 2)
+    expect(mockViewer.controls.target).toEqual({ x: 3, y: 4, z: 5 })
+    expect(mockViewer.camera.position.x).toBeCloseTo(7.71, 2)
+    expect(mockViewer.camera.position.y).toBeCloseTo(5.66, 2)
+    expect(mockViewer.camera.position.z).toBeCloseTo(11.25, 2)
+    expect(mockViewer.camera.zoom).toBe(1.5)
+    expect(mockViewer.camera.updateProjectionMatrix).toHaveBeenCalledOnce()
     expect(mockViewer.camera.lookAt).toHaveBeenCalledWith(
       mockViewer.controls.target,
     )

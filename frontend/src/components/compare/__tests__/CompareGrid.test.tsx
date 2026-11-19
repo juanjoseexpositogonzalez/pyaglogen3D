@@ -104,7 +104,7 @@ describe('<CompareGrid />', () => {
     expect(within(cells[2]).getByText('Agg C')).toBeTruthy()
   })
 
-  it('keeps per-cell scopes isolated and chooses one idle writer when synced', () => {
+  it('keeps per-cell scopes isolated and leaves every cell passive while synced and idle', () => {
     const sims: CompareSim[] = [
       makeSim('sim-a', 'A', true),
       makeSim('sim-b', 'B', true),
@@ -120,7 +120,7 @@ describe('<CompareGrid />', () => {
       stubs[1].getAttribute('data-scope'),
     )
     expect(stubs[0].getAttribute('data-scope')).toMatch(/^compare\//)
-    expect(stubs[0].getAttribute('data-can-write')).toBe('true')
+    expect(stubs[0].getAttribute('data-can-write')).toBe('false')
     expect(stubs[1].getAttribute('data-can-write')).toBe('false')
   })
 
@@ -162,6 +162,8 @@ describe('<CompareGrid />', () => {
         azimuth: number
         elevation: number
         distance: number
+        target: [number, number, number]
+        zoom: number
       }) => void
     }
     act(() => secondSource.onStart())
@@ -174,7 +176,13 @@ describe('<CompareGrid />', () => {
       (activeProps[1].cameraSource as { canWrite: boolean }).canWrite,
     ).toBe(true)
 
-    const pose = { azimuth: 37, elevation: 12, distance: 8 }
+    const pose = {
+      azimuth: 37,
+      elevation: 12,
+      distance: 8,
+      target: [1, 2, 3] as [number, number, number],
+      zoom: 1.5,
+    }
     act(() => {
       (
         activeProps[1].cameraSource as {
