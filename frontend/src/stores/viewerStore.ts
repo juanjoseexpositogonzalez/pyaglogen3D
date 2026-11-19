@@ -38,6 +38,101 @@ export interface CameraAngles {
   elevation: number
 }
 
+interface CameraState {
+  /** Volatile camera positions keyed by viewer scope. */
+  cameraScopes: Record<string, CameraAngles>
+  /** Mirror of the default scope for legacy angle consumers. */
+  cameraAzimuth: number
+  /** Mirror of the default scope for legacy angle consumers. */
+  cameraElevation: number
+  setCameraAngles: (azimuth: number, elevation: number, scope?: string) => void
+  getCameraAngles: (scope?: string) => CameraAngles
+  clearCameraScope: (scope: string) => void
+  clearCameraScopes: (prefix: string) => void
+  resetCameraState: () => void
+}
+
+const initialCameraState = {
+  cameraScopes: {
+    [DEFAULT_CAMERA_SCOPE]: { azimuth: 0, elevation: 0 },
+  } as Record<string, CameraAngles>,
+  cameraAzimuth: 0,
+  cameraElevation: 0,
+}
+
+/**
+ * Camera positions are intentionally kept outside the persisted viewer settings.
+ * Moving a camera may update this store every frame, but it never writes storage.
+ */
+export const useCameraStore = create<CameraState>()((set, get) => ({
+  ...initialCameraState,
+  setCameraAngles: (azimuth, elevation, scope = DEFAULT_CAMERA_SCOPE) => {
+    const current = get().cameraScopes[scope]
+    if (
+      current !== undefined &&
+      current.azimuth === azimuth &&
+      current.elevation === elevation
+    ) {
+      return
+    }
+
+    set((state) => {
+      const cameraScopes = {
+        ...state.cameraScopes,
+        [scope]: { azimuth, elevation },
+      }
+      if (scope === DEFAULT_CAMERA_SCOPE) {
+        return {
+          cameraScopes,
+          cameraAzimuth: azimuth,
+          cameraElevation: elevation,
+        }
+      }
+      return { cameraScopes }
+    })
+  },
+  getCameraAngles: (scope = DEFAULT_CAMERA_SCOPE) =>
+    get().cameraScopes[scope] ?? { azimuth: 0, elevation: 0 },
+  clearCameraScope: (scope) => {
+    set((state) => {
+      if (scope === DEFAULT_CAMERA_SCOPE) {
+        return {
+          cameraScopes: {
+            ...state.cameraScopes,
+            [DEFAULT_CAMERA_SCOPE]: { azimuth: 0, elevation: 0 },
+          },
+          cameraAzimuth: 0,
+          cameraElevation: 0,
+        }
+      }
+      if (!(scope in state.cameraScopes)) return state
+      const cameraScopes = { ...state.cameraScopes }
+      delete cameraScopes[scope]
+      return { cameraScopes }
+    })
+  },
+  clearCameraScopes: (prefix) => {
+    set((state) => {
+      const cameraScopes = Object.fromEntries(
+        Object.entries(state.cameraScopes).filter(
+          ([scope]) => scope !== prefix && !scope.startsWith(`${prefix}/`),
+        ),
+      )
+      const single = cameraScopes[DEFAULT_CAMERA_SCOPE] ?? {
+        azimuth: 0,
+        elevation: 0,
+      }
+      cameraScopes[DEFAULT_CAMERA_SCOPE] = single
+      return {
+        cameraScopes,
+        cameraAzimuth: single.azimuth,
+        cameraElevation: single.elevation,
+      }
+    })
+  },
+  resetCameraState: () => set(initialCameraState),
+}))
+
 interface ViewerState {
   // Display settings
   colorMode: ColorMode
