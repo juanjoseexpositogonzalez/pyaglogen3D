@@ -16,9 +16,9 @@ vi.mock('@/lib/api', () => ({
   API_BASE: 'http://localhost:8000/api/v1',
 }))
 
-// Mock viewerStore (in case ProjectionControls is used internally)
+// Mock volatile camera state used by ProjectionControls.
 vi.mock('@/stores/viewerStore', () => ({
-  useViewerStore: () => ({ cameraAzimuth: 0, cameraElevation: 0 }),
+  useViewerCamera: () => ({ azimuth: 0, elevation: 0 }),
 }))
 
 // ---------------------------------------------------------------------------
