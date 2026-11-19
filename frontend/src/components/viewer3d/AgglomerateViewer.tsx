@@ -19,6 +19,8 @@ export interface CameraPose {
   azimuth: number
   elevation: number
   distance: number
+  target: [number, number, number]
+  zoom: number
 }
 
 /** Optional coordination channel for multi-viewer camera synchronization. */
@@ -111,6 +113,8 @@ function CameraTracker({
       azimuth: Math.round(normalizedAzimuth),
       elevation: Math.round(elevation),
       distance,
+      target: [target.x, target.y, target.z] as [number, number, number],
+      zoom: (camera as typeof camera & { zoom: number }).zoom,
     }
     setCameraAngles(pose.azimuth, pose.elevation, scope)
     cameraSource?.onCameraChange?.(pose)
@@ -138,10 +142,20 @@ function CameraPoseApplier({
     const elevation = pose.elevation * (Math.PI / 180)
     const horizontalDistance = pose.distance * Math.cos(elevation)
     const target = controls.target
+    const [targetX, targetY, targetZ] = pose.target
+    const zoomableCamera = camera as typeof camera & {
+      zoom: number
+      updateProjectionMatrix: () => void
+    }
 
-    camera.position.x = target.x + horizontalDistance * Math.sin(azimuth)
-    camera.position.y = target.y + pose.distance * Math.sin(elevation)
-    camera.position.z = target.z + horizontalDistance * Math.cos(azimuth)
+    target.x = targetX
+    target.y = targetY
+    target.z = targetZ
+    camera.position.x = targetX + horizontalDistance * Math.sin(azimuth)
+    camera.position.y = targetY + pose.distance * Math.sin(elevation)
+    camera.position.z = targetZ + horizontalDistance * Math.cos(azimuth)
+    zoomableCamera.zoom = pose.zoom
+    zoomableCamera.updateProjectionMatrix()
     camera.lookAt(target)
     controls.update()
     setCameraAngles(pose.azimuth, pose.elevation, cameraSource.scope)
