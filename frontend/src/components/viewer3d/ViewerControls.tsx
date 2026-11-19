@@ -1,6 +1,11 @@
 'use client'
 
-import { useViewerStore, type BackgroundPreset } from '@/stores/viewerStore'
+import {
+  useCameraStore,
+  useViewerCamera,
+  useViewerStore,
+  type BackgroundPreset,
+} from '@/stores/viewerStore'
 import { useShallow } from 'zustand/react/shallow'
 import { Button } from '@/components/ui/button'
 import { Select } from '@/components/ui/select'
@@ -64,8 +69,6 @@ export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsPr
     setParticleOpacity,
     background,
     setBackground,
-    cameraAzimuth,
-    cameraElevation,
     requestExport,
     reset,
   } = useViewerStore(
@@ -93,12 +96,16 @@ export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsPr
       setParticleOpacity: s.setParticleOpacity,
       background: s.background,
       setBackground: s.setBackground,
-      cameraAzimuth: s.cameraAzimuth,
-      cameraElevation: s.cameraElevation,
       requestExport: s.requestExport,
       reset: s.reset,
     }))
   )
+  const { azimuth: cameraAzimuth, elevation: cameraElevation } = useViewerCamera()
+  const resetCameraState = useCameraStore((state) => state.resetCameraState)
+  const handleReset = () => {
+    reset()
+    resetCameraState()
+  }
 
   return (
     <div className="space-y-4 p-4 bg-card rounded-lg border">
@@ -223,7 +230,7 @@ export function ViewerControls({ onExportCsv, isExportingCsv }: ViewerControlsPr
           Rotate
         </Button>
 
-        <Button variant="outline" size="sm" onClick={reset}>
+        <Button variant="outline" size="sm" onClick={handleReset}>
           <RotateCcw className="h-4 w-4 mr-1" />
           Reset
         </Button>

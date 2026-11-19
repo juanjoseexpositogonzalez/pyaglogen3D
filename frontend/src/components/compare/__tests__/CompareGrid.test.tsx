@@ -5,9 +5,9 @@
  * that echoes the props it received, so we can assert on color + scope
  * threading without touching WebGL.
  */
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import React from 'react'
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 // ---------------------------------------------------------------------------
 // AgglomerateViewer stub — surfaces the props the grid feeds into it.
@@ -18,12 +18,15 @@ vi.mock('@/components/viewer3d/AgglomerateViewer', () => ({
   AgglomerateViewer: (props: Record<string, unknown>) => {
     viewerProps.push(props)
     const coords = props.coordinates as number[][]
-    const cameraSource = props.cameraSource as { scope: string } | undefined
+    const cameraSource = props.cameraSource as
+      | { scope: string; canWrite?: boolean }
+      | undefined
     return (
       <div
         data-testid="viewer-stub"
         data-color={String(props.colorOverride ?? '')}
         data-scope={cameraSource?.scope ?? ''}
+        data-can-write={String(cameraSource?.canWrite ?? true)}
         data-count={String(coords?.length ?? 0)}
       />
     )
@@ -72,6 +75,10 @@ beforeEach(() => {
   viewerProps.length = 0
 })
 
+afterEach(() => {
+  vi.useRealTimers()
+})
+
 describe('<CompareGrid />', () => {
   it('renders one cell per simulation with the palette border color and label', () => {
     const sims: CompareSim[] = [
@@ -97,7 +104,7 @@ describe('<CompareGrid />', () => {
     expect(within(cells[2]).getByText('Agg C')).toBeTruthy()
   })
 
-  it('forwards colorOverride + scoped camera to each viewer (synced → shared scope)', () => {
+  it('keeps per-cell scopes isolated and leaves every cell passive while synced and idle', () => {
     const sims: CompareSim[] = [
       makeSim('sim-a', 'A', true),
       makeSim('sim-b', 'B', true),
@@ -108,12 +115,87 @@ describe('<CompareGrid />', () => {
     expect(viewerProps[0].colorOverride).toBe('#4E79A7')
     expect(viewerProps[1].colorOverride).toBe('#F28E2B')
 
-    // Synced provider → both viewers got the same scope key.
     const stubs = screen.getAllByTestId('viewer-stub')
-    expect(stubs[0].getAttribute('data-scope')).toBe(
+    expect(stubs[0].getAttribute('data-scope')).not.toBe(
       stubs[1].getAttribute('data-scope'),
     )
     expect(stubs[0].getAttribute('data-scope')).toMatch(/^compare\//)
+    expect(stubs[0].getAttribute('data-can-write')).toBe('false')
+    expect(stubs[1].getAttribute('data-can-write')).toBe('false')
+  })
+
+  it('keeps unsynchronised cells independently writable without broadcasts', () => {
+    const sims: CompareSim[] = [
+      makeSim('sim-a', 'A', true),
+      makeSim('sim-b', 'B', true),
+    ]
+    render(
+      <CompareCameraProvider initialSynchronised={false}>
+        <CompareGrid simulations={sims} colorMap={colorMap} />
+      </CompareCameraProvider>,
+    )
+
+    const [firstSource, secondSource] = viewerProps.map(
+      (props) => props.cameraSource as Record<string, unknown>,
+    )
+    expect(firstSource.scope).not.toBe(secondSource.scope)
+    expect(firstSource.canWrite).toBe(true)
+    expect(secondSource.canWrite).toBe(true)
+    expect(firstSource.pose).toBeNull()
+    expect(secondSource.pose).toBeNull()
+    expect(firstSource.onStart).toBeUndefined()
+    expect(firstSource.onCameraChange).toBeUndefined()
+    expect(firstSource.onEnd).toBeUndefined()
+  })
+
+  it('hands temporary writer ownership to the manipulated cell and broadcasts its pose', () => {
+    vi.useFakeTimers()
+    const sims: CompareSim[] = [
+      makeSim('sim-a', 'A', true),
+      makeSim('sim-b', 'B', true),
+    ]
+    render(wrap(<CompareGrid simulations={sims} colorMap={colorMap} />))
+
+    const secondSource = viewerProps[1].cameraSource as {
+      onStart: () => void
+      onCameraChange: (state: {
+        azimuth: number
+        elevation: number
+        distance: number
+        target: [number, number, number]
+        zoom: number
+      }) => void
+    }
+    act(() => secondSource.onStart())
+
+    const activeProps = viewerProps.slice(-2)
+    expect(
+      (activeProps[0].cameraSource as { canWrite: boolean }).canWrite,
+    ).toBe(false)
+    expect(
+      (activeProps[1].cameraSource as { canWrite: boolean }).canWrite,
+    ).toBe(true)
+
+    const pose = {
+      azimuth: 37,
+      elevation: 12,
+      distance: 8,
+      target: [1, 2, 3] as [number, number, number],
+      zoom: 1.5,
+    }
+    act(() => {
+      (
+        activeProps[1].cameraSource as {
+          onCameraChange: (state: typeof pose) => void
+        }
+      ).onCameraChange(pose)
+      vi.advanceTimersByTime(16)
+    })
+
+    const broadcastProps = viewerProps.slice(-2)
+    expect(
+      (broadcastProps[0].cameraSource as { pose: typeof pose }).pose,
+    ).toEqual(pose)
   })
 
   it('applies per-sim nm scaling to coordinates before handing them to the viewer', () => {
