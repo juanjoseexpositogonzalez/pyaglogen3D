@@ -132,6 +132,7 @@ _ELEVEN_KEYS = {
     "execution_time_ms",
     "parameters",
     "status",
+    "fit_window",
     "fit_window_used",
     "requested_window",
     "error_message",
@@ -327,6 +328,7 @@ class TestIssue351FitWindowPublication:
         assert legacy["window_source"] == "legacy"
 
         windowed = sim.metrics["box_counting_windowed"]
+        assert windowed["fit_window"] == [1, 4]
         assert windowed["fit_window_used"] == [1, 4]
         assert windowed["requested_window"] == [1, 4]
 

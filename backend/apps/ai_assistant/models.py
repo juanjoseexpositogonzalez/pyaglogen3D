@@ -1,4 +1,5 @@
 """AI Assistant models."""
+
 import uuid
 from typing import Any
 
@@ -224,7 +225,11 @@ class ChatMessage(models.Model):
         verbose_name_plural = "Chat Messages"
 
     def __str__(self) -> str:
-        preview = self.content[:50] if isinstance(self.content, str) else str(self.content)[:50]
+        preview = (
+            self.content[:50]
+            if isinstance(self.content, str)
+            else str(self.content)[:50]
+        )
         return f"[{self.role}] {preview}..."
 
 
@@ -276,8 +281,26 @@ class Notification(models.Model):
         user: Any,
         simulation: Any,
         success: bool = True,
+        partial: bool = False,
     ) -> "Notification":
         """Create a notification for simulation completion."""
+        if partial:
+            return cls.objects.create(
+                user=user,
+                notification_type=cls.NotificationType.INFO,
+                title="Simulation Partially Completed",
+                message=(
+                    f"Simulation '{simulation.name}' completed partially because "
+                    "its operation budget was exhausted."
+                ),
+                data={
+                    "simulation_id": str(simulation.id),
+                    "simulation_name": simulation.name,
+                    "algorithm": simulation.algorithm,
+                    "budget_exhausted": True,
+                    "operations_used": simulation.metrics.get("operations_used"),
+                },
+            )
         if success:
             return cls.objects.create(
                 user=user,
