@@ -2813,7 +2813,11 @@ def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
     try:
         task.backend.store_result(
             f"{_BC_INFLIGHT_PREFIX}{study_id}",
-            {"task_id": task.id, "study_id": study_id},
+            {
+                "task_id": task.id,
+                "study_id": study_id,
+                "dispatched_at": time.time(),
+            },
             state="PROGRESS",
         )
     except Exception:  # noqa: BLE001 — stamping must never break dispatch
