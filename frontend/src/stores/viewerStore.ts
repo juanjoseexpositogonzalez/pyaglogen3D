@@ -344,13 +344,10 @@ export function useViewerCamera(scope: string = DEFAULT_CAMERA_SCOPE): {
   elevation: number
   setCameraAngles: (azimuth: number, elevation: number) => void
 } {
-  const angles = useViewerStore((s) =>
-    s.cameraScopes[scope] ??
-    (scope === DEFAULT_CAMERA_SCOPE
-      ? { azimuth: s.cameraAzimuth, elevation: s.cameraElevation }
-      : { azimuth: 0, elevation: 0 })
+  const angles = useCameraStore(
+    (state) => state.cameraScopes[scope] ?? { azimuth: 0, elevation: 0 },
   )
-  const setCameraAngles = useViewerStore((s) => s.setCameraAngles)
+  const setCameraAngles = useCameraStore((state) => state.setCameraAngles)
   return {
     azimuth: angles.azimuth,
     elevation: angles.elevation,

@@ -11,6 +11,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import {
+  useCameraStore,
   useViewerStore,
   useViewerCamera,
   DEFAULT_CAMERA_SCOPE,
@@ -21,6 +22,7 @@ beforeEach(() => {
   // Reset to a clean baseline; `reset()` re-applies the initial state which
   // includes a `cameraScopes: { single: { azimuth: 0, elevation: 0 } }` map.
   useViewerStore.getState().reset()
+  useCameraStore.getState().resetCameraState()
   localStorage.clear()
 })
 
@@ -92,8 +94,8 @@ describe('viewerStore camera scoping (R-DELTA-1)', () => {
     // reflects the new value.
     expect(result.current.azimuth).toBe(33)
     expect(result.current.elevation).toBe(22)
-    // And the root mirror is updated too (backwards-compat).
-    expect(useViewerStore.getState().cameraAzimuth).toBe(33)
+    // The volatile store keeps the legacy single-scope mirror updated.
+    expect(useCameraStore.getState().cameraAzimuth).toBe(33)
   })
 
   it('useViewerCamera(scope) reads/writes an isolated scope', () => {
@@ -108,8 +110,8 @@ describe('viewerStore camera scoping (R-DELTA-1)', () => {
     expect(single.current.azimuth).toBe(10)
     expect(compareA.current.azimuth).toBe(99)
     // Writing to compare scope must not leak into the single scope.
-    expect(useViewerStore.getState().cameraAzimuth).toBe(10)
-    expect(useViewerStore.getState().cameraElevation).toBe(10)
+    expect(useCameraStore.getState().cameraAzimuth).toBe(10)
+    expect(useCameraStore.getState().cameraElevation).toBe(10)
   })
 })
 
