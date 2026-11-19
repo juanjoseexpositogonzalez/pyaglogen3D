@@ -5,6 +5,7 @@ import { Canvas, useFrame, useThree } from '@react-three/fiber'
 import { OrbitControls, Grid, GizmoHelper, GizmoViewport, Line } from '@react-three/drei'
 import { Particles } from './Particles'
 import {
+  useCameraStore,
   useViewerStore,
   backgroundColors,
   DEFAULT_CAMERA_SCOPE,
@@ -71,7 +72,7 @@ function CameraTracker({
   controlsRef: React.RefObject<OrbitControlsImpl | null>
   scope?: string
 }) {
-  const setCameraAngles = useViewerStore((s) => s.setCameraAngles)
+  const setCameraAngles = useCameraStore((state) => state.setCameraAngles)
   const { camera } = useThree()
 
   useFrame(() => {
