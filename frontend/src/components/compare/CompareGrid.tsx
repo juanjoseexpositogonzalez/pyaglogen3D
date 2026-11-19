@@ -9,9 +9,9 @@
  *   - Gets its own scaled coordinates/radii via `getScaleFactorNm(params)`
  *     so aggregates with different primary particle sizes all display in
  *     real-world nm units (R-3).
- *   - Gets the session-scoped camera key from `useCompareCamera()` so
- *     when sync is on, all cells share one camera scope (orbit controls
- *     move together); when off, each cell owns its own sub-scope.
+ *   - Gets an isolated volatile camera scope from `useCompareCamera()`.
+ *     In synchronized mode one idle/active writer publishes a shared pose
+ *     that passive cells apply; unsynchronized cells remain independent.
  *   - Gets a `colorOverride` from the deterministic palette so the border
  *     tint, legend chip, and (in overlay mode) particle color all agree.
  *   - Shows a label overlay in the corner: color chip + sim name.
@@ -96,8 +96,17 @@ export function CompareGrid({
   simulations,
   colorMap,
 }: CompareGridProps): ReactNode {
-  const { scopeFor } = useCompareCamera()
+  const {
+    synchronised,
+    scopeFor,
+    cameraState,
+    activeWriterId,
+    beginCameraWrite,
+    endCameraWrite,
+    publishCamera,
+  } = useCompareCamera()
   const layout = getCompareGridLayout(simulations.length)
+  const primaryWriterId = simulations.find((sim) => sim.geometry)?.id ?? null
 
   return (
     <div
@@ -158,7 +167,22 @@ export function CompareGrid({
                 coordinates={scaledCoords}
                 radii={scaledRadii}
                 colorOverride={color}
-                cameraSource={{ scope: scopeFor(sim.id) }}
+                cameraSource={{
+                  scope: scopeFor(sim.id),
+                  canWrite:
+                    !synchronised ||
+                    (activeWriterId ?? primaryWriterId) === sim.id,
+                  pose: synchronised ? cameraState : null,
+                  onStart: synchronised
+                    ? () => beginCameraWrite(sim.id)
+                    : undefined,
+                  onCameraChange: synchronised
+                    ? (pose) => publishCamera(sim.id, pose)
+                    : undefined,
+                  onEnd: synchronised
+                    ? () => endCameraWrite(sim.id)
+                    : undefined,
+                }}
                 className="h-full w-full"
               />
             ) : (
