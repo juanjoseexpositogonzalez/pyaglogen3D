@@ -10,7 +10,7 @@ import { Slider } from '@/components/ui/slider'
 import { Progress } from '@/components/ui/progress'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Download, Image as ImageIcon, Loader2, Camera } from 'lucide-react'
-import { useViewerStore } from '@/stores/viewerStore'
+import { useViewerCamera } from '@/stores/viewerStore'
 import type { ExportProjectionsPayload } from '@/lib/api'
 
 export interface ProjectionParams {
@@ -95,10 +95,7 @@ export function ProjectionControls({
   isLoading,
   isBatchLoading,
 }: ProjectionControlsProps) {
-  // Selectors, one per key: a subscriber without one re-renders on every store
-  // change, and the camera writes sixty times a second while it moves (#312).
-  const cameraAzimuth = useViewerStore((s) => s.cameraAzimuth)
-  const cameraElevation = useViewerStore((s) => s.cameraElevation)
+  const { azimuth: cameraAzimuth, elevation: cameraElevation } = useViewerCamera()
   const [azimuth, setAzimuth] = useState(45)
   const [elevation, setElevation] = useState(30)
   const [format, setFormat] = useState<'png' | 'svg'>('png')
