@@ -107,7 +107,13 @@ describe('<CompareCameraProvider />', () => {
     const { result } = renderHook(() => useCompareCamera(), {
       wrapper: CompareCameraProvider,
     })
-    const pose = { azimuth: 37, elevation: 12, distance: 8 }
+    const pose = {
+      azimuth: 37,
+      elevation: 12,
+      distance: 8,
+      target: [1, 2, 3] as [number, number, number],
+      zoom: 1.5,
+    }
 
     act(() => result.current.beginCameraWrite('sim-b'))
     expect(result.current.activeWriterId).toBe('sim-b')
@@ -140,6 +146,8 @@ describe('<CompareCameraProvider />', () => {
           azimuth: 31 + frame,
           elevation: 10 + frame,
           distance: 8,
+          target: [frame, 0, 0],
+          zoom: 1 + frame / 10,
         })
         vi.advanceTimersByTime(8)
       }
@@ -149,7 +157,31 @@ describe('<CompareCameraProvider />', () => {
       azimuth: 36,
       elevation: 15,
       distance: 8,
+      target: [5, 0, 0],
+      zoom: 1.5,
     })
+  })
+
+  it('drops a queued pose when its writer loses ownership before it flushes', () => {
+    const { result } = renderHook(() => useCompareCamera(), {
+      wrapper: CompareCameraProvider,
+    })
+    const pose = {
+      azimuth: 37,
+      elevation: 12,
+      distance: 8,
+      target: [1, 2, 3] as [number, number, number],
+      zoom: 1.5,
+    }
+
+    act(() => {
+      result.current.beginCameraWrite('sim-b')
+      result.current.publishCamera('sim-b', pose)
+      result.current.beginCameraWrite('sim-a')
+      vi.advanceTimersByTime(16)
+    })
+
+    expect(result.current.cameraState).toBeNull()
   })
 
   it('removes its root and per-cell camera scopes on unmount', () => {

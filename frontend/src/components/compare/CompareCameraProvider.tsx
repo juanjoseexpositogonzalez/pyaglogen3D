@@ -17,6 +17,8 @@ export interface CameraState {
   azimuth: number
   elevation: number
   distance: number
+  target: [number, number, number]
+  zoom: number
 }
 
 interface CompareCameraContextValue {
@@ -26,11 +28,11 @@ interface CompareCameraContextValue {
   scopeFor: (simId: string) => string
   /** Latest pose published by the accepted writer. */
   cameraState: CameraState | null
-  /** Cell currently being manipulated; null means the grid's primary is idle writer. */
+  /** Cell currently being manipulated; null means no cell may write. */
   activeWriterId: string | null
   beginCameraWrite: (simId: string) => void
   endCameraWrite: (simId: string) => void
-  /** Publish only when no interaction owns the channel or source owns it. */
+  /** Publish only when the source owns the channel, or flush its final pose. */
   publishCamera: (simId: string, state: CameraState) => void
   toggleSync: () => void
 }
@@ -66,8 +68,12 @@ export function CompareCameraProvider({
   const [synchronised, setSynchronised] = useState(initialSynchronised)
   const [cameraState, setCameraState] = useState<CameraState | null>(null)
   const [activeWriterId, setActiveWriterId] = useState<string | null>(null)
+  const activeWriterRef = useRef<string | null>(null)
   const publishTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const pendingCameraRef = useRef<CameraState | null>(null)
+  const pendingCameraRef = useRef<{
+    simId: string
+    state: CameraState
+  } | null>(null)
 
   const scopeFor = useCallback(
     (simId: string) => `compare/${sessionId}/${simId}`,
@@ -75,31 +81,41 @@ export function CompareCameraProvider({
   )
 
   const beginCameraWrite = useCallback((simId: string) => {
+    activeWriterRef.current = simId
     setActiveWriterId(simId)
   }, [])
 
   const endCameraWrite = useCallback((simId: string) => {
+    if (activeWriterRef.current === simId) activeWriterRef.current = null
     setActiveWriterId((current) => (current === simId ? null : current))
   }, [])
 
   const publishCamera = useCallback(
     (simId: string, nextCamera: CameraState) => {
-      if (activeWriterId !== null && activeWriterId !== simId) return
-      pendingCameraRef.current = nextCamera
+      const activeWriter = activeWriterRef.current
+      if (activeWriter !== null && activeWriter !== simId) return
+      pendingCameraRef.current = { simId, state: nextCamera }
       if (publishTimerRef.current !== null) return
 
       publishTimerRef.current = setTimeout(() => {
         const pendingCamera = pendingCameraRef.current
         pendingCameraRef.current = null
         publishTimerRef.current = null
-        if (pendingCamera) setCameraState(pendingCamera)
+        if (
+          pendingCamera &&
+          (activeWriterRef.current === null ||
+            activeWriterRef.current === pendingCamera.simId)
+        ) {
+          setCameraState(pendingCamera.state)
+        }
       }, 16)
     },
-    [activeWriterId],
+    [],
   )
 
   const toggleSync = useCallback(() => {
     setSynchronised((current) => !current)
+    activeWriterRef.current = null
     setActiveWriterId(null)
   }, [])
 
