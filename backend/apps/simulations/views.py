@@ -1552,7 +1552,8 @@ class SimulationViewSet(viewsets.ModelViewSet):
         - precision: int (default: 18) - bits per dimension (max: 21)
         - windowed: only the literal "true" engages the windowed estimator
           (R8); absent or any other value keeps the legacy estimator and omits
-          the windowed block while preserving additive fit-window audit fields.
+          the windowed block while publishing additive `fit_window`,
+          `window_source`, and `effective_levels` audit fields.
 
         Returns fractal dimension estimate with statistics and log-log data.
         With windowed=true the flat dict additionally gains
@@ -1610,6 +1611,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "log_values": result.log_values.tolist(),
             "residuals": result.residuals.tolist(),
             "linear_region_start": result.linear_region_start,
+            # Maps effective fit-window indices onto the possibly truncated
+            # log arrays: offset = effective_levels - len(log_scales).
+            "effective_levels": result.effective_levels,
             "execution_time_ms": result.execution_time_ms,
             # Same None guard as the persisted producer in tasks.py: the window
             # is None whenever the fit had fewer than three effective levels, which
