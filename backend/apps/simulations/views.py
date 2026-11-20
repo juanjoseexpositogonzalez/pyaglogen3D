@@ -30,6 +30,7 @@ from .serializers import (
 from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
+    PARAM_KEY_SCALE_NM,
     get_scale_factor_nm,
 )
 from .services.projection import (
@@ -155,8 +156,10 @@ def _stamp_scale_metadata(
     - ``pixels_per_100nm`` (float | None): how many pixels correspond to
       100 nm in the rendered PNGs. ``None`` when the aggregate is empty
       or the engine→nm conversion is degenerate.
-    - ``scale_factor_nm`` (float): ``primary_particle_diameter_nm / 2``,
-      the engine→nm multiplier used for Rg display across the app.
+    - ``scale_factor_nm`` (float): the engine→nm multiplier used for Rg
+      display across the app, as resolved by ``get_scale_factor_nm`` —
+      ``scale_nm`` when the parameters carry it (an import already in nm),
+      otherwise ``primary_particle_diameter_nm / 2``.
 
     Scale is constant per aggregate (NOT per direction) because we use
     the 3D bounding-box extent + particle-radius margin as the reference
@@ -322,13 +325,21 @@ class SimulationViewSet(viewsets.ModelViewSet):
         meta_unit = (
             import_metadata.get("unit") if isinstance(import_metadata, dict) else None
         )
+        # The parser stores the author-written unit verbatim (``#unit=NM`` exists
+        # in the wild) and defaults to ``"nm"`` when the header omits it, so a
+        # CSV without metadata is nm geometry too. ONE normalised value decides
+        # BOTH the diameter below and ``scale_nm`` further down: normalising in
+        # one place and not the other is how ``#unit=Dimensionless`` would get a
+        # mean-radius diameter and no ``scale_nm`` — the #197 bug again, for a
+        # file that differs only in capitalisation.
+        declared_unit = meta_unit.strip().lower() if isinstance(meta_unit, str) else None
         if (
             isinstance(meta_diameter, (int, float))
             and not isinstance(meta_diameter, bool)
             and meta_diameter > 0
         ):
             params[PARAM_KEY_DIAMETER] = float(meta_diameter)
-        elif meta_unit == "dimensionless":
+        elif declared_unit == "dimensionless":
             # Import a normalized-radius geometry: use the historical default
             # diameter so downstream nm-scaling stays sensible.
             from .services.params import DEFAULT_DIAMETER_NM
@@ -337,6 +348,23 @@ class SimulationViewSet(viewsets.ModelViewSet):
         else:
             mean_radius = float(np.mean(geometry_array[:, 3]))
             params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
+
+        # #197 (S2): an import whose geometry is already in nm must not be
+        # rescaled by its own mean radius. Both shims read ``scale_nm`` first
+        # (same priority, same acceptance rule), so the import pins the
+        # engine→nm factor at 1.0. The physical diameter above is untouched:
+        # the parameters panel keeps telling the real diameter (2 × mean
+        # radius), and a dimensionless import keeps the default-diameter path
+        # by carrying no ``scale_nm`` at all (S3).
+        if fmt == "mat":
+            # ``.mat`` has no metadata dict: mat_parser.py documents that all
+            # distances share the radius column's physical unit, so the array
+            # is never dimensionless — it is already in the file's unit.
+            params[PARAM_KEY_SCALE_NM] = 1.0
+        else:
+            # ``declared_unit`` is already normalised above (S3).
+            if declared_unit != "dimensionless":
+                params[PARAM_KEY_SCALE_NM] = 1.0
         params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
         params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"
@@ -1523,12 +1551,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         - points_per_sphere: int (default: 100) - surface points per particle
         - precision: int (default: 18) - bits per dimension (max: 21)
         - windowed: only the literal "true" engages the windowed estimator
-          (R8); absent or any other value keeps the response byte-identical
-          to pre-change.
+          (R8); absent or any other value keeps the legacy estimator and omits
+          the windowed block while publishing additive `fit_window`,
+          `window_source`, and `effective_levels` audit fields.
 
         Returns fractal dimension estimate with statistics and log-log data.
         With windowed=true the flat dict additionally gains
-        "box_counting_windowed" with the R2 11-key schema.
+        "box_counting_windowed" with the R2 13-key schema.
         """
         simulation = self.get_object()
 
@@ -1582,7 +1611,18 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "log_values": result.log_values.tolist(),
             "residuals": result.residuals.tolist(),
             "linear_region_start": result.linear_region_start,
+            # Maps effective fit-window indices onto the possibly truncated
+            # log arrays: offset = effective_levels - len(log_scales).
+            "effective_levels": result.effective_levels,
             "execution_time_ms": result.execution_time_ms,
+            # Same None guard as the persisted producer in tasks.py: the window
+            # is None whenever the fit had fewer than three effective levels, which
+            # is the COMMON case. Without this, list(None) raises and the direct
+            # endpoint returns no analysis at all instead of fit_window: null.
+            "fit_window": (
+                list(result.fit_window) if result.fit_window is not None else None
+            ),
+            "window_source": result.window_source,
             "parameters": {
                 "points_per_sphere": points_per_sphere,
                 "precision": precision,
@@ -2777,7 +2817,11 @@ def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
     try:
         task.backend.store_result(
             f"{_BC_INFLIGHT_PREFIX}{study_id}",
-            {"task_id": task.id, "study_id": study_id},
+            {
+                "task_id": task.id,
+                "study_id": study_id,
+                "dispatched_at": time.time(),
+            },
             state="PROGRESS",
         )
     except Exception:  # noqa: BLE001 — stamping must never break dispatch

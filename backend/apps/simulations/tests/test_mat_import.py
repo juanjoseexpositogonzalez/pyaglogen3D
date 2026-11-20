@@ -39,7 +39,7 @@ from apps.simulations.services.mat_parser import (
     MatParseError,
     parse_mat_geometry,
 )
-
+from apps.simulations.services.params import PARAM_KEY_SCALE_NM
 
 # --- Fixture helpers ---------------------------------------------------------
 
@@ -217,13 +217,15 @@ def test_parser_v73_hdf5_rejected_with_message() -> None:
     import apps.simulations.services.mat_parser as mat_parser_module
 
     # Any bytes work here; the patched loadmat never inspects them.
-    with patch.object(
-        mat_parser_module.scipy.io,
-        "loadmat",
-        side_effect=NotImplementedError("v7.3 files are not supported"),
+    with (
+        patch.object(
+            mat_parser_module.scipy.io,
+            "loadmat",
+            side_effect=NotImplementedError("v7.3 files are not supported"),
+        ),
+        pytest.raises(MatParseError) as exc_info,
     ):
-        with pytest.raises(MatParseError) as exc_info:
-            parse_mat_geometry(b"\x00\x00fake")
+        parse_mat_geometry(b"\x00\x00fake")
 
     msg = str(exc_info.value)
     assert "v7.3" in msg or "HDF5" in msg, (
@@ -267,6 +269,34 @@ def test_mat_clusters_happy_path_http() -> None:
     )
     # Schema version still stamped by the serializer.
     assert sim.parameters["parameters_schema_version"] == "v2"
+
+
+@pytest.mark.django_db
+def test_mat_import_stamps_scale_nm() -> None:
+    """#197 (S2): a ``.mat`` import stamps ``scale_nm = 1.0``.
+
+    ``mat_parser.py`` documents that all distances share the radius
+    column's physical unit, so a ``.mat`` array is never dimensionless:
+    the geometry is already in the file's physical unit, and the shims
+    must not rescale it by its own mean radius.
+    """
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    radii = np.array([12.0, 12.0, 12.0, 12.0, 12.0])
+    geometry = np.column_stack([np.arange(5.0) * 24.0, np.zeros(5), np.zeros(5), radii])
+    payload = _mat_bytes({"clusters": geometry})
+
+    response = _post_mat_import(
+        client, project, payload, original_filename="nm_agg.mat"
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert sim.parameters[PARAM_KEY_SCALE_NM] == 1.0
+    # The physical diameter keeps telling the truth: 2 * mean(radius) = 24.
+    assert sim.parameters["primary_particle_diameter_nm"] == pytest.approx(24.0)
 
 
 @pytest.mark.django_db

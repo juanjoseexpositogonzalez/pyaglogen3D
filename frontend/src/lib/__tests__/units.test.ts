@@ -7,6 +7,7 @@ import {
   SCHEMA_VERSION_CURRENT,
   PARAM_KEY_DIAMETER,
   PARAM_KEY_RADIUS_LEGACY,
+  PARAM_KEY_SCALE_NM,
   PARAM_KEY_SCHEMA_VERSION,
 } from "../units";
 
@@ -22,6 +23,7 @@ describe("constants", () => {
   it("key constants match documented names", () => {
     expect(PARAM_KEY_DIAMETER).toBe("primary_particle_diameter_nm");
     expect(PARAM_KEY_RADIUS_LEGACY).toBe("primary_particle_radius_nm");
+    expect(PARAM_KEY_SCALE_NM).toBe("scale_nm");
     expect(PARAM_KEY_SCHEMA_VERSION).toBe("parameters_schema_version");
   });
 });
@@ -146,6 +148,68 @@ describe("getScaleFactorNm", () => {
 
   it("returns default / 2 = 25 for null params", () => {
     expect(getScaleFactorNm(null)).toBe(25.0);
+  });
+});
+
+describe("getScaleFactorNm — explicit scale_nm (#197)", () => {
+  // Parity with backend/apps/simulations/tests/test_params_shim.py: every
+  // case here has the same expected value there. A guard added to only one
+  // shim made the screen and the CSV export disagree (issue #197, PR #348).
+  it("explicit scale_nm is the factor itself — first priority", () => {
+    expect(getScaleFactorNm({ scale_nm: 1.0 })).toBe(1.0);
+  });
+
+  it("scale_nm outranks the v2 diameter key, same order as the backend", () => {
+    expect(
+      getScaleFactorNm({ scale_nm: 1.0, primary_particle_diameter_nm: 24.0 }),
+    ).toBe(1.0);
+  });
+
+  it("scale_nm absent keeps the historical diameter/2 behaviour", () => {
+    expect(getScaleFactorNm({ primary_particle_diameter_nm: 30.0 })).toBe(15.0);
+    expect(getScaleFactorNm({ primary_particle_radius_nm: 12.5 })).toBe(12.5);
+  });
+
+  it("scale_nm 0 falls through to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({ scale_nm: 0, primary_particle_diameter_nm: 24.0 }),
+    ).toBe(12.0);
+  });
+
+  it("scale_nm negative falls through to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({ scale_nm: -2.0, primary_particle_diameter_nm: 24.0 }),
+    ).toBe(12.0);
+  });
+
+  it("scale_nm string falls through to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({ scale_nm: "1.0", primary_particle_diameter_nm: 24.0 }),
+    ).toBe(12.0);
+  });
+
+  it("scale_nm NaN falls through to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({
+        scale_nm: Number.NaN,
+        primary_particle_diameter_nm: 24.0,
+      }),
+    ).toBe(12.0);
+  });
+
+  it("scale_nm Infinity falls through to diameter / 2", () => {
+    expect(
+      getScaleFactorNm({
+        scale_nm: Number.POSITIVE_INFINITY,
+        primary_particle_diameter_nm: 24.0,
+      }),
+    ).toBe(12.0);
+  });
+
+  it("a dimensionless import keeps the default-diameter path", () => {
+    // What the import stamps for unit=dimensionless: default diameter, no
+    // explicit factor — same expectation as the Python mirror.
+    expect(getScaleFactorNm({ primary_particle_diameter_nm: 50.0 })).toBe(25.0);
   });
 });
 

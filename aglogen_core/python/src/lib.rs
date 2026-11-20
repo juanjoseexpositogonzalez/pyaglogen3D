@@ -76,6 +76,17 @@ pub struct PyFractalResult {
     /// semantics: the 2D `From` impl populates it as 0.
     #[pyo3(get)]
     pub effective_levels: usize,
+    /// Inclusive `(start, end)` indices into the sequence fitted to report
+    /// the dimension (task #332 S3). The 3D path indexes its effective level
+    /// sequence; the 2D path publishes every counted scale as `(0, n - 1)`
+    /// or `None` when fewer than two scales were counted.
+    #[pyo3(get)]
+    pub fit_window: Option<(usize, usize)>,
+    /// Origin of the published window: `"legacy"` for the 3D default robust
+    /// path, `"r5"` for a future measured 3D selection, or `"all_levels"`
+    /// for 2D box-counting, which fits every counted scale without selection.
+    #[pyo3(get)]
+    pub window_source: &'static str,
     pub log_scales_data: Vec<f64>,
     pub log_values_data: Vec<f64>,
     pub residuals_data: Vec<f64>,
@@ -107,6 +118,8 @@ impl From<FractalResult> for PyFractalResult {
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
             effective_levels: 0,
+            fit_window: r.fit_window,
+            window_source: r.window_source,
             log_scales_data: r.log_scales,
             log_values_data: r.log_values,
             residuals_data: r.residuals,
@@ -124,6 +137,8 @@ impl From<BoxCountingResult3D> for PyFractalResult {
             execution_time_ms: r.execution_time_ms,
             linear_region_start: r.linear_region_start,
             effective_levels: r.effective_levels,
+            fit_window: r.fit_window,
+            window_source: r.window_source,
             log_scales_data: r.log_scales,
             log_values_data: r.log_counts,
             residuals_data: r.residuals,
@@ -305,6 +320,10 @@ pub struct PySimulationResult {
     #[pyo3(get)]
     pub seed: u64,
     #[pyo3(get)]
+    pub budget_exhausted: bool,
+    #[pyo3(get)]
+    pub operations_used: u64,
+    #[pyo3(get)]
     pub anisotropy: f64,
     #[pyo3(get)]
     pub asphericity: f64,
@@ -412,6 +431,8 @@ impl From<SimulationResult> for PySimulationResult {
             coordination_std: r.coordination_std,
             execution_time_ms: r.execution_time_ms,
             seed: r.seed,
+            budget_exhausted: r.budget_exhausted,
+            operations_used: r.operations_used,
             anisotropy: r.anisotropy,
             asphericity: r.asphericity,
             acylindricity: r.acylindricity,
@@ -1347,7 +1368,7 @@ fn parse_seed_type(
 
 // Tunable CC
 #[pyfunction]
-#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None, dpo_mode=None, dpo_value=None, dpo_mean=None, dpo_std=None, dpo_min=None, dpo_max=None, kf_mode=None, kf_value=None, kf_mean=None, kf_std=None, kf_min=None, kf_max=None))]
+#[pyo3(signature = (n_particles, target_df=1.8, target_kf=1.3, radius_min=1.0, radius_max=None, seed_cluster_size=None, max_rotation_attempts=50, sintering_coeff=1.0, sintering_type="fixed", sintering_min=0.85, sintering_max=0.95, sintering_std=0.05, seed=None, seed_type=None, dpo_mode=None, dpo_value=None, dpo_mean=None, dpo_std=None, dpo_min=None, dpo_max=None, kf_mode=None, kf_value=None, kf_mean=None, kf_std=None, kf_min=None, kf_max=None, operation_budget=Some(300_000_000)))]
 fn run_tunable_cc(
     py: Python<'_>,
     n_particles: usize,
@@ -1378,6 +1399,7 @@ fn run_tunable_cc(
     kf_std: Option<f64>,
     kf_min: Option<f64>,
     kf_max: Option<f64>,
+    operation_budget: Option<u64>,
 ) -> PyResult<PySimulationResult> {
     let seed = seed.unwrap_or_else(rand::random);
     let radius_max = radius_max.unwrap_or(radius_min);
@@ -1425,6 +1447,7 @@ fn run_tunable_cc(
         seed_strategy,
         seed_type: seed_type_enum,
         max_rotation_attempts,
+        operation_budget,
         sintering,
         dpo_distribution,
         target_kf_distribution,
@@ -2584,6 +2607,8 @@ mod tests {
             coordination_std: 0.5,
             execution_time_ms: 100,
             seed: 42,
+            budget_exhausted: true,
+            operations_used: 100,
             anisotropy: 0.1,
             asphericity: 0.05,
             acylindricity: 0.02,
@@ -2601,6 +2626,8 @@ mod tests {
         let py_result: super::PySimulationResult = sim_result.into();
         // Must have 2 entries
         assert_eq!(py_result.merge_trace_data.len(), 2);
+        assert!(py_result.budget_exhausted);
+        assert_eq!(py_result.operations_used, 100);
         // First entry: tunable
         assert_eq!(py_result.merge_trace_data[0].step, 0);
         assert_eq!(py_result.merge_trace_data[0].merge_type, "tunable");
@@ -2627,6 +2654,8 @@ mod tests {
             coordination_std: 0.0,
             execution_time_ms: 10,
             seed: 1,
+            budget_exhausted: false,
+            operations_used: 0,
             anisotropy: 0.0,
             asphericity: 0.0,
             acylindricity: 0.0,
@@ -2774,5 +2803,82 @@ mod tests {
                 r.index
             );
         }
+    }
+
+    // ── Task #332 S5: fit_window/window_source reach the Python result ──
+
+    #[test]
+    fn box_counting_3d_result_carries_fit_window_into_py_result() {
+        // S5 witness (conversion layer): the window the engine actually
+        // fitted and its origin must survive the From<BoxCountingResult3D>
+        // conversion that every 3D binding entry point uses.
+        use aglogen_engine::fractal::box_counting_3d::BoxCountingResult3D;
+
+        let engine_result = BoxCountingResult3D {
+            dimension: 2.31,
+            r_squared: 0.96,
+            std_error: 0.34,
+            confidence_interval: (1.64, 2.98),
+            log_scales: vec![3.0, 2.0, 1.0, 0.0],
+            log_counts: vec![7.0, 6.0, 4.0, 2.0],
+            residuals: vec![0.0; 4],
+            execution_time_ms: 12,
+            num_points: 2000,
+            linear_region_start: 3,
+            effective_levels: 16,
+            // The S2 shape with both terms non-zero: offset 9 + start 3.
+            fit_window: Some((12, 15)),
+            window_source: "legacy",
+        };
+        let py_result: super::PyFractalResult = engine_result.into();
+        assert_eq!(py_result.fit_window, Some((12, 15)));
+        assert_eq!(py_result.window_source, "legacy");
+        // Additive conversion: the pre-existing fields are untouched.
+        assert_eq!(py_result.linear_region_start, 3);
+        assert_eq!(py_result.effective_levels, 16);
+        assert_eq!(py_result.log_scales_data.len(), 4);
+    }
+
+    #[test]
+    fn box_counting_2d_result_carries_fit_window_into_py_result() {
+        use aglogen_engine::fractal::box_counting::box_counting_internal;
+
+        let mut image = vec![vec![false; 64]; 64];
+        for x in 0..64 {
+            image[32][x] = true;
+        }
+
+        let engine_result = box_counting_internal(&image, 2, 32, 8);
+        let expected_window = Some((0, engine_result.log_scales.len() - 1));
+        let py_result: super::PyFractalResult = engine_result.into();
+
+        assert_eq!(py_result.fit_window, expected_window);
+        assert_eq!(py_result.window_source, "all_levels");
+    }
+
+    #[test]
+    fn fit_window_none_survives_conversion_as_none() {
+        // S6 through the conversion layer: no window to promise -> Python
+        // None, while the origin marker stays the string "legacy".
+        use aglogen_engine::fractal::box_counting_3d::BoxCountingResult3D;
+
+        let engine_result = BoxCountingResult3D {
+            dimension: 0.0,
+            r_squared: 0.0,
+            std_error: f64::INFINITY,
+            confidence_interval: (0.0, 0.0),
+            log_scales: vec![],
+            log_counts: vec![],
+            residuals: vec![],
+            execution_time_ms: 0,
+            num_points: 1,
+            linear_region_start: 0,
+            effective_levels: 0,
+            fit_window: None,
+            window_source: "legacy",
+        };
+        let py_result: super::PyFractalResult = engine_result.into();
+        assert_eq!(py_result.fit_window, None);
+        assert_eq!(py_result.window_source, "legacy");
     }
 }

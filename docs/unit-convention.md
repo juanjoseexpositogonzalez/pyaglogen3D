@@ -1,7 +1,8 @@
 # Unit Convention — Radius of Gyration & Parameters Schema
 
 The Rust engine emits a dimensionless `Rg`; every user-facing surface scales it
-to nm using `primary_particle_diameter_nm / 2` as the single source of truth.
+to nm using the factor resolved by the shim — `scale_nm` when present and
+positive finite, `primary_particle_diameter_nm / 2` otherwise.
 Legacy simulations remain readable via a shim keyed on `parameters_schema_version`.
 
 ## 1. The engine is dimensionless
@@ -14,13 +15,24 @@ line-by-line match with MATLAB `agloGen3D.m` and is invariant under both
 uniform scaling (`Rg(α·coords, α·radii) = α·Rg`) and translation. **Do not
 re-derive the formula; link to `metrics.rs` instead.**
 
-## 2. Display scales by diameter / 2
+## 2. Display scales by an explicit factor
 
 The contract at every read boundary is:
 
 ```
-Rg_nm = Rg_engine × (primary_particle_diameter_nm / 2)
+Rg_nm = Rg_engine × F
 ```
+
+where `F` is resolved by the shim, in this order:
+
+1. `scale_nm` if it is a positive finite number
+2. `primary_particle_diameter_nm / 2`
+
+`scale_nm` exists because an **imported** agglomerate may already carry its
+coordinates in nanometres. Rescaling it by its own mean radius multiplied it by
+up to two orders of magnitude (#197: radius 12 read as 144). The import stamps
+`scale_nm = 1.0` for such a geometry, and nothing downstream has to know the
+difference — every surface reads the same shim, in both languages.
 
 Single source of truth per language:
 

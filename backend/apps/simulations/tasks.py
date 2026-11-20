@@ -50,12 +50,15 @@ def expand_distribution_kwargs(prefix: str, dist_config: dict | None) -> dict:
     return {}
 
 
-def create_simulation_notification(simulation, success: bool = True) -> None:
+def create_simulation_notification(
+    simulation, success: bool = True, partial: bool = False
+) -> None:
     """Create a notification for simulation completion.
 
     Args:
         simulation: The Simulation instance
         success: Whether the simulation completed successfully
+        partial: Whether a completed simulation stopped at its operation budget
     """
     try:
         from apps.ai_assistant.models import Notification
@@ -64,6 +67,7 @@ def create_simulation_notification(simulation, success: bool = True) -> None:
             user=simulation.project.owner,
             simulation=simulation,
             success=success,
+            partial=partial,
         )
         logger.info(f"Created notification for simulation {simulation.id}")
     except Exception as e:
@@ -969,6 +973,13 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
         "log_scales": result.log_scales.tolist(),
         "log_values": result.log_values.tolist(),
         "execution_time_ms": int(result.execution_time_ms),
+        # `fit_window` is None whenever the fit had fewer than 3 effective
+        # levels, which is the COMMON case, not an edge: list(None) raises
+        # TypeError and the caller silently reports zero processed simulations.
+        "fit_window": (
+            list(result.fit_window) if result.fit_window is not None else None
+        ),
+        "window_source": result.window_source,
         "parameters": {
             "points_per_sphere": points_per_sphere,
             "precision": precision,
@@ -1023,14 +1034,15 @@ def build_bc_block(
     """Build the windowed box-counting storage block (R2, design D3).
 
     ONE schema for all three statuses (``ok | insufficient_levels | error``):
-    always the 11 keys ``dimension, r_squared, std_error, confidence_interval,
+    always the 13 keys ``dimension, r_squared, std_error, confidence_interval,
     log_scales, log_values, execution_time_ms, parameters, status,
-    fit_window_used, error_message``. Key parity is enforced by code, not by
-    prose (spec-review r2):
+    fit_window, fit_window_used, requested_window, error_message``. Key parity is enforced
+    by code, not by prose (spec-review r2):
 
     - value fields are ``None`` when ``status != "ok"``;
     - ``error_message`` is a string only when ``status == "error"``;
-    - ``fit_window_used`` is ``[s, e]`` only when ``status == "ok"``.
+    - ``fit_window_used`` and ``requested_window`` are ``[s, e]`` only when
+      ``status == "ok"``.
     """
     ok = status == "ok" and result is not None
     return {
@@ -1043,7 +1055,9 @@ def build_bc_block(
         "execution_time_ms": int(result.execution_time_ms) if ok else 0,
         "parameters": dict(params),
         "status": status,
+        "fit_window": list(result.fit_window) if ok and result.fit_window is not None else None,
         "fit_window_used": list(fit_window_used) if ok else None,
+        "requested_window": list(fit_window_used) if ok else None,
         "error_message": str(error_message) if status == "error" else None,
     }
 
@@ -1160,6 +1174,14 @@ def run_box_counting_for_study(
                     "log_scales": bc_result.log_scales.tolist(),
                     "log_values": bc_result.log_values.tolist(),
                     "execution_time_ms": int(bc_result.execution_time_ms),
+                    # Same None guard as the legacy builder above: most clouds
+                    # have no published window at all.
+                    "fit_window": (
+                        list(bc_result.fit_window)
+                        if bc_result.fit_window is not None
+                        else None
+                    ),
+                    "window_source": bc_result.window_source,
                     "parameters": {
                         "points_per_sphere": points_per_sphere,
                         "precision": precision,
@@ -2082,6 +2104,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
 
         coord_data = compute_coordination_data(result.coordinates, result.radii)
 
+        budget_exhausted = bool(getattr(result, "budget_exhausted", False))
+        operations_used = int(getattr(result, "operations_used", 0))
+
         # Store metrics
         simulation.metrics = {
             "fractal_dimension": float(result.fractal_dimension),
@@ -2120,6 +2145,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "acylindricity": float(result.acylindricity),
             "principal_moments": result.principal_moments.tolist(),
             "principal_axes": result.principal_axes.tolist(),
+            "budget_exhausted": budget_exhausted,
+            "operations_used": operations_used,
         }
         # Persist per-merge diagnostic trace (R16.7). The attribute is
         # always present on the binding (Vec<MergeTraceEntry> → PyList);
@@ -2158,8 +2185,13 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             logger.warning(f"Box-counting failed for {simulation_id}: {e}")
             # Don't fail the whole simulation for box-counting error
 
-        # Create notification for user
-        create_simulation_notification(simulation, success=True)
+        # A budget-exhausted tunable run is a valid, persisted partial result;
+        # do not present it to the user as an ordinary full success.
+        create_simulation_notification(
+            simulation,
+            success=True,
+            partial=budget_exhausted,
+        )
 
         # TODO: Enable RAG indexing when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
         # try:
@@ -2174,6 +2206,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "fractal_dimension": simulation.metrics["fractal_dimension"],
             "execution_time_ms": simulation.execution_time_ms,
             "box_counting": bc_result,
+            "budget_exhausted": budget_exhausted,
+            "operations_used": operations_used,
         }
 
     except ImportError as e:

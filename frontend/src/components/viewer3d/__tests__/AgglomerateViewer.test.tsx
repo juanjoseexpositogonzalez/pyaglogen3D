@@ -14,10 +14,25 @@
  */
 import React from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { act, render, screen } from '@testing-library/react'
+
+const mockViewer = vi.hoisted(() => ({
+  camera: {
+    position: { x: 1, y: 1, z: 1 },
+    zoom: 1,
+    lookAt: vi.fn(),
+    updateProjectionMatrix: vi.fn(),
+  },
+  controls: {
+    target: { x: 0, y: 0, z: 0 },
+    update: vi.fn(),
+  },
+  orbitProps: [] as Array<Record<string, unknown>>,
+}))
 
 // --- Capture props handed to <Particles> through the stub -------------
 const particlesProps: Array<Record<string, unknown>> = []
+const frameCallbacks: Array<() => void> = []
 
 vi.mock('../Particles', () => ({
   Particles: (props: Record<string, unknown>) => {
@@ -43,18 +58,24 @@ vi.mock('@react-three/fiber', () => ({
   Canvas: ({ children }: { children?: React.ReactNode }) => (
     <div data-testid="canvas-stub">{children}</div>
   ),
-  useFrame: () => {},
+  useFrame: (callback: () => void) => {
+    frameCallbacks.push(callback)
+  },
   useThree: () => ({
     gl: { render: () => {}, domElement: { toDataURL: () => '' } },
     scene: {},
-    camera: { position: { x: 0, y: 0, z: 0 } },
+    camera: mockViewer.camera,
   }),
 }))
 
-// `<OrbitControls>` / `<Grid>` / `<GizmoHelper>` / `<Line>` render to
-// nothing — we don't assert on them.
+// `<OrbitControls>` exposes the target through its ref; the rest render to
+// nothing because these tests only exercise camera tracking and particle props.
 vi.mock('@react-three/drei', () => ({
-  OrbitControls: () => null,
+  OrbitControls: React.forwardRef(function OrbitControls(props, ref) {
+    mockViewer.orbitProps.push(props as Record<string, unknown>)
+    React.useImperativeHandle(ref, () => mockViewer.controls)
+    return null
+  }),
   Grid: () => null,
   GizmoHelper: () => null,
   GizmoViewport: () => null,
@@ -63,7 +84,11 @@ vi.mock('@react-three/drei', () => ({
 
 // --- Target component ---------------------------------------------------
 import { AgglomerateViewer } from '../AgglomerateViewer'
-import { useViewerStore, DEFAULT_CAMERA_SCOPE } from '../../../stores/viewerStore'
+import {
+  DEFAULT_CAMERA_SCOPE,
+  useCameraStore,
+  useViewerStore,
+} from '../../../stores/viewerStore'
 
 const coords: [number, number, number][] = [
   [0, 0, 0],
@@ -74,7 +99,20 @@ const radii = [0.5, 0.5, 0.5]
 
 beforeEach(() => {
   particlesProps.length = 0
+  frameCallbacks.length = 0
+  mockViewer.orbitProps.length = 0
+  mockViewer.camera.position.x = 1
+  mockViewer.camera.position.y = 1
+  mockViewer.camera.position.z = 1
+  mockViewer.camera.zoom = 1
+  mockViewer.controls.target.x = 0
+  mockViewer.controls.target.y = 0
+  mockViewer.controls.target.z = 0
+  mockViewer.camera.lookAt.mockClear()
+  mockViewer.camera.updateProjectionMatrix.mockClear()
+  mockViewer.controls.update.mockClear()
   useViewerStore.getState().reset()
+  useCameraStore.getState().resetCameraState()
 })
 
 describe('<AgglomerateViewer /> new props (T3)', () => {
@@ -114,17 +152,115 @@ describe('<AgglomerateViewer /> new props (T3)', () => {
     expect(particlesProps[0].uniformColor).toBe(0x00ff00)
   })
 
-  it('writes camera angles to the default "single" scope when cameraSource is absent', () => {
-    // CameraTracker runs inside the Canvas — our mock short-circuits
-    // useFrame so we instead exercise the store API directly, emulating
-    // what the tracker does on frame updates. The assertion target is the
-    // scope threading contract: without cameraSource, the default scope
-    // is used. We verify that by calling setCameraAngles with no scope
-    // and checking the default slot.
+  it('tracks camera angles in the default "single" scope', () => {
     render(<AgglomerateViewer coordinates={coords} radii={radii} />)
-    useViewerStore.getState().setCameraAngles(11, 22)
-    expect(useViewerStore.getState().getCameraAngles(DEFAULT_CAMERA_SCOPE))
-      .toEqual({ azimuth: 11, elevation: 22 })
+
+    expect(frameCallbacks).toHaveLength(1)
+    frameCallbacks[0]()
+
+    expect(useCameraStore.getState().getCameraAngles(DEFAULT_CAMERA_SCOPE))
+      .toEqual({ azimuth: 45, elevation: 35 })
+  })
+
+  it('publishes the tracked writer pose through cameraSource', () => {
+    const onCameraChange = vi.fn()
+    render(
+      <AgglomerateViewer
+        coordinates={coords}
+        radii={radii}
+        cameraSource={{
+          scope: 'compare/session/writer',
+          canWrite: true,
+          onCameraChange,
+        }}
+      />
+    )
+
+    frameCallbacks[0]()
+
+    expect(onCameraChange).toHaveBeenCalledWith({
+      azimuth: 45,
+      elevation: 35,
+      distance: Math.sqrt(3),
+      target: [0, 0, 0],
+      zoom: 1,
+    })
+  })
+
+  it('does not let a passive compare viewer overwrite the shared camera', () => {
+    const scope = 'compare/session/passive'
+    render(
+      <AgglomerateViewer
+        coordinates={coords}
+        radii={radii}
+        cameraSource={{ scope, canWrite: false } as never}
+      />
+    )
+
+    frameCallbacks[0]()
+
+    expect(useCameraStore.getState().getCameraAngles(scope)).toEqual({
+      azimuth: 0,
+      elevation: 0,
+    })
+  })
+
+  it('forwards interaction ownership callbacks to OrbitControls', () => {
+    const onStart = vi.fn()
+    const onEnd = vi.fn()
+    render(
+      <AgglomerateViewer
+        coordinates={coords}
+        radii={radii}
+        cameraSource={{ scope: 'compare/session/writer', onStart, onEnd }}
+      />
+    )
+
+    const orbitProps = mockViewer.orbitProps.at(-1) as {
+      onStart?: () => void
+      onEnd?: () => void
+    }
+    act(() => orbitProps.onStart?.())
+    act(() => orbitProps.onEnd?.())
+
+    expect(onStart).toHaveBeenCalledOnce()
+    expect(onEnd).toHaveBeenCalledOnce()
+  })
+
+  it('applies an exact shared pose to a passive compare viewer', () => {
+    const scope = 'compare/session/passive'
+    render(
+      <AgglomerateViewer
+        coordinates={coords}
+        radii={radii}
+        cameraSource={{
+          scope,
+          canWrite: false,
+          pose: {
+            azimuth: 37,
+            elevation: 12,
+            distance: 8,
+            target: [3, 4, 5],
+            zoom: 1.5,
+          },
+        } as never}
+      />
+    )
+
+    expect(useCameraStore.getState().getCameraAngles(scope)).toEqual({
+      azimuth: 37,
+      elevation: 12,
+    })
+    expect(mockViewer.controls.target).toEqual({ x: 3, y: 4, z: 5 })
+    expect(mockViewer.camera.position.x).toBeCloseTo(7.71, 2)
+    expect(mockViewer.camera.position.y).toBeCloseTo(5.66, 2)
+    expect(mockViewer.camera.position.z).toBeCloseTo(11.25, 2)
+    expect(mockViewer.camera.zoom).toBe(1.5)
+    expect(mockViewer.camera.updateProjectionMatrix).toHaveBeenCalledOnce()
+    expect(mockViewer.camera.lookAt).toHaveBeenCalledWith(
+      mockViewer.controls.target,
+    )
+    expect(mockViewer.controls.update).toHaveBeenCalledOnce()
   })
 
   it('scopes camera-state writes when cameraSource is provided', () => {
@@ -136,22 +272,20 @@ describe('<AgglomerateViewer /> new props (T3)', () => {
         cameraSource={{ scope }}
       />
     )
-    // Emulate what CameraTracker does on a frame tick: call
-    // setCameraAngles with the scope threaded through the component.
-    // The contract we test is that the scope key is actually honored.
-    useViewerStore.getState().setCameraAngles(42, 33, scope)
+    expect(frameCallbacks).toHaveLength(1)
+    frameCallbacks[0]()
 
-    expect(useViewerStore.getState().getCameraAngles(scope)).toEqual({
-      azimuth: 42,
-      elevation: 33,
+    expect(useCameraStore.getState().getCameraAngles(scope)).toEqual({
+      azimuth: 45,
+      elevation: 35,
     })
     // Single-sim slot is untouched.
-    expect(useViewerStore.getState().getCameraAngles('single')).toEqual({
+    expect(useCameraStore.getState().getCameraAngles('single')).toEqual({
       azimuth: 0,
       elevation: 0,
     })
     // And the legacy root mirrors also stay at zero.
-    expect(useViewerStore.getState().cameraAzimuth).toBe(0)
-    expect(useViewerStore.getState().cameraElevation).toBe(0)
+    expect(useCameraStore.getState().cameraAzimuth).toBe(0)
+    expect(useCameraStore.getState().cameraElevation).toBe(0)
   })
 })

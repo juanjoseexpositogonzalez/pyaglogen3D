@@ -26,6 +26,14 @@ Fallback order for :func:`get_primary_particle_diameter_nm`
 3. :data:`DEFAULT_DIAMETER_NM` — preserves the historical default for ancient
    rows that carry neither key.
 
+Resolution order for :func:`get_scale_factor_nm`
+------------------------------------------------
+1. ``params["scale_nm"]`` — explicit factor, used when the value is a
+   positive finite number (e.g. ``1.0`` stamped on imports whose geometry is
+   already in nm; issue #197).
+2. ``get_primary_particle_diameter_nm(params) / 2`` — the historical
+   diameter-derived factor.
+
 Non-dict input (``None``, lists, etc.), missing keys, non-numeric values,
 ``NaN``, ``Infinity``, zero, and negatives all fall through to the next step.
 
@@ -51,6 +59,15 @@ PARAM_KEY_RADIUS_LEGACY: str = "primary_particle_radius_nm"
 
 PARAM_KEY_SCHEMA_VERSION: str = "parameters_schema_version"
 """Parameters key that stamps the schema version (``"v2"`` for new writes)."""
+
+PARAM_KEY_SCALE_NM: str = "scale_nm"
+"""Optional explicit engine→nm scale factor (issue #197).
+
+When present as a positive finite number it IS the factor — before any
+diameter key is consulted. The import pipeline stamps ``1.0`` on geometry
+that is already in nm; ``get_primary_particle_diameter_nm`` keeps resolving
+the physical diameter independently of this key.
+"""
 
 DEFAULT_DIAMETER_NM: float = 50.0
 """Historical default diameter in nm (preserves the legacy radius=25 behaviour)."""
@@ -129,12 +146,24 @@ def get_primary_particle_diameter_nm(params: dict[str, Any] | None) -> float:
 
 
 def get_scale_factor_nm(params: dict[str, Any] | None) -> float:
-    """Return the nm-scale factor for Rg display/export: ``diameter / 2``.
+    """Return the nm-scale factor for Rg display/export.
 
     This is the single source of truth for the scale applied at every read
     boundary (CSV export, UI cells, chart axes). Multiply the dimensionless
     engine Rg by this value to obtain Rg in nm.
+
+    Resolution order (issue #197 — ``scale_nm`` is an input field read in
+    exactly this position by the TypeScript twin, not an import special
+    case):
+
+    1. ``params[PARAM_KEY_SCALE_NM]`` if it is a positive finite number.
+    2. ``get_primary_particle_diameter_nm(params) / 2``.
     """
+    p = _as_params_dict(params)
+    if p is not None:
+        scale = _coerce_positive_finite(p.get(PARAM_KEY_SCALE_NM))
+        if scale is not None:
+            return scale
     return get_primary_particle_diameter_nm(params) / 2.0
 
 
@@ -181,6 +210,7 @@ __all__ = [
     "PARAM_KEY_DIAMETER",
     "PARAM_KEY_RADIUS_LEGACY",
     "PARAM_KEY_SCHEMA_VERSION",
+    "PARAM_KEY_SCALE_NM",
     "DEFAULT_DIAMETER_NM",
     "SCHEMA_VERSION_CURRENT",
     "get_primary_particle_diameter_nm",
