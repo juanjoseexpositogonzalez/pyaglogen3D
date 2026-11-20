@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import patch
 
 import numpy as np
@@ -16,7 +17,7 @@ from apps.simulations.tasks import run_simulation_task
 
 
 @pytest.fixture
-def project(db) -> Project:
+def project(db: Any) -> Project:
     owner = User.objects.create_user(
         email="budget-marker@example.com", password="irrelevant"
     )
@@ -68,8 +69,10 @@ def test_budget_exhaustion_is_persisted_returned_and_notified_as_partial(project
     simulation.refresh_from_db()
     notification = Notification.objects.get(user=project.owner)
     assert simulation.status == SimulationStatus.COMPLETED
-    assert simulation.metrics["budget_exhausted"] is True
-    assert simulation.metrics["operations_used"] == 123
+    metrics = simulation.metrics
+    assert isinstance(metrics, dict)
+    assert metrics["budget_exhausted"] is True
+    assert metrics["operations_used"] == 123
     assert response["budget_exhausted"] is True
     assert response["operations_used"] == 123
     assert notification.notification_type == Notification.NotificationType.INFO

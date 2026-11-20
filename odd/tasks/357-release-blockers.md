@@ -19,7 +19,7 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 
 - **T1** — S2-S6 — **done** — Corroborated and froze five release findings against `33e8bbb`; route: parent read-only verification; commit: n/a.
 - **T2** — S2-S4, S6, S8-S9 — **done** — Completed and independently verified the three isolated corrections; route: parent inline implementation plus fresh verifier; commits: engine `4377db1`, backend `f6ae437`, frontend `c12d569`.
-- **T3** — S1-S3, S7 — **in progress** — Integrated the verified work as `d979467`, `31c26c8`, and `eb6f500`; PR #364 is 301 changed code/test lines before this record and targets `develop`; route: parent delivery; commit: pending CI/merge.
+- **T3** — S1-S3, S7 — **in progress** — Integrated the verified work as `d979467`, `31c26c8`, and `eb6f500`; PR #364 targets `develop`; reproduced and stabilized one calendar-dependent frontend witness, removed the new test's mypy findings, and lowered CI ratchets only to values measured by CI; route: parent delivery; commit: pending CI/merge.
 - **T4** — S2-S4 — **pending** — Run scoped re-judgment for every frozen severe ID and one final integrated verification; route: fresh Judgment Day judges + verifier; commit: n/a.
 - **T5** — S1-S3 — **pending** — After corrected CI is green, merge the correction to `develop`, revalidate and merge PR #357 to `main`, then prepare the Easypanel deployment and smoke plan; route: parent delivery; commit: pending.
 
@@ -37,3 +37,5 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 - **L10** — «No más agentes/reintentos. Cuando backend cierre, materializá los tres parciales y terminá inline en sus worktrees: engine actualizá los 6 call sites y llevá los 2 RED a GREEN; frontend usá un symlink temporal al `frontend/node_modules` del root para ejecutar el test, luego retiralo; backend completá según su resultado. Commit por área solo con GREEN enfocado y diff-check. Si algún área no cierra así, paramos con Needs decision.»
 - **L11** — «Continuar con una verificación nueva»; bounded verification then passed engine `4377db1`, backend `f6ae437`, and frontend `c12d569` without installs.
 - **L12** — Fresh integration branch `fix/357-release-blockers-v2` cherry-picked the three verified commits; PR #364 targets `develop` with the sole label `type:bug`.
+- **L13** — PR #364 Frontend CI reproduced locally at 1/70 failed because a fixed `2026-10-20` fixture crossed the UI relative-date threshold; the witness now derives a timestamp one hour before test execution without changing production behavior.
+- **L14** — PR #364 Backend CI passed 2090 tests but measured mypy 1658 against 1657 and ruff 279 against 286. The new marker witness's three annotations remove its own mypy findings, yielding the CI-derived target 1655; ratchets were lowered to mypy 1655 and ruff 279, never raised.

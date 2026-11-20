@@ -430,7 +430,8 @@ describe('the run identity in the header', () => {
   })
 
   it('says when the run happened, which the identity row is for', () => {
-    withSimulation({ created_at: '2026-10-20T10:00:00Z' })
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    withSimulation({ created_at: oneHourAgo })
     renderPage()
 
     expect(pageHeader().textContent).toMatch(/ago/i)
