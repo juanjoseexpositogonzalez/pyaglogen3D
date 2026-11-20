@@ -297,19 +297,32 @@ impl OperationBudget {
 
     /// Charges one operation and reports whether work may continue.
     fn consume(&mut self) -> bool {
+        self.consume_many(1)
+    }
+
+    /// Charges a deterministic batch of operations before the work executes.
+    fn consume_many(&mut self, count: u64) -> bool {
         if self.exhausted {
             return false;
         }
-        if self.limit.is_some_and(|limit| self.used >= limit) {
-            self.exhausted = true;
-            return false;
-        }
 
-        self.used += 1;
-        if self.limit.is_some_and(|limit| self.used >= limit) {
-            self.exhausted = true;
+        match self.limit {
+            None => {
+                self.used = self.used.saturating_add(count);
+                true
+            }
+            Some(limit) => {
+                let remaining = limit.saturating_sub(self.used);
+                if count >= remaining {
+                    self.used = limit;
+                    self.exhausted = true;
+                    false
+                } else {
+                    self.used += count;
+                    true
+                }
+            }
         }
-        !self.exhausted
     }
 }
 
@@ -861,6 +874,7 @@ fn merge_ballistic<R: Rng>(
     cluster2: &mut TunableCluster,
     sintering_coeff: f64,
     rng: &mut R,
+    operation_budget: &mut OperationBudget,
 ) -> bool {
     // Position cluster2 far from cluster1
     let launch_dist = cluster1.bounding_radius + cluster2.bounding_radius * 3.0;
@@ -900,6 +914,9 @@ fn merge_ballistic<R: Rng>(
             let mut min_cd = f64::INFINITY;
             for p1 in &cluster1.particles {
                 for p2 in &cluster2.particles {
+                    if !operation_budget.consume() {
+                        return false;
+                    }
                     let cd = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
                     if cd < min_cd {
                         min_cd = cd;
@@ -922,6 +939,9 @@ fn merge_ballistic<R: Rng>(
                 let mut delta = None;
                 'search: for p1 in &cluster1.particles {
                     for p2 in &cluster2.particles {
+                        if !operation_budget.consume() {
+                            return false;
+                        }
                         let dist = p1.center.distance_to(&p2.center);
                         let contact_dist =
                             sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
@@ -943,6 +963,11 @@ fn merge_ballistic<R: Rng>(
             if let Some(d) = snap_delta {
                 if d.length() > 1e-14 {
                     cluster2.translate(d);
+                }
+                let pair_count = (cluster1.particles.len() as u64)
+                    .saturating_mul(cluster2.particles.len() as u64);
+                if !operation_budget.consume_many(pair_count) {
+                    return false;
                 }
                 if !check_overlap(cluster1, cluster2, sintering_coeff) {
                     return true;
@@ -1414,6 +1439,7 @@ pub fn run_tunable_cc_internal(
                             rp,
                             sintering_coeff,
                             &mut rng,
+                            &mut operation_budget,
                         );
 
                         if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1445,13 +1471,19 @@ pub fn run_tunable_cc_internal(
                             merge_count += 1;
                             clusters.push(merged);
                             merge_success = true;
-                        } else {
+                        } else if !operation_budget.exhausted {
                             // March-inward failed → pure ballistic fallback.
                             // Tag as "ballistic" (not "adaptive") so we know it failed.
                             let imp_b = clusters[impacted_idx].clone();
                             let mut imr_b = clusters[impactor_idx].clone();
 
-                            if merge_ballistic(&imp_b, &mut imr_b, sintering_coeff, &mut rng) {
+                            if merge_ballistic(
+                                &imp_b,
+                                &mut imr_b,
+                                sintering_coeff,
+                                &mut rng,
+                                &mut operation_budget,
+                            ) {
                                 ballistic_merges += 1;
                                 let actual_distance =
                                     imp_b.center_of_mass.distance_to(&imr_b.center_of_mass);
@@ -1526,6 +1558,7 @@ pub fn run_tunable_cc_internal(
                         rp,
                         sintering_coeff,
                         &mut rng,
+                        &mut operation_budget,
                     );
 
                     if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1564,14 +1597,19 @@ pub fn run_tunable_cc_internal(
                         merge_count += 1;
                         clusters.push(merged);
                         merge_success = true;
-                    } else {
+                    } else if !operation_budget.exhausted {
                         // March-inward failed → pure ballistic fallback.
-                        ballistic_merges += 1;
-
                         let imp = clusters[impacted_idx].clone();
                         let mut imr = clusters[impactor_idx].clone();
 
-                        if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
+                        if merge_ballistic(
+                            &imp,
+                            &mut imr,
+                            sintering_coeff,
+                            &mut rng,
+                            &mut operation_budget,
+                        ) {
+                            ballistic_merges += 1;
                             let actual_distance =
                                 imp.center_of_mass.distance_to(&imr.center_of_mass);
 
@@ -1785,7 +1823,13 @@ pub fn run_tunable_cc_internal(
                 let ballistic_n1 = impacted.n_particles();
                 let ballistic_n2 = impactor.n_particles();
 
-                if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
+                if merge_ballistic(
+                    &impacted,
+                    &mut impactor,
+                    sintering_coeff,
+                    &mut rng,
+                    &mut operation_budget,
+                ) {
                     ballistic_merges += 1;
 
                     // R16: Measure actual COM-COM distance for ballistic merge.
@@ -2043,7 +2087,30 @@ pub(crate) enum MarchResult {
 /// # Returns
 /// * `MarchResult::Distance(d)` — first contact at COM-COM distance `d`
 /// * `MarchResult::NoContact` — no contact achievable in the range
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn find_first_contact_distance(
+    spheres_a: &[Sphere],
+    spheres_b: &[Sphere],
+    direction: &Vector3,
+    d_start: f64,
+    d_floor: f64,
+    rp: f64,
+    sintering_coeff: f64,
+) -> MarchResult {
+    let mut operation_budget = OperationBudget::new(None);
+    find_first_contact_distance_budgeted(
+        spheres_a,
+        spheres_b,
+        direction,
+        d_start,
+        d_floor,
+        rp,
+        sintering_coeff,
+        &mut operation_budget,
+    )
+}
+
+fn find_first_contact_distance_budgeted(
     spheres_a: &[Sphere],
     spheres_b: &[Sphere],
     direction: &Vector3,
@@ -2051,6 +2118,7 @@ pub(crate) fn find_first_contact_distance(
     d_floor: f64,
     _rp: f64,
     sintering_coeff: f64,
+    operation_budget: &mut OperationBudget,
 ) -> MarchResult {
     // Safety: d_start must be > d_floor
     if d_start <= d_floor {
@@ -2079,6 +2147,9 @@ pub(crate) fn find_first_contact_distance(
 
     for sa in spheres_a {
         for sb in spheres_b {
+            if !operation_budget.consume() {
+                return MarchResult::NoContact;
+            }
             let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
             let v = sa.center - sb.center; // vector from sb to sa
             let v_dot_dir = v.dot(direction);
@@ -2135,6 +2206,9 @@ pub(crate) fn find_first_contact_distance(
         let mut has_overlap = false;
         for sa in spheres_a {
             for sb in spheres_b {
+                if !operation_budget.consume() {
+                    return MarchResult::NoContact;
+                }
                 let sb_center = sb.center + offset;
                 let dist = sa.center.distance_to(&sb_center);
                 let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
@@ -2158,6 +2232,9 @@ pub(crate) fn find_first_contact_distance(
         let mut max_safe_d = d;
         for sa in spheres_a {
             for sb in spheres_b {
+                if !operation_budget.consume() {
+                    return MarchResult::NoContact;
+                }
                 let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
                 let v = sa.center - sb.center;
                 let v_dot_dir = v.dot(direction);
@@ -2201,6 +2278,7 @@ fn march_inward_merge<R: Rng>(
     rp: f64,
     sintering_coeff: f64,
     rng: &mut R,
+    operation_budget: &mut OperationBudget,
 ) -> Option<(TunableCluster, TunableCluster, f64)> {
     let max_achievable = compute_max_achievable_distance(cluster1, cluster2);
 
@@ -2247,7 +2325,7 @@ fn march_inward_merge<R: Rng>(
         let (dx, dy, dz) = sample_merge_direction(rng);
         let direction = Vector3::new(dx, dy, dz);
 
-        let march = find_first_contact_distance(
+        let march = find_first_contact_distance_budgeted(
             &spheres_a_centered,
             &spheres_b_centered,
             &direction,
@@ -2255,7 +2333,12 @@ fn march_inward_merge<R: Rng>(
             d_floor,
             rp,
             sintering_coeff,
+            operation_budget,
         );
+
+        if operation_budget.exhausted {
+            return None;
+        }
 
         if let MarchResult::Distance(d) = march {
             match &best_result {
@@ -2285,12 +2368,19 @@ fn march_inward_merge<R: Rng>(
         .collect();
     let mut c2 = TunableCluster::from_particles(positioned_particles);
 
-    // Verify physical contact + no overlap
-    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
-        && !check_overlap(cluster1, &c2, sintering_coeff)
-    {
-        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
-        return Some((cluster1.clone(), c2, actual));
+    // Verify physical contact + no overlap.
+    let pair_count = (cluster1.particles.len() as u64).saturating_mul(c2.particles.len() as u64);
+    if !operation_budget.consume_many(pair_count) {
+        return None;
+    }
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
+        if !check_overlap(cluster1, &c2, sintering_coeff) {
+            let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+            return Some((cluster1.clone(), c2, actual));
+        }
     }
 
     // March found a COM distance but exact placement has slight misalignment.
@@ -2302,12 +2392,18 @@ fn march_inward_merge<R: Rng>(
     for _ in 0..max_nudge {
         c2.translate(trajectory * step);
 
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
         if check_overlap(cluster1, &c2, sintering_coeff) {
             // Overshot into overlap — back off one step
             c2.translate(trajectory * (-step));
             break;
         }
 
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
         if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
             let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
             return Some((cluster1.clone(), c2, actual));
@@ -2315,11 +2411,17 @@ fn march_inward_merge<R: Rng>(
     }
 
     // Last check after nudging
-    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
-        && !check_overlap(cluster1, &c2, sintering_coeff)
-    {
-        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
-        return Some((cluster1.clone(), c2, actual));
+    if !operation_budget.consume_many(pair_count) {
+        return None;
+    }
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
+        if !check_overlap(cluster1, &c2, sintering_coeff) {
+            let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+            return Some((cluster1.clone(), c2, actual));
+        }
     }
 
     None
@@ -2607,6 +2709,7 @@ pub(crate) fn emit_no_feasible_pair_entry(step: usize, pool_size: usize) -> Merg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
 
     fn particles_form_connected_graph(
         coordinates: &[[f64; 3]],
@@ -2825,6 +2928,50 @@ mod tests {
             result.merge_trace.is_empty(),
             "the O(k²) pair scan must consume this budget before a merge is attempted"
         );
+    }
+
+    #[test]
+    fn operation_budget_stops_adaptive_and_ballistic_fallback_pair_scans() {
+        let cluster = |x: f64| {
+            TunableCluster::from_particles(vec![
+                Sphere::new(Vector3::new(x, 0.0, 0.0), 1.0),
+                Sphere::new(Vector3::new(x, 2.0, 0.0), 1.0),
+                Sphere::new(Vector3::new(x, 4.0, 0.0), 1.0),
+            ])
+        };
+        let impacted = cluster(0.0);
+        let impactor = cluster(10.0);
+
+        let mut adaptive_rng = StdRng::seed_from_u64(42);
+        let mut adaptive_budget = OperationBudget::new(Some(2));
+        let adaptive = march_inward_merge(
+            &impacted,
+            &impactor,
+            5.0,
+            1.0,
+            1.0,
+            &mut adaptive_rng,
+            &mut adaptive_budget,
+        );
+
+        assert!(adaptive.is_none());
+        assert!(adaptive_budget.exhausted);
+        assert_eq!(adaptive_budget.used, 2);
+
+        let mut ballistic_rng = StdRng::seed_from_u64(42);
+        let mut ballistic_budget = OperationBudget::new(Some(2));
+        let mut ballistic_impactor = impactor.clone();
+        let ballistic = merge_ballistic(
+            &impacted,
+            &mut ballistic_impactor,
+            1.0,
+            &mut ballistic_rng,
+            &mut ballistic_budget,
+        );
+
+        assert!(!ballistic);
+        assert!(ballistic_budget.exhausted);
+        assert_eq!(ballistic_budget.used, 2);
     }
 
     #[test]

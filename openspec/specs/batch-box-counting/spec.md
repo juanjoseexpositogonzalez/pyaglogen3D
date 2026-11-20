@@ -72,13 +72,15 @@ This change also ADDS unknown-key rejection to `validate_box_counting_params` (p
 ### Requirement: R2. Dual-estimator results storage
 
 When windowed is enabled, each processed simulation SHALL store the windowed block at
-`metrics["box_counting_windowed"]` — **ONE schema for all three statuses** (spec-review r3,
-MEDIA): always the 11 keys `{dimension, r_squared, std_error, confidence_interval, log_scales,
-log_values, execution_time_ms, parameters, status, fit_window_used, error_message}`, where
-`dimension, r_squared, std_error, confidence_interval, log_scales, log_values` are `null` when
-`status != "ok"`, and `error_message` is a string only when `status == "error"` (`null`
-otherwise); `fit_window_used` is `[s, e]` only when `status == "ok"` (no window is derived for
-the other statuses), `null` otherwise. `status` enum: `ok | insufficient_levels | error` — `error` covers any windowed-side
+`metrics["box_counting_windowed"]` — **ONE schema for all three statuses**: always the 13 keys
+`{dimension, r_squared, std_error, confidence_interval, log_scales, log_values,
+execution_time_ms, parameters, status, fit_window, fit_window_used, requested_window,
+error_message}`, where `dimension, r_squared, std_error, confidence_interval, log_scales,
+log_values` are `null` when `status != "ok"`, and `error_message` is a string only when
+`status == "error"` (`null` otherwise). For `status == "ok"`, `fit_window` is the window the
+engine actually applied and `requested_window` is the window requested by the backend;
+`fit_window_used` preserves the historical requested-window key. All three window fields are
+`null` for the other statuses. `status` enum: `ok | insufficient_levels | error` — `error` covers any windowed-side
 failure other than `InsufficientLevels` (engine or pyo3), NEVER aborts the run, and never
 overwrites the legacy block. The block SHALL be built by a single shared helper
 `build_bc_block(result, params, status, fit_window_used)` — key parity is enforced by code,
@@ -88,7 +90,8 @@ not by prose (spec-review r2). `metrics["box_counting"]` is not altered.
 
 - **GIVEN** a simulation with ≥3 count-valid levels after clamping (design D2)
 - **WHEN** the dual run completes
-- **THEN** `status: "ok"` with the windowed Df/R²/CI and `fit_window_used: [s, e]`
+- **THEN** `status: "ok"` with the windowed Df/R²/CI, applied `fit_window`, and requested
+  `requested_window: [s, e]` with backward-compatible `fit_window_used: [s, e]`
 - **AND** the legacy block equals (bit-identically) the pre-change legacy result for the same inputs
 
 #### Scenario R2.2 — Insufficient levels (small aggregates; Cycle 3.2 Log L4)
@@ -97,8 +100,9 @@ not by prose (spec-review r2). `metrics["box_counting"]` is not altered.
   itself is degenerate)
 - **WHEN** the windowed estimator refuses (`InsufficientLevels`)
 - **THEN** the run completes WITHOUT error; the windowed block stores `status:
-  "insufficient_levels"` with the 11-key schema and `dimension`/`r_squared`/
-  `std_error`/`confidence_interval`/`log_scales`/`log_values`/`fit_window_used` = `null` (R2)
+  "insufficient_levels"` with the 13-key schema and `dimension`/`r_squared`/
+  `std_error`/`confidence_interval`/`log_scales`/`log_values`/`fit_window`/
+  `fit_window_used`/`requested_window` = `null` (R2)
 - **AND** the legacy block is stored normally
 - **NOTE**: with `effective_levels == 3` the clamp (D2) yields window `(0, 2)` → `status: "ok"`
   with a fit equal to the legacy fit (archive Log L4) — refusal only happens below 3 levels
@@ -150,6 +154,14 @@ AND `status == "ok"` (a refusal/error block carries no dimension → no delta, r
 `fractal_dimension` (Rg-evolution Df) is ALREADY returned and is the third comparison term —
 no `rg_df` alias is introduced.
 
+#### Scenario R4.1 — Windowed comparison row
+
+- **GIVEN** a simulation with a windowed block whose `status == "ok"`
+- **WHEN** the study results endpoint returns its row
+- **THEN** the row includes the windowed block and `bc_delta = windowed − legacy`
+- **AND** rows without an `ok` windowed block omit `bc_delta`, while `fractal_dimension`
+  remains the Rg-evolution comparison value
+
 ### Requirement: R5. Per-config distributions (API)
 
 A new endpoint `GET studies/<pk>/fractal-analysis/` SHALL return, per parameter config:
@@ -197,6 +209,13 @@ toggled off after a windowed run keeps its `BC_Win_*` header (the gate for the w
 is the recorded run, not the current flag). A study whose run was legacy-only produces a CSV
 **byte-identical** to pre-change (single header, no appended block).
 
+#### Scenario R6.1 — Header follows recorded windowed data
+
+- **GIVEN** a study where any simulation carries a recorded windowed block
+- **WHEN** its CSV is exported
+- **THEN** the `BC_Win_*` columns are appended even if `include_box_counting` was later disabled
+- **AND** a legacy-only study keeps the pre-change CSV byte-identically
+
 ### Requirement: R7. Frontend: dedicated Fractal Analysis tab
 
 The study page SHALL expose a dedicated tab "Fractal Analysis" containing: (a) the per-sim
@@ -236,16 +255,28 @@ only, with no error state.
 ### Requirement: R8. Single-simulation windowed analysis (opt-in)
 
 The single-sim `GET .../box-counting/` endpoint (`views.py:1502`) SHALL accept an optional
-`windowed=true` query param (only `"true"` engages it; `windowed=false` or absent = legacy
-behavior); the flat response dict gains a `box_counting_windowed` key with the R2 schema (all
-statuses: `ok` full keys; `insufficient_levels`/`error` per the R2 null-schema with
-`error_message`); when the param is absent, the response is byte-identical to pre-change.
+`windowed=true` query param (only `"true"` engages it; `windowed=false` or absent keeps the
+legacy estimator and does not add a `box_counting_windowed` block). The flat legacy response
+publishes the additive engine audit fields `fit_window` and `window_source` without changing
+its existing numeric results. With `windowed=true`, the response additionally gains a
+`box_counting_windowed` key with the R2 schema (all statuses: `ok` full keys;
+`insufficient_levels`/`error` per the R2 null-schema with `error_message`).
 
-#### Scenario R8.1 — Response unchanged without the flag
+#### Scenario R8.1 — Legacy estimator without the flag
 
 - **GIVEN** a GET without `windowed`
 - **WHEN** it executes
-- **THEN** the response is byte-identical to pre-change
+- **THEN** no `box_counting_windowed` key is added
+- **AND** the legacy numeric fields are unchanged while `fit_window` and `window_source`
+  identify the engine window applied to those numbers
+
+#### Scenario R8.2 — Manual regression window attribution
+
+- **GIVEN** the single-simulation UI recomputes the displayed Df after the user changes the
+  excluded-point slider
+- **WHEN** the adjusted result is rendered
+- **THEN** its fit-window label shows `[selected_start, last_level]` with source `manual`, not
+  the immutable engine window associated with the automatic result
 
 ### Requirement: R9. Engine additive field `effective_levels`
 

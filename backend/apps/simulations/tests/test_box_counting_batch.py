@@ -6,7 +6,7 @@ Covers spec requirements of `batch-windowed-box-counting`:
   shape via the shared validator)
 - R1.3: precedence request body > study params > absent; `save()` preserves
   the flag; explicit `windowed: false` overrides and persists
-- R2.1: windowed block with the single 11-key schema, status ok, legacy
+- R2.1: windowed block with the single 13-key schema, status ok, legacy
   block bit-identical to a legacy-only run
 - R2.2: eff < 3 → insufficient_levels with nulls WITHOUT calling the
   windowed estimator; eff == 3 → window (0, 2) → ok
@@ -122,7 +122,7 @@ class _FakeResult:
         self.effective_levels = effective_levels
 
 
-_ELEVEN_KEYS = {
+_WINDOWED_BLOCK_KEYS = {
     "dimension",
     "r_squared",
     "std_error",
@@ -386,8 +386,8 @@ class TestIssue351FitWindowPublication:
 @pytest.mark.django_db
 class TestR2DualEstimatorStorage:
     def test_r2_1_ok_block_schema_and_window(self, user, project):
-        """eff=5 → window (1, 4); block has exactly the 11 keys with
-        fit_window_used [1, 4] and error_message None."""
+        """eff=5 → window (1, 4); block has exactly the 13 keys with
+        applied/requested audit windows and error_message None."""
         study = _make_study(project)
         sim = _make_sim(project, study)
         client = _authed_client(user)
@@ -399,7 +399,7 @@ class TestR2DualEstimatorStorage:
         assert response.status_code == 200
         sim.refresh_from_db()
         block = sim.metrics["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "ok"
         assert block["fit_window_used"] == [1, 4]
         assert block["dimension"] == 2.7
@@ -453,7 +453,7 @@ class TestR2DualEstimatorStorage:
         assert mock_bc.call_count == 1
         sim.refresh_from_db()
         block = sim.metrics["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "insufficient_levels"
         assert block["dimension"] is None
         assert block["r_squared"] is None

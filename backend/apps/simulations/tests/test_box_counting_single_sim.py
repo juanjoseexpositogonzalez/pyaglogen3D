@@ -2,8 +2,9 @@
 
 Covers spec requirements of `batch-windowed-box-counting`:
 - R8: GET .../box-counting/ accepts windowed=true ONLY; the flat dict gains
-  box_counting_windowed with the R2 11-key schema
-- R8.1: without the flag the response is byte-identical to pre-change
+  box_counting_windowed with the R2 13-key schema
+- R8.1: without the flag the legacy estimator remains active and publishes
+  additive fit_window/window_source audit metadata without moving its numbers
 """
 
 from __future__ import annotations
@@ -91,7 +92,7 @@ def _fake_result(
     )
 
 
-_ELEVEN_KEYS = {
+_WINDOWED_BLOCK_KEYS = {
     "dimension",
     "r_squared",
     "std_error",
@@ -129,8 +130,8 @@ def sim(user, project):
 @pytest.mark.django_db
 class TestR8SingleSimWindowed:
     def test_r8_1_response_unchanged_without_flag(self, user, project, sim):
-        """Without the windowed param the response is byte-identical to
-        pre-change: no box_counting_windowed key (R8.1)."""
+        """Without the windowed param the legacy estimator remains active and
+        no box_counting_windowed block is added (R8.1)."""
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
@@ -209,7 +210,7 @@ class TestR8SingleSimWindowed:
         assert response.data["dimension"] == pytest.approx(2.5)
 
     def test_windowed_true_adds_ok_block(self, user, project, sim):
-        """windowed=true adds the R2 11-key block; eff=5 → window [1, 4]."""
+        """windowed=true adds the R2 13-key block; eff=5 → window [1, 4]."""
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
@@ -222,7 +223,7 @@ class TestR8SingleSimWindowed:
         assert response.status_code == 200
         assert mock_bc.call_count == 2
         block = response.data["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "ok"
         assert block["fit_window"] == [0, 4]
         assert block["fit_window_used"] == [1, 4]
@@ -245,7 +246,7 @@ class TestR8SingleSimWindowed:
         assert response.status_code == 200
         assert mock_bc.call_count == 1
         block = response.data["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "insufficient_levels"
         assert block["dimension"] is None
         assert block["fit_window_used"] is None

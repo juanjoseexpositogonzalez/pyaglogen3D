@@ -490,7 +490,7 @@ export interface BoxCountingResult {
   window_source?: BoxCountingWindowSource
 }
 
-// Windowed box-counting block (R2 — historical rows have an 11-key schema).
+// Windowed box-counting block (R2 — current rows have 13 keys; historical rows may omit audit fields).
 export type WindowedBlockStatus = 'ok' | 'insufficient_levels' | 'error'
 
 export interface WindowedBlock {
