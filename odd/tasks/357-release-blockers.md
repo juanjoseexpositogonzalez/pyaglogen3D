@@ -2,6 +2,7 @@
 
 Issue/PR scope: correction gate for PR #357 before `develop` is merged into `main`.
 Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33e8bbb`.
+Final correction branch: `fix/357-release-final-blockers` from corrected release head `d54dd2e`.
 
 ## Specs
 
@@ -22,6 +23,9 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 - **T3** — S1-S3, S7 — **done** — Integrated the verified work as `d979467`, `31c26c8`, and `eb6f500`; stabilized CI in `4509ffa`; PR #364 stayed at 357/400 and exact-head CI `44698385059` passed Rust, Backend, and Frontend; route: parent delivery; commits: `d979467`, `31c26c8`, `eb6f500`, `4509ffa`.
 - **T4** — S2-S4 — **done** — Integrated verifier `mwooq3w4-i-8nj1` passed T3/S2-S7; scoped re-judges `mwoovr2k-j-cacy` and `mwoovr3z-k-tx2i` independently resolved all six frozen rows as `verified`; route: fresh Judgment Day judges + verifier; commit: n/a.
 - **T5** — S1-S3 — **in progress** — Merge PR #364 to `develop`, revalidate and merge PR #357 to `main`, then prepare the Easypanel deployment and smoke plan; route: parent delivery; commit: pending.
+- **T6** — S2-S4, S7, S9 — **done** — Froze final release ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1` (7 raw rows / 5 logical claims) and corroborated three required corrections: #351 canonical contract sync, fallback budget metering, and manual-window attribution; `JD-B-003` is contract-intended; route: fresh blind judges + parent/explorer corroboration; commit: n/a.
+- **T7** — S2-S4, S7, S9 — **done** — Implemented the three final corrections with RED/GREEN evidence in one 373-line candidate; route: parent inline per S9; commit: `d603208`.
+- **T8** — S1-S3, S7 — **in progress** — Exact-head CI `44757030224` passed and both fresh judges resolved all seven frozen rows; finalize documentary-head CI, merge correction PR, rebind #357, and close release/main/deploy preparation; route: parent delivery; commit: pending.
 
 ## Log
 
@@ -41,3 +45,6 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 - **L14** — PR #364 Backend CI passed 2090 tests but measured mypy 1658 against 1657 and ruff 279 against 286. The new marker witness's three annotations remove its own mypy findings, yielding the CI-derived target 1655; ratchets were lowered to mypy 1655 and ruff 279, never raised.
 - **L15** — Exact-head CI run `44698385059` passed Rust engine, Backend, and Frontend at `4509ffa85c6363be95a88f7ab74cf20a04e5f830`; integrated verifier `mwooq3w4-i-8nj1` passed all five logical corrections, focused engine 6/6, backend 5/5, CRLF-aware diff-check, and the 357-line review budget.
 - **L16** — Scoped re-judgment used frozen ledger `b98a190158f0cf0441d423d11077cc0db70e047d2740a701aa05f4c0169b7406`; both fresh judges independently resolved `JD-A-001`, `JD-A-002`, `JD-A-003`, `JD-A-004`, `JD-B-001`, and `JD-B-002` as `verified`. `JUDGMENT: APPROVED`.
+- **L17** — Fresh full release Judgment Day at corrected head `d54dd2ea9db44ded84b3b3c02ef0f0d92ca86068` froze ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1` from judges `mwoqivto-l-1wqp` and `mwoqivv2-m-az1c`. Corroboration found: (1) canonical R2/R8 still describe pre-#351 shapes and must be synchronized to approved #351 S1-S3 without reverting additive audit fields; (2) adaptive/ballistic fallback particle-pair work remains outside the #310 deterministic operation budget; (3) manual slider regression displays the immutable engine window instead of its actual selected range. `JD-B-003` is the explicitly approved partial-completion contract (status COMPLETED + persisted/exposed metadata + INFO notification) and requires no behavior change.
+- **L18** — Final local gates at `d603208`: engine 399 passed, backend 2090 passed, frontend 1502 passed, Ruff 279 ≤ 279, mypy 1652 ≤ 1655, frontend type-check/lint passed, target OpenSpec strict validation passed, and CRLF-aware diff-check passed; native ASSESS classified the 373-line candidate medium risk with no separate verifier required.
+- **L19** — PR #365 exact-head CI `44757030224` passed Rust, Backend, and Frontend at `8858df8da66a64a60d91fd2cc9a79bb725b11ad7`. Scoped judges `mwp3i68v-o-q0lt` and `mwp3i6aj-p-w8pg` independently resolved ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1`: judge A verified all seven rows; judge B verified six and corroborated `JD-B-003` as the approved #310 partial-completion contract, with no `still_open` row.

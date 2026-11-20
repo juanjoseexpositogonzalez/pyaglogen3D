@@ -401,8 +401,16 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
                 <p className="text-sm text-muted-foreground">Fractal Dimension</p>
                 <p className="text-2xl font-bold font-mono">{formatNumber(adjustedRegression.dimension, 3)}</p>
                 <AppliedFitWindow
-                  window={result.fit_window}
-                  source={result.window_source}
+                  window={
+                    excludeStart !== null && excludeStart !== result.linear_region_start
+                      ? [effectiveExcludeStart, result.log_scales.length - 1]
+                      : result.fit_window
+                  }
+                  source={
+                    excludeStart !== null && excludeStart !== result.linear_region_start
+                      ? 'manual'
+                      : result.window_source
+                  }
                 />
                 {excludeStart !== null && excludeStart !== result.linear_region_start && (
                   <p className="text-xs text-muted-foreground">

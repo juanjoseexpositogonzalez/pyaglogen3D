@@ -1551,12 +1551,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
         - points_per_sphere: int (default: 100) - surface points per particle
         - precision: int (default: 18) - bits per dimension (max: 21)
         - windowed: only the literal "true" engages the windowed estimator
-          (R8); absent or any other value keeps the response byte-identical
-          to pre-change.
+          (R8); absent or any other value keeps the legacy estimator and omits
+          the windowed block while preserving additive fit-window audit fields.
 
         Returns fractal dimension estimate with statistics and log-log data.
         With windowed=true the flat dict additionally gains
-        "box_counting_windowed" with the R2 11-key schema.
+        "box_counting_windowed" with the R2 13-key schema.
         """
         simulation = self.get_object()
 
