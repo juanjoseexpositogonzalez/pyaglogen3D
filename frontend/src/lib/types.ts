@@ -766,8 +766,10 @@ export interface BoxCounting3DResult {
   log_scales: number[]
   log_values: number[]
   residuals: number[]
-  /** Start index of linear region (points before this are excluded as outliers) */
+  /** Start index within the returned, post-truncation log arrays. */
   linear_region_start: number
+  /** Pre-truncation effective level count; maps fit_window onto returned arrays. */
+  effective_levels?: number
   execution_time_ms: number
   /**
    * Applied engine fit window, absent from responses saved before issue #351.

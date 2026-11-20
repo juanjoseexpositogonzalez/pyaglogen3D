@@ -150,6 +150,7 @@ class TestR8SingleSimWindowed:
             "log_values",
             "residuals",
             "linear_region_start",
+            "effective_levels",
             "execution_time_ms",
             "fit_window",
             "window_source",
@@ -186,6 +187,24 @@ class TestR8SingleSimWindowed:
         assert response.data["std_error"] == pytest.approx(0.01)
         assert response.data["fit_window"] == [0, 4]
         assert response.data["window_source"] == "legacy"
+
+    def test_truncated_legacy_response_exposes_effective_level_mapping(
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
+        """Consumers can map effective fit indices onto the returned truncated curve."""
+        client = _authed_client(user)
+        truncated = _fake_result(16, fit_window=(13, 15))
+        truncated.log_scales = np.array([3.0, 4.0, 5.0])
+        truncated.log_values = np.array([3.4, 1.7, 0.0])
+        truncated.residuals = np.array([0.0, 0.0, 0.0])
+
+        with patch("aglogen_core.box_counting_agglomerate", return_value=truncated):
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["effective_levels"] == 16
+        assert response.data["fit_window"] == [13, 15]
+        assert response.data["effective_levels"] - len(response.data["log_scales"]) == 13
 
     def test_legacy_response_without_window_publishes_null(
         self, user: User, project: Project, sim: Simulation

@@ -3,6 +3,7 @@
 Issue/PR scope: correction gate for PR #357 before `develop` is merged into `main`.
 Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33e8bbb`.
 Final correction branch: `fix/357-release-final-blockers` from corrected release head `d54dd2e`.
+Window-index correction branch: `fix/357-release-window-index-map` from release head `56803b9`.
 
 ## Specs
 
@@ -25,7 +26,8 @@ Final correction branch: `fix/357-release-final-blockers` from corrected release
 - **T5** — S1-S3 — **in progress** — Merge PR #364 to `develop`, revalidate and merge PR #357 to `main`, then prepare the Easypanel deployment and smoke plan; route: parent delivery; commit: pending.
 - **T6** — S2-S4, S7, S9 — **done** — Froze final release ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1` (7 raw rows / 5 logical claims) and corroborated three required corrections: #351 canonical contract sync, fallback budget metering, and manual-window attribution; `JD-B-003` is contract-intended; route: fresh blind judges + parent/explorer corroboration; commit: n/a.
 - **T7** — S2-S4, S7, S9 — **done** — Implemented the three final corrections with RED/GREEN evidence in one 373-line candidate; route: parent inline per S9; commit: `d603208`.
-- **T8** — S1-S3, S7 — **in progress** — Exact-head CI `44757030224` passed and both fresh judges resolved all seven frozen rows; finalize documentary-head CI, merge correction PR, rebind #357, and close release/main/deploy preparation; route: parent delivery; commit: pending.
+- **T8** — S1-S3, S7 — **in progress** — Exact-head CI passed at `56803b9`, but fresh full release Judgment Day opened a new HIGH mapping gap; merge #357 remains stopped; route: parent delivery; commit: pending.
+- **T9** — S2-S4, S7, S9 — **in progress** — Preserve #332 effective-index semantics while exposing `effective_levels` through the direct API and translating manual UI labels with the truncation offset; route: parent inline in isolated worktree; commit: pending.
 
 ## Log
 
@@ -48,3 +50,5 @@ Final correction branch: `fix/357-release-final-blockers` from corrected release
 - **L17** — Fresh full release Judgment Day at corrected head `d54dd2ea9db44ded84b3b3c02ef0f0d92ca86068` froze ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1` from judges `mwoqivto-l-1wqp` and `mwoqivv2-m-az1c`. Corroboration found: (1) canonical R2/R8 still describe pre-#351 shapes and must be synchronized to approved #351 S1-S3 without reverting additive audit fields; (2) adaptive/ballistic fallback particle-pair work remains outside the #310 deterministic operation budget; (3) manual slider regression displays the immutable engine window instead of its actual selected range. `JD-B-003` is the explicitly approved partial-completion contract (status COMPLETED + persisted/exposed metadata + INFO notification) and requires no behavior change.
 - **L18** — Final local gates at `d603208`: engine 399 passed, backend 2090 passed, frontend 1502 passed, Ruff 279 ≤ 279, mypy 1652 ≤ 1655, frontend type-check/lint passed, target OpenSpec strict validation passed, and CRLF-aware diff-check passed; native ASSESS classified the 373-line candidate medium risk with no separate verifier required.
 - **L19** — PR #365 exact-head CI `44757030224` passed Rust, Backend, and Frontend at `8858df8da66a64a60d91fd2cc9a79bb725b11ad7`. Scoped judges `mwp3i68v-o-q0lt` and `mwp3i6aj-p-w8pg` independently resolved ledger `fb54d915f5c0c71c185693e9b6474ac029dd0ae26903bb7365b078b82f8a36c1`: judge A verified all seven rows; judge B verified six and corroborated `JD-B-003` as the approved #310 partial-completion contract, with no `still_open` row.
+- **L20** — Fresh full release judge B `mwp3wxbh-r-ay94` opened HIGH `JD-RB-001` at `56803b9`: #332 correctly defines `fit_window` in effective-sequence coordinates, but saturated curves return truncated log arrays, the direct API omits `effective_levels`, and manual UI labels use local truncated indices. Release merge stopped; RED witnesses reproduced the missing API mapping and omitted truncation offset.
+- **L21** — Fresh full release judge A `mwp3wx9x-q-25i9` opened four additional HIGH rows: `JD-RA-001` unmetered main-path particle-pair scans, `JD-RA-002` global Celery limits conflicting with the 30-minute projection contract, `JD-RA-003` partial aggregates presented as ordinary study/CSV results, and `JD-RA-004` stale canonical #197 unit text. The complete five-row ledger is frozen at `2a85d4600f81bf0caf8a3151c2fe0deb58ec87d2b022fa73ee965e9fce57c398`.

@@ -84,8 +84,15 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
   // Manual point exclusion - additional points to exclude beyond auto-detected
   const [excludeStart, setExcludeStart] = useState<number | null>(null)
 
-  // Initialize excludeStart when result arrives
+  // The engine reports fit_window in pre-truncation effective coordinates,
+  // while the returned log arrays use post-truncation local coordinates.
   const effectiveExcludeStart = excludeStart ?? result?.linear_region_start ?? 0
+  const effectiveLevelOffset = result
+    ? Math.max(0, (result.effective_levels ?? result.log_scales.length) - result.log_scales.length)
+    : 0
+  const effectiveLastLevel = result
+    ? effectiveLevelOffset + result.log_scales.length - 1
+    : 0
 
   const handleRunAnalysis = useCallback(async () => {
     setIsLoading(true)
@@ -403,7 +410,7 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
                 <AppliedFitWindow
                   window={
                     excludeStart !== null && excludeStart !== result.linear_region_start
-                      ? [effectiveExcludeStart, result.log_scales.length - 1]
+                      ? [effectiveLevelOffset + effectiveExcludeStart, effectiveLastLevel]
                       : result.fit_window
                   }
                   source={

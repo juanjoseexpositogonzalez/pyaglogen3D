@@ -52,4 +52,27 @@ describe('BoxCountingAnalysis fit-window attribution', () => {
     expect(screen.getByText('Fit window: [2, 4] · manual')).toBeTruthy()
     expect(screen.queryByText('Fit window: [1, 4] · legacy')).toBeNull()
   })
+
+  it('keeps manual labels in effective coordinates for a truncated curve', async () => {
+    getBoxCounting.mockResolvedValueOnce({
+      ...result,
+      effective_levels: 16,
+      log_scales: [1, 2, 3, 4, 5],
+      log_values: [5, 4, 3, 2, 1],
+      residuals: [0, 0, 0, 0, 0],
+      linear_region_start: 0,
+      fit_window: [11, 15],
+    })
+
+    render(<BoxCountingAnalysis projectId="project-1" simulationId="sim-1" />)
+    fireEvent.click(screen.getByRole('button', { name: /run box-counting analysis/i }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Fit window: [11, 15] · legacy')).toBeTruthy()
+    })
+
+    fireEvent.change(screen.getByRole('slider'), { target: { value: '1' } })
+
+    expect(screen.getByText('Fit window: [12, 15] · manual')).toBeTruthy()
+  })
 })

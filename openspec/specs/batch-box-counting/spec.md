@@ -257,8 +257,10 @@ only, with no error state.
 The single-sim `GET .../box-counting/` endpoint (`views.py:1502`) SHALL accept an optional
 `windowed=true` query param (only `"true"` engages it; `windowed=false` or absent keeps the
 legacy estimator and does not add a `box_counting_windowed` block). The flat legacy response
-publishes the additive engine audit fields `fit_window` and `window_source` without changing
-its existing numeric results. With `windowed=true`, the response additionally gains a
+publishes the additive engine audit fields `fit_window`, `window_source`, and `effective_levels`
+without changing its existing numeric results. `fit_window` uses pre-truncation effective-level
+indices; consumers map those indices onto returned log arrays with
+`offset = effective_levels - len(log_scales)`. With `windowed=true`, the response additionally gains a
 `box_counting_windowed` key with the R2 schema (all statuses: `ok` full keys;
 `insufficient_levels`/`error` per the R2 null-schema with `error_message`).
 
@@ -267,16 +269,17 @@ its existing numeric results. With `windowed=true`, the response additionally ga
 - **GIVEN** a GET without `windowed`
 - **WHEN** it executes
 - **THEN** no `box_counting_windowed` key is added
-- **AND** the legacy numeric fields are unchanged while `fit_window` and `window_source`
-  identify the engine window applied to those numbers
+- **AND** the legacy numeric fields are unchanged while `fit_window`, `window_source`, and
+  `effective_levels` identify the engine window and its mapping onto the returned curve
 
 #### Scenario R8.2 — Manual regression window attribution
 
 - **GIVEN** the single-simulation UI recomputes the displayed Df after the user changes the
   excluded-point slider
 - **WHEN** the adjusted result is rendered
-- **THEN** its fit-window label shows `[selected_start, last_level]` with source `manual`, not
-  the immutable engine window associated with the automatic result
+- **THEN** its fit-window label shows the selected range in effective-level coordinates with
+  source `manual`, applying the truncation offset instead of mixing returned-array indices with
+  the immutable engine window's coordinate system
 
 ### Requirement: R9. Engine additive field `effective_levels`
 
@@ -296,6 +299,13 @@ underflow and the pyo3 `(usize, usize)` constraint).
 - **AND** the acceptance fixture includes a case where Step 4b truncation fires (`effective_levels
   > 6` with a plateau) asserting the field reports the PRE-truncation count (r3: without it, a
   post-truncation implementation would pass R9.1)
+
+#### Scenario R9.2 — Truncated curve remains externally auditable
+
+- **GIVEN** Step 4b removes fine levels so `effective_levels > len(log_scales)`
+- **WHEN** the single-simulation API and UI publish an automatic or manual fit window
+- **THEN** the response includes `effective_levels`, and every displayed window remains in
+  effective-level coordinates with offset `effective_levels - len(log_scales)`
 
 ## Out of scope call sites (documented)
 
