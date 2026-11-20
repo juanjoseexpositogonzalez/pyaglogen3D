@@ -101,6 +101,7 @@ _ELEVEN_KEYS = {
     "execution_time_ms",
     "parameters",
     "status",
+    "fit_window",
     "fit_window_used",
     "requested_window",
     "error_message",
@@ -223,6 +224,7 @@ class TestR8SingleSimWindowed:
         block = response.data["box_counting_windowed"]
         assert set(block.keys()) == _ELEVEN_KEYS
         assert block["status"] == "ok"
+        assert block["fit_window"] == [0, 4]
         assert block["fit_window_used"] == [1, 4]
         assert block["requested_window"] == [1, 4]
         assert block["dimension"] == 2.7

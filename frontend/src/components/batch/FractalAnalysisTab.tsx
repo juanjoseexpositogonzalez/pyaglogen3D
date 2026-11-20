@@ -350,7 +350,7 @@ function ComparisonRow({
   const requestedWindow = formatFitWindow(
     win?.requested_window ?? win?.fit_window_used,
   )
-  const appliedWindow = formatFitWindow(row.box_counting?.fit_window)
+  const appliedWindow = formatFitWindow(win?.fit_window)
   return (
     <tr className="border-b last:border-0">
       <td className="px-3 py-2 font-mono text-xs">{row.simulation_id.slice(0, 8)}</td>

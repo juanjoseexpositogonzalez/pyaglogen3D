@@ -1251,7 +1251,12 @@ pub fn run_tunable_cc_internal(
                 &mut rng,
                 use_low_df_fix,
                 use_high_df_fix,
+                Some(&mut operation_budget),
             );
+
+            if operation_budget.exhausted {
+                break;
+            }
 
             match smart_result {
                 SmartPairResult::Feasible(pair) => {
@@ -1863,11 +1868,7 @@ pub fn run_tunable_cc_internal(
     // the tracing/logging infrastructure.
 
     // Collect final result
-    let final_particles: Vec<Sphere> = if clusters.is_empty() {
-        Vec::new()
-    } else {
-        clusters.remove(0).particles
-    };
+    let final_particles = take_final_particles(&mut clusters, operation_budget.exhausted);
 
     let coords: Vec<[f64; 3]> = final_particles
         .iter()
@@ -1926,6 +1927,23 @@ pub fn run_tunable_cc_internal(
         target_kf_used: Some(target_kf_used),
         merge_trace,
     })
+}
+
+fn take_final_particles(
+    clusters: &mut Vec<TunableCluster>,
+    budget_exhausted: bool,
+) -> Vec<Sphere> {
+    if budget_exhausted {
+        clusters
+            .iter()
+            .max_by_key(|cluster| cluster.n_particles())
+            .map(|cluster| cluster.particles.clone())
+            .unwrap_or_default()
+    } else if clusters.is_empty() {
+        Vec::new()
+    } else {
+        clusters.remove(0).particles
+    }
 }
 
 /// Calculate Df and kf from Rg evolution using power law fitting.
@@ -2367,7 +2385,9 @@ pub(crate) fn find_feasible_pairs(
     sintering_coeff: f64,
     use_low_df_fix: bool,
     use_high_df_fix: bool,
+    operation_budget: Option<&mut OperationBudget>,
 ) -> Vec<PairCandidate> {
+    let mut operation_budget = operation_budget;
     // Threshold factor is computed once (R3, scenario 3.9): each pair's
     // required distance is multiplied by this factor before comparison.
     let bounding_threshold_factor: f64 = if use_low_df_fix { 0.5 } else { 1.0 };
@@ -2377,6 +2397,13 @@ pub(crate) fn find_feasible_pairs(
 
     for i in 0..k {
         for j in (i + 1)..k {
+            if operation_budget
+                .as_deref_mut()
+                .is_some_and(|budget| !budget.consume())
+            {
+                return feasible;
+            }
+
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
             let required =
@@ -2439,7 +2466,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     rng: &mut R,
     use_low_df_fix: bool,
     use_high_df_fix: bool,
+    operation_budget: Option<&mut OperationBudget>,
 ) -> SmartPairResult {
+    let mut operation_budget = operation_budget;
     let feasible = find_feasible_pairs(
         clusters,
         target_df,
@@ -2448,7 +2477,12 @@ pub(crate) fn select_pair_smart<R: Rng>(
         sintering_coeff,
         use_low_df_fix,
         use_high_df_fix,
+        operation_budget.as_deref_mut(),
     );
+
+    if operation_budget.as_ref().is_some_and(|budget| budget.exhausted) {
+        return SmartPairResult::NoCandidates;
+    }
 
     if !feasible.is_empty() {
         let chosen = feasible.choose(rng).unwrap().clone();
@@ -2461,6 +2495,13 @@ pub(crate) fn select_pair_smart<R: Rng>(
 
     for i in 0..k {
         for j in (i + 1)..k {
+            if operation_budget
+                .as_deref_mut()
+                .is_some_and(|budget| !budget.consume())
+            {
+                return SmartPairResult::NoCandidates;
+            }
+
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
             let required =
@@ -2763,6 +2804,49 @@ mod tests {
 
         assert!(result.budget_exhausted);
         assert!(result.operations_used >= 100);
+    }
+
+    #[test]
+    fn operation_budget_meters_smart_pair_scan_before_any_merge() {
+        let result = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 20,
+                operation_budget: Some(5),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budget-exhausted simulation should return a partial aggregate");
+
+        assert!(result.budget_exhausted);
+        assert_eq!(result.operations_used, 5);
+        assert!(
+            result.merge_trace.is_empty(),
+            "the O(k²) pair scan must consume this budget before a merge is attempted"
+        );
+    }
+
+    #[test]
+    fn budget_exhaustion_returns_the_largest_accumulated_cluster() {
+        let cluster = |size: usize, x: f64| {
+            TunableCluster::from_particles(
+                (0..size)
+                    .map(|offset| {
+                        Sphere::new(Vector3::new(x + offset as f64, 0.0, 0.0), 1.0)
+                    })
+                    .collect(),
+            )
+        };
+        let mut clusters = vec![cluster(1, 0.0), cluster(4, 10.0), cluster(2, 20.0)];
+
+        let particles = take_final_particles(&mut clusters, true);
+
+        assert_eq!(
+            particles.len(),
+            4,
+            "a budget-exhausted result must return the largest accumulated cluster"
+        );
     }
 
     #[test]
@@ -4742,7 +4826,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false, None);
         // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
         assert_eq!(
             feasible.len(),
@@ -4767,7 +4851,9 @@ mod tests {
         let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
         // With n1=50, n2=50, df=1.4, the required distance is very large
         // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
-        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false, false);
+        let feasible = find_feasible_pairs(
+            &clusters, 1.4, 1.3, 1.0, 1.0, false, false, None,
+        );
         assert_eq!(
             feasible.len(),
             0,
@@ -4795,7 +4881,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false, None);
         // Pair (0,1) = monomer+monomer → feasible at Df=1.8
         // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
         assert!(
@@ -4829,7 +4915,9 @@ mod tests {
             TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
         ];
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
         match result {
             SmartPairResult::Feasible(pair) => {
                 assert!(pair.required_distance > 0.0);
@@ -4858,7 +4946,9 @@ mod tests {
 
         let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
 
-        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
         match result {
             SmartPairResult::AllInfeasible {
                 max_achievable_pair,
@@ -4892,7 +4982,9 @@ mod tests {
         let mut rng = create_rng(42);
         let clusters: Vec<TunableCluster> = Vec::new();
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
 
         match result {
             SmartPairResult::NoCandidates => {}

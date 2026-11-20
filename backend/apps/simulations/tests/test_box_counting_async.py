@@ -547,10 +547,10 @@ class TestDoubleSubmitGuard:
         assert stamped[0].kwargs["state"] == "PROGRESS"
         # Second stamp: the per-study in-flight marker (JD-B-006)
         assert stamped[1].args[0] == f"bc-inflight-{study.id}"
-        assert stamped[1].args[1] == {
-            "task_id": "task-stamp-1",
-            "study_id": str(study.id),
-        }
+        marker_meta = stamped[1].args[1]
+        assert marker_meta["task_id"] == "task-stamp-1"
+        assert marker_meta["study_id"] == str(study.id)
+        assert isinstance(marker_meta["dispatched_at"], float)
         assert stamped[1].kwargs["state"] == "PROGRESS"
 
 
