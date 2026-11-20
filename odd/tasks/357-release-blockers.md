@@ -19,9 +19,9 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 
 - **T1** — S2-S6 — **done** — Corroborated and froze five release findings against `33e8bbb`; route: parent read-only verification; commit: n/a.
 - **T2** — S2-S4, S6, S8-S9 — **done** — Completed and independently verified the three isolated corrections; route: parent inline implementation plus fresh verifier; commits: engine `4377db1`, backend `f6ae437`, frontend `c12d569`.
-- **T3** — S1-S3, S7 — **in progress** — Integrated the verified work as `d979467`, `31c26c8`, and `eb6f500`; PR #364 targets `develop`; reproduced and stabilized one calendar-dependent frontend witness, removed the new test's mypy findings, and lowered CI ratchets only to values measured by CI; route: parent delivery; commit: pending CI/merge.
-- **T4** — S2-S4 — **pending** — Run scoped re-judgment for every frozen severe ID and one final integrated verification; route: fresh Judgment Day judges + verifier; commit: n/a.
-- **T5** — S1-S3 — **pending** — After corrected CI is green, merge the correction to `develop`, revalidate and merge PR #357 to `main`, then prepare the Easypanel deployment and smoke plan; route: parent delivery; commit: pending.
+- **T3** — S1-S3, S7 — **done** — Integrated the verified work as `d979467`, `31c26c8`, and `eb6f500`; stabilized CI in `4509ffa`; PR #364 stayed at 357/400 and exact-head CI `44698385059` passed Rust, Backend, and Frontend; route: parent delivery; commits: `d979467`, `31c26c8`, `eb6f500`, `4509ffa`.
+- **T4** — S2-S4 — **done** — Integrated verifier `mwooq3w4-i-8nj1` passed T3/S2-S7; scoped re-judges `mwoovr2k-j-cacy` and `mwoovr3z-k-tx2i` independently resolved all six frozen rows as `verified`; route: fresh Judgment Day judges + verifier; commit: n/a.
+- **T5** — S1-S3 — **in progress** — Merge PR #364 to `develop`, revalidate and merge PR #357 to `main`, then prepare the Easypanel deployment and smoke plan; route: parent delivery; commit: pending.
 
 ## Log
 
@@ -39,3 +39,5 @@ Integrated branch: `fix/357-release-blockers-v2` from immutable release head `33
 - **L12** — Fresh integration branch `fix/357-release-blockers-v2` cherry-picked the three verified commits; PR #364 targets `develop` with the sole label `type:bug`.
 - **L13** — PR #364 Frontend CI reproduced locally at 1/70 failed because a fixed `2026-10-20` fixture crossed the UI relative-date threshold; the witness now derives a timestamp one hour before test execution without changing production behavior.
 - **L14** — PR #364 Backend CI passed 2090 tests but measured mypy 1658 against 1657 and ruff 279 against 286. The new marker witness's three annotations remove its own mypy findings, yielding the CI-derived target 1655; ratchets were lowered to mypy 1655 and ruff 279, never raised.
+- **L15** — Exact-head CI run `44698385059` passed Rust engine, Backend, and Frontend at `4509ffa85c6363be95a88f7ab74cf20a04e5f830`; integrated verifier `mwooq3w4-i-8nj1` passed all five logical corrections, focused engine 6/6, backend 5/5, CRLF-aware diff-check, and the 357-line review budget.
+- **L16** — Scoped re-judgment used frozen ledger `b98a190158f0cf0441d423d11077cc0db70e047d2740a701aa05f4c0169b7406`; both fresh judges independently resolved `JD-A-001`, `JD-A-002`, `JD-A-003`, `JD-A-004`, `JD-B-001`, and `JD-B-002` as `verified`. `JUDGMENT: APPROVED`.
