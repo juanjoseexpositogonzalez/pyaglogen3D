@@ -199,9 +199,11 @@ class TestR6CsvWindowedColumns:
         assert row[bc_idx + 5] == ""  # delta only on ok
         assert row[bc_idx + 6] == "insufficient_levels"
 
-    def test_legacy_only_study_is_byte_identical_to_pre_change(self, user, project):
-        """A study without any windowed block produces the exact pre-change
-        CSV bytes: single header, no BC_Win_* columns, no extra cells."""
+    def test_legacy_only_study_preserves_bc_columns_and_marks_complete(
+        self, user, project
+    ):
+        """A study without any windowed block keeps the BC column order and
+        appends only the additive partial-completion marker."""
         study = _make_study(project)
         _make_sim(
             project,
@@ -227,11 +229,16 @@ class TestR6CsvWindowedColumns:
         assert "BC_Win" not in content
         rows = _parse_csv(response.content)
         header = rows[0]
-        # Pre-change header ends with the BC block; no windowed extension
-        assert header[-4:] == ["BC_Df", "BC_R2", "BC_StdError", "BC_Time_ms"]
-        # Every data row has exactly header-width cells (no trailing empties)
+        assert header[-5:] == [
+            "BC_Df",
+            "BC_R2",
+            "BC_StdError",
+            "BC_Time_ms",
+            "Partial",
+        ]
         for row in rows[1:]:
             assert len(row) == len(header)
+            assert row[-1] == "false"
 
     def test_header_gate_survives_include_box_counting_off(self, user, project):
         """The BC_Win_* gate is the recorded windowed run, NOT the current

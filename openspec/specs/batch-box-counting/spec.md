@@ -307,6 +307,27 @@ underflow and the pyo3 `(usize, usize)` constraint).
 - **THEN** the response includes `effective_levels`, and every displayed window remains in
   effective-level coordinates with offset `effective_levels - len(log_scales)`
 
+### Requirement: R10. Partial-completion study outputs
+
+Completed simulations with truthy `metrics["budget_exhausted"]` SHALL remain completed and
+unfiltered. Their result rows SHALL add `partial = bool(metrics.get("budget_exhausted", False))`;
+`progress` adds `partial` without changing `completed`; each fractal-analysis config adds
+`partial_count` and `partial_simulation_ids` without changing estimator values; study CSV appends
+a trailing `Partial` column whose rows are lowercase `true` or `false`.
+
+#### Scenario R10.1 — Mixed completed study remains visible
+
+- **GIVEN** two completed simulations, exactly one budget-exhausted
+- **WHEN** results and fractal analysis are requested
+- **THEN** both remain completed, `progress.completed` is unchanged, `progress.partial` is `1`,
+  and that config has the exact partial ID/count with unchanged estimator values
+
+#### Scenario R10.2 — CSV marker is additive
+
+- **GIVEN** complete and budget-exhausted completed simulations
+- **WHEN** study CSV is exported
+- **THEN** legacy headers and rows retain order and trailing `Partial` is `false` then `true`
+
 ## Out of scope call sites (documented)
 
 - `ai_assistant/tools/analysis_tools.py:89` (AI tool BC path) — legacy only, no `windowed`.

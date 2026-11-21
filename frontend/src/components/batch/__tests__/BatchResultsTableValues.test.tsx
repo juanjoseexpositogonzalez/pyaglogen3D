@@ -62,3 +62,31 @@ describe('BatchResultsTable — the varying-parameter column carries the value',
     expect(screen.queryByText('[object Object]')).toBeNull()
   })
 })
+
+describe('BatchResultsTable — partial completed runs', () => {
+  it('labels partial completed rows and warns that aggregates include them', () => {
+    const data = {
+      ...DATA,
+      progress: { ...DATA.progress, total: 2, completed: 2, partial: 1 },
+      results: [
+        ROW,
+        { ...ROW, simulation_id: 'sim-partial', partial: true },
+      ],
+    } as unknown as ParametricStudyResults
+
+    render(
+      <BatchResultsTable
+        data={data}
+        projectId="proj-1"
+        onExport={vi.fn()}
+        onRefresh={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Completed (partial)')).toBeTruthy()
+    expect(screen.getAllByText('completed', { exact: true })).toHaveLength(1)
+    expect(screen.getByRole('alert').textContent).toBe(
+      'Partial results: 1 completed run. Aggregates include partial runs.',
+    )
+  })
+})

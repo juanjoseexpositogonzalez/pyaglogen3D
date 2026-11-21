@@ -518,6 +518,7 @@ export interface WindowedBlock {
 export interface ParametricStudyResult {
   simulation_id: string
   status: SimulationStatus
+  partial?: boolean
   parameters: Record<string, unknown>
   seed: number
   execution_time_ms: number | null
@@ -552,6 +553,7 @@ export interface ParametricStudyResults {
     completed: number
     failed: number
     running: number
+    partial?: number
   }
   results: ParametricStudyResult[]
 }
@@ -611,7 +613,10 @@ export interface StudyEstimatorStats {
 }
 
 export interface StudyFractalAnalysisConfig {
-  config: Record<string, unknown>
+  config: Record<string, unknown> & {
+    partial_count?: number
+    partial_simulation_ids?: string[]
+  }
   estimators: {
     rg: StudyEstimatorStats
     bc_legacy: StudyEstimatorStats

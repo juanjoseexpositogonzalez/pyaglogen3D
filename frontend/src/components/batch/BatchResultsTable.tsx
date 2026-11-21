@@ -90,6 +90,7 @@ export function BatchResultsTable({
 }: BatchResultsTableProps) {
   const progress = (data.progress.completed / data.progress.total) * 100
   const isComplete = data.progress.running === 0
+  const partialCount = data.progress.partial ?? 0
 
   // State for box-counting skip points slider
   const [bcSkipPoints, setBcSkipPoints] = useState(0)
@@ -165,6 +166,11 @@ export function BatchResultsTable({
             <span>{progress.toFixed(0)}%</span>
           </div>
           <Progress value={progress} />
+          {partialCount > 0 && (
+            <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+              Partial results: {partialCount} completed run{partialCount === 1 ? '' : 's'}. Aggregates include partial runs.
+            </p>
+          )}
         </div>
 
         {/* Algorithm info */}
@@ -232,7 +238,9 @@ export function BatchResultsTable({
                             : 'secondary'
                         }
                       >
-                        {result.status}
+                        {result.status === 'completed' && result.partial
+                          ? 'Completed (partial)'
+                          : result.status}
                       </Badge>
                     </td>
                     {varyingParams.map((param) => (
