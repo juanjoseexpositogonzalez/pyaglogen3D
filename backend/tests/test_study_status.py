@@ -203,6 +203,7 @@ def test_every_dispatch_happens_after_all_the_children_exist(
 
     with patch("apps.simulations.views.run_simulation_task") as mock_task:
         mock_task.delay.side_effect = _dispatch
+        mock_task.apply_async.side_effect = lambda args, **_options: _dispatch(args[0])
         response = api_client.post(
             f"/api/v1/projects/{project.id}/studies/",
             data={

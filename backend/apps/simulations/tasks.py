@@ -3,10 +3,12 @@
 import io
 import logging
 import math
+from typing import Any
 from uuid import UUID
 
 import numpy as np
 from celery import shared_task
+from django.conf import settings
 from django.utils import timezone
 
 from .param_policy import rotation_attempts
@@ -1589,6 +1591,20 @@ def compute_import_metrics_task(self, simulation_id: str) -> dict:
             "simulation_id": simulation_id,
             "error": str(e),
         }
+
+
+def dispatch_simulation_task(
+    task: Any, simulation_id: UUID | str, algorithm: str
+) -> Any:
+    """Dispatch one simulation with algorithm-specific Celery time limits."""
+    simulation_id_str = str(simulation_id)
+    if algorithm == "tunable_cc":
+        return task.apply_async(
+            args=[simulation_id_str],
+            time_limit=settings.CELERY_TUNABLE_CC_TASK_TIME_LIMIT,
+            soft_time_limit=settings.CELERY_TUNABLE_CC_TASK_SOFT_TIME_LIMIT,
+        )
+    return task.delay(simulation_id_str)
 
 
 @shared_task(bind=True, max_retries=1)

@@ -16,7 +16,7 @@ from apps.simulations.models import (
     SimulationAlgorithm,
     SimulationStatus,
 )
-from apps.simulations.tasks import run_simulation_task
+from apps.simulations.tasks import dispatch_simulation_task, run_simulation_task
 from apps.simulations.utils import complete_distribution_aliases
 
 from .decorators import tool
@@ -198,7 +198,7 @@ def create_parametric_study_handler(
     study.save(update_fields=["status"])
 
     for sim in simulations_created:
-        task = run_simulation_task.delay(str(sim.id))
+        task = dispatch_simulation_task(run_simulation_task, sim.id, sim.algorithm)
         sim.task_id = task.id
         sim.save(update_fields=["task_id"])
 
