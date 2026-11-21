@@ -9,7 +9,7 @@ from typing import Any
 
 from apps.projects.models import Project
 from apps.simulations.models import Simulation, SimulationAlgorithm, SimulationStatus
-from apps.simulations.tasks import run_simulation_task
+from apps.simulations.tasks import dispatch_simulation_task, run_simulation_task
 
 from .base import ToolResult
 from .decorators import tool
@@ -62,7 +62,9 @@ def _create_simulation(
     )
 
     # Queue Celery task
-    task = run_simulation_task.delay(str(simulation.id))
+    task = dispatch_simulation_task(
+        run_simulation_task, simulation.id, simulation.algorithm
+    )
     simulation.task_id = task.id
     simulation.save(update_fields=["task_id"])
 

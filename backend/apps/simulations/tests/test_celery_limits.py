@@ -1,27 +1,20 @@
-"""Celery time limits are a declared safety net (issue #310, T4).
-
-The engine has a deterministic operation budget, so no task should ever reach
-these limits. They exist for what the budget cannot see: a pathological merge, a
-starved host, or a task that never touches the engine at all. That is why the
-assertions here are about the *relationship* between the two numbers and their
-propagation to the Celery app, not just about two constants.
-"""
+"""Celery time limits preserve unrelated workloads while bounding tunable-CC."""
 
 from __future__ import annotations
+
+from typing import Any
 
 from django.conf import settings
 
 from config.celery import app
 
 
-def test_hard_limit_is_the_agreed_value() -> None:
-    """600 s, four times the worst run the operation budget allows (110-150 s)."""
-    assert settings.CELERY_TASK_TIME_LIMIT == 600
+def test_global_hard_limit_preserves_the_existing_hour_ceiling() -> None:
+    assert settings.CELERY_TASK_TIME_LIMIT == 3600
 
 
-def test_soft_limit_is_the_agreed_value() -> None:
-    """540 s: it fires first, so the task can record why it stopped."""
-    assert settings.CELERY_TASK_SOFT_TIME_LIMIT == 540
+def test_global_soft_limit_does_not_preempt_the_projection_contract() -> None:
+    assert settings.CELERY_TASK_SOFT_TIME_LIMIT == 3300
 
 
 def test_soft_limit_fires_before_the_hard_one() -> None:
@@ -30,12 +23,41 @@ def test_soft_limit_fires_before_the_hard_one() -> None:
     assert settings.CELERY_TASK_SOFT_TIME_LIMIT < settings.CELERY_TASK_TIME_LIMIT
 
 
-def test_the_app_receives_both_limits() -> None:
-    """`config_from_object(namespace="CELERY")` has to carry them to the app.
+def test_the_app_receives_both_global_limits() -> None:
+    assert app.conf.task_time_limit == 3600
+    assert app.conf.task_soft_time_limit == 3300
 
-    This is the assertion that fails if the settings exist but the namespace or
-    the key names drift - the failure mode where everything looks configured and
-    nothing is enforced.
-    """
-    assert app.conf.task_time_limit == 600
-    assert app.conf.task_soft_time_limit == 540
+
+def test_tunable_cc_limits_remain_declared() -> None:
+    assert settings.CELERY_TUNABLE_CC_TASK_TIME_LIMIT == 600
+    assert settings.CELERY_TUNABLE_CC_TASK_SOFT_TIME_LIMIT == 540
+
+
+def test_tunable_cc_dispatch_uses_the_shorter_limits(mocker: Any) -> None:
+    from apps.simulations.tasks import dispatch_simulation_task
+
+    task = mocker.Mock()
+    task.apply_async.return_value = mocker.sentinel.async_result
+
+    result = dispatch_simulation_task(task, "simulation-id", "tunable_cc")
+
+    assert result is mocker.sentinel.async_result
+    task.apply_async.assert_called_once_with(
+        args=["simulation-id"],
+        time_limit=600,
+        soft_time_limit=540,
+    )
+    task.delay.assert_not_called()
+
+
+def test_other_algorithms_keep_the_default_dispatch(mocker: Any) -> None:
+    from apps.simulations.tasks import dispatch_simulation_task
+
+    task = mocker.Mock()
+    task.delay.return_value = mocker.sentinel.async_result
+
+    result = dispatch_simulation_task(task, "simulation-id", "dla")
+
+    assert result is mocker.sentinel.async_result
+    task.delay.assert_called_once_with("simulation-id")
+    task.apply_async.assert_not_called()

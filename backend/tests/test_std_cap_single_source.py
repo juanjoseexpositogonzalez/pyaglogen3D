@@ -94,7 +94,10 @@ def _no_dispatch(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         views,
         "run_simulation_task",
-        MagicMock(delay=MagicMock(return_value=MagicMock(id="t"))),
+        MagicMock(
+            delay=MagicMock(return_value=MagicMock(id="t")),
+            apply_async=MagicMock(return_value=MagicMock(id="t")),
+        ),
     )
 
 

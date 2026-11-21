@@ -17,13 +17,11 @@ import uuid
 from unittest.mock import MagicMock, patch
 
 import pytest
-from django.contrib.auth import get_user_model
 from rest_framework.test import APIClient
 
+from apps.accounts.models import User
 from apps.projects.models import Project
 from apps.simulations.models import ParametricStudy, Simulation, SimulationStatus
-
-User = get_user_model()
 
 
 @pytest.fixture
@@ -55,6 +53,7 @@ def _mock_celery_task():
         "apps.simulations.views.run_simulation_task"
     ) as mock_task:
         mock_task.delay.return_value = mock_result
+        mock_task.apply_async.return_value = mock_result
         yield mock_task
 
 

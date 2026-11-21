@@ -94,6 +94,7 @@ def _mock_celery_dispatch() -> Any:
     mock_result = MagicMock(id="fake-celery-task-id")
     with patch("apps.simulations.views.run_simulation_task") as mock_task:
         mock_task.delay.return_value = mock_result
+        mock_task.apply_async.return_value = mock_result
         yield mock_task
 
 

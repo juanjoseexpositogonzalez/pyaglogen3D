@@ -40,7 +40,11 @@ from .services.projection import (
 )
 from .services.projections import build_projection_zip
 from .sintering_shape import FLAT_KEYS
-from .tasks import compute_import_metrics_task, run_simulation_task
+from .tasks import (
+    compute_import_metrics_task,
+    dispatch_simulation_task,
+    run_simulation_task,
+)
 from .utils import CSVParseError, parse_csv_geometry
 
 # Rejection message for .dat uploads — spec R7 scenario "`.dat` upload". The
@@ -492,7 +496,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Try Celery, fall back to sync execution in development
         try:
-            result = run_simulation_task.delay(str(simulation.id))
+            result = dispatch_simulation_task(
+                run_simulation_task, simulation.id, simulation.algorithm
+            )
             # Store task ID for cancellation
             simulation.task_id = result.id
             simulation.save(update_fields=["task_id"])
@@ -1989,7 +1995,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # was closed with one of three children created (measured, #152).
         for sim in simulations_created:
             try:
-                result = run_simulation_task.delay(str(sim.id))
+                result = dispatch_simulation_task(
+                    run_simulation_task, sim.id, sim.algorithm
+                )
                 sim.task_id = result.id
                 sim.save(update_fields=["task_id"])
             except Exception as e:
