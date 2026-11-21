@@ -31,6 +31,7 @@ from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
     PARAM_KEY_SCALE_NM,
+    get_primary_particle_diameter_nm,
     get_scale_factor_nm,
 )
 from .services.projection import (
@@ -365,10 +366,12 @@ class SimulationViewSet(viewsets.ModelViewSet):
             # distances share the radius column's physical unit, so the array
             # is never dimensionless — it is already in the file's unit.
             params[PARAM_KEY_SCALE_NM] = 1.0
+        elif declared_unit == "dimensionless":
+            # Caller-supplied parameters cannot override the import's declared
+            # unit: normalized geometry uses the default diameter-derived scale.
+            params.pop(PARAM_KEY_SCALE_NM, None)
         else:
-            # ``declared_unit`` is already normalised above (S3).
-            if declared_unit != "dimensionless":
-                params[PARAM_KEY_SCALE_NM] = 1.0
+            params[PARAM_KEY_SCALE_NM] = 1.0
         params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
         params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"
@@ -2348,9 +2351,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 # mixed-version batch produces correct values throughout.
                 rg_scale_nm = get_scale_factor_nm(sim.parameters)
                 rg_nm = sim.metrics.get("radius_of_gyration", 0) * rg_scale_nm
-                # radius_nm = diameter / 2 = scale factor. Matches verify-rg
-                # convention where ``Rg_nm = Rg_engine * scale_factor_nm``.
-                radius_nm = rg_scale_nm
+                # Physical primary-particle radius is independent from an explicit
+                # engine→nm scale (nm imports carry scale_nm=1 with diameter=2r).
+                radius_nm = get_primary_particle_diameter_nm(sim.parameters) / 2.0
                 row = (
                     [
                         str(sim.id),

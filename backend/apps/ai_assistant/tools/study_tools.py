@@ -16,6 +16,7 @@ from apps.simulations.models import (
     SimulationAlgorithm,
     SimulationStatus,
 )
+from apps.simulations.param_policy import validate_tunable_cc_particle_count
 from apps.simulations.tasks import dispatch_simulation_task, run_simulation_task
 from apps.simulations.utils import complete_distribution_aliases
 
@@ -44,6 +45,18 @@ def _generate_parameter_combinations(
         combinations.append(dict(zip(keys, combo)))
 
     return combinations
+
+
+def _validate_tunable_cc_particle_counts(
+    algorithm: str,
+    base_parameters: dict[str, Any],
+    combinations: list[dict[str, Any]],
+) -> None:
+    """Validate every effective AI-study child before any ORM write."""
+    if algorithm.lower() != "tunable_cc":
+        return
+    for combo in combinations:
+        validate_tunable_cc_particle_count({**base_parameters, **combo})
 
 
 @tool(
@@ -134,6 +147,7 @@ def create_parametric_study_handler(
 
     # Generate parameter combinations
     combinations = _generate_parameter_combinations(parameter_grid)
+    _validate_tunable_cc_particle_counts(algorithm, base_parameters, combinations)
     total_simulations = len(combinations) * seeds_per_combination
 
     if total_simulations > 10000:
