@@ -326,6 +326,20 @@ impl OperationBudget {
     }
 }
 
+/// At most five Cartesian particle comparisons are admitted per budget operation.
+/// Phase 0 covered the approved N=500 fixtures and the public R25 N=2000 matrix.
+/// Quantum 4 still reached 303,364,437 operations, so five is the smallest integer
+/// that preserves the 300M default while bounding the previously hidden pair work.
+const PAIR_COMPARISONS_PER_OPERATION: u64 = 5;
+
+fn consume_pair_comparison(operations: &mut OperationBudget, comparisons: &mut u64) -> bool {
+    if *comparisons % PAIR_COMPARISONS_PER_OPERATION == 0 && !operations.consume() {
+        return false;
+    }
+    *comparisons = comparisons.saturating_add(1);
+    true
+}
+
 impl TunableCcParams {
     pub fn is_polydisperse(&self) -> bool {
         (self.radius_max - self.radius_min).abs() > 1e-10
@@ -599,7 +613,25 @@ fn check_overlap(
     cluster2: &TunableCluster,
     sintering_coeff: f64,
 ) -> bool {
-    // Quick bounding sphere check first (use sintered distance)
+    check_overlap_with_budget(cluster1, cluster2, sintering_coeff, None)
+        .expect("an unbounded overlap scan cannot exhaust")
+}
+
+fn check_overlap_budgeted(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    operations: &mut OperationBudget,
+) -> Option<bool> {
+    check_overlap_with_budget(cluster1, cluster2, sintering_coeff, Some(operations))
+}
+
+fn check_overlap_with_budget(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    mut operations: Option<&mut OperationBudget>,
+) -> Option<bool> {
     let dist = cluster1
         .center_of_mass
         .distance_to(&cluster2.center_of_mass);
@@ -609,20 +641,26 @@ fn check_overlap(
         sintering_coeff,
     );
     if dist > bounding_contact + 1e-6 {
-        return false;
+        return Some(false);
     }
 
-    // Detailed particle-level check with sintering
+    let mut pair_comparisons = 0;
     for p1 in &cluster1.particles {
         for p2 in &cluster2.particles {
+            if operations.as_deref_mut().is_some_and(|budget| {
+                !consume_pair_comparison(budget, &mut pair_comparisons)
+            }) {
+                return None;
+            }
+
             let d = p1.center.distance_to(&p2.center);
             let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
             if d < contact_dist - 1e-6 {
-                return true;
+                return Some(true);
             }
         }
     }
-    false
+    Some(false)
 }
 
 /// Relative tolerance accepted when validating inter-cluster contact.
@@ -642,6 +680,25 @@ fn has_intercluster_contact(
     cluster2: &TunableCluster,
     sintering_coeff: f64,
 ) -> bool {
+    has_intercluster_contact_with_budget(cluster1, cluster2, sintering_coeff, None)
+        .expect("an unbounded contact scan cannot exhaust")
+}
+
+fn has_intercluster_contact_budgeted(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    operations: &mut OperationBudget,
+) -> Option<bool> {
+    has_intercluster_contact_with_budget(cluster1, cluster2, sintering_coeff, Some(operations))
+}
+
+fn has_intercluster_contact_with_budget(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    mut operations: Option<&mut OperationBudget>,
+) -> Option<bool> {
     let dist = cluster1
         .center_of_mass
         .distance_to(&cluster2.center_of_mass);
@@ -652,22 +709,29 @@ fn has_intercluster_contact(
     );
     let bounding_tolerance = intercluster_contact_tolerance(bounding_contact);
     if dist > bounding_contact + bounding_tolerance {
-        return false;
+        return Some(false);
     }
 
+    let mut pair_comparisons = 0;
     for p1 in &cluster1.particles {
         for p2 in &cluster2.particles {
+            if operations.as_deref_mut().is_some_and(|budget| {
+                !consume_pair_comparison(budget, &mut pair_comparisons)
+            }) {
+                return None;
+            }
+
             let d = p1.center.distance_to(&p2.center);
             let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
             let tolerance = intercluster_contact_tolerance(contact_dist);
 
             if d <= contact_dist + tolerance {
-                return true;
+                return Some(true);
             }
         }
     }
 
-    false
+    Some(false)
 }
 
 /// Rotate vector v around axis by angle (in radians) using Rodrigues' formula.
@@ -727,6 +791,7 @@ fn select_contact_particles<R: Rng>(
     required_distance: f64,
     sintering_coeff: f64,
     rng: &mut R,
+    operations: &mut OperationBudget,
 ) -> Option<(usize, usize)> {
     // Shuffle candidates for randomness
     let mut candidates1 = la1.to_vec();
@@ -734,8 +799,13 @@ fn select_contact_particles<R: Rng>(
     candidates1.shuffle(rng);
     candidates2.shuffle(rng);
 
+    let mut pair_comparisons = 0;
     for &m1 in &candidates1 {
         for &m2 in &candidates2 {
+            if !consume_pair_comparison(operations, &mut pair_comparisons) {
+                return None;
+            }
+
             let p1 = &cluster1.particles[m1];
             let p2 = &cluster2.particles[m2];
 
@@ -859,13 +929,73 @@ fn resolve_overlap_by_rotation<R: Rng>(
         let mut test_cluster = cluster2.clone();
         test_cluster.rotate_around_axis(rotation_axis, angle, test_cluster.center_of_mass);
 
-        if !check_overlap(cluster1, &test_cluster, sintering_coeff) {
-            *cluster2 = test_cluster;
-            return true;
+        match check_overlap_budgeted(cluster1, &test_cluster, sintering_coeff, operations) {
+            Some(false) => {
+                *cluster2 = test_cluster;
+                return true;
+            }
+            Some(true) => {}
+            None => return false,
         }
     }
 
     false
+}
+
+/// Outcome of validating one positioned cluster pair under the operation budget.
+enum BudgetedPlacement {
+    Valid,
+    Invalid,
+    Exhausted,
+}
+
+fn validate_positioned_clusters<R: Rng>(
+    cluster1: &TunableCluster,
+    cluster2: &mut TunableCluster,
+    contact_particle2: usize,
+    max_rotation_attempts: usize,
+    sintering_coeff: f64,
+    rng: &mut R,
+    operations: &mut OperationBudget,
+) -> BudgetedPlacement {
+    let Some(has_contact) =
+        has_intercluster_contact_budgeted(cluster1, cluster2, sintering_coeff, operations)
+    else {
+        return BudgetedPlacement::Exhausted;
+    };
+    if !has_contact {
+        return BudgetedPlacement::Invalid;
+    }
+
+    let Some(has_overlap) = check_overlap_budgeted(cluster1, cluster2, sintering_coeff, operations)
+    else {
+        return BudgetedPlacement::Exhausted;
+    };
+    if !has_overlap {
+        return BudgetedPlacement::Valid;
+    }
+
+    if !resolve_overlap_by_rotation(
+        cluster1,
+        cluster2,
+        contact_particle2,
+        max_rotation_attempts,
+        sintering_coeff,
+        rng,
+        operations,
+    ) {
+        return if operations.exhausted {
+            BudgetedPlacement::Exhausted
+        } else {
+            BudgetedPlacement::Invalid
+        };
+    }
+
+    match has_intercluster_contact_budgeted(cluster1, cluster2, sintering_coeff, operations) {
+        Some(true) => BudgetedPlacement::Valid,
+        Some(false) => BudgetedPlacement::Invalid,
+        None => BudgetedPlacement::Exhausted,
+    }
 }
 
 /// Fallback: merge clusters using ballistic-like approach with sintering support.
@@ -1336,6 +1466,7 @@ pub fn run_tunable_cc_internal(
                                 required_distance,
                                 sintering_coeff,
                                 &mut rng,
+                                &mut operation_budget,
                             ) {
                                 let positioned = position_clusters_for_contact(
                                     &mut imp_try,
@@ -1347,38 +1478,23 @@ pub fn run_tunable_cc_internal(
                                     &mut rng,
                                 );
                                 if positioned {
-                                    let has_contact = has_intercluster_contact(
+                                    match validate_positioned_clusters(
                                         &imp_try,
-                                        &imr_try,
+                                        &mut imr_try,
+                                        m2,
+                                        params.max_rotation_attempts,
                                         sintering_coeff,
-                                    );
-                                    if has_contact
-                                        && !check_overlap(&imp_try, &imr_try, sintering_coeff)
-                                    {
-                                        inner_success = true;
-                                        impacted = imp_try;
-                                        impactor = imr_try;
-                                        break;
-                                    } else if has_contact
-                                        && resolve_overlap_by_rotation(
-                                            &imp_try,
-                                            &mut imr_try,
-                                            m2,
-                                            params.max_rotation_attempts,
-                                            sintering_coeff,
-                                            &mut rng,
-                                            &mut operation_budget,
-                                        )
-                                        && has_intercluster_contact(
-                                            &imp_try,
-                                            &imr_try,
-                                            sintering_coeff,
-                                        )
-                                    {
-                                        inner_success = true;
-                                        impacted = imp_try;
-                                        impactor = imr_try;
-                                        break;
+                                        &mut rng,
+                                        &mut operation_budget,
+                                    ) {
+                                        BudgetedPlacement::Valid => {
+                                            inner_success = true;
+                                            impacted = imp_try;
+                                            impactor = imr_try;
+                                            break;
+                                        }
+                                        BudgetedPlacement::Invalid => {}
+                                        BudgetedPlacement::Exhausted => break,
                                     }
                                 }
                             }
@@ -1716,6 +1832,7 @@ pub fn run_tunable_cc_internal(
                         required_distance,
                         sintering_coeff,
                         &mut rng,
+                        &mut operation_budget,
                     ) {
                         let positioned = position_clusters_for_contact(
                             &mut impacted,
@@ -1728,27 +1845,21 @@ pub fn run_tunable_cc_internal(
                         );
 
                         if positioned {
-                            let has_contact =
-                                has_intercluster_contact(&impacted, &impactor, sintering_coeff);
-
-                            if has_contact && !check_overlap(&impacted, &impactor, sintering_coeff)
-                            {
-                                attempt_succeeded = true;
-                                break;
-                            } else if has_contact
-                                && resolve_overlap_by_rotation(
-                                    &impacted,
-                                    &mut impactor,
-                                    m2,
-                                    params.max_rotation_attempts,
-                                    sintering_coeff,
-                                    &mut rng,
-                                    &mut operation_budget,
-                                )
-                                && has_intercluster_contact(&impacted, &impactor, sintering_coeff)
-                            {
-                                attempt_succeeded = true;
-                                break;
+                            match validate_positioned_clusters(
+                                &impacted,
+                                &mut impactor,
+                                m2,
+                                params.max_rotation_attempts,
+                                sintering_coeff,
+                                &mut rng,
+                                &mut operation_budget,
+                            ) {
+                                BudgetedPlacement::Valid => {
+                                    attempt_succeeded = true;
+                                    break;
+                                }
+                                BudgetedPlacement::Invalid => {}
+                                BudgetedPlacement::Exhausted => break,
                             }
                         }
                     }
@@ -2974,6 +3085,107 @@ mod tests {
         assert_eq!(ballistic_budget.used, 2);
     }
 
+    fn scan_test_cluster(size: usize, y: f64) -> TunableCluster {
+        TunableCluster::from_particles(
+            (0..size).map(|index| Sphere::new(Vector3::new(index as f64 * 10.0, y, 0.0), 1.0)).collect())
+    }
+
+    #[test]
+    fn operation_budget_meters_contact_particle_candidate_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let candidates: Vec<usize> = (0..8).collect();
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        let exhausted = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &candidates,
+            &candidates,
+            1_000.0,
+            1.0,
+            &mut rng,
+            &mut exact_budget,
+        );
+        assert!(exhausted.is_none());
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert!(select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &candidates,
+            &candidates,
+            1_000.0,
+            1.0,
+            &mut rng,
+            &mut permitted_budget,
+        )
+        .is_none());
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_intercluster_contact_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        assert_eq!(
+            has_intercluster_contact_budgeted(&cluster1, &cluster2, 1.0, &mut exact_budget),
+            None
+        );
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert_eq!(
+            has_intercluster_contact_budgeted(&cluster1, &cluster2, 1.0, &mut permitted_budget),
+            Some(false)
+        );
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_overlap_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        assert_eq!(
+            check_overlap_budgeted(&cluster1, &cluster2, 1.0, &mut exact_budget),
+            None
+        );
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert_eq!(
+            check_overlap_budgeted(&cluster1, &cluster2, 1.0, &mut permitted_budget),
+            Some(false)
+        );
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_rotation_overlap_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let mut cluster2 = scan_test_cluster(8, 5.0);
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut budget = OperationBudget::new(Some(14));
+        assert!(!resolve_overlap_by_rotation(
+            &cluster1,
+            &mut cluster2,
+            0,
+            1,
+            1.0,
+            &mut rng,
+            &mut budget,
+        ));
+        assert!(budget.exhausted);
+        assert_eq!(budget.used, 14);
+    }
+
     #[test]
     fn budget_exhaustion_returns_the_largest_accumulated_cluster() {
         let cluster = |size: usize, x: f64| {
@@ -4153,6 +4365,7 @@ mod tests {
         let mut rng = create_rng(42);
         let rp = 1.0;
         let sintering_coeff = 0.9;
+        let mut operations = OperationBudget::new(None);
 
         // Two monomer clusters
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
@@ -4170,6 +4383,7 @@ mod tests {
             1.9,
             sintering_coeff,
             &mut rng,
+            &mut operations,
         );
         assert!(
             result.is_none(),
@@ -4184,6 +4398,7 @@ mod tests {
         use crate::common::rng::create_rng;
         let mut rng = create_rng(42);
         let rp = 1.0;
+        let mut operations = OperationBudget::new(None);
 
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
         let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
@@ -4192,7 +4407,16 @@ mod tests {
         let la2 = vec![0usize];
 
         // required_distance = 1.9: bare contact_dist = 2.0 >= 1.9 → must accept
-        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.9, 1.0, &mut rng);
+        let result = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &la1,
+            &la2,
+            1.9,
+            1.0,
+            &mut rng,
+            &mut operations,
+        );
         assert!(
             result.is_some(),
             "With bare contact_dist=2.0 and required_distance=1.9, must accept"
@@ -4206,6 +4430,7 @@ mod tests {
         use crate::common::rng::create_rng;
         let mut rng = create_rng(42);
         let rp = 1.0;
+        let mut operations = OperationBudget::new(None);
 
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
         let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
@@ -4214,7 +4439,16 @@ mod tests {
         let la2 = vec![0usize];
 
         // required_distance = 1.7: sintered contact_dist = 1.8 >= 1.7 → must accept
-        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.7, 0.9, &mut rng);
+        let result = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &la1,
+            &la2,
+            1.7,
+            0.9,
+            &mut rng,
+            &mut operations,
+        );
         assert!(
             result.is_some(),
             "With sintered contact_dist=1.8 and required_distance=1.7, must accept"
