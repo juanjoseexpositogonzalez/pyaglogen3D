@@ -2032,6 +2032,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "parameters": sim.parameters,
                 "seed": sim.seed,
                 "execution_time_ms": sim.execution_time_ms,
+                "partial": bool((sim.metrics or {}).get("budget_exhausted", False)),
             }
             if sim.metrics:
                 result_data.update(
@@ -2080,6 +2081,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         completed = study.simulations.filter(status="completed").count()
         failed = study.simulations.filter(status="failed").count()
         running = study.simulations.filter(status__in=["queued", "running"]).count()
+        partial = sum(result["partial"] for result in results)
 
         return Response(
             {
@@ -2098,6 +2100,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     "completed": completed,
                     "failed": failed,
                     "running": running,
+                    "partial": partial,
                 },
                 "results": results,
             }
@@ -2220,9 +2223,18 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     elif win_status == "error":
                         errors += 1
 
+            partial_simulation_ids = [
+                str(sim.id)
+                for sim in group["sims"]
+                if bool((sim.metrics or {}).get("budget_exhausted", False))
+            ]
             configs.append(
                 {
-                    "config": group["config"],
+                    "config": {
+                        **group["config"],
+                        "partial_count": len(partial_simulation_ids),
+                        "partial_simulation_ids": partial_simulation_ids,
+                    },
                     "estimators": {
                         "rg": self._estimator_stats(rg_values),
                         "bc_legacy": self._estimator_stats(bc_legacy_values),
@@ -2326,6 +2338,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 ]
             )
 
+        header.append("Partial")
         wrow(header)
 
         # Data rows
@@ -2423,6 +2436,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     else:
                         row.extend(["", "", "", "", "", ""])
 
+                row.append(
+                    str(bool((sim.metrics or {}).get("budget_exhausted", False))).lower()
+                )
                 wrow(row)
 
         output.seek(0)

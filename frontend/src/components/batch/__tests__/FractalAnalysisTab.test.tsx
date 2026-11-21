@@ -603,3 +603,53 @@ describe('FractalAnalysisTab — the per-config header carries the value', () =>
     expect(document.body.textContent).toContain('"value":1.9')
   })
 })
+
+describe('FractalAnalysisTab — partial distributions', () => {
+  it('warns when distributions include partial runs, but not for zero or absent counts', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse(
+        200,
+        makeSummary([
+          {
+            config: {
+              kf: 1.7,
+              partial_count: 2,
+              partial_simulation_ids: ['sim-1', 'sim-2'],
+            },
+            estimators: {
+              rg: makeEstimatorStats([1.8]),
+              bc_legacy: makeEstimatorStats([1.79]),
+              bc_windowed: makeEstimatorStats([]),
+            },
+          },
+          {
+            config: { kf: 1.8, partial_count: 0 },
+            estimators: {
+              rg: makeEstimatorStats([1.8]),
+              bc_legacy: makeEstimatorStats([1.79]),
+              bc_windowed: makeEstimatorStats([]),
+            },
+          },
+          {
+            config: { kf: 1.9 },
+            estimators: {
+              rg: makeEstimatorStats([1.8]),
+              bc_legacy: makeEstimatorStats([1.79]),
+              bc_windowed: makeEstimatorStats([]),
+            },
+          },
+        ]),
+      ),
+    )
+
+    renderTab(makeResults([makeRow('sim-1')]))
+
+    const alerts = await screen.findAllByRole('alert')
+    expect(alerts).toHaveLength(1)
+    expect(alerts[0].textContent).toBe(
+      'Partial results: 2 completed runs. Displayed distributions include partial runs.',
+    )
+    expect(document.body.textContent).not.toContain('partial_count=')
+    expect(document.body.textContent).not.toContain('partial_simulation_ids=')
+  })
+})

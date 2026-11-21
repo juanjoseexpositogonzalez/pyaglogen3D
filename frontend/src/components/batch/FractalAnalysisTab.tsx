@@ -308,8 +308,17 @@ export function FractalAnalysisTab({
           )}
           {summary?.configs.map((cfg, configIndex) => (
             <div key={configIndex} className="space-y-2">
+              {(cfg.config.partial_count ?? 0) > 0 && (
+                <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+                  Partial results: {cfg.config.partial_count} completed run{cfg.config.partial_count === 1 ? '' : 's'}. Displayed distributions include partial runs.
+                </p>
+              )}
               <div className="text-xs font-medium text-muted-foreground">
                 {Object.entries(cfg.config)
+                  .filter(
+                    ([key]) =>
+                      key !== 'partial_count' && key !== 'partial_simulation_ids',
+                  )
                   .map(([k, v]) => `${k}=${formatParameterValue(v)}`)
                   .join(', ')}
               </div>
