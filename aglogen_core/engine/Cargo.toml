@@ -119,3 +119,7 @@ path = "examples/diagnostics/bc_fit_window_curve.rs"
 [[example]]
 name = "cc_time_budget"
 path = "examples/diagnostics/cc_time_budget.rs"
+
+[[example]]
+name = "cc_main_path_pair_budget"
+path = "examples/diagnostics/cc_main_path_pair_budget.rs"
