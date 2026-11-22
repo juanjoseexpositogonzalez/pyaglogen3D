@@ -103,6 +103,23 @@ def _authed_client(user: User) -> APIClient:
     return client
 
 
+@pytest.fixture(autouse=True)
+def bc_result_backend(monkeypatch):  # type: ignore[no-untyped-def]
+    """Keep async endpoint tests isolated from configured Celery services."""
+    from apps.simulations.tasks import run_box_counting_async
+
+    backend = MagicMock()
+    task: Any = run_box_counting_async
+
+    def apply_async(*, args, task_id):  # type: ignore[no-untyped-def]
+        return task.delay(*args)
+
+    monkeypatch.setattr("apps.simulations.views._bc_result_backend", lambda: backend)
+    monkeypatch.setattr("apps.simulations.views.AsyncResult", _fake_async_result_factory({}))
+    monkeypatch.setattr(task, "apply_async", apply_async)
+    return backend
+
+
 # ── R3.1 — synchronous boundary ────────────────────────────────────────
 
 
@@ -141,6 +158,19 @@ class TestR31SyncPath:
             assert isinstance(box_counting, dict)
             assert box_counting["fit_window"] is None
             assert box_counting["window_source"] == "legacy"
+
+    def test_small_work_set_does_not_require_result_backend(self, user: User, project: Project) -> None:
+        study = _make_study(project)
+        _make_sim(project, study)
+        with (
+            patch("apps.simulations.views.AsyncResult", side_effect=RuntimeError("result backend unavailable")) as mock_result,
+            patch("apps.simulations.tasks.run_box_counting_for_study", return_value={"total": 1, "processed": 1, "skipped": 0, "failed": 0}),
+        ):
+            response = _authed_client(user).post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 200
+        assert response.data["results"]["total"] == 1
+        mock_result.assert_not_called()
 
     def test_geometry_less_sims_do_not_count_toward_boundary(self, user, project):
         """≤30 sims WITH geometry plus geometry-less sims stay synchronous
@@ -186,21 +216,21 @@ class TestR32AsyncPath:
         client = _authed_client(user)
 
         with (
-            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
-            patch("aglogen_core.box_counting_agglomerate"),
+            patch("apps.simulations.views.uuid.uuid4", return_value="task-abc-123"),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
         ):
-            mock_delay.return_value = MagicMock(id="task-abc-123")
             response = client.post(_run_url(study), {}, format="json")
 
         assert response.status_code == 202
         assert response.data["task_id"] == "task-abc-123"
         # Geometry-less sims excluded from the total (R3.2)
         assert response.data["total"] == 31
-        mock_delay.assert_called_once()
-        args = mock_delay.call_args.args
-        assert args[0] == str(study.id)
-        assert args[3] is False  # windowed
-        assert args[4] is False  # force
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, False, False),
+            task_id="task-abc-123",
+        )
 
     def test_status_endpoint_reports_processing(self, user, project):
         study = _make_study(project)
@@ -515,43 +545,52 @@ class TestDoubleSubmitGuard:
 
         assert response.status_code == 202
 
-    def test_dispatch_stamps_total_and_inflight_marker(self, user, project):
-        """F2: the 202-time total is stamped into the task meta right after
-        dispatch; JD-B-006: the in-flight marker is stamped too."""
+    def test_dispatch_reserves_task_owner_and_inflight_marker(
+        self, user, project, bc_result_backend
+    ):
+        """The complete reservation is durable before broker dispatch."""
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
         client = _authed_client(user)
-
-        fake_cls = _fake_async_result_factory({})
-
         with (
-            patch("apps.simulations.views.AsyncResult", fake_cls),
-            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
-            patch("aglogen_core.box_counting_agglomerate"),
+            patch(
+                "apps.simulations.views.AsyncResult",
+                _fake_async_result_factory({}),
+            ),
+            patch("apps.simulations.views.uuid.uuid4", return_value="task-stamp-1"),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
         ):
-            task = MagicMock(id="task-stamp-1")
-            mock_delay.return_value = task
             response = client.post(_run_url(study), {}, format="json")
 
         assert response.status_code == 202
-        stamped = task.backend.store_result.call_args_list
-        # First stamp: the dispatch meta carrying the 202-time total (F2)
-        # + the wall-clock dispatch time (fix round 2, JD-B-NEW-002).
-        assert stamped[0].args[0] == "task-stamp-1"
-        stamp_meta = stamped[0].args[1]
-        assert stamp_meta["current"] == 0
-        assert stamp_meta["total"] == 31
-        assert stamp_meta["progress"] == 0.0
-        assert isinstance(stamp_meta["dispatched_at"], float)
-        assert stamped[0].kwargs["state"] == "PROGRESS"
-        # Second stamp: the per-study in-flight marker (JD-B-006)
-        assert stamped[1].args[0] == f"bc-inflight-{study.id}"
-        marker_meta = stamped[1].args[1]
+        stamped = bc_result_backend.store_result.call_args_list
+        assert [call.args[0] for call in stamped] == [
+            "task-stamp-1",
+            "bc-owner-task-stamp-1",
+            f"bc-inflight-{study.id}",
+        ]
+        task_meta = stamped[0].args[1]
+        assert task_meta["current"] == 0
+        assert task_meta["total"] == 31
+        assert task_meta["progress"] == 0.0
+        assert isinstance(task_meta["dispatched_at"], float)
+        owner_meta = stamped[1].args[1]
+        assert owner_meta == {
+            "task_id": "task-stamp-1",
+            "study_id": str(study.id),
+        }
+        marker_meta = stamped[2].args[1]
         assert marker_meta["task_id"] == "task-stamp-1"
         assert marker_meta["study_id"] == str(study.id)
         assert isinstance(marker_meta["dispatched_at"], float)
-        assert stamped[1].kwargs["state"] == "PROGRESS"
+        assert all(call.kwargs["state"] == "PROGRESS" for call in stamped)
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, False, False),
+            task_id="task-stamp-1",
+        )
 
 
 # ── Async task producer behavior ───────────────────────────────────────

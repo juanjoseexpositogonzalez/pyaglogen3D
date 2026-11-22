@@ -5,10 +5,12 @@ import io
 import json
 import logging
 import time
+import uuid
 import zipfile
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
+from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -2539,56 +2541,88 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             persisted_params["windowed"] = study_params["windowed"]
         effective_windowed = bool(persisted_params.get("windowed", False))
 
-        # Update study to enable box-counting for future reference. Fix
-        # round 2 (fresh-pass JD-B-NEW-001): this save happens AFTER the
-        # in-flight guard — a 409-rejected double-submit must not overwrite
-        # the study's stored params with the rejected request's values.
-        study.include_box_counting = True
-        study.box_counting_params = persisted_params
-
-        # JD-B-006: per-study double-submit guard — a second POST while a
-        # box-counting run is in flight is rejected with 409. The marker is
-        # a synthetic entry in the Celery result backend (NOT Django cache:
-        # LocMemCache is per-process — spec-review B1).
-        in_flight_task_id = _bc_in_flight_task_id(study)
-        if in_flight_task_id is not None:
-            return Response(
-                {
-                    "detail": (
-                        "A box-counting run is already in flight for this study"
-                    ),
-                    "task_id": in_flight_task_id,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-        study.save(update_fields=["include_box_counting", "box_counting_params"])
-
         # Work set: completed simulations WITH geometry — the same filter as
         # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
         # count toward the sync/async boundary.
-        work_set = study.simulations.filter(
+        total = study.simulations.filter(
             status="completed",
             geometry__isnull=False,
-        )
-        total = work_set.count()
+        ).count()
 
-        if total > BC_ASYNC_THRESHOLD:
-            task = run_box_counting_async.delay(
-                str(study.id),
-                points_per_sphere,
-                precision,
-                effective_windowed,
-                force,
-            )
-            # F2: surface the 202-time total to the status endpoint before
-            # the worker picks the task up. Best-effort: the task re-stamps
-            # its meta via update_state once it starts, and the final return
-            # value lands under SUCCESS.
-            _stamp_bc_dispatch_meta(task, total)
-            # JD-B-006: stamp the per-study in-flight marker (best-effort).
-            _stamp_bc_inflight_marker(task, str(study.id))
+        reserved_task_id: str | None = None
+        result_backend: Any = None
+        try:
+            with transaction.atomic():
+                locked_study = ParametricStudy.objects.select_for_update().get(
+                    pk=study.pk
+                )
+                if (
+                    windowed is None
+                    and isinstance(locked_study.box_counting_params, dict)
+                    and "windowed" in locked_study.box_counting_params
+                ):
+                    persisted_params["windowed"] = locked_study.box_counting_params[
+                        "windowed"
+                    ]
+                    effective_windowed = bool(persisted_params["windowed"])
+                if total > BC_ASYNC_THRESHOLD:
+                    try:
+                        in_flight_task_id = _bc_in_flight_task_id(locked_study)
+                    except _BCBackendUnavailable:
+                        return Response(
+                            {"detail": "Unable to verify box-counting run state"},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        )
+                    if in_flight_task_id is not None:
+                        return Response(
+                            {
+                                "detail": (
+                                    "A box-counting run is already in flight for this study"
+                                ),
+                                "task_id": in_flight_task_id,
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    reserved_task_id = str(uuid.uuid4())
+                    result_backend = _bc_result_backend()
+                    if not _reserve_bc_dispatch(
+                        result_backend, reserved_task_id, str(study.id), total
+                    ):
+                        return Response(
+                            {"detail": "Unable to reserve box-counting run"},
+                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        )
+                locked_study.include_box_counting = True
+                locked_study.box_counting_params = persisted_params
+                locked_study.save(
+                    update_fields=["include_box_counting", "box_counting_params"]
+                )
+        except BaseException:
+            if reserved_task_id is not None:
+                _clear_bc_dispatch_reservation(
+                    result_backend, str(study.id), reserved_task_id
+                )
+            raise
+
+        if reserved_task_id is not None:
+            try:
+                cast(Any, run_box_counting_async).apply_async(
+                    args=(
+                        str(study.id),
+                        points_per_sphere,
+                        precision,
+                        effective_windowed,
+                        force,
+                    ),
+                    task_id=reserved_task_id,
+                )
+            except BaseException:
+                _clear_bc_dispatch_reservation(
+                    result_backend, str(study.id), reserved_task_id
+                )
+                raise
             return Response(
-                {"task_id": task.id, "total": total},
+                {"task_id": reserved_task_id, "total": total},
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -2767,92 +2801,99 @@ from rest_framework.decorators import api_view, permission_classes  # noqa: E402
 # Box-counting async run helpers (R3/D5 — judgment-day fix round A)
 # ============================================================================
 
-#: Synthetic result-backend id prefix for the per-study in-flight marker
-#: (JD-B-006). The marker lives in the Celery result backend, NOT Django
-#: cache: LocMemCache is per-process and invisible across the Gunicorn
-#: workers (spec-review B1/M1).
+#: Celery result-backend keys; Django's LocMemCache is process-local.
 _BC_INFLIGHT_PREFIX = "bc-inflight-"
+_BC_OWNER_PREFIX = "bc-owner-"
+
+
+class _BCBackendUnavailable(RuntimeError):
+    """The cross-process reservation state could not be read safely."""
+
+
+def _bc_result_backend() -> Any:
+    from .tasks import run_box_counting_async
+
+    return cast(Any, run_box_counting_async).backend
+
+
+def _clear_bc_dispatch_reservation(backend: Any, study_id: str, task_id: str) -> None:
+    for result_id in (
+        f"{_BC_INFLIGHT_PREFIX}{study_id}",
+        f"{_BC_OWNER_PREFIX}{task_id}",
+        task_id,
+    ):
+        try:
+            backend.store_result(result_id, None, state="SUCCESS")
+        except Exception:  # noqa: BLE001 — cleanup must not hide root failure
+            logger.debug("box-counting reservation cleanup skipped", exc_info=True)
+
+
+def _reserve_bc_dispatch(
+    backend: Any, task_id: str, study_id: str, total: int
+) -> bool:
+    dispatched_at = time.time()
+    records = {
+        task_id: {
+            "current": 0,
+            "total": total,
+            "progress": 0.0,
+            "dispatched_at": dispatched_at,
+        },
+        f"{_BC_OWNER_PREFIX}{task_id}": {"task_id": task_id, "study_id": study_id},
+        f"{_BC_INFLIGHT_PREFIX}{study_id}": {
+            "task_id": task_id,
+            "study_id": study_id,
+            "dispatched_at": dispatched_at,
+        },
+    }
+    try:
+        for result_id, payload in records.items():
+            backend.store_result(result_id, payload, state="PROGRESS")
+    except Exception:  # noqa: BLE001 — never dispatch without full reservation
+        logger.warning("box-counting dispatch reservation failed", exc_info=True)
+        _clear_bc_dispatch_reservation(backend, study_id, task_id)
+        return False
+    return True
+
+
+def _bc_task_belongs_to_study(task_id: str, study_id: str) -> bool:
+    try:
+        owner = AsyncResult(f"{_BC_OWNER_PREFIX}{task_id}")
+        meta = owner.info if isinstance(owner.info, dict) else {}
+        return (
+            owner.state == "PROGRESS"
+            and meta.get("task_id") == task_id
+            and meta.get("study_id") == study_id
+        )
+    except Exception:  # noqa: BLE001 — missing ownership fails closed
+        logger.debug("box-counting owner lookup failed", exc_info=True)
+        return False
 
 
 def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
-    """Return the id of the box-counting task currently in flight for
-    ``study``, or ``None`` (JD-B-006).
-
-    The marker is stamped at dispatch (see :func:`_stamp_bc_inflight_marker`)
-    and released by the task itself when it finishes. A marker whose
-    referenced task has already reached a terminal state (SUCCESS/FAILURE/
-    REVOKED) is stale and does NOT block a new run. Best-effort: any backend
-    failure degrades to "nothing in flight" — the guard must never break the
-    run path.
-    """
+    """Return the id of the box-counting task currently in flight for study."""
     try:
         marker = AsyncResult(f"{_BC_INFLIGHT_PREFIX}{study.id}")
         if marker.state != "PROGRESS":
             return None
         meta = marker.info if isinstance(marker.info, dict) else {}
         task_id = meta.get("task_id")
-        if not task_id:
+        if not task_id or meta.get("study_id") != str(study.id):
             return None
-        # Fix round 2 (fresh-pass JD-B-NEW-002): a worker hard death
-        # (SIGKILL/OOM) never runs the task's ``finally`` release and never
-        # reaches a terminal state, so the marker would block new runs until
-        # RESULT_EXPIRES. Stamp a wall-clock dispatch time and treat markers
-        # older than one hour as stale (generous vs the 30-min poller
-        # deadline and the 16-48 min worst-case run ceiling).
+        # A worker hard death never runs its ``finally`` release. Treat a
+        # marker older than the executable one-hour task ceiling as stale.
         dispatched_at = meta.get("dispatched_at")
-        if isinstance(dispatched_at, (int, float)):
-            import time as _time
-
-            if _time.time() - float(dispatched_at) > 3600:
-                return None
+        if (
+            isinstance(dispatched_at, (int, float))
+            and time.time() - float(dispatched_at) > 3600
+        ):
+            return None
         if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
             return None
         return str(task_id)
-    except Exception:  # noqa: BLE001 — guard must never break the run path
-        logger.debug("box-counting in-flight marker check failed", exc_info=True)
-        return None
-
-
-def _stamp_bc_dispatch_meta(task: Any, total: int) -> None:
-    """Stamp the freshly dispatched task with initial PROGRESS meta (F2).
-
-    Surfaces the 202-time ``total`` to the status endpoint before the worker
-    picks the task up (the frontend learns ``total`` at 202 time; the status
-    endpoint must echo it instead of 0). Best-effort: the task re-stamps its
-    meta via ``update_state`` once it starts, and the final return value
-    lands under SUCCESS.
-    """
-    try:
-        task.backend.store_result(
-            task.id,
-            {
-                "current": 0,
-                "total": total,
-                "progress": 0.0,
-                # Fix round 2 (fresh-pass JD-B-NEW-002): wall-clock dispatch
-                # time for the stale-marker bound (worker hard death).
-                "dispatched_at": time.time(),
-            },
-            state="PROGRESS",
-        )
-    except Exception:  # noqa: BLE001 — stamping must never break dispatch
-        logger.debug("box-counting dispatch stamping skipped", exc_info=True)
-
-
-def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
-    """Stamp the per-study in-flight marker (JD-B-006). Best-effort."""
-    try:
-        task.backend.store_result(
-            f"{_BC_INFLIGHT_PREFIX}{study_id}",
-            {
-                "task_id": task.id,
-                "study_id": study_id,
-                "dispatched_at": time.time(),
-            },
-            state="PROGRESS",
-        )
-    except Exception:  # noqa: BLE001 — stamping must never break dispatch
-        logger.debug("box-counting in-flight marker stamping skipped", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — reservation must fail closed
+        logger.warning("box-counting in-flight marker check failed", exc_info=True)
+        raise _BCBackendUnavailable from exc
 
 
 @api_view(["GET"])
