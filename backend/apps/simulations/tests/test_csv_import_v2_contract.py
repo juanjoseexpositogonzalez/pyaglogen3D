@@ -257,6 +257,28 @@ def test_csv_import_dimensionless_carries_no_scale_nm() -> None:
     assert sim.parameters[PARAM_KEY_DIAMETER] == DEFAULT_DIAMETER_NM
 
 
+@pytest.mark.django_db
+def test_dimensionless_import_discards_explicit_scale_nm() -> None:
+    """A client cannot override the dimensionless import's default 25 nm factor."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"#unit=dimensionless\nx,y,z,radius\n0,0,0,1\n2,0,0,1\n4,0,0,1\n"
+    response = _post_import(
+        client,
+        project,
+        rows=[],
+        csv_override=base64.b64encode(raw).decode("ascii"),
+        extra_parameters={PARAM_KEY_SCALE_NM: 1.0},
+    )
+
+    assert response.status_code == 201, response.content
+    sim = Simulation.objects.get(id=response.data["id"])
+    assert PARAM_KEY_SCALE_NM not in sim.parameters
+    assert sim.parameters[PARAM_KEY_DIAMETER] == DEFAULT_DIAMETER_NM
+
+
 # --- Content-validation rejections (400, not 500) ---------------------------
 
 

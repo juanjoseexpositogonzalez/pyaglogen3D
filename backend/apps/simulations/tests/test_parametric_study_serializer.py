@@ -217,6 +217,38 @@ class TestBackwardCompat:
         assert len(result["parameter_grid"]) == 2
 
 
+class TestTunableCcParticleCountValidation:
+    """Every effective tunable-CC child must stay below the public ceiling."""
+
+    @pytest.mark.parametrize(
+        ("base_parameters", "parameter_grid"),
+        [
+            (
+                {"n_particles": 10**12, "target_df": 1.8, "target_kf": 1.3},
+                {"target_df": [1.8]},
+            ),
+            (
+                {"n_particles": 100, "target_df": 1.8, "target_kf": 1.3},
+                {"n_particles": [100, 10**12]},
+            ),
+        ],
+    )
+    def test_oversized_base_or_grid_child_is_rejected(
+        self,
+        base_parameters: dict[str, Any],
+        parameter_grid: dict[str, list[Any]],
+    ) -> None:
+        with pytest.raises(ValidationError) as exc_info:
+            _validate(
+                _make_data(
+                    base_parameters=base_parameters,
+                    parameter_grid=parameter_grid,
+                )
+            )
+
+        assert "n_particles must be at most 100,000" in str(exc_info.value.detail)
+
+
 # ---------------------------------------------------------------------------
 # T2.7 — batch size >1000 rejection (R6.2)
 # ---------------------------------------------------------------------------

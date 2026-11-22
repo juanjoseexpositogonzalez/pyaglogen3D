@@ -358,3 +358,41 @@ class TestBatchCsvExport:
         assert v2_rg == pytest.approx(15.0), (
             f"v2: rg_engine=0.6 * scale=25 should be 15.0, got {v2_rg}"
         )
+
+    def test_batch_nm_import_separates_physical_radius_from_rg_scale(self) -> None:
+        """An nm import exports radius 12 while Rg keeps the explicit factor 1."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_simulation(
+            project,
+            parameters={
+                "n_particles": 3,
+                "primary_particle_diameter_nm": 24.0,
+                "scale_nm": 1.0,
+                "parameters_schema_version": "v2",
+            },
+            rg_engine=2.5,
+            name="nm-import",
+            is_batch=True,
+        )
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Imported nm study",
+            base_algorithm="imported",
+            base_parameters={},
+            parameter_grid={},
+            status="completed",
+        )
+        study.simulations.add(sim)
+
+        response = _authed_client(user).get(
+            reverse(
+                "project-studies-export",
+                kwargs={"project_pk": project.id, "pk": study.id},
+            )
+        )
+
+        assert response.status_code == 200, response.content
+        header, row = _parse_csv(response.content)
+        assert float(row[header.index("Rg_nm")]) == pytest.approx(2.5)
+        assert float(row[header.index("radius_nm")]) == pytest.approx(12.0)

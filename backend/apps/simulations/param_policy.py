@@ -74,3 +74,20 @@ def rotation_attempts(params: Any) -> int:
     # `int(...)` and not `value`: the mapping hands back `Any`, and the whole point of
     # this function is that what leaves it has been checked.
     return int(value)
+
+
+TUNABLE_CC_PARTICLE_COUNT_MAX = 100_000
+
+
+def validate_tunable_cc_particle_count(params: Any) -> None:
+    """Reject only numeric counts above the public pre-allocation ceiling."""
+    if not isinstance(params, Mapping):
+        return
+
+    value = params.get("n_particles")
+    # Existing request contracts permit small and non-scalar study shapes; the
+    # release blocker is specifically unbounded numeric allocation before budget.
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return
+    if value > TUNABLE_CC_PARTICLE_COUNT_MAX:
+        raise ValueError("n_particles must be at most 100,000")

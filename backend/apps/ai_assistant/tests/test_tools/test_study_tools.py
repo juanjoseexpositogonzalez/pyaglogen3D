@@ -186,6 +186,48 @@ class TestCreateParametricStudy:
             assert "Maximum is 10000" in str(exc_info.value)
 
     @pytest.mark.django_db
+    @pytest.mark.parametrize(
+        ("base_parameters", "parameter_grid"),
+        [
+            (
+                {"n_particles": 10**12, "target_df": 1.8, "target_kf": 1.3},
+                {"target_df": [1.8]},
+            ),
+            (
+                {"n_particles": 100, "target_df": 1.8, "target_kf": 1.3},
+                {"n_particles": [100, 10**12]},
+            ),
+        ],
+    )
+    def test_tunable_cc_rejects_oversized_children_before_orm_or_dispatch(  # type: ignore[no-untyped-def]
+        self,
+        mock_user,
+        mock_project,
+        base_parameters,
+        parameter_grid,
+    ):
+        with patch("apps.ai_assistant.tools.study_tools.Project") as MockProject, \
+             patch("apps.ai_assistant.tools.study_tools.ParametricStudy") as MockStudy, \
+             patch("apps.ai_assistant.tools.study_tools.Simulation") as MockSim, \
+             patch("apps.ai_assistant.tools.study_tools.dispatch_simulation_task") as dispatch:
+            MockProject.objects.get.return_value = mock_project
+
+            with pytest.raises(ValueError) as exc_info:
+                create_parametric_study_handler(
+                    name="Oversized tunable CC",
+                    algorithm="tunable_cc",
+                    base_parameters=base_parameters,
+                    parameter_grid=parameter_grid,
+                    project_id="550e8400-e29b-41d4-a716-446655440000",
+                    user=mock_user,
+                )
+
+            assert "n_particles must be at most 100,000" in str(exc_info.value)
+            MockStudy.objects.create.assert_not_called()
+            MockSim.objects.create.assert_not_called()
+            dispatch.assert_not_called()
+
+    @pytest.mark.django_db
     def test_successful_study_creation(self, mock_user, mock_project, mock_study):
         """Test successful parametric study creation."""
         with patch("apps.ai_assistant.tools.study_tools.Project") as MockProject, \
