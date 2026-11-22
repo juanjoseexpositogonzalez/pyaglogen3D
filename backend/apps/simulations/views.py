@@ -2659,16 +2659,20 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         - every branch returns the canonical shape (F2); non-terminal Celery
           states (REVOKED/RETRY/...) map to ``failed`` instead of leaking
           verbatim outside the union.
-        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): the dispatch path
-          stamps PROGRESS meta carrying ``total`` immediately after
-          ``delay()`` (F2), so a PENDING without meta can only be a
-          never-dispatched or expired task id — never a legitimately queued
-          run.
+        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): reservation
+          stamps PROGRESS meta carrying ``total`` before ``apply_async`` (F2),
+          so PENDING can only mean a never-dispatched or expired task id.
         """
         # F1: object-permission gate — must run before touching AsyncResult.
-        self.get_object()
+        study = self.get_object()
+        task_id = str(kwargs["task_id"])
+        if not _bc_task_belongs_to_study(task_id, str(study.id)):
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        result = AsyncResult(kwargs["task_id"])
+        result = AsyncResult(task_id)
         state = result.state
         meta = result.info if isinstance(result.info, dict) else {}
 
