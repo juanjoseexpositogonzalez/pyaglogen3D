@@ -199,7 +199,7 @@ class TestCreateParametricStudy:
             ),
         ],
     )
-    def test_tunable_cc_rejects_oversized_children_before_orm_or_dispatch(
+    def test_tunable_cc_rejects_oversized_children_before_orm_or_dispatch(  # type: ignore[no-untyped-def]
         self,
         mock_user,
         mock_project,

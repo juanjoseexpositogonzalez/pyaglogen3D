@@ -214,7 +214,7 @@ class TestSimulationsAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_tunable_cc_rejects_oversized_particle_count_before_dispatch(
+    def test_tunable_cc_rejects_oversized_particle_count_before_dispatch(  # type: ignore[no-untyped-def]
         self, api_client, project, mocker
     ):
         """The public request ceiling applies before persistence or Celery dispatch."""
