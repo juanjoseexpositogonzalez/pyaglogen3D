@@ -10,7 +10,7 @@ Covers spec requirements of `batch-windowed-box-counting`:
 from __future__ import annotations
 
 import io
-from typing import Any
+from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -207,6 +207,15 @@ class TestR31SyncPath:
 
 @pytest.mark.django_db
 class TestR32AsyncPath:
+    @pytest.fixture(autouse=True)
+    def allow_legacy_status_fixtures(  # type: ignore[no-untyped-def]
+        self, monkeypatch
+    ):
+        """These payload-shape tests predate task ownership records."""
+        monkeypatch.setattr(
+            "apps.simulations.views._bc_task_belongs_to_study", lambda *_: True
+        )
+
     def test_large_work_set_returns_202_with_task_id(self, user, project):
         study = _make_study(project)
         for _ in range(31):
@@ -426,6 +435,67 @@ class TestJobStatusObjectPermission:
 
         mock_get_object.assert_called_once()
 
+    def test_foreign_task_owner_is_denied_before_task_metadata_is_read(  # type: ignore[no-untyped-def]
+        self, user, project
+    ):
+        requested_study = _make_study(project)
+        owning_study = _make_study(project)
+        client = _authed_client(user)
+        task_id = "task-owned-by-another-study"
+        seen: list[str] = []
+        fake_cls = _fake_async_result_factory(
+            {
+                f"bc-owner-{task_id}": {
+                    "state": "PROGRESS",
+                    "info": {
+                        "task_id": task_id,
+                        "study_id": str(owning_study.id),
+                    },
+                },
+                task_id: {
+                    "state": "FAILURE",
+                    "info": ValueError("private worker failure"),
+                },
+            },
+            seen,
+        )
+
+        with patch("apps.simulations.views.AsyncResult", fake_cls):
+            response = client.get(_status_url(requested_study, task_id))
+
+        assert response.status_code == 404
+        assert response.data == {"detail": "Not found."}
+        assert seen == [f"bc-owner-{task_id}"]
+
+    @pytest.mark.parametrize(
+        ("task_state", "task_payload", "expected_status"),
+        [
+            ("SUCCESS", {"result": {"total": 4, "processed": 4}}, "done"),
+            ("FAILURE", {"info": ValueError("boom")}, "failed"),
+        ],
+    )
+    def test_matching_owner_preserves_terminal_payloads(  # type: ignore[no-untyped-def]
+        self, user, project, task_state, task_payload, expected_status
+    ):
+        study = _make_study(project)
+        task_id = "owned-task"
+        states = {
+            f"bc-owner-{task_id}": {
+                "state": "PROGRESS",
+                "info": {"task_id": task_id, "study_id": str(study.id)},
+            },
+            task_id: {"state": task_state, **task_payload},
+        }
+        with patch(
+            "apps.simulations.views.AsyncResult",
+            _fake_async_result_factory(states),
+        ):
+            response = _authed_client(user).get(_status_url(study, task_id))
+
+        assert response.status_code == 200
+        assert response.data["status"] == expected_status
+        assert set(response.data) >= {"status", "progress", "current", "total"}
+
     def test_read_only_share_can_poll(self, user, project):
         """A read-only share keeps GET access (SAFE_METHODS) — the F1 fix
         must not break legitimate shared-read polling."""
@@ -440,7 +510,13 @@ class TestJobStatusObjectPermission:
         study = _make_study(project)
         client = _authed_client(reader)
 
-        with patch("apps.simulations.views.AsyncResult") as mock_result:
+        with (
+            patch(
+                "apps.simulations.views._bc_task_belongs_to_study",
+                return_value=True,
+            ),
+            patch("apps.simulations.views.AsyncResult") as mock_result,
+        ):
             mock_result.return_value.state = "PROGRESS"
             mock_result.return_value.info = {
                 "current": 3,
@@ -458,21 +534,190 @@ class TestJobStatusObjectPermission:
 
 def _fake_async_result_factory(
     states: dict[str, dict[str, Any]],
+    seen: list[str] | None = None,
 ) -> type:
     """Build a patchable AsyncResult whose instances dispatch on task id."""
 
     class _FakeAsyncResult:
         def __init__(self, task_id: str) -> None:
             self._task_id = task_id
+            if seen is not None:
+                seen.append(task_id)
             spec = states.get(task_id, {"state": "PENDING", "info": None})
             self.state = spec["state"]
             self.info = spec.get("info")
+            self.result = spec.get("result")
 
     return _FakeAsyncResult
 
 
+def _fake_result_backend(states: dict[str, dict[str, Any]]) -> MagicMock:
+    """Return a result backend whose writes are visible to fake AsyncResult."""
+    backend = MagicMock()
+
+    def store_result(task_id: str, result: Any, state: str) -> None:
+        states[task_id] = {
+            "state": state,
+            "info": result,
+            "result": result,
+        }
+
+    backend.store_result.side_effect = store_result
+    return backend
+
+
 @pytest.mark.django_db
 class TestDoubleSubmitGuard:
+    def test_interleaved_posts_dispatch_once_and_reject_the_second(  # type: ignore[no-untyped-def]
+        self, user, project
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        first_client = _authed_client(user)
+        second_client = _authed_client(user)
+        states: dict[str, dict[str, Any]] = {}
+        fake_cls = _fake_async_result_factory(states)
+        backend = _fake_result_backend(states)
+        dispatches: list[str] = []
+        second_responses: list[Any] = []
+
+        def dispatch(*args, **kwargs):  # type: ignore[no-untyped-def]
+            dispatches.append(kwargs["task_id"])
+            if len(dispatches) == 1:
+                second_responses.append(
+                    second_client.post(
+                        _run_url(study), {"windowed": True}, format="json"
+                    )
+                )
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.views._bc_result_backend", return_value=backend),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async",
+                side_effect=dispatch,
+            ),
+        ):
+            first_response = first_client.post(
+                _run_url(study),
+                {"windowed": False},
+                format="json",
+            )
+
+        assert first_response.status_code == 202
+        assert [response.status_code for response in second_responses] == [409]
+        assert len(dispatches) == 1
+        assert second_responses[0].data["task_id"] == first_response.data["task_id"]
+        study.refresh_from_db()
+        assert isinstance(study.box_counting_params, dict)
+        assert study.box_counting_params["windowed"] is False
+
+    @pytest.mark.parametrize("fail_on_write", [2, 3])
+    def test_reservation_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
+        self, user, project, fail_on_write
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+        backend = MagicMock()
+        writes = 0
+
+        def fail_selected_write(*args, **kwargs):  # type: ignore[no-untyped-def]
+            nonlocal writes
+            writes += 1
+            if writes == fail_on_write:
+                raise RuntimeError("result backend unavailable")
+
+        backend.store_result.side_effect = fail_selected_write
+
+        with (
+            patch("apps.simulations.views._bc_result_backend", return_value=backend),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(
+                _run_url(study),
+                {"windowed": True},
+                format="json",
+            )
+
+        assert response.status_code == 503
+        mock_apply_async.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_params is None
+
+    def test_marker_read_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
+        self, user, project
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                side_effect=RuntimeError("result backend unavailable"),
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 503
+        mock_apply_async.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_params is None
+
+    def test_broker_failure_clears_the_complete_reservation(  # type: ignore[no-untyped-def]
+        self, user, project
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+        client.raise_request_exception = False
+        states: dict[str, dict[str, Any]] = {}
+        backend = _fake_result_backend(states)
+        task_id = "task-broker-failure"
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                _fake_async_result_factory(states),
+            ),
+            patch("apps.simulations.views._bc_result_backend", return_value=backend),
+            patch("apps.simulations.views.uuid.uuid4", return_value=task_id),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async",
+                side_effect=RuntimeError("broker unavailable"),
+            ),
+        ):
+            response = client.post(
+                _run_url(study),
+                {"windowed": True},
+                format="json",
+            )
+
+        assert response.status_code == 500
+        for result_id in (
+            task_id,
+            f"bc-owner-{task_id}",
+            f"bc-inflight-{study.id}",
+        ):
+            assert states[result_id] == {
+                "state": "SUCCESS",
+                "info": None,
+                "result": None,
+            }
+        study.refresh_from_db()
+        assert isinstance(study.box_counting_params, dict)
+        assert study.box_counting_params["windowed"] is True
+
     def test_second_post_while_in_flight_returns_409(self, user, project):
         study = _make_study(project)
         for _ in range(31):
@@ -646,3 +891,57 @@ class TestAsyncTaskProducer:
         state, meta = updates[-1]
         assert state == "PROGRESS"
         assert meta == {"current": 2, "total": 2, "progress": 1.0}
+
+    @pytest.mark.parametrize(
+        ("marker_task_id", "task_error", "expected_release"),
+        [
+            ("task-current", False, True),
+            ("task-current", True, True),
+            ("task-newer", False, False),
+        ],
+    )
+    def test_task_releases_only_its_matching_study_lock(  # type: ignore[no-untyped-def]
+        self,
+        user,
+        project,
+        marker_task_id,
+        task_error,
+        expected_release,
+    ):
+        from apps.simulations.tasks import run_box_counting_async
+
+        study = _make_study(project)
+        marker = MagicMock(
+            info={"task_id": marker_task_id, "study_id": str(study.id)}
+        )
+        task_runner = cast(Any, run_box_counting_async)
+        backend = task_runner.backend
+        task_runner.push_request(id="task-current")
+        try:
+            outcome = RuntimeError("worker failed") if task_error else None
+            with (
+                patch(
+                    "apps.simulations.tasks.run_box_counting_for_study",
+                    side_effect=outcome,
+                    return_value={"total": 0, "processed": 0},
+                ),
+                patch("celery.app.task.Task.AsyncResult", return_value=marker),
+                patch.object(backend, "store_result") as mock_store_result,
+            ):
+                if task_error:
+                    with pytest.raises(RuntimeError, match="worker failed"):
+                        task_runner.run(str(study.id), 100, 18, False, False)
+                else:
+                    summary = task_runner.run(str(study.id), 100, 18, False, False)
+                    assert summary == {"total": 0, "processed": 0}
+        finally:
+            task_runner.pop_request()
+
+        if expected_release:
+            mock_store_result.assert_called_once_with(
+                f"bc-inflight-{study.id}",
+                None,
+                state="SUCCESS",
+            )
+        else:
+            mock_store_result.assert_not_called()
