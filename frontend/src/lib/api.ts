@@ -1418,7 +1418,7 @@ export const studiesApi = {
 export interface PollBoxCountingJobOptions {
   /** Delay between polls in ms (default 2000). */
   intervalMs?: number
-  /** Overall deadline in ms (default 30 min). */
+  /** Overall deadline in ms (default 60 min). */
   timeoutMs?: number
   /** Called with every observed status payload, including the final one. */
   onProgress?: (status: BoxCountingJobStatus) => void
@@ -1438,7 +1438,7 @@ export async function pollBoxCountingJobStatus(
   options: PollBoxCountingJobOptions = {},
 ): Promise<BoxCountingJobStatus> {
   const intervalMs = options.intervalMs ?? 2000
-  const deadline = Date.now() + (options.timeoutMs ?? 30 * 60 * 1000)
+  const deadline = Date.now() + (options.timeoutMs ?? 60 * 60 * 1000)
 
   for (;;) {
     const status = await studiesApi.boxCountingJobStatus(projectId, studyId, taskId)
