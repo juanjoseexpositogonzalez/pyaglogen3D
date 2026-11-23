@@ -748,8 +748,8 @@ class TestDoubleSubmitGuard:
 
     @pytest.mark.parametrize("task_state", ["PENDING", "PROGRESS"])
     def test_old_nonterminal_marker_still_blocks_within_end_to_end_lease(
-        self, user, project, task_state
-    ):
+        self, user: User, project: Project, task_state: str
+    ) -> None:
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
@@ -783,8 +783,8 @@ class TestDoubleSubmitGuard:
         assert study.box_counting_params is None
 
     def test_nonterminal_marker_past_end_to_end_lease_allows_new_run(
-        self, user, project
-    ):
+        self, user: User, project: Project
+    ) -> None:
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
