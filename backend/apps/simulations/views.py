@@ -10,6 +10,7 @@ import zipfile
 from typing import Any, Literal, cast
 
 import numpy as np
+from django.conf import settings
 from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
@@ -2615,6 +2616,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         force,
                     ),
                     task_id=reserved_task_id,
+                    expires=_BC_QUEUE_MAX_AGE_SECONDS,
                 )
             except BaseException:
                 _clear_bc_dispatch_reservation(
@@ -2808,6 +2810,14 @@ from rest_framework.decorators import api_view, permission_classes  # noqa: E402
 #: Celery result-backend keys; Django's LocMemCache is process-local.
 _BC_INFLIGHT_PREFIX = "bc-inflight-"
 _BC_OWNER_PREFIX = "bc-owner-"
+_BC_QUEUE_MAX_AGE_SECONDS = 60 * 60
+_BC_EXECUTION_HARD_LIMIT_SECONDS = int(settings.CELERY_TASK_TIME_LIMIT)
+_BC_INFLIGHT_GRACE_SECONDS = 5 * 60
+_BC_INFLIGHT_LEASE_SECONDS = (
+    _BC_QUEUE_MAX_AGE_SECONDS
+    + _BC_EXECUTION_HARD_LIMIT_SECONDS
+    + _BC_INFLIGHT_GRACE_SECONDS
+)
 
 
 class _BCBackendUnavailable(RuntimeError):
@@ -2884,15 +2894,16 @@ def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
         task_id = meta.get("task_id")
         if not task_id or meta.get("study_id") != str(study.id):
             return None
-        # A worker hard death never runs its ``finally`` release. Treat a
-        # marker older than the executable one-hour task ceiling as stale.
+        if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
+            return None
+        # A worker hard death never runs its ``finally`` release. The task
+        # expires after the bounded queue age, so it is safe to release an
+        # otherwise nonterminal marker after queue + execution + grace.
         dispatched_at = meta.get("dispatched_at")
         if (
             isinstance(dispatched_at, (int, float))
-            and time.time() - float(dispatched_at) > 3600
+            and time.time() - float(dispatched_at) > _BC_INFLIGHT_LEASE_SECONDS
         ):
-            return None
-        if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
             return None
         return str(task_id)
     except Exception as exc:  # noqa: BLE001 — reservation must fail closed

@@ -111,7 +111,7 @@ def bc_result_backend(monkeypatch):  # type: ignore[no-untyped-def]
     backend = MagicMock()
     task: Any = run_box_counting_async
 
-    def apply_async(*, args, task_id):  # type: ignore[no-untyped-def]
+    def apply_async(*, args, task_id, expires=None):  # type: ignore[no-untyped-def]
         return task.delay(*args)
 
     monkeypatch.setattr("apps.simulations.views._bc_result_backend", lambda: backend)
@@ -239,6 +239,7 @@ class TestR32AsyncPath:
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 100, 18, False, False),
             task_id="task-abc-123",
+            expires=3600,
         )
 
     def test_status_endpoint_reports_processing(self, user, project):
@@ -745,6 +746,76 @@ class TestDoubleSubmitGuard:
         assert response.data["task_id"] == "task-real-1"
         mock_delay.assert_not_called()
 
+    @pytest.mark.parametrize("task_state", ["PENDING", "PROGRESS"])
+    def test_old_nonterminal_marker_still_blocks_within_end_to_end_lease(
+        self, user, project, task_state
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory(
+            {
+                f"bc-inflight-{study.id}": {
+                    "state": "PROGRESS",
+                    "info": {
+                        "task_id": "task-queued",
+                        "study_id": str(study.id),
+                        "dispatched_at": 0.0,
+                    },
+                },
+                "task-queued": {"state": task_state, "info": None},
+            }
+        )
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.views.time.time", return_value=3601.0),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+        ):
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
+
+        assert response.status_code == 409
+        assert response.data["task_id"] == "task-queued"
+        mock_delay.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_params is None
+
+    def test_nonterminal_marker_past_end_to_end_lease_allows_new_run(
+        self, user, project
+    ):
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        fake_cls = _fake_async_result_factory(
+            {
+                f"bc-inflight-{study.id}": {
+                    "state": "PROGRESS",
+                    "info": {
+                        "task_id": "task-expired",
+                        "study_id": str(study.id),
+                        "dispatched_at": 0.0,
+                    },
+                },
+                "task-expired": {"state": "PENDING", "info": None},
+            }
+        )
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch("apps.simulations.views.time.time", return_value=7501.0),
+            patch("apps.simulations.tasks.run_box_counting_async.delay") as mock_delay,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            mock_delay.return_value = MagicMock(id="task-new-after-expiry")
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        mock_delay.assert_called_once()
+
     def test_stale_marker_with_terminal_task_allows_new_run(self, user, project):
         study = _make_study(project)
         for _ in range(31):
@@ -835,6 +906,7 @@ class TestDoubleSubmitGuard:
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 100, 18, False, False),
             task_id="task-stamp-1",
+            expires=3600,
         )
 
 
