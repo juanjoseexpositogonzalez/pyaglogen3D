@@ -2551,22 +2551,72 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         ).count()
 
         reserved_task_id: str | None = None
-        result_backend: Any = None
-        try:
-            with transaction.atomic():
-                locked_study = ParametricStudy.objects.select_for_update().get(
-                    pk=study.pk
-                )
+        dispatch_payload: dict[str, Any] | None = None
+        publisher_lease_started_at: Any = None
+        recovering_pending = False
+        previous_include_box_counting = study.include_box_counting
+        previous_box_counting_params = study.box_counting_params
+        previous_dispatch = (
+            study.box_counting_task_id,
+            study.box_counting_task_state,
+            study.box_counting_task_payload,
+            study.box_counting_task_reserved_at,
+        )
+
+        with transaction.atomic():
+            locked_study = ParametricStudy.objects.select_for_update().get(pk=study.pk)
+            if (
+                windowed is None
+                and isinstance(locked_study.box_counting_params, dict)
+                and "windowed" in locked_study.box_counting_params
+            ):
+                persisted_params["windowed"] = locked_study.box_counting_params[
+                    "windowed"
+                ]
+                effective_windowed = bool(persisted_params["windowed"])
+            if total > BC_ASYNC_THRESHOLD:
+                stored_payload = locked_study.box_counting_task_payload
                 if (
-                    windowed is None
-                    and isinstance(locked_study.box_counting_params, dict)
-                    and "windowed" in locked_study.box_counting_params
+                    locked_study.box_counting_task_id
+                    and locked_study.box_counting_task_state == "pending"
+                    and isinstance(stored_payload, dict)
+                    and all(
+                        key in stored_payload
+                        for key in (
+                            "points_per_sphere",
+                            "precision",
+                            "windowed",
+                            "force",
+                        )
+                    )
                 ):
-                    persisted_params["windowed"] = locked_study.box_counting_params[
-                        "windowed"
-                    ]
-                    effective_windowed = bool(persisted_params["windowed"])
-                if total > BC_ASYNC_THRESHOLD:
+                    lease_started_at = locked_study.box_counting_task_reserved_at
+                    now = timezone.now()
+                    if (
+                        lease_started_at is not None
+                        and (now - lease_started_at).total_seconds()
+                        <= _BC_PUBLISH_LEASE_SECONDS
+                    ):
+                        return Response(
+                            {
+                                "detail": (
+                                    "A box-counting run is already in flight for this study"
+                                ),
+                                "task_id": locked_study.box_counting_task_id,
+                            },
+                            status=status.HTTP_409_CONFLICT,
+                        )
+                    recovering_pending = True
+                    publisher_lease_started_at = now
+                    reserved_task_id = locked_study.box_counting_task_id
+                    dispatch_payload = stored_payload
+                    points_per_sphere = int(dispatch_payload["points_per_sphere"])
+                    precision = int(dispatch_payload["precision"])
+                    effective_windowed = bool(dispatch_payload["windowed"])
+                    force = bool(dispatch_payload["force"])
+                    locked_study.box_counting_task_reserved_at = now
+                    locked_study.save(update_fields=["box_counting_task_reserved_at"])
+                else:
                     try:
                         in_flight_task_id = _bc_in_flight_task_id(locked_study)
                     except _BCBackendUnavailable:
@@ -2585,27 +2635,59 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                             status=status.HTTP_409_CONFLICT,
                         )
                     reserved_task_id = str(uuid.uuid4())
-                    result_backend = _bc_result_backend()
-                    if not _reserve_bc_dispatch(
-                        result_backend, reserved_task_id, str(study.id), total
-                    ):
-                        return Response(
-                            {"detail": "Unable to reserve box-counting run"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        )
+                    dispatch_payload = {
+                        "points_per_sphere": points_per_sphere,
+                        "precision": precision,
+                        "windowed": effective_windowed,
+                        "force": force,
+                    }
+                    previous_include_box_counting = locked_study.include_box_counting
+                    previous_box_counting_params = locked_study.box_counting_params
+                    previous_dispatch = (
+                        locked_study.box_counting_task_id,
+                        locked_study.box_counting_task_state,
+                        locked_study.box_counting_task_payload,
+                        locked_study.box_counting_task_reserved_at,
+                    )
+                    publisher_lease_started_at = timezone.now()
+                    locked_study.box_counting_task_id = reserved_task_id
+                    locked_study.box_counting_task_state = "pending"
+                    locked_study.box_counting_task_payload = dispatch_payload
+                    locked_study.box_counting_task_reserved_at = (
+                        publisher_lease_started_at
+                    )
+            if not recovering_pending:
                 locked_study.include_box_counting = True
                 locked_study.box_counting_params = persisted_params
-                locked_study.save(
-                    update_fields=["include_box_counting", "box_counting_params"]
-                )
-        except BaseException:
-            if reserved_task_id is not None:
-                _clear_bc_dispatch_reservation(
-                    result_backend, str(study.id), reserved_task_id
-                )
-            raise
+                update_fields = ["include_box_counting", "box_counting_params"]
+                if reserved_task_id is not None:
+                    update_fields.extend(
+                        [
+                            "box_counting_task_id",
+                            "box_counting_task_state",
+                            "box_counting_task_payload",
+                            "box_counting_task_reserved_at",
+                        ]
+                    )
+                locked_study.save(update_fields=update_fields)
 
-        if reserved_task_id is not None:
+        if reserved_task_id is not None and dispatch_payload is not None:
+            result_backend = _bc_result_backend()
+            if not _reserve_bc_dispatch(
+                result_backend, reserved_task_id, str(study.id), total
+            ):
+                if not recovering_pending:
+                    _rollback_bc_db_dispatch(
+                        str(study.id),
+                        reserved_task_id,
+                        previous_include_box_counting,
+                        previous_box_counting_params,
+                        previous_dispatch,
+                    )
+                return Response(
+                    {"detail": "Unable to reserve box-counting run"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             try:
                 cast(Any, run_box_counting_async).apply_async(
                     args=(
@@ -2619,10 +2701,14 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     expires=_BC_QUEUE_MAX_AGE_SECONDS,
                 )
             except BaseException:
-                _clear_bc_dispatch_reservation(
-                    result_backend, str(study.id), reserved_task_id
-                )
+                if _release_bc_db_dispatch(
+                    str(study.id), reserved_task_id, publisher_lease_started_at
+                ):
+                    _clear_bc_dispatch_reservation(
+                        result_backend, str(study.id), reserved_task_id
+                    )
                 raise
+            _mark_bc_db_dispatch_published(str(study.id), reserved_task_id)
             return Response(
                 {"task_id": reserved_task_id, "total": total},
                 status=status.HTTP_202_ACCEPTED,
@@ -2810,6 +2896,7 @@ from rest_framework.decorators import api_view, permission_classes  # noqa: E402
 #: Celery result-backend keys; Django's LocMemCache is process-local.
 _BC_INFLIGHT_PREFIX = "bc-inflight-"
 _BC_OWNER_PREFIX = "bc-owner-"
+_BC_PUBLISH_LEASE_SECONDS = 30
 _BC_QUEUE_MAX_AGE_SECONDS = 60 * 60
 _BC_EXECUTION_HARD_LIMIT_SECONDS = int(settings.CELERY_TASK_TIME_LIMIT)
 _BC_INFLIGHT_GRACE_SECONDS = 5 * 60
@@ -2840,6 +2927,50 @@ def _clear_bc_dispatch_reservation(backend: Any, study_id: str, task_id: str) ->
             backend.store_result(result_id, None, state="SUCCESS")
         except Exception:  # noqa: BLE001 — cleanup must not hide root failure
             logger.debug("box-counting reservation cleanup skipped", exc_info=True)
+
+
+def _release_bc_db_dispatch(
+    study_id: str, task_id: str, publisher_lease_started_at: Any
+) -> bool:
+    updated = ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state="pending",
+        box_counting_task_reserved_at=publisher_lease_started_at,
+    ).update(
+        box_counting_task_state="cancelled",
+        box_counting_task_reserved_at=None,
+    )
+    return updated == 1
+
+
+def _rollback_bc_db_dispatch(
+    study_id: str,
+    task_id: str,
+    include_box_counting: bool,
+    box_counting_params: Any,
+    previous_dispatch: tuple[Any, Any, Any, Any],
+) -> None:
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state="pending",
+    ).update(
+        include_box_counting=include_box_counting,
+        box_counting_params=box_counting_params,
+        box_counting_task_id=previous_dispatch[0],
+        box_counting_task_state=previous_dispatch[1],
+        box_counting_task_payload=previous_dispatch[2],
+        box_counting_task_reserved_at=previous_dispatch[3],
+    )
+
+
+def _mark_bc_db_dispatch_published(study_id: str, task_id: str) -> None:
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state="pending",
+    ).update(box_counting_task_state="dispatched")
 
 
 def _reserve_bc_dispatch(

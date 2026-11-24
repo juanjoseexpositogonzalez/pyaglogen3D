@@ -10,12 +10,14 @@ Covers spec requirements of `batch-windowed-box-counting`:
 from __future__ import annotations
 
 import io
+from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
@@ -101,6 +103,29 @@ def _authed_client(user: User) -> APIClient:
     client = APIClient()
     client.force_authenticate(user=user)
     return client
+
+
+def _task_payload(
+    points_per_sphere: int = 100,
+    precision: int = 18,
+    windowed: bool = False,
+) -> dict[str, Any]:
+    return {
+        "points_per_sphere": points_per_sphere,
+        "precision": precision,
+        "windowed": windowed,
+        "force": False,
+    }
+
+
+def _assert_no_db_dispatch(study: ParametricStudy) -> None:
+    study.refresh_from_db()
+    assert (
+        study.box_counting_task_id,
+        study.box_counting_task_state,
+        study.box_counting_task_payload,
+        study.box_counting_task_reserved_at,
+    ) == ("", "", None, None)
 
 
 @pytest.fixture(autouse=True)
@@ -613,14 +638,25 @@ class TestDoubleSubmitGuard:
         study.refresh_from_db()
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is False
+        assert study.box_counting_task_id == first_response.data["task_id"]
+        assert study.box_counting_task_state == "dispatched"
+        assert study.box_counting_task_payload == _task_payload()
+        assert study.box_counting_task_reserved_at is not None
 
     @pytest.mark.parametrize("fail_on_write", [2, 3])
+    @pytest.mark.parametrize("previous_task_id", ["", "task-finished"])
     def test_reservation_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
-        self, user, project, fail_on_write
+        self, user, project, fail_on_write, previous_task_id
     ):
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
+        previous_payload = _task_payload(77, 12, True) if previous_task_id else None
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id=previous_task_id,
+            box_counting_task_state="finished" if previous_task_id else "",
+            box_counting_task_payload=previous_payload,
+        )
         client = _authed_client(user)
         backend = MagicMock()
         writes = 0
@@ -649,6 +685,12 @@ class TestDoubleSubmitGuard:
         mock_apply_async.assert_not_called()
         study.refresh_from_db()
         assert study.box_counting_params is None
+        assert study.box_counting_task_id == previous_task_id
+        assert study.box_counting_task_state == (
+            "finished" if previous_task_id else ""
+        )
+        assert study.box_counting_task_payload == previous_payload
+        assert study.box_counting_task_reserved_at is None
 
     def test_marker_read_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
         self, user, project
@@ -671,11 +713,12 @@ class TestDoubleSubmitGuard:
 
         assert response.status_code == 503
         mock_apply_async.assert_not_called()
-        study.refresh_from_db()
+        _assert_no_db_dispatch(study)
         assert study.box_counting_params is None
 
-    def test_broker_failure_clears_the_complete_reservation(  # type: ignore[no-untyped-def]
-        self, user, project
+    @pytest.mark.parametrize("worker_claimed", [False, True])
+    def test_broker_failure_clears_only_unpublished_reservation(  # type: ignore[no-untyped-def]
+        self, user, project, worker_claimed
     ):
         study = _make_study(project)
         for _ in range(31):
@@ -686,6 +729,13 @@ class TestDoubleSubmitGuard:
         backend = _fake_result_backend(states)
         task_id = "task-broker-failure"
 
+        def publish_then_raise(*args, **kwargs):  # type: ignore[no-untyped-def]
+            if worker_claimed:
+                ParametricStudy.objects.filter(pk=study.pk).update(
+                    box_counting_task_state="running"
+                )
+            raise RuntimeError("broker unavailable")
+
         with (
             patch(
                 "apps.simulations.views.AsyncResult",
@@ -695,7 +745,7 @@ class TestDoubleSubmitGuard:
             patch("apps.simulations.views.uuid.uuid4", return_value=task_id),
             patch(
                 "apps.simulations.tasks.run_box_counting_async.apply_async",
-                side_effect=RuntimeError("broker unavailable"),
+                side_effect=publish_then_raise,
             ),
         ):
             response = client.post(
@@ -705,19 +755,68 @@ class TestDoubleSubmitGuard:
             )
 
         assert response.status_code == 500
-        for result_id in (
-            task_id,
-            f"bc-owner-{task_id}",
-            f"bc-inflight-{study.id}",
-        ):
-            assert states[result_id] == {
-                "state": "SUCCESS",
-                "info": None,
-                "result": None,
-            }
-        study.refresh_from_db()
+        result_ids = (task_id, f"bc-owner-{task_id}", f"bc-inflight-{study.id}")
+        if worker_claimed:
+            assert all(states[result_id]["state"] == "PROGRESS" for result_id in result_ids)
+            study.refresh_from_db()
+            assert study.box_counting_task_id == task_id
+            assert study.box_counting_task_state == "running"
+            assert study.box_counting_task_payload == _task_payload(windowed=True)
+        else:
+            assert all(states[result_id]["state"] == "SUCCESS" for result_id in result_ids)
+            study.refresh_from_db()
+            assert study.box_counting_task_id == task_id
+            assert study.box_counting_task_state == "cancelled"
+            assert study.box_counting_task_payload == _task_payload(windowed=True)
+            assert study.box_counting_task_reserved_at is None
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is True
+
+    def test_pending_dispatch_is_republished_with_same_task_id(
+        self, user: User, project: Project
+    ) -> None:
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        original_params = {
+            "points_per_sphere": 77,
+            "precision": 12,
+            "windowed": True,
+        }
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_params=original_params,
+            box_counting_task_id="task-pending",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async"
+        ) as mock_apply_async:
+            response = client.post(
+                _run_url(study),
+                {"points_per_sphere": 100, "precision": 18, "windowed": False},
+                format="json",
+            )
+
+        assert response.status_code == 202
+        assert response.data == {"task_id": "task-pending", "total": 31}
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 77, 12, True, False),
+            task_id="task-pending",
+            expires=3600,
+        )
+        study.refresh_from_db()
+        assert study.box_counting_params == original_params
+        assert study.box_counting_task_id == "task-pending"
+        assert study.box_counting_task_state == "dispatched"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_reserved_at is not None
+        assert study.box_counting_task_reserved_at > expired_lease
 
     def test_second_post_while_in_flight_returns_409(self, user, project):
         study = _make_study(project)
@@ -948,7 +1047,8 @@ class TestAsyncTaskProducer:
                 fit_window=None,
                 window_source="legacy",
             )
-            summary = run_box_counting_async.run(
+            task_runner = cast(Any, run_box_counting_async)
+            summary = task_runner.run(
                 str(study.id),
                 100,
                 18,
@@ -983,8 +1083,14 @@ class TestAsyncTaskProducer:
         from apps.simulations.tasks import run_box_counting_async
 
         study = _make_study(project)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-current",
+            box_counting_task_state="dispatched",
+            box_counting_task_payload=_task_payload(),
+        )
         marker = MagicMock(
-            info={"task_id": marker_task_id, "study_id": str(study.id)}
+            state="PROGRESS",
+            info={"task_id": marker_task_id, "study_id": str(study.id)},
         )
         task_runner = cast(Any, run_box_counting_async)
         backend = task_runner.backend
