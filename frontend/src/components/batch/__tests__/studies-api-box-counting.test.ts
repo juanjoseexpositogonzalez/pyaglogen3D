@@ -206,7 +206,7 @@ describe('pollBoxCountingJobStatus', () => {
   it('terminates when the backend maps REVOKED to failed (F2)', async () => {
     // The status endpoint maps REVOKED/RETRY onto `failed` with a clear
     // error; the poller must resolve on that payload, not spin until the
-    // one-hour deadline.
+    // end-to-end deadline.
     fetchMock.mockResolvedValueOnce(
       jsonResponse(200, {
         status: 'failed',
@@ -226,11 +226,11 @@ describe('pollBoxCountingJobStatus', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('uses the 60-minute backend deadline by default', async () => {
+  it('uses the 125-minute queue plus runtime deadline by default', async () => {
     const now = vi.spyOn(Date, 'now')
       .mockReturnValueOnce(0)
-      .mockReturnValueOnce(20 * 60 * 1000)
-      .mockReturnValueOnce(40 * 60 * 1000)
+      .mockReturnValueOnce(70 * 60 * 1000)
+      .mockReturnValueOnce(120 * 60 * 1000)
     fetchMock
       .mockResolvedValueOnce(jsonResponse(200, { status: 'processing' }))
       .mockResolvedValueOnce(jsonResponse(200, { status: 'processing' }))
