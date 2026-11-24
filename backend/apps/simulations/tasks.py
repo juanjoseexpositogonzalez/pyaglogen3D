@@ -8,7 +8,9 @@ from uuid import UUID
 
 import numpy as np
 from celery import shared_task
+from celery.exceptions import Ignore
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from .param_policy import rotation_attempts
@@ -1259,13 +1261,52 @@ def run_box_counting_async(
             },
         )
 
-    # JD-B-006: release the per-study in-flight marker stamped at dispatch
-    # (views.py _stamp_bc_inflight_marker). Runs in a finally so a raising
-    # run can never wedge the marker into a permanent 409; only cleared
-    # while it still references THIS task id — a newer dispatch may already
-    # own the marker. Best-effort: the marker also self-expires via the
-    # result backend's RESULT_EXPIRES, and the view treats a marker whose
-    # referenced task is terminal as stale.
+    from .models import ParametricStudy
+
+    task_id = str(self.request.id or "")
+    with transaction.atomic():
+        locked_study = ParametricStudy.objects.select_for_update().get(pk=study_id)
+        if locked_study.box_counting_task_id:
+            if (
+                locked_study.box_counting_task_id != task_id
+                or locked_study.box_counting_task_state not in ("pending", "dispatched")
+            ):
+                raise Ignore()
+        else:
+            if task_id:
+                try:
+                    owner = self.AsyncResult(f"bc-owner-{task_id}")
+                    owner_meta = owner.info if isinstance(owner.info, dict) else {}
+                except Exception:  # noqa: BLE001 — legacy adoption fails closed
+                    logger.warning("box-counting legacy owner lookup failed", exc_info=True)
+                    raise Ignore() from None
+                if (
+                    owner.state != "PROGRESS"
+                    or owner_meta.get("task_id") != task_id
+                    or owner_meta.get("study_id") != study_id
+                ):
+                    raise Ignore()
+            # Legacy queued messages created before the durable dispatch
+            # migration remain executable and become protected once claimed.
+            locked_study.box_counting_task_id = task_id
+            locked_study.box_counting_task_payload = {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "windowed": windowed,
+                "force": force,
+            }
+        locked_study.box_counting_task_state = "running"
+        locked_study.save(
+            update_fields=[
+                "box_counting_task_id",
+                "box_counting_task_state",
+                "box_counting_task_payload",
+            ]
+        )
+
+    # Terminalize the durable claim and release the result-backend marker in a
+    # finally so failures cannot wedge later submissions. Each update is
+    # matching-only: a newer dispatch may already own the study marker.
     marker_id = f"bc-inflight-{study_id}"
     try:
         return run_box_counting_for_study(
@@ -1277,6 +1318,13 @@ def run_box_counting_async(
             progress_cb=_report,
         )
     finally:
+        ParametricStudy.objects.filter(
+            pk=study_id,
+            box_counting_task_id=task_id,
+        ).update(
+            box_counting_task_state="finished",
+            box_counting_task_reserved_at=None,
+        )
         try:
             marker = self.AsyncResult(marker_id)
             meta = marker.info if isinstance(marker.info, dict) else {}
