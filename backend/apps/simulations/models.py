@@ -152,6 +152,32 @@ class ParametricStudy(models.Model):
         blank=True,
         help_text="Box-counting params: {'points_per_sphere': 100, 'precision': 18}",
     )
+    box_counting_task_id = models.CharField(
+        max_length=255,
+        default="",
+        blank=True,
+        editable=False,
+        help_text="Internal durable task id for an async box-counting dispatch",
+    )
+    box_counting_task_state = models.CharField(
+        max_length=20,
+        default="",
+        blank=True,
+        editable=False,
+        help_text="Internal async box-counting dispatch state",
+    )
+    box_counting_task_payload = models.JSONField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Internal durable payload for async box-counting recovery",
+    )
+    box_counting_task_reserved_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        editable=False,
+        help_text="Internal publisher lease timestamp for async box-counting",
+    )
     simulations = models.ManyToManyField(
         Simulation,
         related_name="studies",
