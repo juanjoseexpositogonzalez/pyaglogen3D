@@ -2506,6 +2506,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
+        points_per_sphere_explicit = "points_per_sphere" in body_wo_force
+        precision_explicit = "precision" in body_wo_force
+        windowed_explicit = windowed is not None
+        # `force` is never persisted, but it does change what a run executes,
+        # so an explicit value still conflicts with a stored payload.
+        force_explicit = "force" in body
+
         # Shared validation with the study serializer (R1.2): the FULL body
         # (minus `force`) is validated against the persisted shape — unknown
         # keys are rejected naming the offending key; ranges and windowed
@@ -2553,6 +2560,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         reserved_task_id: str | None = None
         dispatch_payload: dict[str, Any] | None = None
         publisher_lease_started_at: Any = None
+        original_reserved_at: Any = None
         recovering_pending = False
         previous_include_box_counting = study.include_box_counting
         previous_box_counting_params = study.box_counting_params
@@ -2582,6 +2590,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             # all (pre-T18 deploy window, R6).
             durable_task_id = locked_study.box_counting_task_id
             durable_state = locked_study.box_counting_task_state
+            stored_payload = locked_study.box_counting_task_payload
             reserved_at = locked_study.box_counting_task_reserved_at
             now = timezone.now()
 
@@ -2614,14 +2623,80 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 if (now - reserved_at).total_seconds() <= lease_seconds:
                     return _bc_in_flight_response(durable_task_id)
 
-                # Slice-2 intermediate state: an expired claim is
-                # superseded by the new-dispatch path below, which overwrites
-                # the durable row under the same row lock with a fresh task
-                # id and payload. Recovery by reuse (R3) and the matching
-                # `cancelled` tombstone with deferred backend cleanup (R4/R5)
-                # land in the next slice, replacing this block.
-                pass
+                # Expired. A queued claim with a stored payload that does not
+                # conflict with explicit parameters is recoverable by reusing
+                # its own task id (R3); a running claim is never reused, since
+                # Celery's own `expires` only guarantees a queued message is
+                # discarded, not a claimed one, so reusing its id risks a
+                # split-brain and it always supersedes with a fresh id (R4).
+                can_recover = False
+                if (
+                    not is_running
+                    and isinstance(stored_payload, dict)
+                    and all(
+                        key in stored_payload
+                        for key in (
+                            "points_per_sphere",
+                            "precision",
+                            "windowed",
+                            "force",
+                        )
+                    )
+                ):
+                    sp_ppsphere = int(stored_payload["points_per_sphere"])
+                    sp_precision = int(stored_payload["precision"])
+                    sp_windowed = bool(stored_payload["windowed"])
+                    sp_force = bool(stored_payload["force"])
+                    conflict = (
+                        (
+                            points_per_sphere_explicit
+                            and sp_ppsphere != points_per_sphere
+                        )
+                        or (precision_explicit and sp_precision != precision)
+                        or (windowed_explicit and sp_windowed != windowed)
+                        or (force_explicit and sp_force != force)
+                    )
+                    can_recover = not conflict
 
+                if can_recover:
+                    recovering_pending = True
+                    original_reserved_at = reserved_at
+                    publisher_lease_started_at = now
+                    reserved_task_id = durable_task_id
+                    dispatch_payload = stored_payload
+                    assert dispatch_payload is not None
+                    points_per_sphere = int(dispatch_payload["points_per_sphere"])
+                    precision = int(dispatch_payload["precision"])
+                    effective_windowed = bool(dispatch_payload["windowed"])
+                    force = bool(dispatch_payload["force"])
+                    locked_study.box_counting_task_reserved_at = now
+                    locked_study.save(
+                        update_fields=["box_counting_task_reserved_at"]
+                    )
+                else:
+                    # R4/R5: retire with a transactional tombstone. The
+                    # matching update wins only if nothing has touched this
+                    # exact lease since we read it — a concurrent worker
+                    # claim always refreshes the lease and wins (409). The
+                    # result-backend release is best-effort and must never
+                    # run while this transaction is open, so it is deferred
+                    # to `transaction.on_commit` and may fail harmlessly:
+                    # no admission decision depends on it.
+                    if not _release_bc_db_dispatch(
+                        str(study.id),
+                        durable_task_id,
+                        reserved_at,
+                        expected_state=durable_state,
+                    ):
+                        return _bc_in_flight_response(durable_task_id)
+                    def _release_superseded_backend_records(
+                        tid: str = durable_task_id,
+                    ) -> None:
+                        _clear_bc_dispatch_reservation(_bc_result_backend(), tid)
+
+                    transaction.on_commit(_release_superseded_backend_records)
+                    locked_study.box_counting_task_state = "cancelled"
+                    locked_study.box_counting_task_reserved_at = None
             elif (
                 durable_task_id
                 and reserved_at is None
@@ -2699,6 +2774,77 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                         ]
                     )
                 locked_study.save(update_fields=update_fields)
+
+        if recovering_pending:
+            assert reserved_task_id is not None and dispatch_payload is not None
+            result_backend = _bc_result_backend()
+            if not _reserve_bc_recovery_dispatch(
+                result_backend,
+                reserved_task_id,
+                str(study.id),
+                total,
+            ):
+                # Closed by construction (same R1/R2 guarantee as an
+                # `apply_async` failure below): the reservation refresh
+                # failed before the broker was ever contacted, so revert
+                # only the lease stamp instead of touching task id, state,
+                # or writing a tombstone — a possibly still-genuine
+                # original copy's records are never terminalized by this
+                # failure.
+                _revert_bc_recovery_lease(
+                    str(study.id),
+                    reserved_task_id,
+                    publisher_lease_started_at,
+                    original_reserved_at,
+                )
+                return Response(
+                    {"detail": "Unable to reserve box-counting run"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            try:
+                cast(Any, run_box_counting_async).apply_async(
+                    args=(
+                        str(study.id),
+                        points_per_sphere,
+                        precision,
+                        effective_windowed,
+                        force,
+                    ),
+                    task_id=reserved_task_id,
+                    expires=_BC_QUEUE_MAX_AGE_SECONDS,
+                )
+            except BaseException:
+                # R1/R2 (closed by construction): revert the lease stamp to
+                # its pre-refresh (already-expired) value instead of writing
+                # any tombstone. The next request then sees the claim as
+                # expired again — never wedged behind 409 with nothing
+                # running — and a genuinely delivered duplicate is never
+                # ignored, because task id and state are left untouched.
+                # Matching-only on the just-set lease: a concurrent worker
+                # claim (which refreshes the lease itself) makes this a
+                # harmless no-op.
+                _revert_bc_recovery_lease(
+                    str(study.id),
+                    reserved_task_id,
+                    publisher_lease_started_at,
+                    original_reserved_at,
+                )
+                raise
+            _mark_bc_db_dispatch_published(str(study.id), reserved_task_id)
+            # R3: discloses `recovered` plus every effective parameter,
+            # `force` included.
+            return Response(
+                {
+                    "task_id": reserved_task_id,
+                    "total": total,
+                    "recovered": True,
+                    "points_per_sphere": points_per_sphere,
+                    "precision": precision,
+                    "windowed": effective_windowed,
+                    "force": force,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
 
         if reserved_task_id is not None and dispatch_payload is not None:
             result_backend = _bc_result_backend()
@@ -3016,6 +3162,34 @@ def _release_bc_db_dispatch(
     return updated == 1
 
 
+def _revert_bc_recovery_lease(
+    study_id: str,
+    task_id: str,
+    refreshed_reserved_at: Any,
+    original_reserved_at: Any,
+) -> None:
+    """A recovery republish failed — either its own result-backend
+    reservation refresh (`_reserve_bc_recovery_dispatch`) or the broker
+    `apply_async` call itself (T18, closed by construction): revert the
+    lease stamp to its pre-refresh (already expired) value instead of
+    writing any tombstone. Task id and state are left untouched, so a
+    genuinely delivered duplicate is never ignored by the worker's claim
+    check, and the next admission request immediately sees the claim as
+    expired again instead of wedging behind 409 for a full lease with
+    nothing running. Matching-only on the just-refreshed lease: a
+    concurrent worker claim (which refreshes it again itself) makes this
+    a harmless no-op. This is deliberately narrower than
+    `_rollback_bc_db_dispatch`: that helper restores a brand-new
+    dispatch's entire previous state (task id, state, payload, lease) and
+    matches only `state="pending"`, which cannot express "this task id
+    already existed, may still be state `dispatched`, and only its lease
+    timestamp was ever touched" — the shape a recovery revert needs.
+    """
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_reserved_at=refreshed_reserved_at,
+    ).update(box_counting_task_reserved_at=original_reserved_at)
 
 
 def _rollback_bc_db_dispatch(
@@ -3068,7 +3242,10 @@ def _reserve_bc_dispatch(
     """Stamp the preserved progress/status-ownership records (R7) for a
     brand-new task id before it is handed to the broker. T18 removes
     `bc-inflight-<study_id>` from this write entirely (R8): admission no
-    longer needs it.
+    longer needs it. A recovery republish reuses an existing task id and
+    calls `_reserve_bc_recovery_dispatch` instead (below): that task id
+    may already carry genuine records from an earlier delivery, so its
+    failure path must never run this function's terminalizing cleanup.
     """
     dispatched_at = time.time()
     records = {
@@ -3090,6 +3267,43 @@ def _reserve_bc_dispatch(
     return True
 
 
+def _reserve_bc_recovery_dispatch(
+    backend: Any,
+    task_id: str,
+    study_id: str,
+    total: int,
+) -> bool:
+    """Refresh a recovered task's progress/ownership records before its
+    republish (T18 R3): the original dispatch may have crashed before
+    ever reaching `_reserve_bc_dispatch`, so these records cannot be
+    assumed to exist, and a status read for the reused task id must keep
+    working once the worker claims it. Unlike `_reserve_bc_dispatch`
+    (always a brand-new task id with no history), this task id may
+    already carry genuine records from an earlier delivery that could
+    still be live, so a failed write here is never followed by
+    `_clear_bc_dispatch_reservation` — that cleanup terminalizes
+    (state=SUCCESS) and is safe only for a task id nothing has touched
+    yet. The caller reverts only the durable row's lease stamp instead
+    (`_revert_bc_recovery_lease`), so a possibly still-running original
+    copy's own records are never clobbered by this failure.
+    """
+    dispatched_at = time.time()
+    records = {
+        task_id: {
+            "current": 0,
+            "total": total,
+            "progress": 0.0,
+            "dispatched_at": dispatched_at,
+        },
+        f"{_BC_OWNER_PREFIX}{task_id}": {"task_id": task_id, "study_id": study_id},
+    }
+    try:
+        for result_id, payload in records.items():
+            backend.store_result(result_id, payload, state="PROGRESS")
+    except Exception:  # noqa: BLE001 — fail closed; never republish without it
+        logger.warning("box-counting recovery reservation failed", exc_info=True)
+        return False
+    return True
 
 
 def _bc_task_belongs_to_study(task_id: str, study_id: str) -> bool:

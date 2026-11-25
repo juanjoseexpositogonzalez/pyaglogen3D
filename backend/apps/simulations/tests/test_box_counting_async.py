@@ -803,6 +803,128 @@ class TestDoubleSubmitGuard:
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is True
 
+    def test_pending_dispatch_is_republished_with_same_task_id(
+        self, user: User, project: Project
+    ) -> None:
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        original_params = {
+            "points_per_sphere": 77,
+            "precision": 12,
+            "windowed": True,
+        }
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_params=original_params,
+            box_counting_task_id="task-pending",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async"
+        ) as mock_apply_async:
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        # JD-A-002/T18 R3: discloses `recovered` + every effective reused
+        # parameter, `force` included — an ordinary unforced request must
+        # be able to see that a recovered run's `force` differs from what
+        # it asked for, never silently re-analyze under it.
+        assert response.data == {
+            "task_id": "task-pending",
+            "total": 31,
+            "recovered": True,
+            "points_per_sphere": 77,
+            "precision": 12,
+            "windowed": True,
+            "force": False,
+        }
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 77, 12, True, False),
+            task_id="task-pending",
+            expires=3600,
+        )
+        study.refresh_from_db()
+        assert study.box_counting_params == original_params
+        assert study.box_counting_task_id == "task-pending"
+        assert study.box_counting_task_state == "dispatched"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_reserved_at is not None
+        assert study.box_counting_task_reserved_at > expired_lease
+
+    def test_pending_dispatch_with_conflicting_explicit_params_supersedes_expired_claim(
+        self, user: User, project: Project, bc_result_backend: MagicMock
+    ) -> None:
+        """Round 2 regression 2 (product decision): no caller ever retries
+        without parameters — the frontend always sends full bodies — so the
+        former 409 was a dead end that blocked the study forever. Explicit
+        new parameters now supersede an expired pending claim: the stale
+        row is retired to a `cancelled` tombstone, its result-backend
+        records are released, and a fresh task is reserved and dispatched
+        with the caller's own parameters (replaces the old
+        ``test_pending_dispatch_with_conflicting_explicit_params_returns_409``
+        row, whose 409 assertion encoded the regression itself)."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-pending",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        # The superseded claim's result-backend cleanup is deferred to
+        # `transaction.on_commit` (T18 R5), which a plain non-transactional
+        # test never fires on its own — `captureOnCommitCallbacks` runs the
+        # queued callback so this test can observe it.
+        with (
+            _capture_on_commit(execute=True),
+            patch("apps.simulations.views.uuid.uuid4", return_value="task-fresh"),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(
+                _run_url(study),
+                {"points_per_sphere": 100, "precision": 18, "windowed": False},
+                format="json",
+            )
+
+        assert response.status_code == 202
+        assert response.data == {"task_id": "task-fresh", "total": 31}
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, False, False),
+            task_id="task-fresh",
+            expires=3600,
+        )
+        # The superseded task's result-backend records are released (JD
+        # round 2 regression 2 step 3) so its stale study marker cannot
+        # block the fresh dispatch.
+        cleared = {
+            call.args[0]
+            for call in bc_result_backend.store_result.call_args_list
+            if call.kwargs.get("state") == "SUCCESS"
+        }
+        assert cleared == {"bc-owner-task-pending", "task-pending"}
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-fresh"
+        assert study.box_counting_task_state == "dispatched"
+        assert study.box_counting_task_payload == _task_payload(100, 18, False)
+        assert study.box_counting_params == {
+            "points_per_sphere": 100,
+            "precision": 18,
+            "windowed": False,
+        }
+
     def test_explicit_force_conflict_supersedes_expired_claim(
         self, user: User, project: Project, bc_result_backend: MagicMock
     ) -> None:
@@ -849,16 +971,143 @@ class TestDoubleSubmitGuard:
             "force": True
         }
 
+    def test_matching_force_still_recovers_the_stored_payload(
+        self, user: User, project: Project
+    ) -> None:
+        """An explicit `force` equal to the stored one is not a conflict:
+        the claim is still recovered with its original task id."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-pending",
+            box_counting_task_state="pending",
+            box_counting_task_payload=_task_payload(100, 18, True),
+            box_counting_task_reserved_at=timezone.now() - timedelta(seconds=31),
+        )
+        client = _authed_client(user)
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async"
+        ) as mock_apply_async:
+            response = client.post(
+                _run_url(study),
+                {"windowed": True, "force": False},
+                format="json",
+            )
+
+        assert response.status_code == 202
+        assert response.data["task_id"] == "task-pending"
+        assert response.data["recovered"] is True
+        # T18 R3: `force` is always disclosed, even when it matches what
+        # the caller already asked for.
+        assert response.data["force"] is False
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, True, False),
+            task_id="task-pending",
+            expires=3600,
+        )
+
+    def test_recovery_discloses_a_stored_force_to_an_unforced_caller(
+        self, user: User, project: Project
+    ) -> None:
+        """T18 R3 (one of the six frozen situations this redesign exists to
+        close): the stored claim already asked for `force=True`, and the
+        recovering caller sends no `force` at all. Recovery still executes
+        the stored `force=True` — but it must say so in the 202, because an
+        ordinary unforced caller must be able to see that this run is about
+        to re-analyze simulations that already hold a block, instead of a
+        silent overwrite with no visible signal."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        stored_payload = _task_payload(100, 18, True) | {"force": True}
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-stored-force",
+            box_counting_task_state="pending",
+            box_counting_task_payload=stored_payload,
+            box_counting_task_reserved_at=timezone.now() - timedelta(seconds=31),
+        )
+        client = _authed_client(user)
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async"
+        ) as mock_apply_async:
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        assert response.data == {
+            "task_id": "task-stored-force",
+            "total": 31,
+            "recovered": True,
+            "points_per_sphere": 100,
+            "precision": 18,
+            "windowed": True,
+            "force": True,
+        }
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, True, True),
+            task_id="task-stored-force",
+            expires=3600,
+        )
+
+    def test_concurrent_worker_claim_defeats_supersede_and_returns_409(
+        self, user: User, project: Project
+    ) -> None:
+        """A worker that claims the stale task between its lease's expiry
+        and our retiring update must win: the matching update affects zero
+        rows, and the request answers the existing in-flight 409 instead of
+        superseding a claim that is no longer ours to retire."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-stale",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views._release_bc_db_dispatch",
+                return_value=False,
+            ) as mock_release,
+            patch(
+                "apps.simulations.views._clear_bc_dispatch_reservation"
+            ) as mock_clear,
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(
+                _run_url(study),
+                {"points_per_sphere": 100, "precision": 18, "windowed": False},
+                format="json",
+            )
+
+        assert response.status_code == 409
+        assert response.data == {
+            "detail": "A box-counting run is already in flight for this study",
+            "task_id": "task-stale",
+        }
+        assert mock_release.call_args.args[:2] == (str(study.id), "task-stale")
+        mock_clear.assert_not_called()
+        mock_apply_async.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-stale"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_params is None
+
     @pytest.mark.parametrize(
         ("durable_state", "lease_seconds", "expected_status"),
         [
             ("pending", 10, 409),
-            # ("pending", 31, 202) is recovery-by-reuse, which lands in the
-            # next slice: at this slice an expired `pending` claim is
-            # admitted (it must not block) and falls through to the
-            # ordinary path, which for this small work set runs
-            # synchronously — 200 with the results summary.
-            ("pending", 31, 200),
+            ("pending", 31, 202),
             ("dispatched", 10, 409),
             ("running", 10, 409),
             ("dispatched", None, 200),
@@ -910,9 +1159,7 @@ class TestDoubleSubmitGuard:
         if expected_status == 409:
             assert response.data["task_id"] == "task-durable"
             mock_apply_async.assert_not_called()
-        elif expected_status == 202:
-            # Recovery-by-reuse (next slice): the original task id is
-            # republished and the response discloses `recovered`.
+        elif durable_state == "pending":
             assert response.data["task_id"] == "task-durable"
             assert response.data["recovered"] is True
             mock_apply_async.assert_called_once()
@@ -974,14 +1221,233 @@ class TestDoubleSubmitGuard:
         else:
             assert response.data["results"]["total"] == 5
 
+    def test_unreadable_marker_fails_closed_for_a_small_legacy_claim(
+        self, user: User, project: Project
+    ) -> None:
+        """A small work set normally runs without the result backend, but a
+        durable claim carrying no publisher lease can only be judged by the
+        marker: when that read fails, the request fails closed instead of
+        starting a second run over a study that may still be processing."""
+        study = _make_study(project)
+        for _ in range(5):
+            _make_sim(project, study, with_geometry=True)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-legacy",
+            box_counting_task_state="running",
+            box_counting_task_payload=_task_payload(),
+            box_counting_task_reserved_at=None,
+        )
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                side_effect=RuntimeError("result backend unavailable"),
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+            patch("aglogen_core.box_counting_agglomerate") as mock_bc,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 503
+        assert response.data["detail"] == "Unable to verify box-counting run state"
+        mock_apply_async.assert_not_called()
+        mock_bc.assert_not_called()
+
+    def test_recovery_reservation_failure_never_terminalizes_original_records(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-A-001: a failed recovery re-reservation must not terminalize
+        records that may belong to a genuinely running original copy."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-recover",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+        backend = MagicMock()
+        backend.store_result.side_effect = RuntimeError("result backend unavailable")
+
+        with (
+            patch("apps.simulations.views._bc_result_backend", return_value=backend),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 503
+        mock_apply_async.assert_not_called()
+        # Only the failed write itself — cleanup never terminalizes records.
+        assert backend.store_result.call_count == 1
+
+    def test_recovery_broker_failure_does_not_wedge_the_next_request(
+        self, user: User, project: Project
+    ) -> None:
+        """T18 (one of the six frozen situations this redesign exists to
+        close): a recovery republish's own `apply_async` fails — a broker
+        failure previously had no witness at all. The revert restores the
+        lease to its already-expired value instead of leaving the
+        just-refreshed stamp in place, so the very next request is not
+        wedged behind 409 for a full new lease with nothing actually
+        running."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-recover-wedge",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+        client.raise_request_exception = False
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async",
+            side_effect=RuntimeError("broker unavailable"),
+        ):
+            first_response = client.post(_run_url(study), {}, format="json")
+
+        assert first_response.status_code == 500
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-recover-wedge"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_reserved_at == expired_lease
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async"
+        ) as mock_apply_async:
+            second_response = client.post(_run_url(study), {}, format="json")
+
+        assert second_response.status_code == 202
+        assert second_response.data["recovered"] is True
+        assert second_response.data["task_id"] == "task-recover-wedge"
+        mock_apply_async.assert_called_once()
+
+    def test_recovery_broker_failure_leaves_a_genuinely_delivered_duplicate_claimable(
+        self, user: User, project: Project
+    ) -> None:
+        """T18 (one of the six frozen situations this redesign exists to
+        close): the same recovery broker failure must not make a message
+        the broker genuinely queued (ack lost on the way back to the
+        client) be ignored and the run silently lost. The revert touches
+        only the lease timestamp — never task id, state, or a tombstone —
+        so the worker's own claim check still accepts a delivery of the
+        original task id."""
+        from apps.simulations.tasks import run_box_counting_async as _producer_task
+
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-recover-duplicate",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+        client.raise_request_exception = False
+
+        with patch(
+            "apps.simulations.tasks.run_box_counting_async.apply_async",
+            side_effect=RuntimeError("broker unavailable"),
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 500
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-recover-duplicate"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
+
+        task_runner = cast(Any, _producer_task)
+        task_runner.push_request(id="task-recover-duplicate")
+        try:
+            with (
+                patch(
+                    "apps.simulations.tasks.run_box_counting_for_study",
+                    return_value={"total": 31, "processed": 31},
+                ),
+                patch(
+                    "celery.app.task.Task.AsyncResult",
+                    return_value=MagicMock(info={}),
+                ),
+            ):
+                summary = task_runner.run(str(study.id), 77, 12, True, False)
+        finally:
+            task_runner.pop_request()
+
+        assert summary == {"total": 31, "processed": 31}
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "finished"
+
+    def test_superseded_claim_rollback_never_leaves_terminal_backend_records(
+        self, user: User, project: Project
+    ) -> None:
+        """T18 R5 (one of the six frozen situations this redesign exists to
+        close, closed by construction via `transaction.on_commit`): if the
+        transaction that retires an expired claim never actually commits,
+        the deferred result-backend cleanup must never run, and the
+        durable row must still show the original, uncancelled claim —
+        never a terminal backend record sitting over a row that still
+        looks live."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-rollback",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+        client.raise_request_exception = False
+
+        with (
+            patch.object(
+                ParametricStudy, "save", side_effect=RuntimeError("disk full")
+            ),
+            patch(
+                "apps.simulations.views._clear_bc_dispatch_reservation"
+            ) as mock_clear,
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(
+                _run_url(study),
+                {"points_per_sphere": 100, "precision": 18, "windowed": False},
+                format="json",
+            )
+
+        assert response.status_code == 500
+        mock_clear.assert_not_called()
+        mock_apply_async.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-rollback"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_reserved_at == expired_lease
+
     @pytest.mark.parametrize(
         ("durable_state", "expect_recovered"),
-        # Recovery-by-reuse of an expired `dispatched` claim lands in the
-        # next slice: at this slice both expired branches supersede with a
-        # fresh task id, so neither response carries `recovered`. The
-        # guarded invariant — an expired claim resolves with no
-        # result-backend read — holds for both rows either way.
-        [("dispatched", False), ("running", False)],
+        [("dispatched", True), ("running", False)],
     )
     def test_expired_claim_resolves_without_reading_an_unreadable_backend(
         self,
@@ -1235,6 +1701,7 @@ class TestDoubleSubmitGuard:
 # ── L65 — the worker's own burial releases the study ──────────────────
 
 
+@pytest.mark.django_db
 class TestAsyncTaskProducer:
     def test_task_reports_progress_and_returns_summary(self, user, project):
         from apps.simulations.tasks import run_box_counting_async
