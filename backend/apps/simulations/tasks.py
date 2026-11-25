@@ -7,8 +7,9 @@ from typing import Any
 from uuid import UUID
 
 import numpy as np
-from celery import shared_task
+from celery import Task, shared_task
 from celery.exceptions import Ignore
+from celery.signals import task_revoked
 from django.conf import settings
 from django.db import transaction
 from django.utils import timezone
@@ -1232,8 +1233,68 @@ def run_box_counting_for_study(
             progress_cb(current, total)
 
     return results
+
+
+def _bury_box_counting_claim(task_id: Any, args: Any) -> None:
+    """L65 amendment to T18 R2: write the durable `failed` tombstone for
+    this worker's own running claim.
+
+    Matching-only by construction: the study row must still carry this
+    delivery's task id in the `running` state only this worker's claim can
+    hold, so a newer dispatch — a different task id, or this same id
+    re-queued as `pending`/`dispatched` by a recovery republish — is never
+    buried. Admission treats `failed` as terminal exactly like
+    `cancelled`, releasing the study immediately instead of waiting out
+    the running lease; that lease remains the bound only for a worker
+    death no handler witnesses (SIGKILL).
+    """
+    if not task_id or not args:
+        return
+    from .models import ParametricStudy
+
+    ParametricStudy.objects.filter(
+        pk=str(args[0]),
+        box_counting_task_id=str(task_id),
+        box_counting_task_state="running",
+    ).update(
+        box_counting_task_state="failed",
+        box_counting_task_reserved_at=None,
+    )
+
+
+class _BoxCountingClaimBurialTask(Task):  # type: ignore[misc]
+    """Task base for `run_box_counting_async` only (L65): the worker
+    buries its own durable claim when Celery reports the task failed, so
+    the single admission authority learns of the death from the only
+    party that knows — with no cross-store read in admission.
+
+    `on_failure` runs after Celery has already recorded the failure in the
+    result backend, so it must neither re-raise nor swallow the original
+    exception: it only writes the tombstone, and its own errors are logged
+    and leave the claim to the running lease.
+    """
+
+    def on_failure(
+        self,
+        exc: BaseException,
+        task_id: str,
+        args: Any,
+        kwargs: Any,
+        einfo: Any,
+    ) -> None:
+        try:
+            _bury_box_counting_claim(task_id, args)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "box-counting claim burial failed for task %s",
+                task_id,
+                exc_info=True,
+            )
+
+
 @shared_task(
     bind=True,
+    base=_BoxCountingClaimBurialTask,
     name="apps.simulations.tasks.run_box_counting_async",
 )
 def run_box_counting_async(
@@ -1311,14 +1372,18 @@ def run_box_counting_async(
             ]
         )
 
-    # Terminalize the durable claim and release the result-backend marker
-    # (slice-4 state: success and failure both write the matching
-    # `finished` tombstone here; the worker-side burial of failed runs
-    # lands in the next slice). Each write is matching-only: a newer
-    # dispatch may already own the study claim.
+    # Terminalize the durable claim and release the result-backend marker.
+    # L65 amendment to T18: a successful run keeps writing its matching
+    # `finished` tombstone, but a failure no longer terminalizes here —
+    # Celery's failure/revocation handling (the `_BoxCountingClaimBurialTask`
+    # base and the `task_revoked` hook below) buries the claim with the
+    # distinct `failed` tombstone instead, so a failed run never
+    # masquerades as `finished`. A hard worker death that runs no handler
+    # at all (SIGKILL) stays bounded by the running lease. Each write is
+    # matching-only: a newer dispatch may already own the study claim.
     marker_id = f"bc-inflight-{study_id}"
     try:
-        return run_box_counting_for_study(
+        result = run_box_counting_for_study(
             study_id,
             points_per_sphere,
             precision,
@@ -1326,7 +1391,12 @@ def run_box_counting_async(
             force,
             progress_cb=_report,
         )
-    finally:
+    except BaseException:
+        # The re-raise keeps the `else` clause success-only: the claim is
+        # left for the failure handling that owns the burial, and this
+        # handler must never mask the original exception.
+        raise
+    else:
         ParametricStudy.objects.filter(
             pk=study_id,
             box_counting_task_id=task_id,
@@ -1334,6 +1404,8 @@ def run_box_counting_async(
             box_counting_task_state="finished",
             box_counting_task_reserved_at=None,
         )
+        return result
+    finally:
         try:
             marker = self.AsyncResult(marker_id)
             meta = marker.info if isinstance(marker.info, dict) else {}
@@ -1341,6 +1413,89 @@ def run_box_counting_async(
                 self.backend.store_result(marker_id, None, state="SUCCESS")
         except Exception:  # noqa: BLE001 — cleanup must never mask the result
             logger.debug("box-counting in-flight marker cleanup skipped", exc_info=True)
+
+
+def _bury_box_counting_claim_on_revoked(
+    sender: Any = None,
+    request: Any = None,
+    terminated: bool = False,
+    signum: Any = None,
+    expired: bool = False,
+    **kwargs: Any,
+) -> None:
+    """L65: revocation handling buries the claim exactly like failure.
+
+    Celery 5.6 has no ``Task.on_revoked``, so this is the equivalent hook:
+    ``celery.signals.task_revoked``, dispatched by the worker both for a
+    terminate-revoke of a running task and for a revoke/expiry of a task
+    still queued. Scoped by task name so no other task in this module is
+    affected; a revoke of a task that never claimed (row still
+    ``pending``/``dispatched``) is a harmless no-op because the burial
+    matches only the ``running`` state.
+
+    No user-facing cancel/revoke endpoint reaches the study box-counting
+    task: the simulation cancel path revokes ``simulation.task_id`` only,
+    and the study's ``box_counting_task_id`` is never stored on a
+    simulation or passed to any revoke. This hook therefore serves
+    operator-driven revokes — and buries the claim either way.
+    """
+    if getattr(sender, "name", None) != run_box_counting_async.name:
+        return
+    try:
+        context = request or {}
+        _bury_box_counting_claim(context.get("id"), context.get("args") or ())
+    except Exception:  # noqa: BLE001
+        logger.warning("box-counting revocation burial failed", exc_info=True)
+
+
+task_revoked.connect(_bury_box_counting_claim_on_revoked)
+
+
+def fit_power_law_rg(
+    n_values: list[int], rg_values: list[float], rp: float = 1.0
+) -> tuple[float, float, float]:
+    """Fit power-law relationship N = kf * (Rg/rp)^Df to get Df and kf.
+
+    Args:
+        n_values: List of particle counts
+        rg_values: List of corresponding Rg values
+        rp: Primary particle radius
+
+    Returns:
+        Tuple of (Df, kf, R²)
+    """
+    if len(n_values) < 3 or len(rg_values) < 3:
+        return 0.0, 0.0, 0.0
+
+    # Filter out invalid values
+    valid = [(n, rg) for n, rg in zip(n_values, rg_values) if n > 0 and rg > 0]
+    if len(valid) < 3:
+        return 0.0, 0.0, 0.0
+
+    n_arr = np.array([v[0] for v in valid], dtype=np.float64)
+    rg_arr = np.array([v[1] for v in valid], dtype=np.float64)
+
+    # Take log: log(N) = log(kf) + Df * log(Rg/rp)
+    log_n = np.log(n_arr)
+    log_rg_rp = np.log(rg_arr / rp)
+
+    # Linear fit: y = a + b*x where y=log(N), x=log(Rg/rp), b=Df, a=log(kf)
+    # Using least squares
+    A = np.vstack([log_rg_rp, np.ones(len(log_rg_rp))]).T
+    try:
+        result = np.linalg.lstsq(A, log_n, rcond=None)
+        df, log_kf = result[0]
+        kf = math.exp(log_kf)
+
+        # R² calculation
+        residuals = log_n - (df * log_rg_rp + log_kf)
+        ss_res = np.sum(residuals**2)
+        ss_tot = np.sum((log_n - np.mean(log_n)) ** 2)
+        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
+
+        return float(df), float(kf), float(r_squared)
+    except Exception:
+        return 0.0, 0.0, 0.0
 
 
 def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
