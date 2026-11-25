@@ -10,17 +10,28 @@ Covers spec requirements of `batch-windowed-box-counting`:
 from __future__ import annotations
 
 import io
+import time
+from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from django.test import TestCase as DjangoTestCase
 from django.urls import reverse
+from django.utils import timezone
 from rest_framework.test import APIClient
 
 from apps.accounts.models import User
 from apps.projects.models import Project
 from apps.simulations.models import ParametricStudy, Simulation
+
+#: T18 R5 — the supersede path defers its result-backend cleanup to
+#: ``transaction.on_commit``, which a plain (non-transactional)
+#: ``@pytest.mark.django_db`` test never actually fires. Wrap the call
+#: whose cleanup a test needs to observe in this context manager, which
+#: manually runs the queued callbacks without requiring a real commit.
+_capture_on_commit = DjangoTestCase.captureOnCommitCallbacks
 
 # ── Fixtures / helpers ─────────────────────────────────────────────────
 
@@ -103,6 +114,29 @@ def _authed_client(user: User) -> APIClient:
     return client
 
 
+def _task_payload(
+    points_per_sphere: int = 100,
+    precision: int = 18,
+    windowed: bool = False,
+) -> dict[str, Any]:
+    return {
+        "points_per_sphere": points_per_sphere,
+        "precision": precision,
+        "windowed": windowed,
+        "force": False,
+    }
+
+
+def _assert_no_db_dispatch(study: ParametricStudy) -> None:
+    study.refresh_from_db()
+    assert (
+        study.box_counting_task_id,
+        study.box_counting_task_state,
+        study.box_counting_task_payload,
+        study.box_counting_task_reserved_at,
+    ) == ("", "", None, None)
+
+
 @pytest.fixture(autouse=True)
 def bc_result_backend(monkeypatch):  # type: ignore[no-untyped-def]
     """Keep async endpoint tests isolated from configured Celery services."""
@@ -115,7 +149,9 @@ def bc_result_backend(monkeypatch):  # type: ignore[no-untyped-def]
         return task.delay(*args)
 
     monkeypatch.setattr("apps.simulations.views._bc_result_backend", lambda: backend)
-    monkeypatch.setattr("apps.simulations.views.AsyncResult", _fake_async_result_factory({}))
+    monkeypatch.setattr(
+        "apps.simulations.views.AsyncResult", _fake_async_result_factory({})
+    )
     monkeypatch.setattr(task, "apply_async", apply_async)
     return backend
 
@@ -159,12 +195,20 @@ class TestR31SyncPath:
             assert box_counting["fit_window"] is None
             assert box_counting["window_source"] == "legacy"
 
-    def test_small_work_set_does_not_require_result_backend(self, user: User, project: Project) -> None:
+    def test_small_work_set_does_not_require_result_backend(
+        self, user: User, project: Project
+    ) -> None:
         study = _make_study(project)
         _make_sim(project, study)
         with (
-            patch("apps.simulations.views.AsyncResult", side_effect=RuntimeError("result backend unavailable")) as mock_result,
-            patch("apps.simulations.tasks.run_box_counting_for_study", return_value={"total": 1, "processed": 1, "skipped": 0, "failed": 0}),
+            patch(
+                "apps.simulations.views.AsyncResult",
+                side_effect=RuntimeError("result backend unavailable"),
+            ) as mock_result,
+            patch(
+                "apps.simulations.tasks.run_box_counting_for_study",
+                return_value={"total": 1, "processed": 1, "skipped": 0, "failed": 0},
+            ),
         ):
             response = _authed_client(user).post(_run_url(study), {}, format="json")
 
@@ -613,14 +657,31 @@ class TestDoubleSubmitGuard:
         study.refresh_from_db()
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is False
+        assert study.box_counting_task_id == first_response.data["task_id"]
+        assert study.box_counting_task_state == "dispatched"
+        assert study.box_counting_task_payload == _task_payload()
+        assert study.box_counting_task_reserved_at is not None
 
-    @pytest.mark.parametrize("fail_on_write", [2, 3])
+    # T18 R8 removed `bc-inflight-<study_id>` from a new dispatch's
+    # reservation entirely, so it writes exactly two records (the task's
+    # own progress stub, then its owner record) instead of three. Write
+    # index 3 (the old marker write) can never fail because it never
+    # happens; index 1 (the task progress stub, previously untested) now
+    # covers the reservation's own first write instead.
+    @pytest.mark.parametrize("fail_on_write", [1, 2])
+    @pytest.mark.parametrize("previous_task_id", ["", "task-finished"])
     def test_reservation_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
-        self, user, project, fail_on_write
+        self, user, project, fail_on_write, previous_task_id
     ):
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
+        previous_payload = _task_payload(77, 12, True) if previous_task_id else None
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id=previous_task_id,
+            box_counting_task_state="finished" if previous_task_id else "",
+            box_counting_task_payload=previous_payload,
+        )
         client = _authed_client(user)
         backend = MagicMock()
         writes = 0
@@ -649,6 +710,10 @@ class TestDoubleSubmitGuard:
         mock_apply_async.assert_not_called()
         study.refresh_from_db()
         assert study.box_counting_params is None
+        assert study.box_counting_task_id == previous_task_id
+        assert study.box_counting_task_state == ("finished" if previous_task_id else "")
+        assert study.box_counting_task_payload == previous_payload
+        assert study.box_counting_task_reserved_at is None
 
     def test_marker_read_failure_never_dispatches_or_persists_params(  # type: ignore[no-untyped-def]
         self, user, project
@@ -671,11 +736,16 @@ class TestDoubleSubmitGuard:
 
         assert response.status_code == 503
         mock_apply_async.assert_not_called()
-        study.refresh_from_db()
+        _assert_no_db_dispatch(study)
         assert study.box_counting_params is None
 
-    def test_broker_failure_clears_the_complete_reservation(  # type: ignore[no-untyped-def]
-        self, user, project
+    # T18 R8: a new dispatch's reservation no longer writes
+    # `bc-inflight-<study_id>` at all, so this witness now checks only the
+    # two records a new dispatch actually stamps (the task's own progress
+    # stub and its owner record), not the removed third marker write.
+    @pytest.mark.parametrize("worker_claimed", [False, True])
+    def test_broker_failure_clears_only_unpublished_reservation(  # type: ignore[no-untyped-def]
+        self, user, project, worker_claimed
     ):
         study = _make_study(project)
         for _ in range(31):
@@ -686,6 +756,13 @@ class TestDoubleSubmitGuard:
         backend = _fake_result_backend(states)
         task_id = "task-broker-failure"
 
+        def publish_then_raise(*args, **kwargs):  # type: ignore[no-untyped-def]
+            if worker_claimed:
+                ParametricStudy.objects.filter(pk=study.pk).update(
+                    box_counting_task_state="running"
+                )
+            raise RuntimeError("broker unavailable")
+
         with (
             patch(
                 "apps.simulations.views.AsyncResult",
@@ -695,7 +772,7 @@ class TestDoubleSubmitGuard:
             patch("apps.simulations.views.uuid.uuid4", return_value=task_id),
             patch(
                 "apps.simulations.tasks.run_box_counting_async.apply_async",
-                side_effect=RuntimeError("broker unavailable"),
+                side_effect=publish_then_raise,
             ),
         ):
             response = client.post(
@@ -705,19 +782,264 @@ class TestDoubleSubmitGuard:
             )
 
         assert response.status_code == 500
-        for result_id in (
-            task_id,
-            f"bc-owner-{task_id}",
-            f"bc-inflight-{study.id}",
-        ):
-            assert states[result_id] == {
-                "state": "SUCCESS",
-                "info": None,
-                "result": None,
-            }
-        study.refresh_from_db()
+        result_ids = (task_id, f"bc-owner-{task_id}")
+        if worker_claimed:
+            assert all(
+                states[result_id]["state"] == "PROGRESS" for result_id in result_ids
+            )
+            study.refresh_from_db()
+            assert study.box_counting_task_id == task_id
+            assert study.box_counting_task_state == "running"
+            assert study.box_counting_task_payload == _task_payload(windowed=True)
+        else:
+            assert all(
+                states[result_id]["state"] == "SUCCESS" for result_id in result_ids
+            )
+            study.refresh_from_db()
+            assert study.box_counting_task_id == task_id
+            assert study.box_counting_task_state == "cancelled"
+            assert study.box_counting_task_payload == _task_payload(windowed=True)
+            assert study.box_counting_task_reserved_at is None
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is True
+
+    def test_explicit_force_conflict_supersedes_expired_claim(
+        self, user: User, project: Project, bc_result_backend: MagicMock
+    ) -> None:
+        """`force` is never persisted, but it decides whether simulations
+        that already hold a block are re-analyzed, so an explicit value
+        that differs from the stored payload is a real conflict. The
+        forced run offered by the analysis tab posts `windowed: true` with
+        `force: true`; against a stored payload that matches on windowed
+        but not on force, recovery would otherwise execute the user's
+        forced run with `force=False` and silently analyze nothing."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-unforced",
+            box_counting_task_state="pending",
+            box_counting_task_payload=_task_payload(100, 18, True),
+            box_counting_task_reserved_at=timezone.now() - timedelta(seconds=31),
+        )
+        client = _authed_client(user)
+
+        with (
+            patch("apps.simulations.views.uuid.uuid4", return_value="task-forced"),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(
+                _run_url(study),
+                {"windowed": True, "force": True},
+                format="json",
+            )
+
+        assert response.status_code == 202
+        assert response.data == {"task_id": "task-forced", "total": 31}
+        mock_apply_async.assert_called_once_with(
+            args=(str(study.id), 100, 18, True, True),
+            task_id="task-forced",
+            expires=3600,
+        )
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-forced"
+        assert study.box_counting_task_payload == _task_payload(100, 18, True) | {
+            "force": True
+        }
+
+    @pytest.mark.parametrize(
+        ("durable_state", "lease_seconds", "expected_status"),
+        [
+            ("pending", 10, 409),
+            # ("pending", 31, 202) is recovery-by-reuse, which lands in the
+            # next slice: at this slice an expired `pending` claim is
+            # admitted (it must not block) and falls through to the
+            # ordinary path, which for this small work set runs
+            # synchronously — 200 with the results summary.
+            ("pending", 31, 200),
+            ("dispatched", 10, 409),
+            ("running", 10, 409),
+            ("dispatched", None, 200),
+            ("finished", 10, 200),
+            ("cancelled", 10, 200),
+            # L65: the worker's own burial tombstone is terminal exactly
+            # like `cancelled` — a failed run never blocks the study.
+            ("failed", 10, 200),
+        ],
+    )
+    def test_durable_claim_governs_small_work_sets_without_a_redis_marker(
+        self,
+        user: User,
+        project: Project,
+        durable_state: str,
+        lease_seconds: int | None,
+        expected_status: int,
+    ) -> None:
+        """JD-B-001/JD-B-002: durable row governs over an absent Redis
+        marker and over the sync/async size boundary. The `dispatched`
+        None-lease case needs a duration guaranteed to exceed T18's own
+        per-phase `dispatched` bound (`_BC_QUEUED_LEASE_SECONDS`), not the
+        pre-T18 composite marker lease this case used to import."""
+        from apps.simulations.views import _BC_QUEUED_LEASE_SECONDS
+
+        study = _make_study(project)
+        for _ in range(5):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True) if durable_state == "pending" else None
+        age = _BC_QUEUED_LEASE_SECONDS + 10 if lease_seconds is None else lease_seconds
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-durable",
+            box_counting_task_state=durable_state,
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=timezone.now() - timedelta(seconds=age),
+        )
+        client = _authed_client(user)
+
+        with (
+            patch("apps.simulations.views.AsyncResult", _fake_async_result_factory({})),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == expected_status
+        if expected_status == 409:
+            assert response.data["task_id"] == "task-durable"
+            mock_apply_async.assert_not_called()
+        elif expected_status == 202:
+            # Recovery-by-reuse (next slice): the original task id is
+            # republished and the response discloses `recovered`.
+            assert response.data["task_id"] == "task-durable"
+            assert response.data["recovered"] is True
+            mock_apply_async.assert_called_once()
+        else:
+            assert response.data["results"]["total"] == 5
+
+    @pytest.mark.parametrize(
+        ("marker_state", "expected_status"),
+        [("PROGRESS", 409), ("PENDING", 200)],
+    )
+    def test_legacy_adopted_claim_without_a_lease_uses_the_marker_lease(
+        self,
+        user: User,
+        project: Project,
+        marker_state: str,
+        expected_status: int,
+    ) -> None:
+        """JD-B-001: a claim adopted from a legacy queued message carries no
+        publisher lease, so the bounded marker lease must guard it instead of
+        leaving a running study open to a second concurrent dispatch."""
+        study = _make_study(project)
+        for _ in range(5):
+            _make_sim(project, study, with_geometry=True)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-legacy",
+            box_counting_task_state="running",
+            box_counting_task_payload=_task_payload(),
+            box_counting_task_reserved_at=None,
+        )
+        marker_states = {
+            f"bc-inflight-{study.id}": {
+                "state": marker_state,
+                "info": {
+                    "task_id": "task-legacy",
+                    "study_id": str(study.id),
+                    "dispatched_at": time.time(),
+                },
+            },
+            "task-legacy": {"state": "PROGRESS", "info": {}},
+        }
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                _fake_async_result_factory(marker_states),
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+            patch("aglogen_core.box_counting_agglomerate"),
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == expected_status
+        if expected_status == 409:
+            assert response.data["task_id"] == "task-legacy"
+            mock_apply_async.assert_not_called()
+        else:
+            assert response.data["results"]["total"] == 5
+
+    @pytest.mark.parametrize(
+        ("durable_state", "expect_recovered"),
+        # Recovery-by-reuse of an expired `dispatched` claim lands in the
+        # next slice: at this slice both expired branches supersede with a
+        # fresh task id, so neither response carries `recovered`. The
+        # guarded invariant — an expired claim resolves with no
+        # result-backend read — holds for both rows either way.
+        [("dispatched", False), ("running", False)],
+    )
+    def test_expired_claim_resolves_without_reading_an_unreadable_backend(
+        self,
+        user: User,
+        project: Project,
+        durable_state: str,
+        expect_recovered: bool,
+    ) -> None:
+        """T18 R1 (one of the six frozen situations this redesign exists to
+        close, closed by construction): once the durable row's own phase
+        lease has already expired, admission never reads the result
+        backend at all for this claim — an already-expired claim must
+        never answer 503 because of a result-backend outage. `AsyncResult`
+        is patched to raise so that the test fails loudly if admission
+        ever touches it for either the recoverable (`dispatched`) or the
+        always-superseded (`running`) expired branch."""
+        from apps.simulations.views import (
+            _BC_QUEUED_LEASE_SECONDS,
+            _BC_RUNNING_LEASE_SECONDS,
+        )
+
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        lease = (
+            _BC_QUEUED_LEASE_SECONDS
+            if durable_state == "dispatched"
+            else _BC_RUNNING_LEASE_SECONDS
+        )
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-expired-unreadable",
+            box_counting_task_state=durable_state,
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=timezone.now()
+            - timedelta(seconds=lease + 10),
+        )
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                side_effect=RuntimeError("result backend unavailable"),
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        mock_apply_async.assert_called_once()
+        if expect_recovered:
+            assert response.data["recovered"] is True
+            assert response.data["task_id"] == "task-expired-unreadable"
+        else:
+            assert "recovered" not in response.data
+            assert response.data["task_id"] != "task-expired-unreadable"
 
     def test_second_post_while_in_flight_returns_409(self, user, project):
         study = _make_study(project)
@@ -861,10 +1183,15 @@ class TestDoubleSubmitGuard:
 
         assert response.status_code == 202
 
-    def test_dispatch_reserves_task_owner_and_inflight_marker(
+    def test_dispatch_reserves_task_owner_records(
         self, user, project, bc_result_backend
     ):
-        """The complete reservation is durable before broker dispatch."""
+        """The complete reservation is durable before broker dispatch. T18
+        R8 removed `bc-inflight-<study_id>` from a new dispatch's
+        reservation entirely (replaces the former
+        ``test_dispatch_reserves_task_owner_and_inflight_marker``, whose
+        third stamped record asserted the removed marker write), so only
+        the task's own progress stub and its owner record are stamped."""
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
@@ -886,7 +1213,6 @@ class TestDoubleSubmitGuard:
         assert [call.args[0] for call in stamped] == [
             "task-stamp-1",
             "bc-owner-task-stamp-1",
-            f"bc-inflight-{study.id}",
         ]
         task_meta = stamped[0].args[1]
         assert task_meta["current"] == 0
@@ -898,10 +1224,6 @@ class TestDoubleSubmitGuard:
             "task_id": "task-stamp-1",
             "study_id": str(study.id),
         }
-        marker_meta = stamped[2].args[1]
-        assert marker_meta["task_id"] == "task-stamp-1"
-        assert marker_meta["study_id"] == str(study.id)
-        assert isinstance(marker_meta["dispatched_at"], float)
         assert all(call.kwargs["state"] == "PROGRESS" for call in stamped)
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 100, 18, False, False),
@@ -910,10 +1232,9 @@ class TestDoubleSubmitGuard:
         )
 
 
-# ── Async task producer behavior ───────────────────────────────────────
+# ── L65 — the worker's own burial releases the study ──────────────────
 
 
-@pytest.mark.django_db
 class TestAsyncTaskProducer:
     def test_task_reports_progress_and_returns_summary(self, user, project):
         from apps.simulations.tasks import run_box_counting_async
@@ -948,7 +1269,8 @@ class TestAsyncTaskProducer:
                 fit_window=None,
                 window_source="legacy",
             )
-            summary = run_box_counting_async.run(
+            task_runner = cast(Any, run_box_counting_async)
+            summary = task_runner.run(
                 str(study.id),
                 100,
                 18,
@@ -983,8 +1305,14 @@ class TestAsyncTaskProducer:
         from apps.simulations.tasks import run_box_counting_async
 
         study = _make_study(project)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-current",
+            box_counting_task_state="dispatched",
+            box_counting_task_payload=_task_payload(),
+        )
         marker = MagicMock(
-            info={"task_id": marker_task_id, "study_id": str(study.id)}
+            state="PROGRESS",
+            info={"task_id": marker_task_id, "study_id": str(study.id)},
         )
         task_runner = cast(Any, run_box_counting_async)
         backend = task_runner.backend

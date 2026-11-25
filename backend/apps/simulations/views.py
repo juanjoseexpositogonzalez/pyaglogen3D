@@ -2551,61 +2551,174 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         ).count()
 
         reserved_task_id: str | None = None
-        result_backend: Any = None
-        try:
-            with transaction.atomic():
-                locked_study = ParametricStudy.objects.select_for_update().get(
-                    pk=study.pk
+        dispatch_payload: dict[str, Any] | None = None
+        publisher_lease_started_at: Any = None
+        recovering_pending = False
+        previous_include_box_counting = study.include_box_counting
+        previous_box_counting_params = study.box_counting_params
+        previous_dispatch = (
+            study.box_counting_task_id,
+            study.box_counting_task_state,
+            study.box_counting_task_payload,
+            study.box_counting_task_reserved_at,
+        )
+
+        with transaction.atomic():
+            locked_study = ParametricStudy.objects.select_for_update().get(pk=study.pk)
+            if (
+                windowed is None
+                and isinstance(locked_study.box_counting_params, dict)
+                and "windowed" in locked_study.box_counting_params
+            ):
+                persisted_params["windowed"] = locked_study.box_counting_params[
+                    "windowed"
+                ]
+                effective_windowed = bool(persisted_params["windowed"])
+
+            # T18: the durable row is the sole admission authority. Only its
+            # state and `box_counting_task_reserved_at` decide in-flight-ness;
+            # no result-backend read participates here (R1), except the one
+            # bridging case below for a claim carrying no lease timestamp at
+            # all (pre-T18 deploy window, R6).
+            durable_task_id = locked_study.box_counting_task_id
+            durable_state = locked_study.box_counting_task_state
+            reserved_at = locked_study.box_counting_task_reserved_at
+            now = timezone.now()
+
+            if (
+                durable_task_id
+                and reserved_at is not None
+                and durable_state in ("pending", "dispatched", "running")
+            ):
+                is_running = durable_state == "running"
+                # R2 (three phases, each with its own bound — collapsing
+                # `pending` into the queued bound is explicitly wrong: it
+                # would keep a study blocked for 65 minutes after a
+                # publisher crash the 30-second lease resolves in seconds).
+                # `pending` means a publisher is reserving and enqueueing
+                # right now, which lasts seconds, so it keeps the existing
+                # 30-second publisher lease. `dispatched` means the broker
+                # accepted the message, which may wait the whole queue, so
+                # it expires after the broker's own queue expiry plus grace
+                # — Celery discards the message itself by then. `running`
+                # expires after the hard runtime plus the same grace —
+                # Celery hard-kills the worker by then. All three are
+                # derived from the existing settings constants; no
+                # composite lease and no result-backend read.
+                if durable_state == "pending":
+                    lease_seconds = _BC_PENDING_LEASE_SECONDS
+                elif is_running:
+                    lease_seconds = _BC_RUNNING_LEASE_SECONDS
+                else:
+                    lease_seconds = _BC_QUEUED_LEASE_SECONDS
+                if (now - reserved_at).total_seconds() <= lease_seconds:
+                    return _bc_in_flight_response(durable_task_id)
+
+                # Slice-2 intermediate state: an expired claim is
+                # superseded by the new-dispatch path below, which overwrites
+                # the durable row under the same row lock with a fresh task
+                # id and payload. Recovery by reuse (R3) and the matching
+                # `cancelled` tombstone with deferred backend cleanup (R4/R5)
+                # land in the next slice, replacing this block.
+                pass
+
+            elif (
+                durable_task_id
+                and reserved_at is None
+                and durable_state in ("pending", "dispatched", "running")
+            ):
+                # R6: a durable claim with no lease timestamp at all predates
+                # this change's worker (which always stamps one on claim), so
+                # it is judged the same way the empty-row bridge below judges
+                # a run dispatched before this change: by the legacy marker,
+                # bound by the same queue+runtime+grace lifetime and failing
+                # closed on an unreadable backend. This guards an existing
+                # tracked claim regardless of the new request's size.
+                try:
+                    marker_task_id = _bc_in_flight_task_id(locked_study)
+                except _BCBackendUnavailable:
+                    return Response(
+                        {"detail": "Unable to verify box-counting run state"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+                if marker_task_id is not None:
+                    return _bc_in_flight_response(marker_task_id)
+            elif not durable_task_id and total > BC_ASYNC_THRESHOLD:
+                # R6/R7: the durable row is genuinely empty (never dispatched
+                # by this change). The sole remaining marker read guards only
+                # the same async-sized admission a legacy run could ever have
+                # been dispatched under — a synchronous run below the
+                # threshold still needs no result backend at all (R7).
+                try:
+                    marker_task_id = _bc_in_flight_task_id(locked_study)
+                except _BCBackendUnavailable:
+                    return Response(
+                        {"detail": "Unable to verify box-counting run state"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+                if marker_task_id is not None:
+                    return _bc_in_flight_response(marker_task_id)
+            # else: `finished`, `cancelled` (supersede/recovery) or
+            # `failed` (the worker's own L65 burial tombstone), or an empty
+            # row at/under the threshold, never block (R1/R7).
+
+            if not recovering_pending and total > BC_ASYNC_THRESHOLD:
+                reserved_task_id = str(uuid.uuid4())
+                dispatch_payload = {
+                    "points_per_sphere": points_per_sphere,
+                    "precision": precision,
+                    "windowed": effective_windowed,
+                    "force": force,
+                }
+                previous_include_box_counting = locked_study.include_box_counting
+                previous_box_counting_params = locked_study.box_counting_params
+                previous_dispatch = (
+                    locked_study.box_counting_task_id,
+                    locked_study.box_counting_task_state,
+                    locked_study.box_counting_task_payload,
+                    locked_study.box_counting_task_reserved_at,
                 )
-                if (
-                    windowed is None
-                    and isinstance(locked_study.box_counting_params, dict)
-                    and "windowed" in locked_study.box_counting_params
-                ):
-                    persisted_params["windowed"] = locked_study.box_counting_params[
-                        "windowed"
-                    ]
-                    effective_windowed = bool(persisted_params["windowed"])
-                if total > BC_ASYNC_THRESHOLD:
-                    try:
-                        in_flight_task_id = _bc_in_flight_task_id(locked_study)
-                    except _BCBackendUnavailable:
-                        return Response(
-                            {"detail": "Unable to verify box-counting run state"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        )
-                    if in_flight_task_id is not None:
-                        return Response(
-                            {
-                                "detail": (
-                                    "A box-counting run is already in flight for this study"
-                                ),
-                                "task_id": in_flight_task_id,
-                            },
-                            status=status.HTTP_409_CONFLICT,
-                        )
-                    reserved_task_id = str(uuid.uuid4())
-                    result_backend = _bc_result_backend()
-                    if not _reserve_bc_dispatch(
-                        result_backend, reserved_task_id, str(study.id), total
-                    ):
-                        return Response(
-                            {"detail": "Unable to reserve box-counting run"},
-                            status=status.HTTP_503_SERVICE_UNAVAILABLE,
-                        )
+                publisher_lease_started_at = timezone.now()
+                locked_study.box_counting_task_id = reserved_task_id
+                locked_study.box_counting_task_state = "pending"
+                locked_study.box_counting_task_payload = dispatch_payload
+                locked_study.box_counting_task_reserved_at = (
+                    publisher_lease_started_at
+                )
+            if not recovering_pending:
                 locked_study.include_box_counting = True
                 locked_study.box_counting_params = persisted_params
-                locked_study.save(
-                    update_fields=["include_box_counting", "box_counting_params"]
-                )
-        except BaseException:
-            if reserved_task_id is not None:
-                _clear_bc_dispatch_reservation(
-                    result_backend, str(study.id), reserved_task_id
-                )
-            raise
+                update_fields = ["include_box_counting", "box_counting_params"]
+                if reserved_task_id is not None:
+                    update_fields.extend(
+                        [
+                            "box_counting_task_id",
+                            "box_counting_task_state",
+                            "box_counting_task_payload",
+                            "box_counting_task_reserved_at",
+                        ]
+                    )
+                locked_study.save(update_fields=update_fields)
 
-        if reserved_task_id is not None:
+        if reserved_task_id is not None and dispatch_payload is not None:
+            result_backend = _bc_result_backend()
+            if not _reserve_bc_dispatch(
+                result_backend,
+                reserved_task_id,
+                str(study.id),
+                total,
+            ):
+                _rollback_bc_db_dispatch(
+                    str(study.id),
+                    reserved_task_id,
+                    previous_include_box_counting,
+                    previous_box_counting_params,
+                    previous_dispatch,
+                )
+                return Response(
+                    {"detail": "Unable to reserve box-counting run"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
             try:
                 cast(Any, run_box_counting_async).apply_async(
                     args=(
@@ -2619,10 +2732,12 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     expires=_BC_QUEUE_MAX_AGE_SECONDS,
                 )
             except BaseException:
-                _clear_bc_dispatch_reservation(
-                    result_backend, str(study.id), reserved_task_id
-                )
+                if _release_bc_db_dispatch(
+                    str(study.id), reserved_task_id, publisher_lease_started_at
+                ):
+                    _clear_bc_dispatch_reservation(result_backend, reserved_task_id)
                 raise
+            _mark_bc_db_dispatch_published(str(study.id), reserved_task_id)
             return Response(
                 {"task_id": reserved_task_id, "total": total},
                 status=status.HTTP_202_ACCEPTED,
@@ -2808,20 +2923,52 @@ from rest_framework.decorators import api_view, permission_classes  # noqa: E402
 # ============================================================================
 
 #: Celery result-backend keys; Django's LocMemCache is process-local.
+#: `_BC_INFLIGHT_PREFIX` is read ONLY by `_bc_in_flight_task_id` (T18 R6's
+#: sole remaining marker read, for the pre-T18 deploy-window bridge) and is
+#: never written by a new dispatch; `_BC_OWNER_PREFIX` is the preserved
+#: status-ownership record read by `_bc_task_belongs_to_study` (R7).
 _BC_INFLIGHT_PREFIX = "bc-inflight-"
 _BC_OWNER_PREFIX = "bc-owner-"
 _BC_QUEUE_MAX_AGE_SECONDS = 60 * 60
 _BC_EXECUTION_HARD_LIMIT_SECONDS = int(settings.CELERY_TASK_TIME_LIMIT)
-_BC_INFLIGHT_GRACE_SECONDS = 5 * 60
-_BC_INFLIGHT_LEASE_SECONDS = (
+_BC_GRACE_SECONDS = 5 * 60
+#: T18 R2 — three phases, three independent bounds (NOT a composite): a
+#: `pending` row means a publisher is reserving and enqueueing right now,
+#: which lasts seconds, so it keeps the pre-T18 30-second publisher lease.
+#: Collapsing `pending` into the queued bound below is explicitly wrong:
+#: it would keep a study blocked for 65 minutes after a publisher crash
+#: this lease resolves in seconds.
+_BC_PENDING_LEASE_SECONDS = 30
+#: T18 R2 — a queued claim (`dispatched`) outlives the broker's own queue
+#: expiry (Celery itself discards an older message) plus grace.
+_BC_QUEUED_LEASE_SECONDS = _BC_QUEUE_MAX_AGE_SECONDS + _BC_GRACE_SECONDS
+#: T18 R2 — a `running` claim outlives the hard execution limit (Celery
+#: itself hard-kills a worker still running past it) plus the same grace.
+#: This replaces the single composite 7,500-second lease, which only
+#: existed because a bare marker could not distinguish the two phases.
+_BC_RUNNING_LEASE_SECONDS = _BC_EXECUTION_HARD_LIMIT_SECONDS + _BC_GRACE_SECONDS
+#: Sole remaining purpose (T18 R6): bound a pre-T18 legacy marker's OWN
+#: staleness for the deploy-window bridge. Not a durable-row admission
+#: lease — those are the two phase leases above.
+_BC_LEGACY_MARKER_STALE_AFTER_SECONDS = (
     _BC_QUEUE_MAX_AGE_SECONDS
     + _BC_EXECUTION_HARD_LIMIT_SECONDS
-    + _BC_INFLIGHT_GRACE_SECONDS
+    + _BC_GRACE_SECONDS
 )
 
 
 class _BCBackendUnavailable(RuntimeError):
     """The cross-process reservation state could not be read safely."""
+
+
+def _bc_in_flight_response(task_id: str) -> Response:
+    return Response(
+        {
+            "detail": "A box-counting run is already in flight for this study",
+            "task_id": task_id,
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
 
 
 def _bc_result_backend() -> Any:
@@ -2830,21 +2977,99 @@ def _bc_result_backend() -> Any:
     return cast(Any, run_box_counting_async).backend
 
 
-def _clear_bc_dispatch_reservation(backend: Any, study_id: str, task_id: str) -> None:
-    for result_id in (
-        f"{_BC_INFLIGHT_PREFIX}{study_id}",
-        f"{_BC_OWNER_PREFIX}{task_id}",
-        task_id,
-    ):
+def _clear_bc_dispatch_reservation(backend: Any, task_id: str) -> None:
+    """Best-effort release of a task's status-ownership records. T18
+    removed `bc-inflight-<study_id>` as something a new dispatch ever
+    writes (R8), so there is nothing study-scoped left to clear here —
+    only the preserved per-task progress stub and owner record (R7). A
+    failure here is swallowed: no admission decision depends on it (R5).
+    """
+    for result_id in (f"{_BC_OWNER_PREFIX}{task_id}", task_id):
         try:
             backend.store_result(result_id, None, state="SUCCESS")
         except Exception:  # noqa: BLE001 — cleanup must not hide root failure
             logger.debug("box-counting reservation cleanup skipped", exc_info=True)
 
 
-def _reserve_bc_dispatch(
-    backend: Any, task_id: str, study_id: str, total: int
+def _release_bc_db_dispatch(
+    study_id: str,
+    task_id: str,
+    reserved_at: Any,
+    *,
+    expected_state: str = "pending",
 ) -> bool:
+    """Matching-only retirement of a claim to a `cancelled` tombstone.
+    Matches only the exact lease we read: any legitimate transition
+    (a worker claim always refreshes the lease per T18 R2) changes
+    `box_counting_task_reserved_at`, so a concurrent winner always makes
+    this a no-op instead of clobbering their claim.
+    """
+    updated = ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state=expected_state,
+        box_counting_task_reserved_at=reserved_at,
+    ).update(
+        box_counting_task_state="cancelled",
+        box_counting_task_reserved_at=None,
+    )
+    return updated == 1
+
+
+
+
+def _rollback_bc_db_dispatch(
+    study_id: str,
+    task_id: str,
+    include_box_counting: bool,
+    box_counting_params: Any,
+    previous_dispatch: tuple[Any, Any, Any, Any],
+) -> None:
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state="pending",
+    ).update(
+        include_box_counting=include_box_counting,
+        box_counting_params=box_counting_params,
+        box_counting_task_id=previous_dispatch[0],
+        box_counting_task_state=previous_dispatch[1],
+        box_counting_task_payload=previous_dispatch[2],
+        box_counting_task_reserved_at=previous_dispatch[3],
+    )
+
+
+def _mark_bc_db_dispatch_published(study_id: str, task_id: str) -> None:
+    """T18 R2: stamp `box_counting_task_reserved_at` again when the
+    dispatch is marked published, so the dispatched phase is timed from
+    its own start rather than inheriting the reservation (or recovery)
+    timestamp. The filter matches either queued state (`pending` for a
+    brand-new dispatch, or `pending`/`dispatched` for a recovery republish
+    that reused its original task id) so both paths restart the same
+    clock; a worker that has already claimed the task (state `running`)
+    always wins and this becomes a harmless no-op.
+    """
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state__in=["pending", "dispatched"],
+    ).update(
+        box_counting_task_state="dispatched",
+        box_counting_task_reserved_at=timezone.now(),
+    )
+
+
+def _reserve_bc_dispatch(
+    backend: Any,
+    task_id: str,
+    study_id: str,
+    total: int,
+) -> bool:
+    """Stamp the preserved progress/status-ownership records (R7) for a
+    brand-new task id before it is handed to the broker. T18 removes
+    `bc-inflight-<study_id>` from this write entirely (R8): admission no
+    longer needs it.
+    """
     dispatched_at = time.time()
     records = {
         task_id: {
@@ -2854,20 +3079,17 @@ def _reserve_bc_dispatch(
             "dispatched_at": dispatched_at,
         },
         f"{_BC_OWNER_PREFIX}{task_id}": {"task_id": task_id, "study_id": study_id},
-        f"{_BC_INFLIGHT_PREFIX}{study_id}": {
-            "task_id": task_id,
-            "study_id": study_id,
-            "dispatched_at": dispatched_at,
-        },
     }
     try:
         for result_id, payload in records.items():
             backend.store_result(result_id, payload, state="PROGRESS")
     except Exception:  # noqa: BLE001 — never dispatch without full reservation
         logger.warning("box-counting dispatch reservation failed", exc_info=True)
-        _clear_bc_dispatch_reservation(backend, study_id, task_id)
+        _clear_bc_dispatch_reservation(backend, task_id)
         return False
     return True
+
+
 
 
 def _bc_task_belongs_to_study(task_id: str, study_id: str) -> bool:
@@ -2885,7 +3107,12 @@ def _bc_task_belongs_to_study(task_id: str, study_id: str) -> bool:
 
 
 def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
-    """Return the id of the box-counting task currently in flight for study."""
+    """Return the id of a legacy box-counting task in flight for study, per
+    the T18 R6 deploy-window bridge. This is the sole remaining
+    result-backend read that participates in admission, and only reached
+    when the durable row carries no usable lease (R6). Fails closed like
+    every other reservation read.
+    """
     try:
         marker = AsyncResult(f"{_BC_INFLIGHT_PREFIX}{study.id}")
         if marker.state != "PROGRESS":
@@ -2902,7 +3129,8 @@ def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
         dispatched_at = meta.get("dispatched_at")
         if (
             isinstance(dispatched_at, (int, float))
-            and time.time() - float(dispatched_at) > _BC_INFLIGHT_LEASE_SECONDS
+            and time.time() - float(dispatched_at)
+            > _BC_LEGACY_MARKER_STALE_AFTER_SECONDS
         ):
             return None
         return str(task_id)
