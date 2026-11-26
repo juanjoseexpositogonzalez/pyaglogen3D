@@ -1235,18 +1235,31 @@ def run_box_counting_for_study(
     return results
 
 
-def _bury_box_counting_claim(task_id: Any, args: Any) -> None:
+def _bury_box_counting_claim(
+    task_id: Any,
+    args: Any,
+    *,
+    expected_states: tuple[str, ...] = ("running",),
+) -> None:
     """L65 amendment to T18 R2: write the durable `failed` tombstone for
-    this worker's own running claim.
+    this worker's own claim.
 
     Matching-only by construction: the study row must still carry this
-    delivery's task id in the `running` state only this worker's claim can
-    hold, so a newer dispatch — a different task id, or this same id
-    re-queued as `pending`/`dispatched` by a recovery republish — is never
-    buried. Admission treats `failed` as terminal exactly like
-    `cancelled`, releasing the study immediately instead of waiting out
-    the running lease; that lease remains the bound only for a worker
-    death no handler witnesses (SIGKILL).
+    delivery's task id in one of `expected_states`, so a newer dispatch —
+    always a different task id now that every recovery dispatches fresh
+    ids (JD-B-001) — is never buried. Admission treats `failed` as
+    terminal exactly like `cancelled`, releasing the study immediately
+    instead of waiting out the phase lease; that lease remains the bound
+    only for a worker death no handler witnesses (SIGKILL).
+
+    JD-B-002: the revocation hook passes `("dispatched", "running")` —
+    an operator revoke of a still-queued run inserts the id into the
+    worker's persistent revoked set while the durable row stays
+    `dispatched`, and without a burial the study would wedge in
+    409/recover cycles for the rest of the ~65-minute queue lease.
+    `on_failure` keeps the `running`-only default: a failed run can only
+    be running-side, because the worker's claim stamped `running` before
+    the body ever executed.
     """
     if not task_id or not args:
         return
@@ -1255,7 +1268,7 @@ def _bury_box_counting_claim(task_id: Any, args: Any) -> None:
     ParametricStudy.objects.filter(
         pk=str(args[0]),
         box_counting_task_id=str(task_id),
-        box_counting_task_state="running",
+        box_counting_task_state__in=expected_states,
     ).update(
         box_counting_task_state="failed",
         box_counting_task_reserved_at=None,
@@ -1429,9 +1442,11 @@ def _bury_box_counting_claim_on_revoked(
     ``celery.signals.task_revoked``, dispatched by the worker both for a
     terminate-revoke of a running task and for a revoke/expiry of a task
     still queued. Scoped by task name so no other task in this module is
-    affected; a revoke of a task that never claimed (row still
-    ``pending``/``dispatched``) is a harmless no-op because the burial
-    matches only the ``running`` state.
+    affected. JD-B-002: a revoke of a task still queued must bury its
+    `dispatched` claim too — the revoked id will never execute, so the
+    durable row may not keep answering 409 for the rest of the queue
+    lease — while a `pending` row (a publisher mid-reservation whose
+    message was not published yet) stays untouched.
 
     No user-facing cancel/revoke endpoint reaches the study box-counting
     task: the simulation cancel path revokes ``simulation.task_id`` only,
@@ -1443,7 +1458,11 @@ def _bury_box_counting_claim_on_revoked(
         return
     try:
         context = request or {}
-        _bury_box_counting_claim(context.get("id"), context.get("args") or ())
+        _bury_box_counting_claim(
+            context.get("id"),
+            context.get("args") or (),
+            expected_states=("dispatched", "running"),
+        )
     except Exception:  # noqa: BLE001
         logger.warning("box-counting revocation burial failed", exc_info=True)
 
