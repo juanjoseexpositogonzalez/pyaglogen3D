@@ -341,6 +341,23 @@ class SimulationViewSet(viewsets.ModelViewSet):
         # mean-radius diameter and no ``scale_nm`` — the #197 bug again, for a
         # file that differs only in capitalisation.
         declared_unit = meta_unit.strip().lower() if isinstance(meta_unit, str) else None
+        # JD-A-002: only a supported unit may pass. The parser stores the
+        # author-written unit verbatim (``#unit=NM`` exists in the wild) and
+        # defaults to ``"nm"`` when the header omits it, so the accepted
+        # vocabulary after normalisation is exactly these two values.
+        # Anything else — ``um``, ``mm``, ``angstrom`` … — used to fall
+        # through the ``dimensionless`` check into the nm path, silently
+        # importing a geometry that is orders of magnitude off scale with
+        # ``scale_nm=1.0``. Reject it before anything is created.
+        if declared_unit is not None and declared_unit not in ("nm", "dimensionless"):
+            raise drf_serializers.ValidationError(
+                {
+                    "csv_data": (
+                        f"Unsupported unit '{declared_unit}': "
+                        "unit must be nm or dimensionless"
+                    )
+                }
+            )
         if (
             isinstance(meta_diameter, (int, float))
             and not isinstance(meta_diameter, bool)

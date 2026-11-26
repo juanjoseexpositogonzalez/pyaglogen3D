@@ -235,6 +235,53 @@ def test_csv_import_unit_nm_uppercase_stamps_scale_nm() -> None:
 
 
 @pytest.mark.django_db
+@pytest.mark.parametrize("unit", ["um", "mm", "angstrom", "m"])
+def test_csv_import_unsupported_unit_is_rejected(unit: str) -> None:
+    """JD-A-002 (ledger fdcb4e62, HIGH): an unsupported unit must never
+    pass as nm. A ``#unit=um`` file used to fall through the
+    ``dimensionless`` check into the nm path and import a geometry that
+    was orders of magnitude off scale with ``scale_nm=1.0``, silently.
+    Only ``nm`` and ``dimensionless`` (case-insensitive, the parser keeps
+    the verbatim value) are accepted; anything else is rejected before
+    anything is created, naming the offending unit."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = f"#unit={unit}\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n".encode()
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 400, response.content
+    assert response.data["csv_data"] == (
+        f"Unsupported unit '{unit}': unit must be nm or dimensionless"
+    )
+    # Nothing was created: the rejection happens before persistence.
+    assert Simulation.objects.count() == 0
+
+
+@pytest.mark.django_db
+def test_csv_import_unit_um_uppercase_is_rejected_normalized() -> None:
+    """JD-A-002: the unit is normalized before the vocabulary check, so
+    ``#unit=UM`` is rejected exactly like ``um`` — capitalisation must not
+    turn an unsupported unit into an accepted one."""
+    user = _make_user()
+    project = _make_project(user)
+    client = _authed_client(user)
+
+    raw = b"#unit=UM\nx,y,z,radius\n0,0,0,12\n24,0,0,12\n48,0,0,12\n"
+    response = _post_import(
+        client, project, rows=[], csv_override=base64.b64encode(raw).decode("ascii")
+    )
+
+    assert response.status_code == 400, response.content
+    assert response.data["csv_data"] == (
+        "Unsupported unit 'um': unit must be nm or dimensionless"
+    )
+
+
+@pytest.mark.django_db
 def test_csv_import_dimensionless_carries_no_scale_nm() -> None:
     """S3: a dimensionless import keeps the default-diameter path.
 
