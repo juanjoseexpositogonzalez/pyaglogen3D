@@ -1702,6 +1702,75 @@ class TestDoubleSubmitGuard:
 
 
 @pytest.mark.django_db
+class TestFailedClaimNeverBlocks:
+    def test_failed_run_buries_its_claim_and_the_next_post_is_admitted(  # type: ignore[no-untyped-def]
+        self, user, project, bc_result_backend
+    ):
+        """L65 amendment to T18: a run that fails buries its own durable
+        claim with the `failed` tombstone, and admission — which reads only
+        the row — releases the study immediately instead of waiting out
+        the 65-minute running lease. The next POST dispatches a fresh run,
+        never a recovery of the failed task id, and never reads the result
+        backend: `AsyncResult` is patched to raise so any cross-store read
+        in admission would fail loudly."""
+        from apps.simulations.tasks import run_box_counting_async
+
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-failed-run",
+            box_counting_task_state="dispatched",
+            box_counting_task_payload=_task_payload(),
+        )
+        task_runner = cast(Any, run_box_counting_async)
+        marker = MagicMock(
+            info={"task_id": "task-failed-run", "study_id": str(study.id)}
+        )
+        with (
+            patch(
+                "apps.simulations.tasks.run_box_counting_for_study",
+                side_effect=RuntimeError("worker failed"),
+            ),
+            patch("celery.app.task.Task.AsyncResult", return_value=marker),
+            patch.object(task_runner.backend, "store_result"),
+        ):
+            result = task_runner.apply(
+                args=(str(study.id), 100, 18, False, False),
+                task_id="task-failed-run",
+                throw=False,
+            )
+
+        assert result.state == "FAILURE"
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-failed-run"
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+        with (
+            patch(
+                "apps.simulations.views.AsyncResult",
+                side_effect=RuntimeError("result backend unavailable"),
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = _authed_client(user).post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        assert "recovered" not in response.data
+        assert response.data["task_id"] != "task-failed-run"
+        mock_apply_async.assert_called_once()
+        study.refresh_from_db()
+        assert study.box_counting_task_id == response.data["task_id"]
+        assert study.box_counting_task_state == "dispatched"
+
+
+# ── Async task producer behavior ───────────────────────────────────────
+
+
+@pytest.mark.django_db
 class TestAsyncTaskProducer:
     def test_task_reports_progress_and_returns_summary(self, user, project):
         from apps.simulations.tasks import run_box_counting_async

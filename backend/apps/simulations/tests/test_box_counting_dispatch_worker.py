@@ -4,11 +4,16 @@ from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
 import pytest
-from celery.exceptions import Ignore
+from celery.exceptions import Ignore, SoftTimeLimitExceeded
+from celery.signals import task_revoked
+from django.utils import timezone
 
 from apps.projects.models import Project
 from apps.simulations.models import ParametricStudy
-from apps.simulations.tasks import run_box_counting_async
+from apps.simulations.tasks import (
+    run_box_counting_async,
+    run_simulation_task,
+)
 
 from .test_box_counting_async import _make_study, _make_user, _task_payload
 
@@ -128,11 +133,10 @@ class TestDurableAsyncTaskClaim:
         ("marker_task_id", "task_error", "expected_release", "expected_state"),
         [
             ("task-current", False, True, "finished"),
-            # A failed run's distinct `failed` tombstone is the L65 burial,
-            # which lands in a later slice: at this slice a failure still
-            # terminalizes as `finished` in the task's `finally` block,
-            # exactly as it did before the redesign.
-            ("task-current", True, True, "finished"),
+            # L65: a failure no longer terminalizes its own claim as
+            # `finished` — Celery's failure handling buries it with the
+            # distinct `failed` tombstone (see TestWorkerClaimBurial).
+            ("task-current", True, True, "failed"),
             ("task-newer", False, False, "finished"),
         ],
     )
@@ -194,3 +198,231 @@ class TestDurableAsyncTaskClaim:
         assert study.box_counting_task_state == expected_state
         assert study.box_counting_task_payload == _task_payload()
         assert study.box_counting_task_reserved_at is None
+
+
+@pytest.mark.django_db
+class TestWorkerClaimBurial:
+    """L65 amendment to T18: when Celery reports the task failed or was
+    revoked, the worker buries its own durable claim with a `failed`
+    tombstone, so the single admission authority — which reads only the
+    row — releases the study immediately instead of waiting out the
+    65-minute running lease. The lease remains the bound only for a
+    worker death no handler witnesses (SIGKILL)."""
+
+    def _dispatched_claim(self, study: ParametricStudy, task_id: str) -> None:
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id=task_id,
+            box_counting_task_state="dispatched",
+            box_counting_task_payload=_task_payload(),
+        )
+
+    def _running_claim(self, study: ParametricStudy, task_id: str) -> None:
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id=task_id,
+            box_counting_task_state="running",
+            box_counting_task_payload=_task_payload(),
+            box_counting_task_reserved_at=timezone.now(),
+        )
+
+    def _apply_failing_run(
+        self, study: ParametricStudy, task_id: str, exc: Exception
+    ) -> Any:
+        task_runner = cast(Any, run_box_counting_async)
+        marker = MagicMock(info={"task_id": task_id, "study_id": str(study.id)})
+        with (
+            patch(
+                "apps.simulations.tasks.run_box_counting_for_study",
+                side_effect=exc,
+            ),
+            patch("celery.app.task.Task.AsyncResult", return_value=marker),
+            patch.object(task_runner.backend, "store_result"),
+        ):
+            # throw=False: a production worker never propagates the task
+            # exception out of the tracer — it records FAILURE and invokes
+            # the failure handling that must bury the claim.
+            return task_runner.apply(
+                args=(str(study.id), 100, 18, False, False),
+                task_id=task_id,
+                throw=False,
+            )
+
+    def test_failed_run_buries_its_claim(self, user: Any, project: Project) -> None:
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-fail")
+
+        result = self._apply_failing_run(study, "task-fail", RuntimeError("boom"))
+
+        assert result.state == "FAILURE"
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-fail"
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_soft_time_limit_failure_buries_its_claim(
+        self, user: Any, project: Project
+    ) -> None:
+        """Celery hard time limits raise `SoftTimeLimitExceeded` first; the
+        soft limit surfaces as a normal exception, so Celery reports it
+        through the failure handler — and the burial must cover it."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-soft")
+
+        result = self._apply_failing_run(study, "task-soft", SoftTimeLimitExceeded())
+
+        assert result.state == "FAILURE"
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_revoked_run_buries_its_claim(self, user: Any, project: Project) -> None:
+        """Revocation handling buries the claim the same way failure does:
+        the `task_revoked` signal is what a terminate-revoke of a running
+        task dispatches in the worker process."""
+        study = _make_study(project)
+        self._running_claim(study, "task-revoked")
+
+        task_revoked.send(
+            sender=run_box_counting_async,
+            request={
+                "id": "task-revoked",
+                "args": (str(study.id), 100, 18, False, False),
+            },
+            terminated=True,
+            signum=None,
+            expired=False,
+        )
+
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_revocation_of_another_task_never_buries(
+        self, user: Any, project: Project
+    ) -> None:
+        """The revocation hook is scoped to the box-counting task name, so
+        a revoke of any other task in the module never touches a claim."""
+        study = _make_study(project)
+        self._running_claim(study, "task-mine")
+
+        task_revoked.send(
+            sender=run_simulation_task,
+            request={
+                "id": "task-other",
+                "args": (str(study.id), 100, 18, False, False),
+            },
+            terminated=True,
+            signum=None,
+            expired=False,
+        )
+
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "running"
+        assert study.box_counting_task_reserved_at is not None
+
+    def test_failed_run_still_propagates_to_celery(
+        self, user: Any, project: Project
+    ) -> None:
+        """The burial must not swallow the original exception: the failure
+        is still recorded in the result and re-raised on retrieval."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-propagate")
+
+        result = self._apply_failing_run(
+            study, "task-propagate", RuntimeError("worker failed")
+        )
+
+        assert result.state == "FAILURE"
+        with pytest.raises(RuntimeError, match="worker failed"):
+            result.get()
+
+    def test_successful_run_still_ends_finished(
+        self, user: Any, project: Project
+    ) -> None:
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-ok")
+        task_runner = cast(Any, run_box_counting_async)
+        marker = MagicMock(info={"task_id": "task-ok", "study_id": str(study.id)})
+
+        with (
+            patch(
+                "apps.simulations.tasks.run_box_counting_for_study",
+                return_value={"total": 0, "processed": 0},
+            ),
+            patch("celery.app.task.Task.AsyncResult", return_value=marker),
+            patch.object(task_runner.backend, "store_result"),
+        ):
+            result = task_runner.apply(
+                args=(str(study.id), 100, 18, False, False),
+                task_id="task-ok",
+                throw=False,
+            )
+
+        assert result.state == "SUCCESS"
+        assert result.get() == {"total": 0, "processed": 0}
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "finished"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_burial_never_touches_a_claim_owned_by_a_newer_dispatch(
+        self, user: Any, project: Project
+    ) -> None:
+        """The burial is matching-only — task id plus the `running` state
+        only this worker's claim can hold — so a newer dispatch (its own
+        task id, or a recovery republish that re-queued this same id below
+        `running`) is never buried."""
+        study = _make_study(project)
+        args = (str(study.id), 100, 18, False, False)
+        task_runner = cast(Any, run_box_counting_async)
+
+        # Control: the worker's own running claim is buried by its failure.
+        self._running_claim(study, "task-old")
+        task_runner.on_failure(
+            RuntimeError("worker failed"), "task-old", args, {}, None
+        )
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+        # A newer dispatch already replaced the claim with its own task id.
+        self._running_claim(study, "task-new")
+        task_runner.on_failure(
+            RuntimeError("worker failed"), "task-old", args, {}, None
+        )
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-new"
+        assert study.box_counting_task_state == "running"
+
+        # A recovery republish re-queued the SAME task id below `running`:
+        # the stale failure must not bury the queued copy's claim either.
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-old",
+            box_counting_task_state="dispatched",
+            box_counting_task_reserved_at=timezone.now(),
+        )
+        task_runner.on_failure(
+            RuntimeError("worker failed"), "task-old", args, {}, None
+        )
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "dispatched"
+
+    def test_burial_outage_never_breaks_celery_failure_handling(
+        self, user: Any, project: Project
+    ) -> None:
+        """The burial's own failure is logged and swallowed: Celery's
+        failure handling still records the ORIGINAL exception, never the
+        burial outage, and the claim falls back to the running lease."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-bury-outage")
+
+        with patch.object(
+            ParametricStudy.objects,
+            "filter",
+            side_effect=RuntimeError("db outage"),
+        ):
+            result = self._apply_failing_run(
+                study, "task-bury-outage", RuntimeError("worker failed")
+            )
+
+        assert result.state == "FAILURE"
+        with pytest.raises(RuntimeError, match="worker failed"):
+            result.get()
