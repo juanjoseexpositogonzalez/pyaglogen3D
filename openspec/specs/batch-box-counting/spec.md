@@ -206,15 +206,19 @@ emit empty cells in those columns. `BC_Win_Delta` carries the R4 delta (windowed
 only when that row's windowed `status == "ok"`, else empty. The appended block sits after the
 columns gated by `study.include_box_counting` (`views.py:2043-2045`): a study with the flag
 toggled off after a windowed run keeps its `BC_Win_*` header (the gate for the windowed block
-is the recorded run, not the current flag). A study whose run was legacy-only produces a CSV
-**byte-identical** to pre-change (single header, no appended block).
+is the recorded run, not the current flag). A study whose run was legacy-only appends no `BC_Win_*` block (single
+header through the `BC_*` columns). The CSV is byte-identical to pre-change **except**
+for the trailing `Partial` column that R10 appends to every study export: `Partial`
+is unconditional, so the byte-identity claim is bounded to the columns before it and
+R6 and R10 are satisfiable together instead of contradicting each other.
 
 #### Scenario R6.1 — Header follows recorded windowed data
 
 - **GIVEN** a study where any simulation carries a recorded windowed block
 - **WHEN** its CSV is exported
 - **THEN** the `BC_Win_*` columns are appended even if `include_box_counting` was later disabled
-- **AND** a legacy-only study keeps the pre-change CSV byte-identically
+- **AND** a legacy-only study keeps the pre-change column order through `BC_*`, with only R10's
+  trailing `Partial` column appended
 
 ### Requirement: R7. Frontend: dedicated Fractal Analysis tab
 
