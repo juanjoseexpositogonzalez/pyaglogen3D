@@ -1,5 +1,6 @@
 """Worker claim and duplicate-delivery tests for async box-counting dispatch."""
 
+from datetime import timedelta
 from typing import Any, cast
 from unittest.mock import MagicMock, patch
 
@@ -127,6 +128,53 @@ class TestDurableAsyncTaskClaim:
         assert study.box_counting_task_state == "finished"
         assert study.box_counting_task_payload == _task_payload()
         assert study.box_counting_task_reserved_at is None
+
+    def test_worker_claim_stamp_is_strictly_greater_than_the_publisher_stamp(
+        self, user: Any, project: Project
+    ) -> None:
+        """JD-A-002 (mid-run capture): the claim block stamps
+        `box_counting_task_reserved_at` at claim time, and the run's
+        terminal `finished` tombstone clears it. Capture the stamp while
+        the run is in flight — the mocked study runner reads it — and
+        assert it is strictly greater than the stale publisher stamp it
+        replaced."""
+        study = _make_study(project)
+        publisher_stamp = timezone.now() - timedelta(minutes=45)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-claim-stamp",
+            box_counting_task_state="dispatched",
+            box_counting_task_payload=_task_payload(),
+            box_counting_task_reserved_at=publisher_stamp,
+        )
+        observed: dict[str, Any] = {}
+
+        def _capture_stamp(study_id: str, *args: Any, **kwargs: Any) -> dict[str, Any]:
+            study.refresh_from_db()
+            observed["state"] = study.box_counting_task_state
+            observed["reserved_at"] = study.box_counting_task_reserved_at
+            return {"total": 0, "processed": 0}
+
+        task_runner = cast(Any, run_box_counting_async)
+        task_runner.push_request(id="task-claim-stamp")
+        try:
+            with (
+                patch(
+                    "apps.simulations.tasks.run_box_counting_for_study",
+                    side_effect=_capture_stamp,
+                ),
+                patch(
+                    "celery.app.task.Task.AsyncResult",
+                    return_value=MagicMock(info={}),
+                ),
+                patch.object(task_runner.backend, "store_result"),
+            ):
+                task_runner.run(str(study.id), 100, 18, False, False)
+        finally:
+            task_runner.pop_request()
+
+        assert observed["state"] == "running"
+        assert observed["reserved_at"] is not None
+        assert observed["reserved_at"] > publisher_stamp
 
     @pytest.mark.parametrize("initial_state", ["pending", "dispatched"])
     @pytest.mark.parametrize(
@@ -290,6 +338,61 @@ class TestWorkerClaimBurial:
             terminated=True,
             signum=None,
             expired=False,
+        )
+
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_revoked_queued_run_buries_its_dispatched_claim(
+        self, user: Any, project: Project
+    ) -> None:
+        """JD-B-002: Celery dispatches the same `task_revoked` signal for a
+        revoke of a task still QUEUED — and that revoke inserts the id into
+        the worker's persistent revoked set, so every later delivery of
+        that id is dropped worker-side. Without burying the `dispatched`
+        claim too, the study answers 409 with nothing running for the
+        rest of the ~65-minute queue lease. The revoke hook must therefore
+        bury both `dispatched` and `running` claims (on_failure keeps
+        burying only `running`: a FAILED run can only be running-side)."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-revoke-queued")
+
+        task_revoked.send(
+            sender=run_box_counting_async,
+            request={
+                "id": "task-revoke-queued",
+                "args": (str(study.id), 100, 18, False, False),
+            },
+            terminated=False,
+            signum=None,
+            expired=False,
+        )
+
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-revoke-queued"
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_revoked_expired_message_buries_its_dispatched_claim(
+        self, user: Any, project: Project
+    ) -> None:
+        """JD-B-002: the `expired=True` flavor of `task_revoked` (a worker
+        drains a message whose `expires` already lapsed) must bury the
+        `dispatched` claim as well — the queued run it stood for will
+        never execute."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-revoke-expired")
+
+        task_revoked.send(
+            sender=run_box_counting_async,
+            request={
+                "id": "task-revoke-expired",
+                "args": (str(study.id), 100, 18, False, False),
+            },
+            terminated=False,
+            signum=None,
+            expired=True,
         )
 
         study.refresh_from_db()

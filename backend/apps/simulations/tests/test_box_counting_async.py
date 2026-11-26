@@ -17,6 +17,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pytest
+from celery.exceptions import Ignore
 from django.test import TestCase as DjangoTestCase
 from django.urls import reverse
 from django.utils import timezone
@@ -803,9 +804,19 @@ class TestDoubleSubmitGuard:
         assert isinstance(study.box_counting_params, dict)
         assert study.box_counting_params["windowed"] is True
 
-    def test_pending_dispatch_is_republished_with_same_task_id(
-        self, user: User, project: Project
+    def test_pending_dispatch_recovers_with_a_fresh_task_id(
+        self, user: User, project: Project, bc_result_backend: MagicMock
     ) -> None:
+        """JD-B-001 (product decision superseding T18 R3's same-id reuse):
+        Celery enforces `expires` in the worker main process — a drained
+        expired original puts its id into the worker's persistent revoked
+        set, and every later delivery of that same id is silently dropped
+        — so a same-id recovery republish can promise a run nobody
+        executes while the study cycles 409 for the queue lease. Recovery
+        therefore always retires the expired claim and dispatches under a
+        FRESH task id; `recovered: true` now means the caller's parameters
+        were recovered (the stored payload governs what runs) and a fresh
+        run was dispatched, with the fresh task id disclosed in the 202."""
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
@@ -825,18 +836,29 @@ class TestDoubleSubmitGuard:
         )
         client = _authed_client(user)
 
-        with patch(
-            "apps.simulations.tasks.run_box_counting_async.apply_async"
-        ) as mock_apply_async:
+        # The retired claim's result-backend cleanup is deferred to
+        # `transaction.on_commit` (T18 R5): the old id may be poisoned
+        # worker-side, so its records must not block the fresh dispatch.
+        with (
+            _capture_on_commit(execute=True),
+            patch(
+                "apps.simulations.views.uuid.uuid4",
+                return_value="task-fresh-recovery",
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
             response = client.post(_run_url(study), {}, format="json")
 
         assert response.status_code == 202
-        # JD-A-002/T18 R3: discloses `recovered` + every effective reused
-        # parameter, `force` included — an ordinary unforced request must
-        # be able to see that a recovered run's `force` differs from what
-        # it asked for, never silently re-analyze under it.
+        # T18 R3 disclosure preserved: `recovered` + every effective
+        # recovered parameter, `force` included — an ordinary unforced
+        # request must be able to see that a recovered run's `force`
+        # differs from what it asked for, never silently re-analyze
+        # under it.
         assert response.data == {
-            "task_id": "task-pending",
+            "task_id": "task-fresh-recovery",
             "total": 31,
             "recovered": True,
             "points_per_sphere": 77,
@@ -846,12 +868,20 @@ class TestDoubleSubmitGuard:
         }
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 77, 12, True, False),
-            task_id="task-pending",
+            task_id="task-fresh-recovery",
             expires=3600,
         )
+        # The retired id's records are released best-effort after commit
+        # so they can never block the fresh dispatch (JD-B-001).
+        cleared = {
+            call.args[0]
+            for call in bc_result_backend.store_result.call_args_list
+            if call.kwargs.get("state") == "SUCCESS"
+        }
+        assert cleared == {"bc-owner-task-pending", "task-pending"}
         study.refresh_from_db()
         assert study.box_counting_params == original_params
-        assert study.box_counting_task_id == "task-pending"
+        assert study.box_counting_task_id == "task-fresh-recovery"
         assert study.box_counting_task_state == "dispatched"
         assert study.box_counting_task_payload == payload
         assert study.box_counting_task_reserved_at is not None
@@ -975,7 +1005,9 @@ class TestDoubleSubmitGuard:
         self, user: User, project: Project
     ) -> None:
         """An explicit `force` equal to the stored one is not a conflict:
-        the claim is still recovered with its original task id."""
+        the claim is still recovered — under a fresh task id (JD-B-001) —
+        executing the stored payload's parameters rather than being
+        superseded by the caller's own."""
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
@@ -987,9 +1019,12 @@ class TestDoubleSubmitGuard:
         )
         client = _authed_client(user)
 
-        with patch(
-            "apps.simulations.tasks.run_box_counting_async.apply_async"
-        ) as mock_apply_async:
+        with (
+            patch("apps.simulations.views.uuid.uuid4", return_value="task-fresh-force"),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
             response = client.post(
                 _run_url(study),
                 {"windowed": True, "force": False},
@@ -997,16 +1032,19 @@ class TestDoubleSubmitGuard:
             )
 
         assert response.status_code == 202
-        assert response.data["task_id"] == "task-pending"
+        assert response.data["task_id"] == "task-fresh-force"
         assert response.data["recovered"] is True
         # T18 R3: `force` is always disclosed, even when it matches what
         # the caller already asked for.
         assert response.data["force"] is False
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 100, 18, True, False),
-            task_id="task-pending",
+            task_id="task-fresh-force",
             expires=3600,
         )
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-fresh-force"
+        assert study.box_counting_task_state == "dispatched"
 
     def test_recovery_discloses_a_stored_force_to_an_unforced_caller(
         self, user: User, project: Project
@@ -1030,14 +1068,20 @@ class TestDoubleSubmitGuard:
         )
         client = _authed_client(user)
 
-        with patch(
-            "apps.simulations.tasks.run_box_counting_async.apply_async"
-        ) as mock_apply_async:
+        with (
+            patch(
+                "apps.simulations.views.uuid.uuid4",
+                return_value="task-fresh-stored-force",
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
             response = client.post(_run_url(study), {}, format="json")
 
         assert response.status_code == 202
         assert response.data == {
-            "task_id": "task-stored-force",
+            "task_id": "task-fresh-stored-force",
             "total": 31,
             "recovered": True,
             "points_per_sphere": 100,
@@ -1047,7 +1091,7 @@ class TestDoubleSubmitGuard:
         }
         mock_apply_async.assert_called_once_with(
             args=(str(study.id), 100, 18, True, True),
-            task_id="task-stored-force",
+            task_id="task-fresh-stored-force",
             expires=3600,
         )
 
@@ -1102,6 +1146,55 @@ class TestDoubleSubmitGuard:
         assert study.box_counting_task_state == "pending"
         assert study.box_counting_task_payload == payload
         assert study.box_counting_params is None
+
+    def test_concurrent_worker_claim_defeats_recovery_and_returns_409(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-B-001: the concurrent-worker-claim 409 is preserved for the
+        fresh-id recovery branch exactly as for supersede — a worker that
+        claims the expired task between its lease's expiry and our
+        retiring update must win, because the matching update affects zero
+        rows and the request answers the existing in-flight 409 instead of
+        retiring a claim that is no longer ours to retire."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-stale-recovery",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views._release_bc_db_dispatch",
+                return_value=False,
+            ) as mock_release,
+            patch(
+                "apps.simulations.views._clear_bc_dispatch_reservation"
+            ) as mock_clear,
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 409
+        assert response.data == {
+            "detail": "A box-counting run is already in flight for this study",
+            "task_id": "task-stale-recovery",
+        }
+        assert mock_release.call_args.args[:2] == (str(study.id), "task-stale-recovery")
+        mock_clear.assert_not_called()
+        mock_apply_async.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-stale-recovery"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
 
     @pytest.mark.parametrize(
         ("durable_state", "lease_seconds", "expected_status"),
@@ -1160,11 +1253,33 @@ class TestDoubleSubmitGuard:
             assert response.data["task_id"] == "task-durable"
             mock_apply_async.assert_not_called()
         elif durable_state == "pending":
-            assert response.data["task_id"] == "task-durable"
+            # JD-B-001: an expired pending claim is recovered under a
+            # fresh task id, never the retired original's id.
+            assert response.data["task_id"] != "task-durable"
             assert response.data["recovered"] is True
             mock_apply_async.assert_called_once()
         else:
             assert response.data["results"]["total"] == 5
+
+    def test_three_phase_lease_bounds_are_pinned_to_the_t18_contract(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-A-001: every expiry witness derives its age from the same
+        constant it exercises, so collapsing the dispatched and running
+        bounds into the 30-second pending bound would leave the suite
+        green while admission superseded a running claim whose worker was
+        still executing. Pin the literal T18 R2 values instead: 30 seconds
+        for `pending`, and 3,900 seconds (60-minute queue expiry or hard
+        runtime + 5-minute grace) for both `dispatched` and `running`."""
+        from apps.simulations.views import (
+            _BC_PENDING_LEASE_SECONDS,
+            _BC_QUEUED_LEASE_SECONDS,
+            _BC_RUNNING_LEASE_SECONDS,
+        )
+
+        assert _BC_PENDING_LEASE_SECONDS == 30
+        assert _BC_QUEUED_LEASE_SECONDS == 3900
+        assert _BC_RUNNING_LEASE_SECONDS == 3900
 
     @pytest.mark.parametrize(
         ("marker_state", "expected_status"),
@@ -1256,11 +1371,16 @@ class TestDoubleSubmitGuard:
         mock_apply_async.assert_not_called()
         mock_bc.assert_not_called()
 
-    def test_recovery_reservation_failure_never_terminalizes_original_records(
+    def test_recovery_reservation_failure_restores_the_expired_claim(
         self, user: User, project: Project
     ) -> None:
-        """JD-A-001: a failed recovery re-reservation must not terminalize
-        records that may belong to a genuinely running original copy."""
+        """JD-B-001: a failed result-backend reservation for the fresh
+        recovery id rolls the durable row back to the expired claim it
+        retired, so the next request can retry recovery instead of the
+        study sitting on a `cancelled` tombstone with its stored payload
+        parameters gone. The retired old id's own record cleanup is
+        best-effort (T18 R5) and may fail harmlessly, because no admission
+        decision depends on it."""
         study = _make_study(project)
         for _ in range(31):
             _make_sim(project, study, with_geometry=True)
@@ -1286,8 +1406,11 @@ class TestDoubleSubmitGuard:
 
         assert response.status_code == 503
         mock_apply_async.assert_not_called()
-        # Only the failed write itself — cleanup never terminalizes records.
-        assert backend.store_result.call_count == 1
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-recover"
+        assert study.box_counting_task_state == "pending"
+        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_reserved_at == expired_lease
 
     def test_recovery_broker_failure_does_not_wedge_the_next_request(
         self, user: User, project: Project
@@ -1333,19 +1456,21 @@ class TestDoubleSubmitGuard:
 
         assert second_response.status_code == 202
         assert second_response.data["recovered"] is True
-        assert second_response.data["task_id"] == "task-recover-wedge"
+        # JD-B-001: the retry dispatches under a fresh task id, never the
+        # expired original's — which may be poisoned worker-side.
+        assert second_response.data["task_id"] != "task-recover-wedge"
         mock_apply_async.assert_called_once()
 
-    def test_recovery_broker_failure_leaves_a_genuinely_delivered_duplicate_claimable(
+    def test_late_delivery_of_a_retired_old_id_is_ignored(
         self, user: User, project: Project
     ) -> None:
-        """T18 (one of the six frozen situations this redesign exists to
-        close): the same recovery broker failure must not make a message
-        the broker genuinely queued (ack lost on the way back to the
-        client) be ignored and the run silently lost. The revert touches
-        only the lease timestamp — never task id, state, or a tombstone —
-        so the worker's own claim check still accepts a delivery of the
-        original task id."""
+        """JD-B-001: recovery retires the expired claim and dispatches a
+        fresh task id, so a late delivery of the retired old id — the
+        broker may still hold a genuinely queued copy whose ack was lost,
+        or a worker may drain it before its `expires` takes effect — is
+        ignored by the worker's claim check instead of executing a second
+        run over the same study. The old id may be poisoned worker-side;
+        the fresh dispatch owns the study."""
         from apps.simulations.tasks import run_box_counting_async as _producer_task
 
         study = _make_study(project)
@@ -1354,28 +1479,94 @@ class TestDoubleSubmitGuard:
         payload = _task_payload(77, 12, True)
         expired_lease = timezone.now() - timedelta(seconds=31)
         ParametricStudy.objects.filter(pk=study.pk).update(
-            box_counting_task_id="task-recover-duplicate",
+            box_counting_task_id="task-retired",
             box_counting_task_state="pending",
             box_counting_task_payload=payload,
             box_counting_task_reserved_at=expired_lease,
         )
         client = _authed_client(user)
-        client.raise_request_exception = False
 
-        with patch(
-            "apps.simulations.tasks.run_box_counting_async.apply_async",
-            side_effect=RuntimeError("broker unavailable"),
+        with (
+            patch(
+                "apps.simulations.views.uuid.uuid4",
+                return_value="task-fresh-after-retire",
+            ),
+            patch("apps.simulations.tasks.run_box_counting_async.apply_async"),
         ):
             response = client.post(_run_url(study), {}, format="json")
 
-        assert response.status_code == 500
+        assert response.status_code == 202
+        assert response.data["recovered"] is True
+        assert response.data["task_id"] == "task-fresh-after-retire"
         study.refresh_from_db()
-        assert study.box_counting_task_id == "task-recover-duplicate"
-        assert study.box_counting_task_state == "pending"
-        assert study.box_counting_task_payload == payload
+        assert study.box_counting_task_id == "task-fresh-after-retire"
+        assert study.box_counting_task_state == "dispatched"
+
+        # A late delivery of the RETIRED id never executes: the worker's
+        # claim check sees the fresh id on the row and ignores it.
+        task_runner = cast(Any, _producer_task)
+        task_runner.push_request(id="task-retired")
+        try:
+            with (
+                patch("apps.simulations.tasks.run_box_counting_for_study") as mock_run,
+                patch(
+                    "celery.app.task.Task.AsyncResult",
+                    return_value=MagicMock(info={}),
+                ),
+                pytest.raises(Ignore),
+            ):
+                task_runner.run(str(study.id), 77, 12, True, False)
+        finally:
+            task_runner.pop_request()
+        mock_run.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-fresh-after-retire"
+        assert study.box_counting_task_state == "dispatched"
+
+    def test_recovery_dispatches_a_claimable_fresh_id(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-B-001: the worker must be able to claim the task a recovery
+        dispatched — matching id and `pending`/`dispatched` state — which
+        is what makes the fresh-id recovery a real run instead of a 202
+        nobody executes (the frozen defect of the same-id policy: a
+        drained expired original puts its id in the worker's persistent
+        revoked set, so every later delivery of that same id is silently
+        dropped by Celery's worker-side `expires` enforcement)."""
+        from apps.simulations.tasks import run_box_counting_async as _producer_task
+
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-original-claimable",
+            box_counting_task_state="pending",
+            box_counting_task_payload=_task_payload(100, 18, False),
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+
+        with (
+            patch(
+                "apps.simulations.views.uuid.uuid4",
+                return_value="task-fresh-claimable",
+            ),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 202
+        assert response.data["recovered"] is True
+        fresh_id = response.data["task_id"]
+        assert fresh_id == "task-fresh-claimable"
+        assert fresh_id != "task-original-claimable"
+        mock_apply_async.assert_called_once()
 
         task_runner = cast(Any, _producer_task)
-        task_runner.push_request(id="task-recover-duplicate")
+        task_runner.push_request(id=fresh_id)
         try:
             with (
                 patch(
@@ -1387,12 +1578,13 @@ class TestDoubleSubmitGuard:
                     return_value=MagicMock(info={}),
                 ),
             ):
-                summary = task_runner.run(str(study.id), 77, 12, True, False)
+                summary = task_runner.run(str(study.id), 100, 18, False, False)
         finally:
             task_runner.pop_request()
 
         assert summary == {"total": 31, "processed": 31}
         study.refresh_from_db()
+        assert study.box_counting_task_id == fresh_id
         assert study.box_counting_task_state == "finished"
 
     def test_superseded_claim_rollback_never_leaves_terminal_backend_records(
@@ -1502,7 +1694,9 @@ class TestDoubleSubmitGuard:
         mock_apply_async.assert_called_once()
         if expect_recovered:
             assert response.data["recovered"] is True
-            assert response.data["task_id"] == "task-expired-unreadable"
+            # JD-B-001: the recovered run is dispatched under a fresh task
+            # id, never the expired original's — possibly poisoned — id.
+            assert response.data["task_id"] != "task-expired-unreadable"
         else:
             assert "recovered" not in response.data
             assert response.data["task_id"] != "task-expired-unreadable"
