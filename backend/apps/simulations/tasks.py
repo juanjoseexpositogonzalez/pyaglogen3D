@@ -8,7 +8,9 @@ from uuid import UUID
 
 import numpy as np
 from celery import shared_task
+from celery.exceptions import Ignore
 from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from .param_policy import rotation_attempts
@@ -1230,9 +1232,10 @@ def run_box_counting_for_study(
             progress_cb(current, total)
 
     return results
-
-
-@shared_task(bind=True, name="apps.simulations.tasks.run_box_counting_async")
+@shared_task(
+    bind=True,
+    name="apps.simulations.tasks.run_box_counting_async",
+)
 def run_box_counting_async(
     self,
     study_id: str,
@@ -1259,13 +1262,60 @@ def run_box_counting_async(
             },
         )
 
-    # JD-B-006: release the per-study in-flight marker stamped at dispatch
-    # (views.py _stamp_bc_inflight_marker). Runs in a finally so a raising
-    # run can never wedge the marker into a permanent 409; only cleared
-    # while it still references THIS task id — a newer dispatch may already
-    # own the marker. Best-effort: the marker also self-expires via the
-    # result backend's RESULT_EXPIRES, and the view treats a marker whose
-    # referenced task is terminal as stale.
+    from .models import ParametricStudy
+
+    task_id = str(self.request.id or "")
+    with transaction.atomic():
+        locked_study = ParametricStudy.objects.select_for_update().get(pk=study_id)
+        if locked_study.box_counting_task_id:
+            if (
+                locked_study.box_counting_task_id != task_id
+                or locked_study.box_counting_task_state not in ("pending", "dispatched")
+            ):
+                raise Ignore()
+        else:
+            if task_id:
+                try:
+                    owner = self.AsyncResult(f"bc-owner-{task_id}")
+                    owner_meta = owner.info if isinstance(owner.info, dict) else {}
+                except Exception:  # noqa: BLE001 — legacy adoption fails closed
+                    logger.warning("box-counting legacy owner lookup failed", exc_info=True)
+                    raise Ignore() from None
+                if (
+                    owner.state != "PROGRESS"
+                    or owner_meta.get("task_id") != task_id
+                    or owner_meta.get("study_id") != study_id
+                ):
+                    raise Ignore()
+            # Legacy queued messages created before the durable dispatch
+            # migration remain executable and become protected once claimed.
+            locked_study.box_counting_task_id = task_id
+            locked_study.box_counting_task_payload = {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "windowed": windowed,
+                "force": force,
+            }
+        locked_study.box_counting_task_state = "running"
+        # T18 R2: the worker refreshes the lease at claim time, marking the
+        # start of the running phase distinctly from the queued phase the
+        # publisher stamped. Applies uniformly whether this claims an
+        # existing durable row or adopts a legacy queued message.
+        locked_study.box_counting_task_reserved_at = timezone.now()
+        locked_study.save(
+            update_fields=[
+                "box_counting_task_id",
+                "box_counting_task_state",
+                "box_counting_task_payload",
+                "box_counting_task_reserved_at",
+            ]
+        )
+
+    # Terminalize the durable claim and release the result-backend marker
+    # (slice-4 state: success and failure both write the matching
+    # `finished` tombstone here; the worker-side burial of failed runs
+    # lands in the next slice). Each write is matching-only: a newer
+    # dispatch may already own the study claim.
     marker_id = f"bc-inflight-{study_id}"
     try:
         return run_box_counting_for_study(
@@ -1277,6 +1327,13 @@ def run_box_counting_async(
             progress_cb=_report,
         )
     finally:
+        ParametricStudy.objects.filter(
+            pk=study_id,
+            box_counting_task_id=task_id,
+        ).update(
+            box_counting_task_state="finished",
+            box_counting_task_reserved_at=None,
+        )
         try:
             marker = self.AsyncResult(marker_id)
             meta = marker.info if isinstance(marker.info, dict) else {}
@@ -1284,53 +1341,6 @@ def run_box_counting_async(
                 self.backend.store_result(marker_id, None, state="SUCCESS")
         except Exception:  # noqa: BLE001 — cleanup must never mask the result
             logger.debug("box-counting in-flight marker cleanup skipped", exc_info=True)
-
-
-def fit_power_law_rg(
-    n_values: list[int], rg_values: list[float], rp: float = 1.0
-) -> tuple[float, float, float]:
-    """Fit power-law relationship N = kf * (Rg/rp)^Df to get Df and kf.
-
-    Args:
-        n_values: List of particle counts
-        rg_values: List of corresponding Rg values
-        rp: Primary particle radius
-
-    Returns:
-        Tuple of (Df, kf, R²)
-    """
-    if len(n_values) < 3 or len(rg_values) < 3:
-        return 0.0, 0.0, 0.0
-
-    # Filter out invalid values
-    valid = [(n, rg) for n, rg in zip(n_values, rg_values) if n > 0 and rg > 0]
-    if len(valid) < 3:
-        return 0.0, 0.0, 0.0
-
-    n_arr = np.array([v[0] for v in valid], dtype=np.float64)
-    rg_arr = np.array([v[1] for v in valid], dtype=np.float64)
-
-    # Take log: log(N) = log(kf) + Df * log(Rg/rp)
-    log_n = np.log(n_arr)
-    log_rg_rp = np.log(rg_arr / rp)
-
-    # Linear fit: y = a + b*x where y=log(N), x=log(Rg/rp), b=Df, a=log(kf)
-    # Using least squares
-    A = np.vstack([log_rg_rp, np.ones(len(log_rg_rp))]).T
-    try:
-        result = np.linalg.lstsq(A, log_n, rcond=None)
-        df, log_kf = result[0]
-        kf = math.exp(log_kf)
-
-        # R² calculation
-        residuals = log_n - (df * log_rg_rp + log_kf)
-        ss_res = np.sum(residuals**2)
-        ss_tot = np.sum((log_n - np.mean(log_n)) ** 2)
-        r_squared = 1.0 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
-
-        return float(df), float(kf), float(r_squared)
-    except Exception:
-        return 0.0, 0.0, 0.0
 
 
 def compute_import_metrics(coords: np.ndarray, radii: np.ndarray) -> dict:
