@@ -80,3 +80,6 @@ django_settings_module = "config.settings.development"
 DJANGO_SETTINGS_MODULE = "config.settings.test"
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = [
+    "pg_lock_witness: requires a real PostgreSQL connection to exercise select_for_update() as an actual cross-process lock (JD-A-004); skipped automatically unless DATABASES['default'] is postgresql, e.g. via config.settings.test_postgres.",
+]
