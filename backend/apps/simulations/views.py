@@ -2843,23 +2843,26 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 )
             except BaseException:
                 if recovered_dispatch:
-                    # JD-B-001: the broker never accepted the fresh
-                    # recovery dispatch, so no worker can have claimed it
-                    # (the message was never published). Restore the
-                    # expired claim the atomic block retired — full
-                    # rollback matching only this just-written `pending`
-                    # row — so the next request retries recovery instead
-                    # of the study sitting on a `cancelled` tombstone with
-                    # its stored payload gone. The fresh id's own records
-                    # are brand-new and safe to terminalize.
-                    _rollback_bc_db_dispatch(
+                    # JD-B-001: on an unambiguous pre-publish failure the
+                    # fresh id has no records and no worker can have
+                    # claimed it. But `apply_async` raising does NOT prove
+                    # the broker never accepted the message — a
+                    # connection drop after publish-and-claim races here
+                    # too. The rollback matches only this just-written
+                    # `pending` row, so when a worker already flipped it
+                    # to `running` the update affects zero rows and that
+                    # run is live: its records must NOT be terminalized,
+                    # or the study would hold an unpollable claim whose
+                    # owner records report SUCCESS (audit finding 1).
+                    rolled_back = _rollback_bc_db_dispatch(
                         str(study.id),
                         reserved_task_id,
                         previous_include_box_counting,
                         previous_box_counting_params,
                         previous_dispatch,
                     )
-                    _clear_bc_dispatch_reservation(result_backend, reserved_task_id)
+                    if rolled_back:
+                        _clear_bc_dispatch_reservation(result_backend, reserved_task_id)
                 elif _release_bc_db_dispatch(
                     str(study.id), reserved_task_id, publisher_lease_started_at
                 ):
@@ -3168,8 +3171,12 @@ def _rollback_bc_db_dispatch(
     include_box_counting: bool,
     box_counting_params: Any,
     previous_dispatch: tuple[Any, Any, Any, Any],
-) -> None:
-    ParametricStudy.objects.filter(
+) -> bool:
+    """Restore the just-written `pending` row to the expired claim the
+    atomic block retired. Returns whether the rollback happened: a zero-
+    row update means a worker already claimed the task (state flipped to
+    `running`), and that run's records must be left untouched."""
+    updated = ParametricStudy.objects.filter(
         pk=study_id,
         box_counting_task_id=task_id,
         box_counting_task_state="pending",
@@ -3181,6 +3188,7 @@ def _rollback_bc_db_dispatch(
         box_counting_task_payload=previous_dispatch[2],
         box_counting_task_reserved_at=previous_dispatch[3],
     )
+    return updated == 1
 
 
 def _mark_bc_db_dispatch_published(study_id: str, task_id: str) -> None:
