@@ -8,7 +8,7 @@ from uuid import UUID
 
 import numpy as np
 from celery import Task, shared_task
-from celery.exceptions import Ignore
+from celery.exceptions import Ignore, SoftTimeLimitExceeded
 from celery.signals import task_revoked
 from django.conf import settings
 from django.db import transaction
@@ -1216,6 +1216,13 @@ def run_box_counting_for_study(
                 results["processed"] += 1
 
             except (KeyboardInterrupt, SystemExit):
+                raise
+            except SoftTimeLimitExceeded:
+                # The soft time limit fires inside the engine call, but it
+                # inherits from Exception, so it must be re-raised
+                # explicitly: absorbing it here would let the task
+                # continue, finish SUCCESS with a `finished` tombstone,
+                # and skip the worker-side burial entirely (L65).
                 raise
             except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
                 # A panic here used to escape the per-simulation loop and kill

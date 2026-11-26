@@ -890,7 +890,7 @@ class TestDoubleSubmitGuard:
     def test_pending_dispatch_with_conflicting_explicit_params_supersedes_expired_claim(
         self, user: User, project: Project, bc_result_backend: MagicMock
     ) -> None:
-        """Round 2 regression 2 (product decision): no caller ever retries
+        """JD-B-001 (worker-side expiry poisoning: same-id republish can be dropped by the worker): Round 2 regression 2 (product decision): no caller ever retries
         without parameters — the frontend always sends full bodies — so the
         former 409 was a dead end that blocked the study forever. Explicit
         new parameters now supersede an expired pending claim: the stale
@@ -1049,7 +1049,7 @@ class TestDoubleSubmitGuard:
     def test_recovery_discloses_a_stored_force_to_an_unforced_caller(
         self, user: User, project: Project
     ) -> None:
-        """T18 R3 (one of the six frozen situations this redesign exists to
+        """JD-B-001 (fresh-id policy: a same-id republish can be dropped worker-side, so recovery always dispatches under a fresh id): T18 R3 (one of the six frozen situations this redesign exists to
         close): the stored claim already asked for `force=True`, and the
         recovering caller sends no `force` at all. Recovery still executes
         the stored `force=True` — but it must say so in the 202, because an
@@ -1415,7 +1415,7 @@ class TestDoubleSubmitGuard:
     def test_recovery_broker_failure_does_not_wedge_the_next_request(
         self, user: User, project: Project
     ) -> None:
-        """T18 (one of the six frozen situations this redesign exists to
+        """JD-B-001 (fresh-id policy: a same-id republish can be dropped worker-side, so recovery always dispatches under a fresh id): T18 (one of the six frozen situations this redesign exists to
         close): a recovery republish's own `apply_async` fails — a broker
         failure previously had no witness at all. The revert restores the
         lease to its already-expired value instead of leaving the
@@ -1460,6 +1460,60 @@ class TestDoubleSubmitGuard:
         # expired original's — which may be poisoned worker-side.
         assert second_response.data["task_id"] != "task-recover-wedge"
         mock_apply_async.assert_called_once()
+
+    def test_publish_claimed_before_failure_keeps_the_live_run_pollable(
+        self, user: User, project: Project, bc_result_backend: MagicMock
+    ) -> None:
+        """Audit finding 1 (ambiguous publish): `apply_async` raising does
+        not prove the broker never accepted the message. When the worker
+        already flipped the fresh recovery id to `running` before the
+        publisher's handler runs, the rollback matches zero rows and the
+        live run's task/owner records must NOT be terminalized — the run
+        is pollable and its claim valid, even though the POST 500s."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        payload = _task_payload(77, 12, True)
+        expired_lease = timezone.now() - timedelta(seconds=31)
+        ParametricStudy.objects.filter(pk=study.pk).update(
+            box_counting_task_id="task-old-claim",
+            box_counting_task_state="pending",
+            box_counting_task_payload=payload,
+            box_counting_task_reserved_at=expired_lease,
+        )
+        client = _authed_client(user)
+        client.raise_request_exception = False
+
+        def publish_then_worker_claims(*args: Any, **kwargs: Any) -> Any:
+            # The broker accepted the message and the worker claimed it
+            # before the publisher saw a (connection-drop) exception.
+            fresh_id = kwargs.get("task_id")
+            assert fresh_id is not None
+            ParametricStudy.objects.filter(pk=study.pk).update(
+                box_counting_task_state="running",
+            )
+            raise RuntimeError("broker connection dropped after publish")
+
+        with (
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async",
+                side_effect=publish_then_worker_claims,
+            ),
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        assert response.status_code == 500
+        study.refresh_from_db()
+        # The worker's claim survives: task id and running state intact,
+        # and its records were NOT terminalized.
+        assert study.box_counting_task_id not in ("", "task-old-claim")
+        assert study.box_counting_task_state == "running"
+        cleared = {
+            call.args[0]
+            for call in bc_result_backend.store_result.call_args_list
+            if call.kwargs.get("state") == "SUCCESS"
+        }
+        assert cleared == set()
 
     def test_late_delivery_of_a_retired_old_id_is_ignored(
         self, user: User, project: Project
@@ -1590,7 +1644,7 @@ class TestDoubleSubmitGuard:
     def test_superseded_claim_rollback_never_leaves_terminal_backend_records(
         self, user: User, project: Project
     ) -> None:
-        """T18 R5 (one of the six frozen situations this redesign exists to
+        """JD-B-001 (fresh-id policy under which this rollback path exists): T18 R5 (one of the six frozen situations this redesign exists to
         close, closed by construction via `transaction.on_commit`): if the
         transaction that retires an expired claim never actually commits,
         the deferred result-backend cleanup must never run, and the
@@ -1648,7 +1702,7 @@ class TestDoubleSubmitGuard:
         durable_state: str,
         expect_recovered: bool,
     ) -> None:
-        """T18 R1 (one of the six frozen situations this redesign exists to
+        """JD-B-001 (fresh-id policy: a same-id republish can be dropped worker-side, so recovery always dispatches under a fresh id): T18 R1 (one of the six frozen situations this redesign exists to
         close, closed by construction): once the durable row's own phase
         lease has already expired, admission never reads the result
         backend at all for this claim — an already-expired claim must
@@ -1846,7 +1900,7 @@ class TestDoubleSubmitGuard:
     def test_dispatch_reserves_task_owner_records(
         self, user, project, bc_result_backend
     ):
-        """The complete reservation is durable before broker dispatch. T18
+        """JD-B-001 (worker-side expiry poisoning: same-id republish can be dropped by the worker): The complete reservation is durable before broker dispatch. T18
         R8 removed `bc-inflight-<study_id>` from a new dispatch's
         reservation entirely (replaces the former
         ``test_dispatch_reserves_task_owner_and_inflight_marker``, whose

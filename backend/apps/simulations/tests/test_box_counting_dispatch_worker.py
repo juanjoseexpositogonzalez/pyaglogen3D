@@ -16,7 +16,12 @@ from apps.simulations.tasks import (
     run_simulation_task,
 )
 
-from .test_box_counting_async import _make_study, _make_user, _task_payload
+from .test_box_counting_async import (
+    _make_sim,
+    _make_study,
+    _make_user,
+    _task_payload,
+)
 
 
 @pytest.fixture
@@ -316,6 +321,49 @@ class TestWorkerClaimBurial:
         self._dispatched_claim(study, "task-soft")
 
         result = self._apply_failing_run(study, "task-soft", SoftTimeLimitExceeded())
+
+        assert result.state == "FAILURE"
+        study.refresh_from_db()
+        assert study.box_counting_task_state == "failed"
+        assert study.box_counting_task_reserved_at is None
+
+    def test_soft_time_limit_inside_the_engine_buries_its_claim(
+        self, user: Any, project: Project
+    ) -> None:
+        """The real seam (audit finding, seq 5): `SoftTimeLimitExceeded`
+        fires INSIDE the engine call within `run_box_counting_for_study`'s
+        per-simulation loop, where the `except BaseException` used to
+        absorb it as one failed simulation and let the task finish
+        SUCCESS with a `finished` tombstone — no burial at all. This
+        witness injects the exception from the engine boundary the loop
+        actually calls, not from the study-runner helper."""
+        study = _make_study(project)
+        self._dispatched_claim(study, "task-engine-soft")
+        for _ in range(2):
+            _make_sim(project, study, with_geometry=True)
+        task_runner = cast(Any, run_box_counting_async)
+        marker = MagicMock(
+            info={"task_id": "task-engine-soft", "study_id": str(study.id)}
+        )
+
+        def engine_raises_soft_limit(*args: Any, **kwargs: Any) -> Any:
+            # The engine call inside run_box_counting_for_study's loop —
+            # the real place the soft limit fires.
+            raise SoftTimeLimitExceeded()
+
+        with (
+            patch(
+                "aglogen_core.box_counting_agglomerate",
+                side_effect=engine_raises_soft_limit,
+            ),
+            patch("celery.app.task.Task.AsyncResult", return_value=marker),
+            patch.object(task_runner.backend, "store_result"),
+        ):
+            result = task_runner.apply(
+                args=(str(study.id), 100, 18, False, True),
+                task_id="task-engine-soft",
+                throw=False,
+            )
 
         assert result.state == "FAILURE"
         study.refresh_from_db()
