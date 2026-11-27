@@ -30,7 +30,6 @@ from apps.accounts.models import User
 from apps.projects.models import Project
 from apps.simulations.models import ParametricStudy, Simulation
 
-
 # --- Fixture helpers ---------------------------------------------------------
 
 
@@ -55,7 +54,7 @@ def _minimal_geometry_bytes(n: int = 3, radius: float = 1.0) -> bytes:
     return buf.getvalue()
 
 
-def _metrics(rg_engine: float) -> dict:
+def _metrics(rg_engine: float) -> dict[str, object]:
     """Return a minimal ``metrics`` dict with a known dimensionless Rg."""
     return {
         "radius_of_gyration": rg_engine,
@@ -84,7 +83,7 @@ def _make_project(owner: User) -> Project:
 
 def _make_simulation(
     project: Project,
-    parameters: dict,
+    parameters: dict[str, object],
     rg_engine: float,
     *,
     name: str = "sim",
@@ -118,6 +117,16 @@ def _find_rg_row(rows: list[list[str]]) -> list[str]:
         "Rg row not found in CSV; first column values were: "
         + repr([r[0] if r else "" for r in rows])
     )
+
+
+def _particle_data_section(rows: list[list[str]]) -> tuple[list[str], list[list[str]]]:
+    """Return ``(header, data_rows)`` of the ``# PARTICLE DATA`` section."""
+    for i, row in enumerate(rows):
+        if row and row[0] == "# PARTICLE DATA":
+            header = rows[i + 1]
+            data = [r for r in rows[i + 2 :] if r and r[0].isdigit()]
+            return header, data
+    raise AssertionError("particle data section not found in CSV")
 
 
 def _authed_client(user: User) -> APIClient:
@@ -216,6 +225,54 @@ class TestSingleSimCsvExport:
         assert float(rg_row[1]) == pytest.approx(20.0)
         assert rg_row[2] == "nm"
 
+    def test_nm_import_radius_nm_column_reads_engine_radius(self) -> None:
+        """#197 witness: nm import with scale_nm=1.0 → radius_nm = 12, not 144.
+
+        An import whose geometry is already in nm is stamped
+        ``scale_nm = 1.0`` alongside the physical diameter
+        (``2 × mean_radius = 24``). Before #197 the export scaled each
+        particle radius by ``diameter / 2`` (12), so a 12 nm particle read
+        as 144 nm in the exported CSV — the screen and the export disagreed.
+        """
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_simulation(
+            project,
+            parameters={
+                "n_particles": 3,
+                # What the import stamps for geometry already in nm: the
+                # physical diameter (2 × 12) plus the explicit factor.
+                "primary_particle_diameter_nm": 24.0,
+                "scale_nm": 1.0,
+                "parameters_schema_version": "v2",
+            },
+            rg_engine=0.5,
+        )
+        sim.geometry = _minimal_geometry_bytes(radius=12.0)
+        sim.save(update_fields=["geometry"])
+
+        url = reverse(
+            "project-simulations-export",
+            kwargs={"project_pk": project.id, "pk": sim.id},
+        )
+        response = _authed_client(user).get(url)
+
+        assert response.status_code == 200, response.content
+        header, data = _particle_data_section(_parse_csv(response.content))
+        radius_nm_col = header.index("radius_nm")
+
+        # Uniform radius 12 in engine (= nm) units: the column must read
+        # the particle's own radius, not 12 × (24/2) = 144.
+        assert len(data) == 3
+        for row in data:
+            assert float(row[radius_nm_col]) == pytest.approx(12.0), (
+                f"radius_nm should read 12.0 (scale_nm=1.0), got {row[radius_nm_col]}"
+            )
+
+        # The Rg row reads the same shim-resolved factor: 0.5 × 1.0 = 0.5.
+        rg_row = _find_rg_row(_parse_csv(response.content))
+        assert float(rg_row[1]) == pytest.approx(0.5)
+
 
 # --- Batch CSV export --------------------------------------------------------
 
@@ -301,3 +358,41 @@ class TestBatchCsvExport:
         assert v2_rg == pytest.approx(15.0), (
             f"v2: rg_engine=0.6 * scale=25 should be 15.0, got {v2_rg}"
         )
+
+    def test_batch_nm_import_separates_physical_radius_from_rg_scale(self) -> None:
+        """An nm import exports radius 12 while Rg keeps the explicit factor 1."""
+        user = _make_user()
+        project = _make_project(user)
+        sim = _make_simulation(
+            project,
+            parameters={
+                "n_particles": 3,
+                "primary_particle_diameter_nm": 24.0,
+                "scale_nm": 1.0,
+                "parameters_schema_version": "v2",
+            },
+            rg_engine=2.5,
+            name="nm-import",
+            is_batch=True,
+        )
+        study = ParametricStudy.objects.create(
+            project=project,
+            name="Imported nm study",
+            base_algorithm="imported",
+            base_parameters={},
+            parameter_grid={},
+            status="completed",
+        )
+        study.simulations.add(sim)
+
+        response = _authed_client(user).get(
+            reverse(
+                "project-studies-export",
+                kwargs={"project_pk": project.id, "pk": study.id},
+            )
+        )
+
+        assert response.status_code == 200, response.content
+        header, row = _parse_csv(response.content)
+        assert float(row[header.index("Rg_nm")]) == pytest.approx(2.5)
+        assert float(row[header.index("radius_nm")]) == pytest.approx(12.0)

@@ -6,9 +6,9 @@ Validation must run before the first write. The system must not lean on
 `apply_sintering_config` raising during expansion: by then the study row
 exists and some children are already queued, and `perform_create`
 (`views.py:1750`) wraps the expansion in neither `try/except` nor
-`transaction.atomic`. The project defines no `ATOMIC_REQUESTS`, and
-`run_simulation_task.delay` is called inside the per-seed loop, so a
-dispatched task would not be undone by a database rollback either.
+`transaction.atomic`. The project defines no `ATOMIC_REQUESTS`, and simulation
+dispatch is called inside the per-seed loop, so a queued task would not be
+undone by a database rollback either.
 
 Each case therefore counts rows **and** dispatches, before and after.
 """
@@ -53,7 +53,9 @@ def api_client(user: User) -> APIClient:
 def dispatch() -> Any:
     """The seam that a database rollback would not undo."""
     with patch("apps.simulations.views.run_simulation_task") as mock_task:
-        mock_task.delay.return_value = MagicMock(id="fake-celery-task-id")
+        mock_result = MagicMock(id="fake-celery-task-id")
+        mock_task.delay.return_value = mock_result
+        mock_task.apply_async.return_value = mock_result
         yield mock_task
 
 
@@ -155,7 +157,7 @@ def test_r12_a_valid_setting_still_writes_and_queues(
     assert resp.status_code == 201, resp.data
     study = ParametricStudy.objects.get(id=resp.data["id"])
     assert study.simulations.count() == 2
-    assert dispatch.delay.call_count == 2
+    assert dispatch.apply_async.call_count == 2
 
 
 # --- The three R12 violations Judgment Day found alive in the code ----------
@@ -251,7 +253,7 @@ def test_r12_a_fully_specified_sweep_is_still_accepted(
     )
 
     assert resp.status_code == 201, resp.data
-    assert dispatch.delay.call_count > 0
+    assert dispatch.apply_async.call_count > 0
 
 
 def test_r12_a_valid_swept_extreme_is_still_accepted(
@@ -702,7 +704,7 @@ def test_r12_an_ordinary_study_still_expands(
     assert resp.status_code == 201, resp.data
     study = ParametricStudy.objects.get(id=resp.data["id"])
     assert study.simulations.count() == 2
-    assert dispatch.delay.call_count == 2
+    assert dispatch.apply_async.call_count == 2
 
 
 # --- Round 4: what the dry run itself broke -------------------------------

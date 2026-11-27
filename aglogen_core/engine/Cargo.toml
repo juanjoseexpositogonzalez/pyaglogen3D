@@ -106,3 +106,20 @@ path = "examples/fixtures/gen_pre_high_df_fix_snapshots.rs"
 [[example]]
 name = "high_df_feasibility_audit"
 path = "examples/diagnostics/high_df_feasibility_audit.rs"
+
+# Diagnostic: per-level local-slope curve + candidate automatic fit-window rules,
+# measured against reference Dfs and the legacy default path (issue #332, task D1).
+# Run: cargo run --release --example bc_fit_window_curve -p aglogen-engine
+[[example]]
+name = "bc_fit_window_curve"
+path = "examples/diagnostics/bc_fit_window_curve.rs"
+
+# Phase 0 diagnostic for issue #310: measures current CC-tunable runtime with
+# a per-configuration watchdog; it does not change engine behavior.
+[[example]]
+name = "cc_time_budget"
+path = "examples/diagnostics/cc_time_budget.rs"
+
+[[example]]
+name = "cc_main_path_pair_budget"
+path = "examples/diagnostics/cc_main_path_pair_budget.rs"

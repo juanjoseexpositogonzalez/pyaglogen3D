@@ -3,10 +3,16 @@
 import io
 import logging
 import math
+from typing import Any
 from uuid import UUID
 
 import numpy as np
-from celery import shared_task
+from celery import Task, shared_task
+from celery.exceptions import Ignore, SoftTimeLimitExceeded
+from celery.result import AsyncResult
+from celery.signals import task_revoked
+from django.conf import settings
+from django.db import transaction
 from django.utils import timezone
 
 from .param_policy import rotation_attempts
@@ -50,12 +56,15 @@ def expand_distribution_kwargs(prefix: str, dist_config: dict | None) -> dict:
     return {}
 
 
-def create_simulation_notification(simulation, success: bool = True) -> None:
+def create_simulation_notification(
+    simulation, success: bool = True, partial: bool = False
+) -> None:
     """Create a notification for simulation completion.
 
     Args:
         simulation: The Simulation instance
         success: Whether the simulation completed successfully
+        partial: Whether a completed simulation stopped at its operation budget
     """
     try:
         from apps.ai_assistant.models import Notification
@@ -64,6 +73,7 @@ def create_simulation_notification(simulation, success: bool = True) -> None:
             user=simulation.project.owner,
             simulation=simulation,
             success=success,
+            partial=partial,
         )
         logger.info(f"Created notification for simulation {simulation.id}")
     except Exception as e:
@@ -969,6 +979,13 @@ def run_box_counting_if_configured(simulation_id: str) -> dict | None:
         "log_scales": result.log_scales.tolist(),
         "log_values": result.log_values.tolist(),
         "execution_time_ms": int(result.execution_time_ms),
+        # `fit_window` is None whenever the fit had fewer than 3 effective
+        # levels, which is the COMMON case, not an edge: list(None) raises
+        # TypeError and the caller silently reports zero processed simulations.
+        "fit_window": (
+            list(result.fit_window) if result.fit_window is not None else None
+        ),
+        "window_source": result.window_source,
         "parameters": {
             "points_per_sphere": points_per_sphere,
             "precision": precision,
@@ -1023,14 +1040,15 @@ def build_bc_block(
     """Build the windowed box-counting storage block (R2, design D3).
 
     ONE schema for all three statuses (``ok | insufficient_levels | error``):
-    always the 11 keys ``dimension, r_squared, std_error, confidence_interval,
+    always the 13 keys ``dimension, r_squared, std_error, confidence_interval,
     log_scales, log_values, execution_time_ms, parameters, status,
-    fit_window_used, error_message``. Key parity is enforced by code, not by
-    prose (spec-review r2):
+    fit_window, fit_window_used, requested_window, error_message``. Key parity is enforced
+    by code, not by prose (spec-review r2):
 
     - value fields are ``None`` when ``status != "ok"``;
     - ``error_message`` is a string only when ``status == "error"``;
-    - ``fit_window_used`` is ``[s, e]`` only when ``status == "ok"``.
+    - ``fit_window_used`` and ``requested_window`` are ``[s, e]`` only when
+      ``status == "ok"``.
     """
     ok = status == "ok" and result is not None
     return {
@@ -1043,7 +1061,9 @@ def build_bc_block(
         "execution_time_ms": int(result.execution_time_ms) if ok else 0,
         "parameters": dict(params),
         "status": status,
+        "fit_window": list(result.fit_window) if ok and result.fit_window is not None else None,
         "fit_window_used": list(fit_window_used) if ok else None,
+        "requested_window": list(fit_window_used) if ok else None,
         "error_message": str(error_message) if status == "error" else None,
     }
 
@@ -1160,6 +1180,14 @@ def run_box_counting_for_study(
                     "log_scales": bc_result.log_scales.tolist(),
                     "log_values": bc_result.log_values.tolist(),
                     "execution_time_ms": int(bc_result.execution_time_ms),
+                    # Same None guard as the legacy builder above: most clouds
+                    # have no published window at all.
+                    "fit_window": (
+                        list(bc_result.fit_window)
+                        if bc_result.fit_window is not None
+                        else None
+                    ),
+                    "window_source": bc_result.window_source,
                     "parameters": {
                         "points_per_sphere": points_per_sphere,
                         "precision": precision,
@@ -1190,6 +1218,13 @@ def run_box_counting_for_study(
 
             except (KeyboardInterrupt, SystemExit):
                 raise
+            except SoftTimeLimitExceeded:
+                # The soft time limit fires inside the engine call, but it
+                # inherits from Exception, so it must be re-raised
+                # explicitly: absorbing it here would let the task
+                # continue, finish SUCCESS with a `finished` tombstone,
+                # and skip the worker-side burial entirely (L65).
+                raise
             except BaseException as e:  # noqa: BLE001 - a Rust panic is not an Exception
                 # A panic here used to escape the per-simulation loop and kill
                 # the whole async box-counting job, leaving the remaining
@@ -1208,7 +1243,106 @@ def run_box_counting_for_study(
     return results
 
 
-@shared_task(bind=True, name="apps.simulations.tasks.run_box_counting_async")
+def _bc_legacy_marker_names_delivery(task_id: str, study_id: str) -> bool:
+    """JD-A-001 (ledger 1b7fb42e): pre-T15 dispatch evidence.
+
+    Production at the deploy base stamps the per-study marker
+    ``bc-inflight-<study_id>`` (not ``bc-owner-<task_id>``, which was
+    born in the T15 change) with ``{task_id, study_id}``. A pre-upgrade
+    message queued across the deploy carries no owner record, but its
+    dispatch stamped exactly this marker, so the marker naming this
+    delivery is equally valid adoption proof. Best-effort: an unreadable
+    backend adopts nothing (the caller already fails closed on the
+    owner lookup; a False here just falls through to Ignore).
+    """
+    try:
+        marker = AsyncResult(f"bc-inflight-{study_id}")
+        meta = marker.info if isinstance(marker.info, dict) else {}
+    except Exception:  # noqa: BLE001 - marker read is best-effort
+        logger.warning("box-counting legacy marker lookup failed", exc_info=True)
+        return False
+    return (
+        marker.state == "PROGRESS"
+        and meta.get("task_id") == task_id
+        and meta.get("study_id") == study_id
+    )
+
+
+def _bury_box_counting_claim(
+    task_id: Any,
+    args: Any,
+    *,
+    expected_states: tuple[str, ...] = ("running",),
+) -> None:
+    """L65 amendment to T18 R2: write the durable `failed` tombstone for
+    this worker's own claim.
+
+    Matching-only by construction: the study row must still carry this
+    delivery's task id in one of `expected_states`, so a newer dispatch —
+    always a different task id now that every recovery dispatches fresh
+    ids (JD-B-001) — is never buried. Admission treats `failed` as
+    terminal exactly like `cancelled`, releasing the study immediately
+    instead of waiting out the phase lease; that lease remains the bound
+    only for a worker death no handler witnesses (SIGKILL).
+
+    JD-B-002: the revocation hook passes `("dispatched", "running")` —
+    an operator revoke of a still-queued run inserts the id into the
+    worker's persistent revoked set while the durable row stays
+    `dispatched`, and without a burial the study would wedge in
+    409/recover cycles for the rest of the ~65-minute queue lease.
+    `on_failure` keeps the `running`-only default: a failed run can only
+    be running-side, because the worker's claim stamped `running` before
+    the body ever executed.
+    """
+    if not task_id or not args:
+        return
+    from .models import ParametricStudy
+
+    ParametricStudy.objects.filter(
+        pk=str(args[0]),
+        box_counting_task_id=str(task_id),
+        box_counting_task_state__in=expected_states,
+    ).update(
+        box_counting_task_state="failed",
+        box_counting_task_reserved_at=None,
+    )
+
+
+class _BoxCountingClaimBurialTask(Task):  # type: ignore[misc]
+    """Task base for `run_box_counting_async` only (L65): the worker
+    buries its own durable claim when Celery reports the task failed, so
+    the single admission authority learns of the death from the only
+    party that knows — with no cross-store read in admission.
+
+    `on_failure` runs after Celery has already recorded the failure in the
+    result backend, so it must neither re-raise nor swallow the original
+    exception: it only writes the tombstone, and its own errors are logged
+    and leave the claim to the running lease.
+    """
+
+    def on_failure(
+        self,
+        exc: BaseException,
+        task_id: str,
+        args: Any,
+        kwargs: Any,
+        einfo: Any,
+    ) -> None:
+        try:
+            _bury_box_counting_claim(task_id, args)
+        except Exception:  # noqa: BLE001
+            logger.warning(
+                "box-counting claim burial failed for task %s",
+                task_id,
+                exc_info=True,
+            )
+
+
+@shared_task(
+    bind=True,
+    base=_BoxCountingClaimBurialTask,
+    name="apps.simulations.tasks.run_box_counting_async",
+)
 def run_box_counting_async(
     self,
     study_id: str,
@@ -1235,16 +1369,80 @@ def run_box_counting_async(
             },
         )
 
-    # JD-B-006: release the per-study in-flight marker stamped at dispatch
-    # (views.py _stamp_bc_inflight_marker). Runs in a finally so a raising
-    # run can never wedge the marker into a permanent 409; only cleared
-    # while it still references THIS task id — a newer dispatch may already
-    # own the marker. Best-effort: the marker also self-expires via the
-    # result backend's RESULT_EXPIRES, and the view treats a marker whose
-    # referenced task is terminal as stale.
+    from .models import ParametricStudy
+
+    task_id = str(self.request.id or "")
+    with transaction.atomic():
+        locked_study = ParametricStudy.objects.select_for_update().get(pk=study_id)
+        if locked_study.box_counting_task_id:
+            if (
+                locked_study.box_counting_task_id != task_id
+                or locked_study.box_counting_task_state not in ("pending", "dispatched")
+            ):
+                raise Ignore()
+        else:
+            if task_id:
+                try:
+                    owner = self.AsyncResult(f"bc-owner-{task_id}")
+                    owner_meta = owner.info if isinstance(owner.info, dict) else {}
+                except Exception:  # noqa: BLE001 — legacy adoption fails closed
+                    logger.warning("box-counting legacy owner lookup failed", exc_info=True)
+                    raise Ignore() from None
+                # JD-A-001 (ledger 1b7fb42e): production at the deploy
+                # base never wrote `bc-owner-<task_id>` — that record
+                # was born in the T15 change — but it DID stamp the
+                # per-study marker `bc-inflight-<study_id>` at dispatch
+                # with exactly this task id. A pre-upgrade message queued
+                # across the deploy would otherwise be silently discarded
+                # here, so the study marker is an equally valid adoption
+                # proof: a pre-T15 dispatch stamped it with the same task
+                # id and study id this delivery carries.
+                owner_names_delivery = (
+                    owner.state == "PROGRESS"
+                    and owner_meta.get("task_id") == task_id
+                    and owner_meta.get("study_id") == study_id
+                )
+                if not (
+                    owner_names_delivery
+                    or _bc_legacy_marker_names_delivery(task_id, study_id)
+                ):
+                    raise Ignore()
+            # Legacy queued messages created before the durable dispatch
+            # migration remain executable and become protected once claimed.
+            locked_study.box_counting_task_id = task_id
+            locked_study.box_counting_task_payload = {
+                "points_per_sphere": points_per_sphere,
+                "precision": precision,
+                "windowed": windowed,
+                "force": force,
+            }
+        locked_study.box_counting_task_state = "running"
+        # T18 R2: the worker refreshes the lease at claim time, marking the
+        # start of the running phase distinctly from the queued phase the
+        # publisher stamped. Applies uniformly whether this claims an
+        # existing durable row or adopts a legacy queued message.
+        locked_study.box_counting_task_reserved_at = timezone.now()
+        locked_study.save(
+            update_fields=[
+                "box_counting_task_id",
+                "box_counting_task_state",
+                "box_counting_task_payload",
+                "box_counting_task_reserved_at",
+            ]
+        )
+
+    # Terminalize the durable claim and release the result-backend marker.
+    # L65 amendment to T18: a successful run keeps writing its matching
+    # `finished` tombstone, but a failure no longer terminalizes here —
+    # Celery's failure/revocation handling (the `_BoxCountingClaimBurialTask`
+    # base and the `task_revoked` hook below) buries the claim with the
+    # distinct `failed` tombstone instead, so a failed run never
+    # masquerades as `finished`. A hard worker death that runs no handler
+    # at all (SIGKILL) stays bounded by the running lease. Each write is
+    # matching-only: a newer dispatch may already own the study claim.
     marker_id = f"bc-inflight-{study_id}"
     try:
-        return run_box_counting_for_study(
+        result = run_box_counting_for_study(
             study_id,
             points_per_sphere,
             precision,
@@ -1252,6 +1450,20 @@ def run_box_counting_async(
             force,
             progress_cb=_report,
         )
+    except BaseException:
+        # The re-raise keeps the `else` clause success-only: the claim is
+        # left for the failure handling that owns the burial, and this
+        # handler must never mask the original exception.
+        raise
+    else:
+        ParametricStudy.objects.filter(
+            pk=study_id,
+            box_counting_task_id=task_id,
+        ).update(
+            box_counting_task_state="finished",
+            box_counting_task_reserved_at=None,
+        )
+        return result
     finally:
         try:
             marker = self.AsyncResult(marker_id)
@@ -1260,6 +1472,48 @@ def run_box_counting_async(
                 self.backend.store_result(marker_id, None, state="SUCCESS")
         except Exception:  # noqa: BLE001 — cleanup must never mask the result
             logger.debug("box-counting in-flight marker cleanup skipped", exc_info=True)
+
+
+def _bury_box_counting_claim_on_revoked(
+    sender: Any = None,
+    request: Any = None,
+    terminated: bool = False,
+    signum: Any = None,
+    expired: bool = False,
+    **kwargs: Any,
+) -> None:
+    """L65: revocation handling buries the claim exactly like failure.
+
+    Celery 5.6 has no ``Task.on_revoked``, so this is the equivalent hook:
+    ``celery.signals.task_revoked``, dispatched by the worker both for a
+    terminate-revoke of a running task and for a revoke/expiry of a task
+    still queued. Scoped by task name so no other task in this module is
+    affected. JD-B-002: a revoke of a task still queued must bury its
+    `dispatched` claim too — the revoked id will never execute, so the
+    durable row may not keep answering 409 for the rest of the queue
+    lease — while a `pending` row (a publisher mid-reservation whose
+    message was not published yet) stays untouched.
+
+    No user-facing cancel/revoke endpoint reaches the study box-counting
+    task: the simulation cancel path revokes ``simulation.task_id`` only,
+    and the study's ``box_counting_task_id`` is never stored on a
+    simulation or passed to any revoke. This hook therefore serves
+    operator-driven revokes — and buries the claim either way.
+    """
+    if getattr(sender, "name", None) != run_box_counting_async.name:
+        return
+    try:
+        context = request or {}
+        _bury_box_counting_claim(
+            context.get("id"),
+            context.get("args") or (),
+            expected_states=("dispatched", "running"),
+        )
+    except Exception:  # noqa: BLE001
+        logger.warning("box-counting revocation burial failed", exc_info=True)
+
+
+task_revoked.connect(_bury_box_counting_claim_on_revoked)
 
 
 def fit_power_law_rg(
@@ -1567,6 +1821,20 @@ def compute_import_metrics_task(self, simulation_id: str) -> dict:
             "simulation_id": simulation_id,
             "error": str(e),
         }
+
+
+def dispatch_simulation_task(
+    task: Any, simulation_id: UUID | str, algorithm: str
+) -> Any:
+    """Dispatch one simulation with algorithm-specific Celery time limits."""
+    simulation_id_str = str(simulation_id)
+    if algorithm == "tunable_cc":
+        return task.apply_async(
+            args=[simulation_id_str],
+            time_limit=settings.CELERY_TUNABLE_CC_TASK_TIME_LIMIT,
+            soft_time_limit=settings.CELERY_TUNABLE_CC_TASK_SOFT_TIME_LIMIT,
+        )
+    return task.delay(simulation_id_str)
 
 
 @shared_task(bind=True, max_retries=1)
@@ -2082,6 +2350,9 @@ def run_simulation_task(self, simulation_id: str) -> dict:
 
         coord_data = compute_coordination_data(result.coordinates, result.radii)
 
+        budget_exhausted = bool(getattr(result, "budget_exhausted", False))
+        operations_used = int(getattr(result, "operations_used", 0))
+
         # Store metrics
         simulation.metrics = {
             "fractal_dimension": float(result.fractal_dimension),
@@ -2120,6 +2391,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "acylindricity": float(result.acylindricity),
             "principal_moments": result.principal_moments.tolist(),
             "principal_axes": result.principal_axes.tolist(),
+            "budget_exhausted": budget_exhausted,
+            "operations_used": operations_used,
         }
         # Persist per-merge diagnostic trace (R16.7). The attribute is
         # always present on the binding (Vec<MergeTraceEntry> → PyList);
@@ -2158,8 +2431,13 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             logger.warning(f"Box-counting failed for {simulation_id}: {e}")
             # Don't fail the whole simulation for box-counting error
 
-        # Create notification for user
-        create_simulation_notification(simulation, success=True)
+        # A budget-exhausted tunable run is a valid, persisted partial result;
+        # do not present it to the user as an ordinary full success.
+        create_simulation_notification(
+            simulation,
+            success=True,
+            partial=budget_exhausted,
+        )
 
         # TODO: Enable RAG indexing when pgvector is available (see docs/RAG_IMPLEMENTATION_STATUS.md)
         # try:
@@ -2174,6 +2452,8 @@ def run_simulation_task(self, simulation_id: str) -> dict:
             "fractal_dimension": simulation.metrics["fractal_dimension"],
             "execution_time_ms": simulation.execution_time_ms,
             "box_counting": bc_result,
+            "budget_exhausted": budget_exhausted,
+            "operations_used": operations_used,
         }
 
     except ImportError as e:

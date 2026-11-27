@@ -45,6 +45,31 @@ const legendPositionConfig: Record<LegendPosition, { x: number; y: number; xanch
   'bottom-right': { x: 0.98, y: 0.02, xanchor: 'right', yanchor: 'bottom' },
 }
 
+function formatFitWindow(window: [number, number] | null | undefined): string | null {
+  if (!window || !Number.isFinite(window[0]) || !Number.isFinite(window[1])) {
+    return null
+  }
+  return `[${window[0]}, ${window[1]}]`
+}
+
+function AppliedFitWindow({
+  window,
+  source,
+}: {
+  window: [number, number] | null | undefined
+  source?: string
+}) {
+  const formattedWindow = formatFitWindow(window)
+  if (!formattedWindow) return null
+
+  return (
+    <p className="text-xs text-muted-foreground">
+      Fit window: {formattedWindow}
+      {source ? ` · ${source}` : ''}
+    </p>
+  )
+}
+
 export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnalysisProps) {
   const plotRef = useRef<HTMLDivElement>(null)
   const [result, setResult] = useState<BoxCounting3DResult | null>(null)
@@ -59,8 +84,15 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
   // Manual point exclusion - additional points to exclude beyond auto-detected
   const [excludeStart, setExcludeStart] = useState<number | null>(null)
 
-  // Initialize excludeStart when result arrives
+  // The engine reports fit_window in pre-truncation effective coordinates,
+  // while the returned log arrays use post-truncation local coordinates.
   const effectiveExcludeStart = excludeStart ?? result?.linear_region_start ?? 0
+  const effectiveLevelOffset = result
+    ? Math.max(0, (result.effective_levels ?? result.log_scales.length) - result.log_scales.length)
+    : 0
+  const effectiveLastLevel = result
+    ? effectiveLevelOffset + result.log_scales.length - 1
+    : 0
 
   const handleRunAnalysis = useCallback(async () => {
     setIsLoading(true)
@@ -375,6 +407,18 @@ export function BoxCountingAnalysis({ projectId, simulationId }: BoxCountingAnal
               <div>
                 <p className="text-sm text-muted-foreground">Fractal Dimension</p>
                 <p className="text-2xl font-bold font-mono">{formatNumber(adjustedRegression.dimension, 3)}</p>
+                <AppliedFitWindow
+                  window={
+                    excludeStart !== null && excludeStart !== result.linear_region_start
+                      ? [effectiveLevelOffset + effectiveExcludeStart, effectiveLastLevel]
+                      : result.fit_window
+                  }
+                  source={
+                    excludeStart !== null && excludeStart !== result.linear_region_start
+                      ? 'manual'
+                      : result.window_source
+                  }
+                />
                 {excludeStart !== null && excludeStart !== result.linear_region_start && (
                   <p className="text-xs text-muted-foreground">
                     (auto: {formatNumber(result.dimension, 3)})

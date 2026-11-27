@@ -214,6 +214,31 @@ class TestSimulationsAPI:
         )
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
+    def test_tunable_cc_rejects_oversized_particle_count_before_dispatch(  # type: ignore[no-untyped-def]
+        self, api_client, project, mocker
+    ):
+        """The public request ceiling applies before persistence or Celery dispatch."""
+        dispatch = mocker.patch("apps.simulations.views.dispatch_simulation_task")
+
+        response = api_client.post(
+            f"/api/v1/projects/{project.id}/simulations/",
+            {
+                "algorithm": "tunable_cc",
+                "parameters": {
+                    "n_particles": 10**12,
+                    "target_df": 1.8,
+                    "target_kf": 1.3,
+                },
+                "seed": 42,
+            },
+            format="json",
+        )
+
+        assert response.status_code == status.HTTP_400_BAD_REQUEST
+        assert "n_particles must be at most 100,000" in str(response.data)
+        assert Simulation.objects.filter(project=project).count() == 0
+        dispatch.assert_not_called()
+
     def test_get_simulation(self, api_client, project, simulation):
         """Test retrieving a simulation."""
         response = api_client.get(

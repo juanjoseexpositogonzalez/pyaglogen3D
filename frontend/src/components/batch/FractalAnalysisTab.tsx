@@ -111,6 +111,13 @@ function formatConfigLabel(
   return entries.map(([k, v]) => `${k}=${formatParameterValue(v)}`).join(', ')
 }
 
+function formatFitWindow(window: [number, number] | null | undefined): string | null {
+  if (!window || !Number.isFinite(window[0]) || !Number.isFinite(window[1])) {
+    return null
+  }
+  return `[${window[0]}, ${window[1]}]`
+}
+
 export interface HistogramBin {
   start: number
   end: number
@@ -260,6 +267,8 @@ export function FractalAnalysisTab({
                     <th className="px-3 py-2 text-right font-medium">BC Win Df</th>
                     <th className="px-3 py-2 text-right font-medium">BC Win R²</th>
                     <th className="px-3 py-2 text-right font-medium">Δ (bc_delta)</th>
+                    <th className="px-3 py-2 font-medium">BC Requested Window</th>
+                    <th className="px-3 py-2 font-medium">BC Applied Window</th>
                     <th className="px-3 py-2 font-medium">BC Win Status</th>
                   </>
                 )}
@@ -299,8 +308,17 @@ export function FractalAnalysisTab({
           )}
           {summary?.configs.map((cfg, configIndex) => (
             <div key={configIndex} className="space-y-2">
+              {(cfg.config.partial_count ?? 0) > 0 && (
+                <p role="alert" className="text-sm text-amber-700 dark:text-amber-400">
+                  Partial results: {cfg.config.partial_count} completed run{cfg.config.partial_count === 1 ? '' : 's'}. Displayed distributions include partial runs.
+                </p>
+              )}
               <div className="text-xs font-medium text-muted-foreground">
                 {Object.entries(cfg.config)
+                  .filter(
+                    ([key]) =>
+                      key !== 'partial_count' && key !== 'partial_simulation_ids',
+                  )
                   .map(([k, v]) => `${k}=${formatParameterValue(v)}`)
                   .join(', ')}
               </div>
@@ -338,6 +356,10 @@ function ComparisonRow({
   hasWindowed: boolean
 }) {
   const win = row.box_counting_windowed
+  const requestedWindow = formatFitWindow(
+    win?.requested_window ?? win?.fit_window_used,
+  )
+  const appliedWindow = formatFitWindow(win?.fit_window)
   return (
     <tr className="border-b last:border-0">
       <td className="px-3 py-2 font-mono text-xs">{row.simulation_id.slice(0, 8)}</td>
@@ -361,6 +383,12 @@ function ComparisonRow({
           </td>
           <td className="px-3 py-2 text-right font-mono">
             {formatNumber(row.bc_delta, 3)}
+          </td>
+          <td className="px-3 py-2 font-mono text-xs">
+            {requestedWindow ?? '—'}
+          </td>
+          <td className="px-3 py-2 font-mono text-xs">
+            {appliedWindow ?? '—'}
           </td>
           <td className="px-3 py-2">
             {win ? (

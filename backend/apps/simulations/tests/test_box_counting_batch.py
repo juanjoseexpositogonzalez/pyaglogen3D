@@ -6,7 +6,7 @@ Covers spec requirements of `batch-windowed-box-counting`:
   shape via the shared validator)
 - R1.3: precedence request body > study params > absent; `save()` preserves
   the flag; explicit `windowed: false` overrides and persists
-- R2.1: windowed block with the single 11-key schema, status ok, legacy
+- R2.1: windowed block with the single 13-key schema, status ok, legacy
   block bit-identical to a legacy-only run
 - R2.2: eff < 3 → insufficient_levels with nulls WITHOUT calling the
   windowed estimator; eff == 3 → window (0, 2) → ok
@@ -106,10 +106,14 @@ class _FakeResult:
         dimension: float = 2.5,
         r_squared: float = 0.99,
         std_error: float = 0.01,
+        fit_window: tuple[int, int] = (0, 4),
+        window_source: str = "legacy",
     ) -> None:
         self.dimension = dimension
         self.r_squared = r_squared
         self.std_error = std_error
+        self.fit_window = fit_window
+        self.window_source = window_source
         self.confidence_interval = (dimension - 0.1, dimension + 0.1)
         self.log_scales = np.array([1.0, 2.0, 3.0, 4.0, 5.0])
         self.log_values = np.array([6.9, 5.2, 3.4, 1.7, 0.0])
@@ -118,7 +122,7 @@ class _FakeResult:
         self.effective_levels = effective_levels
 
 
-_ELEVEN_KEYS = {
+_WINDOWED_BLOCK_KEYS = {
     "dimension",
     "r_squared",
     "std_error",
@@ -128,7 +132,9 @@ _ELEVEN_KEYS = {
     "execution_time_ms",
     "parameters",
     "status",
+    "fit_window",
     "fit_window_used",
+    "requested_window",
     "error_message",
 }
 
@@ -149,12 +155,12 @@ def project(user):
 class TestDeriveFitWindow:
     """Window derivation from effective_levels, hand-computed (T2)."""
 
-    def test_below_three_levels_derives_no_window(self):
+    def test_below_three_levels_derives_no_window(self) -> None:
         assert derive_fit_window(0) is None
         assert derive_fit_window(1) is None
         assert derive_fit_window(2) is None
 
-    def test_three_levels_gives_full_window(self):
+    def test_three_levels_gives_full_window(self) -> None:
         assert derive_fit_window(3) == (0, 2)
 
     def test_four_levels_clamps_start_to_one(self):
@@ -286,14 +292,102 @@ class TestR1WindowedParameter:
         assert study.box_counting_params["windowed"] is False
 
 
+# ── Issue #351 — applied/requested window publication ──────────────────
+
+
+@pytest.mark.django_db
+class TestIssue351FitWindowPublication:
+    def test_persists_applied_window_and_preserves_numeric_legacy_witness(
+        self, user: User, project: Project
+    ) -> None:
+        """Publishing audit metadata cannot change legacy fit values."""
+        study = _make_study(project)
+        sim = _make_sim(project, study)
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.side_effect = [
+                _FakeResult(
+                    5,
+                    fit_window=(0, 4),
+                    window_source="legacy",
+                ),
+                _FakeResult(5, dimension=2.7, fit_window=(1, 4)),
+            ]
+            response = client.post(_run_url(study), {"windowed": True}, format="json")
+
+        assert response.status_code == 200
+        sim.refresh_from_db()
+        legacy = sim.metrics["box_counting"]
+        # Fixed inputs and mocked engine output pin the pre-publication fit;
+        # metadata must not change any numeric result.
+        assert legacy["dimension"] == pytest.approx(2.5)
+        assert legacy["r_squared"] == pytest.approx(0.99)
+        assert legacy["std_error"] == pytest.approx(0.01)
+        assert legacy["fit_window"] == [0, 4]
+        assert legacy["window_source"] == "legacy"
+
+        windowed = sim.metrics["box_counting_windowed"]
+        assert windowed["fit_window"] == [1, 4]
+        assert windowed["fit_window_used"] == [1, 4]
+        assert windowed["requested_window"] == [1, 4]
+
+    def test_old_windowed_block_keeps_its_pair_when_results_are_read(
+        self, user: User, project: Project
+    ) -> None:
+        """Old rows omit new keys but retain the historical requested pair."""
+        study = _make_study(project)
+        old_windowed = {
+            "dimension": 2.7,
+            "r_squared": 0.99,
+            "std_error": 0.01,
+            "confidence_interval": [2.6, 2.8],
+            "log_scales": [1.0, 2.0, 3.0],
+            "log_values": [3.0, 2.0, 1.0],
+            "execution_time_ms": 12,
+            "parameters": {"points_per_sphere": 100, "precision": 18},
+            "status": "ok",
+            "fit_window_used": [0, 2],
+            "error_message": None,
+        }
+        sim = _make_sim(
+            project,
+            study,
+            metrics={
+                "box_counting": {
+                    "dimension": 2.5,
+                    "r_squared": 0.99,
+                    "std_error": 0.01,
+                },
+                "box_counting_windowed": old_windowed,
+            },
+        )
+        client = _authed_client(user)
+
+        response = client.get(
+            reverse(
+                "project-studies-results",
+                kwargs={"project_pk": project.id, "pk": study.id},
+            )
+        )
+
+        assert response.status_code == 200
+        row = response.data["results"][0]
+        read_windowed = row["box_counting_windowed"]
+        assert "requested_window" not in read_windowed
+        assert read_windowed["fit_window_used"] == [0, 2]
+        assert row["box_counting"].get("fit_window") is None
+        assert sim.metrics["box_counting_windowed"] == old_windowed
+
+
 # ── R2 — dual-estimator storage ────────────────────────────────────────
 
 
 @pytest.mark.django_db
 class TestR2DualEstimatorStorage:
     def test_r2_1_ok_block_schema_and_window(self, user, project):
-        """eff=5 → window (1, 4); block has exactly the 11 keys with
-        fit_window_used [1, 4] and error_message None."""
+        """eff=5 → window (1, 4); block has exactly the 13 keys with
+        applied/requested audit windows and error_message None."""
         study = _make_study(project)
         sim = _make_sim(project, study)
         client = _authed_client(user)
@@ -305,7 +399,7 @@ class TestR2DualEstimatorStorage:
         assert response.status_code == 200
         sim.refresh_from_db()
         block = sim.metrics["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "ok"
         assert block["fit_window_used"] == [1, 4]
         assert block["dimension"] == 2.7
@@ -359,7 +453,7 @@ class TestR2DualEstimatorStorage:
         assert mock_bc.call_count == 1
         sim.refresh_from_db()
         block = sim.metrics["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "insufficient_levels"
         assert block["dimension"] is None
         assert block["r_squared"] is None

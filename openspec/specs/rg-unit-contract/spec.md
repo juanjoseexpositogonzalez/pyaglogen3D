@@ -4,13 +4,14 @@
 This capability establishes the end-to-end contract for the Radius of Gyration (Rg)
 value in the 3D aggregate simulator: the Rust engine emits Rg as a dimensionless
 scalar, and every user-facing surface (frontend pages, AI sidebar, CSV exports,
-charts) scales it to nanometers using `primary_particle_diameter_nm / 2` as the
-single source of truth for the scale factor.
+charts) scales it to nanometers using the factor resolved by the shared shim:
+`scale_nm` when it is positive and finite, otherwise
+`primary_particle_diameter_nm / 2`.
 
 It also defines the parameter schema versioning scheme, a read-side shim for
 legacy stored simulations, and a user-facing transition banner so the unit
-correction is observable and reversible. Context and rationale are in
-`openspec/changes/verify-rg/proposal.md` and `openspec/changes/verify-rg/explore.md`.
+correction is observable and reversible. Context and rationale are in the
+archived `verify-rg-2026-04-20` and `2026-11-21-197-nm-import-scale` changes.
 
 ## Requirements
 
@@ -89,11 +90,40 @@ Imported simulations (CSV and `.mat`) MUST also satisfy this contract.
 - AND its value is either the explicit metadata override or
   `2 * mean(radius)` (or `50.0` when `unit=dimensionless`)
 
+#### Scenario: Imported nm geometry carries scale_nm
+
+- GIVEN a simulation is created via the import pipeline whose geometry is
+  already in nanometres: a CSV whose declared unit is not `dimensionless`
+  (the parser defaults the unit to `nm` when the header omits it, and the
+  declared unit is normalized with `strip().lower()` before the comparison,
+  so `#unit=NM` behaves like `nm`), or a `.mat` file, whose documented
+  convention is that all distances share the radius column's physical unit
+- WHEN its parameters are persisted
+- THEN `parameters.scale_nm == 1.0`
+- AND `parameters.primary_particle_diameter_nm` remains the real physical
+  diameter (`2 * mean(radius)` or the explicit override)
+
+#### Scenario: Imported dimensionless geometry carries no scale_nm
+
+- GIVEN a CSV import whose declared unit is `dimensionless`
+- WHEN its parameters are persisted
+- THEN `parameters.scale_nm` is absent
+- AND `parameters.primary_particle_diameter_nm` is `50.0` (the historical
+  default path)
+
 ### Requirement: Read-side shim for parameter keys
 
 A single helper MUST resolve the primary-particle diameter in nm from either
 schema version, so downstream callers never branch on schema version themselves.
 Imported simulations MUST be resolved by the same shim without special-casing.
+
+The same shim family resolves the engine-to-nm scale factor: when
+`params.scale_nm` is present and a positive finite number, it IS the factor,
+before any diameter key is consulted; otherwise the factor falls through to
+`getPrimaryParticleDiameterNm(params) / 2`. `scale_nm` is an input field read
+identically by the Python shim (`apps.simulations.services.params`) and the
+TypeScript shim (`frontend/src/lib/units.ts`), in the same priority order with
+the same acceptance rule — it is not a special case for imports.
 
 #### Scenario: v2 parameters present
 
@@ -128,7 +158,44 @@ Imported simulations MUST be resolved by the same shim without special-casing.
 - WHEN `getPrimaryParticleDiameterNm(params)` is called during CSV export
   or any display surface
 - THEN it returns `D`
-- AND CSV export scales `radius_nm = radius_engine × (D / 2)` correctly
+- AND CSV export scales `radius_nm = radius_engine × F` correctly, where `F`
+  is the shim-resolved scale factor (`scale_nm` when present, else `D / 2`)
+
+#### Scenario: Explicit scale_nm is the factor
+
+- GIVEN `params.scale_nm = S` with `S` a positive finite number
+- WHEN `getScaleFactorNm(params)` is called on either shim (Python or
+  TypeScript)
+- THEN it returns `S`
+- AND the diameter keys are not consulted for the factor, even when a valid
+  `primary_particle_diameter_nm` is also present
+
+#### Scenario: Invalid scale_nm falls through
+
+- GIVEN `params.scale_nm` is `0`, negative, `NaN`, a non-numeric string, or
+  absent
+- WHEN `getScaleFactorNm(params)` is called on either shim
+- THEN the factor falls through to `getPrimaryParticleDiameterNm(params) / 2`
+  with the historical diameter fallback order unchanged
+
+#### Scenario: Both shims resolve the factor identically
+
+- GIVEN any `params` payload (`scale_nm` present, invalid, or absent; v1, v2,
+  or empty) and the mirrored test cases in
+  `backend/apps/simulations/tests/test_params_shim.py` and
+  `frontend/src/lib/__tests__/units.test.ts`
+- WHEN `get_scale_factor_nm` (Python) and `getScaleFactorNm` (TypeScript) are
+  called on the same payload
+- THEN both return the same value for every case
+
+#### Scenario: Imported nm geometry reads at face value
+
+- GIVEN an imported simulation whose geometry is already in nm (stamped
+  `scale_nm = 1.0`) with uniform particle radius 12 nm and physical diameter
+  `2 * 12 = 24`
+- WHEN any display surface renders the particle radius or the CSV export
+  writes the `radius_nm` column
+- THEN the value reads 12, not `12 × (24 / 2) = 144`
 
 ### Requirement: Backend CSV export includes Unit column and nm-scaled Rg
 
@@ -143,14 +210,18 @@ value is pre-scaled to nm on the server, and an explicit `Unit` column states
 - WHEN the single-simulation CSV is exported
 - THEN the CSV contains a `Unit` column
 - AND the row for Rg has `Unit = "nm"`
-- AND the Rg value equals `rg_engine * (D_nm / 2)`
+- AND the Rg value equals `rg_engine * F`, where `F` is the scale factor
+  resolved by the shim (`scale_nm` when present and positive finite, else
+  `D_nm / 2`)
 
 #### Scenario: Batch-study CSV
 
 - GIVEN a batch study containing simulations with stored engine Rg values
 - WHEN the batch CSV is exported
 - THEN the CSV contains a `Unit` column (or per-column unit annotation) identifying Rg columns as `"nm"`
-- AND each Rg value equals `rg_engine * (D_nm / 2)` using the shim per simulation
+- AND each Rg value equals `rg_engine * F` using the shim per simulation,
+  where `F` is the shim-resolved scale factor (`scale_nm` when present and
+  positive finite, else `D_nm / 2`)
 
 #### Scenario: Legacy simulation export
 
@@ -171,7 +242,9 @@ show the same numeric Rg on every surface within display rounding.
 - WHEN it is rendered on any of: simulation detail page
   (`simulations/[simId]/page.tsx`), project list page (`projects/[id]/page.tsx`),
   AI sidebar (`ai/page.tsx`), `BatchResultsTable`, and `RgEvolutionChart`
-- THEN each surface displays `rg_engine * (D_nm / 2)` within display rounding
+- THEN each surface displays `rg_engine * F` within display rounding, where
+  `F` is the scale factor resolved by the shim (`scale_nm` when present and
+  positive finite, else `D_nm / 2`)
 - AND each surface shows `(nm)` or a ` nm` suffix on the value or axis label
 
 #### Scenario: Rg-evolution chart axis is labelled nm
@@ -179,7 +252,8 @@ show the same numeric Rg on every surface within display rounding.
 - GIVEN an `rg_evolution` series from the engine
 - WHEN the chart renders
 - THEN the y-axis label includes `nm`
-- AND plotted values are scaled by `D_nm / 2`
+- AND plotted values are scaled by the shim-resolved factor `F`
+  (`scale_nm` when present and positive finite, else `D_nm / 2`)
 
 ### Requirement: Transition banner for legacy simulations
 
@@ -221,6 +295,10 @@ schema versioning so the question is not reopened in future changes.
 - WHEN a contributor opens `docs/unit-convention.md`
 - THEN the document exists
 - AND it explains that the engine is dimensionless
-- AND it explains that display/export scale by `primary_particle_diameter_nm / 2`
+- AND it explains that display/export scale by the factor the shim resolves:
+  `scale_nm` when it is present and positive finite, else
+  `primary_particle_diameter_nm / 2`
+- AND it explains that an import whose geometry already is in nm carries
+  `scale_nm = 1.0`, so nothing rescales it
 - AND it explains the `parameters_schema_version` scheme (`v1` legacy vs `v2` current)
 - AND its length is at most one page

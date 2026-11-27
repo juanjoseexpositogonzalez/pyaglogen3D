@@ -28,7 +28,7 @@ from .expansion_preview import (
 )
 from .fields import DistributionField
 from .models import ParametricStudy, Simulation
-from .param_policy import rotation_attempts
+from .param_policy import rotation_attempts, validate_tunable_cc_particle_count
 from .services.distribution_validation import validate_distribution_config
 from .services.params import (
     PARAM_KEY_DIAMETER,
@@ -329,10 +329,10 @@ class SimulationSerializer(serializers.ModelSerializer):
             pass
 
         elif algorithm == "tunable_cc":
-            # #290: the same sentence the worker raises, read from the same place,
-            # so a payload that cannot run is refused with a 400 instead of being
-            # stored and left `running` while the worker sits inside the call.
+            # Public tunable-CC requests must be bounded before the engine allocates
+            # seed clusters; its operation budget starts only after initialization.
             try:
+                validate_tunable_cc_particle_count(value)
                 rotation_attempts(value)
             except ValueError as exc:
                 raise serializers.ValidationError(str(exc)) from exc
@@ -707,6 +707,9 @@ class ParametricStudySerializer(serializers.ModelSerializer):
                 limiting_cases_config=limiting or None,
                 max_children=self._BATCH_HARD_CAP,
             )
+            if effective_algorithm == "tunable_cc":
+                for child in children:
+                    validate_tunable_cc_particle_count(child)
             check_children(children, surface=sintering_surface)
         except GridShapeError as exc:
             raise serializers.ValidationError({"parameter_grid": str(exc)}) from exc

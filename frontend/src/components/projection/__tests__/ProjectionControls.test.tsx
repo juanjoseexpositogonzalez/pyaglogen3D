@@ -5,11 +5,10 @@ import { ProjectionControls, computeGridCount } from "../ProjectionControls";
 import type { ExportProjectionsPayload } from "@/lib/api";
 
 // -----------------------------------------------------------------------------
-// Minimal viewer-store shim. The component reads `cameraAzimuth` /
-// `cameraElevation` for the "3D View" shortcut; anything else would pull in
-// three.js which we don't need for these tests.
+// Minimal volatile-camera shim for the "3D View" shortcut.
+const mockCamera = vi.hoisted(() => ({ azimuth: 0, elevation: 0 }));
 vi.mock("@/stores/viewerStore", () => ({
-  useViewerStore: () => ({ cameraAzimuth: 0, cameraElevation: 0 }),
+  useViewerCamera: () => mockCamera,
 }));
 
 // -----------------------------------------------------------------------------
@@ -75,11 +74,27 @@ describe("computeGridCount (R1 formula)", () => {
 describe("ProjectionControls", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockCamera.azimuth = 0;
+    mockCamera.elevation = 0;
   });
 
   it("renders with grid mode selected by default", () => {
     renderControls();
     expect(modeSelect().value).toBe("grid");
+  });
+
+  it("projects the volatile current 3D camera", () => {
+    mockCamera.azimuth = 37;
+    mockCamera.elevation = 12;
+    const { onPreview } = renderControls();
+
+    fireEvent.click(screen.getByRole("button", { name: /3d view/i }));
+
+    expect(onPreview).toHaveBeenCalledWith({
+      azimuth: 37,
+      elevation: 12,
+      format: "png",
+    });
   });
 
   it("shows n_az and n_el inputs in grid mode", () => {

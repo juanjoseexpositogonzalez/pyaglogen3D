@@ -532,6 +532,9 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
             max_retries_per_merge: 0,
             dpo_used: None,
             target_kf_used: None,
+            // Operation budget applies only to Tunable CC.
+            budget_exhausted: false,
+            operations_used: 0,
             merge_trace: Vec::new(),
         };
     }
@@ -623,6 +626,9 @@ pub fn run_box_rfa_internal(params: BoxRfaParams, seed: u64) -> SimulationResult
         max_retries_per_merge: 0,
         dpo_used: None,
         target_kf_used: None,
+        // Operation budget applies only to Tunable CC.
+        budget_exhausted: false,
+        operations_used: 0,
         merge_trace: Vec::new(),
     }
 }

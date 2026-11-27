@@ -231,7 +231,7 @@ def _post(
     api_client: APIClient, project: Project, mocker: Any, **parameters: Any
 ) -> Any:
     mocker.patch(
-        "apps.simulations.views.run_simulation_task.delay",
+        "apps.simulations.views.run_simulation_task.apply_async",
         return_value=mocker.Mock(id="task-id"),
     )
     return api_client.post(
@@ -253,6 +253,33 @@ def test_the_api_accepts_the_window(
     response = _post(api_client, owned_project, mocker, max_rotation_attempts=attempts)
 
     assert response.status_code == 201, response.data
+
+
+@pytest.mark.django_db
+def test_the_api_scopes_short_limits_to_tunable_cc(
+    api_client: APIClient, owned_project: Project, mocker: Any
+) -> None:
+    dispatch = mocker.patch(
+        "apps.simulations.views.run_simulation_task.apply_async",
+        return_value=mocker.Mock(id="task-id"),
+    )
+
+    response = api_client.post(
+        f"/api/v1/projects/{owned_project.id}/simulations/",
+        {
+            "algorithm": "tunable_cc",
+            "parameters": {"n_particles": 20, "target_df": 2.0},
+            "seed": 42,
+        },
+        format="json",
+    )
+
+    assert response.status_code == 201, response.data
+    dispatch.assert_called_once_with(
+        args=[response.data["id"]],
+        time_limit=600,
+        soft_time_limit=540,
+    )
 
 
 @pytest.mark.django_db

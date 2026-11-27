@@ -2,8 +2,9 @@
 
 Covers spec requirements of `batch-windowed-box-counting`:
 - R8: GET .../box-counting/ accepts windowed=true ONLY; the flat dict gains
-  box_counting_windowed with the R2 11-key schema
-- R8.1: without the flag the response is byte-identical to pre-change
+  box_counting_windowed with the R2 13-key schema
+- R8.1: without the flag the legacy estimator remains active and publishes
+  additive fit_window/window_source audit metadata without moving its numbers
 """
 
 from __future__ import annotations
@@ -67,11 +68,20 @@ def _url(project: Project, sim: Simulation) -> str:
     )
 
 
-def _fake_result(effective_levels: int, dimension: float = 2.5) -> MagicMock:
+def _fake_result(
+    effective_levels: int,
+    dimension: float = 2.5,
+    # None is the COMMON case: fewer than three effective levels means there is
+    # no window to publish, and the endpoint must serialise it as null.
+    fit_window: tuple[int, int] | None = (0, 4),
+    window_source: str = "legacy",
+) -> MagicMock:
     return MagicMock(
         dimension=dimension,
         r_squared=0.99,
         std_error=0.01,
+        fit_window=fit_window,
+        window_source=window_source,
         confidence_interval=(dimension - 0.1, dimension + 0.1),
         log_scales=np.array([1.0, 2.0, 3.0, 4.0, 5.0]),
         log_values=np.array([6.9, 5.2, 3.4, 1.7, 0.0]),
@@ -82,7 +92,7 @@ def _fake_result(effective_levels: int, dimension: float = 2.5) -> MagicMock:
     )
 
 
-_ELEVEN_KEYS = {
+_WINDOWED_BLOCK_KEYS = {
     "dimension",
     "r_squared",
     "std_error",
@@ -92,7 +102,9 @@ _ELEVEN_KEYS = {
     "execution_time_ms",
     "parameters",
     "status",
+    "fit_window",
     "fit_window_used",
+    "requested_window",
     "error_message",
 }
 
@@ -118,8 +130,8 @@ def sim(user, project):
 @pytest.mark.django_db
 class TestR8SingleSimWindowed:
     def test_r8_1_response_unchanged_without_flag(self, user, project, sim):
-        """Without the windowed param the response is byte-identical to
-        pre-change: no box_counting_windowed key (R8.1)."""
+        """Without the windowed param the legacy estimator remains active and
+        no box_counting_windowed block is added (R8.1)."""
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
@@ -138,7 +150,10 @@ class TestR8SingleSimWindowed:
             "log_values",
             "residuals",
             "linear_region_start",
+            "effective_levels",
             "execution_time_ms",
+            "fit_window",
+            "window_source",
             "parameters",
         }
 
@@ -154,8 +169,67 @@ class TestR8SingleSimWindowed:
         assert "box_counting_windowed" not in response.data
         assert mock_bc.call_count == 1
 
+    def test_legacy_response_publishes_applied_window_without_moving_numbers(
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
+        """The direct producer carries the same audit metadata as stored metrics."""
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.return_value = _fake_result(
+                5, fit_window=(0, 4), window_source="legacy"
+            )
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["dimension"] == pytest.approx(2.5)
+        assert response.data["r_squared"] == pytest.approx(0.99)
+        assert response.data["std_error"] == pytest.approx(0.01)
+        assert response.data["fit_window"] == [0, 4]
+        assert response.data["window_source"] == "legacy"
+
+    def test_truncated_legacy_response_exposes_effective_level_mapping(
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
+        """Consumers can map effective fit indices onto the returned truncated curve."""
+        client = _authed_client(user)
+        truncated = _fake_result(16, fit_window=(13, 15))
+        truncated.log_scales = np.array([3.0, 4.0, 5.0])
+        truncated.log_values = np.array([3.4, 1.7, 0.0])
+        truncated.residuals = np.array([0.0, 0.0, 0.0])
+
+        with patch("aglogen_core.box_counting_agglomerate", return_value=truncated):
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["effective_levels"] == 16
+        assert response.data["fit_window"] == [13, 15]
+        assert response.data["effective_levels"] - len(response.data["log_scales"]) == 13
+
+    def test_legacy_response_without_window_publishes_null(
+        self, user: User, project: Project, sim: Simulation
+    ) -> None:
+        """A fit with fewer than three effective levels has no window to publish.
+
+        `fit_window` is None in that case - the COMMON one, not an edge - and the
+        direct endpoint must serialise it as null rather than raising on
+        list(None). Both blind reviewers caught this path unguarded in views.py
+        while tasks.py already guarded it, and no test covered it: every existing
+        witness used a cloud WITH a window.
+        """
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            mock_bc.return_value = _fake_result(2, fit_window=None)
+            response = client.get(_url(project, sim))
+
+        assert response.status_code == 200
+        assert response.data["fit_window"] is None
+        assert response.data["window_source"] == "legacy"
+        assert response.data["dimension"] == pytest.approx(2.5)
+
     def test_windowed_true_adds_ok_block(self, user, project, sim):
-        """windowed=true adds the R2 11-key block; eff=5 → window [1, 4]."""
+        """windowed=true adds the R2 13-key block; eff=5 → window [1, 4]."""
         client = _authed_client(user)
 
         with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
@@ -168,9 +242,11 @@ class TestR8SingleSimWindowed:
         assert response.status_code == 200
         assert mock_bc.call_count == 2
         block = response.data["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "ok"
+        assert block["fit_window"] == [0, 4]
         assert block["fit_window_used"] == [1, 4]
+        assert block["requested_window"] == [1, 4]
         assert block["dimension"] == 2.7
         assert block["error_message"] is None
         assert block["parameters"] == {"points_per_sphere": 100, "precision": 18}
@@ -189,7 +265,7 @@ class TestR8SingleSimWindowed:
         assert response.status_code == 200
         assert mock_bc.call_count == 1
         block = response.data["box_counting_windowed"]
-        assert set(block.keys()) == _ELEVEN_KEYS
+        assert set(block.keys()) == _WINDOWED_BLOCK_KEYS
         assert block["status"] == "insufficient_levels"
         assert block["dimension"] is None
         assert block["fit_window_used"] is None

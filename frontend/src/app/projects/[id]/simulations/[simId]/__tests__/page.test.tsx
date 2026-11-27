@@ -430,7 +430,8 @@ describe('the run identity in the header', () => {
   })
 
   it('says when the run happened, which the identity row is for', () => {
-    withSimulation({ created_at: '2026-10-20T10:00:00Z' })
+    const oneHourAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
+    withSimulation({ created_at: oneHourAgo })
     renderPage()
 
     expect(pageHeader().textContent).toMatch(/ago/i)
@@ -677,6 +678,35 @@ describe('the 3D stage and the values behind it', () => {
     expect(cells.some((text) => text.includes('75.0'))).toBe(true)
     expect(cells.some((text) => text.includes('1.5'))).toBe(true)
     expect(viewerPanel().textContent).toMatch(/nm/)
+  })
+
+  it('reads an nm import at face value: radius 12 renders 12.0nm, not 144', () => {
+    // The record of an import whose geometry is already in nm (#197): the
+    // import stamps scale_nm = 1.0 alongside the physical diameter
+    // (24 = 2 × 12). Before the fix the stage scaled the radius by the
+    // diameter/2 (12), so 12 nm read as 144 nm on screen.
+    withSimulation({
+      parameters: { primary_particle_diameter_nm: 24, scale_nm: 1.0, n_particles: 2 },
+    })
+    withGeometry(
+      geometry({
+        coordinates: [
+          [0.1, -0.2, 0.4],
+          [1, 2, 3],
+        ],
+        radii: [12, 12],
+      }),
+    )
+    renderPage()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Show values' }))
+
+    // One header row plus one row per particle in the payload.
+    const rows = screen.getAllByRole('row')
+    expect(rows).toHaveLength(3)
+    const firstRow = within(rows[1]).getAllByRole('cell').map((node) => node.textContent ?? '')
+    expect(firstRow).toContain('12.0nm')
+    expect(firstRow.join(' ')).not.toContain('144')
   })
 
   it('takes the table from the primitive, caption and scroll region included', () => {

@@ -470,6 +470,8 @@ export interface CreateParametricStudyInput {
   sintering_config?: unknown
 }
 
+export type BoxCountingWindowSource = 'legacy' | 'r5' | 'all_levels'
+
 export interface BoxCountingResult {
   dimension: number
   r_squared: number
@@ -478,9 +480,17 @@ export interface BoxCountingResult {
   log_scales?: number[]
   log_values?: number[]
   execution_time_ms?: number
+  /**
+   * Applied engine fit window, absent from historical rows. `null` when the fit
+   * had fewer than three effective levels - the common case, not an edge - so
+   * consumers must not index it without checking.
+   */
+  fit_window?: [number, number] | null
+  /** Origin of the applied engine fit window, absent from historical rows. */
+  window_source?: BoxCountingWindowSource
 }
 
-// Windowed box-counting block (R2 — one 11-key schema for all three statuses).
+// Windowed box-counting block (R2 — current rows have 13 keys; historical rows may omit audit fields).
 export type WindowedBlockStatus = 'ok' | 'insufficient_levels' | 'error'
 
 export interface WindowedBlock {
@@ -495,8 +505,12 @@ export interface WindowedBlock {
   execution_time_ms: number
   parameters: Record<string, unknown>
   status: WindowedBlockStatus
-  /** [s, e] only when status === 'ok'; null otherwise. */
+  /** Applied engine fit window, absent from historical windowed blocks. */
+  fit_window?: [number, number] | null
+  /** Requested [s, e] retained for historical compatibility. */
   fit_window_used: [number, number] | null
+  /** Requested [s, e], absent from historical rows; null for non-ok statuses. */
+  requested_window?: [number, number] | null
   /** String only when status === 'error'; null otherwise. */
   error_message: string | null
 }
@@ -504,6 +518,7 @@ export interface WindowedBlock {
 export interface ParametricStudyResult {
   simulation_id: string
   status: SimulationStatus
+  partial?: boolean
   parameters: Record<string, unknown>
   seed: number
   execution_time_ms: number | null
@@ -538,6 +553,7 @@ export interface ParametricStudyResults {
     completed: number
     failed: number
     running: number
+    partial?: number
   }
   results: ParametricStudyResult[]
 }
@@ -597,7 +613,10 @@ export interface StudyEstimatorStats {
 }
 
 export interface StudyFractalAnalysisConfig {
-  config: Record<string, unknown>
+  config: Record<string, unknown> & {
+    partial_count?: number
+    partial_simulation_ids?: string[]
+  }
   estimators: {
     rg: StudyEstimatorStats
     bc_legacy: StudyEstimatorStats
@@ -752,9 +771,19 @@ export interface BoxCounting3DResult {
   log_scales: number[]
   log_values: number[]
   residuals: number[]
-  /** Start index of linear region (points before this are excluded as outliers) */
+  /** Start index within the returned, post-truncation log arrays. */
   linear_region_start: number
+  /** Pre-truncation effective level count; maps fit_window onto returned arrays. */
+  effective_levels?: number
   execution_time_ms: number
+  /**
+   * Applied engine fit window, absent from responses saved before issue #351.
+   * `null` when the fit had fewer than three effective levels: the direct
+   * endpoint publishes `null`, so this must not be typed as always present.
+   */
+  fit_window?: [number, number] | null
+  /** Origin of the applied engine fit window, absent from older responses. */
+  window_source?: BoxCountingWindowSource
 }
 
 // Project Sharing

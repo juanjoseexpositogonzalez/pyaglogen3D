@@ -5,10 +5,13 @@ import io
 import json
 import logging
 import time
+import uuid
 import zipfile
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
+from django.conf import settings
+from django.db import transaction
 from django.http import HttpResponse
 from django.utils import timezone
 from rest_framework import status, viewsets
@@ -30,6 +33,8 @@ from .serializers import (
 from .services.mat_parser import MatParseError, parse_mat_geometry
 from .services.params import (
     PARAM_KEY_DIAMETER,
+    PARAM_KEY_SCALE_NM,
+    get_primary_particle_diameter_nm,
     get_scale_factor_nm,
 )
 from .services.projection import (
@@ -39,7 +44,11 @@ from .services.projection import (
 )
 from .services.projections import build_projection_zip
 from .sintering_shape import FLAT_KEYS
-from .tasks import compute_import_metrics_task, run_simulation_task
+from .tasks import (
+    compute_import_metrics_task,
+    dispatch_simulation_task,
+    run_simulation_task,
+)
 from .utils import CSVParseError, parse_csv_geometry
 
 # Rejection message for .dat uploads — spec R7 scenario "`.dat` upload". The
@@ -155,8 +164,10 @@ def _stamp_scale_metadata(
     - ``pixels_per_100nm`` (float | None): how many pixels correspond to
       100 nm in the rendered PNGs. ``None`` when the aggregate is empty
       or the engine→nm conversion is degenerate.
-    - ``scale_factor_nm`` (float): ``primary_particle_diameter_nm / 2``,
-      the engine→nm multiplier used for Rg display across the app.
+    - ``scale_factor_nm`` (float): the engine→nm multiplier used for Rg
+      display across the app, as resolved by ``get_scale_factor_nm`` —
+      ``scale_nm`` when the parameters carry it (an import already in nm),
+      otherwise ``primary_particle_diameter_nm / 2``.
 
     Scale is constant per aggregate (NOT per direction) because we use
     the 3D bounding-box extent + particle-radius margin as the reference
@@ -322,13 +333,38 @@ class SimulationViewSet(viewsets.ModelViewSet):
         meta_unit = (
             import_metadata.get("unit") if isinstance(import_metadata, dict) else None
         )
+        # The parser stores the author-written unit verbatim (``#unit=NM`` exists
+        # in the wild) and defaults to ``"nm"`` when the header omits it, so a
+        # CSV without metadata is nm geometry too. ONE normalised value decides
+        # BOTH the diameter below and ``scale_nm`` further down: normalising in
+        # one place and not the other is how ``#unit=Dimensionless`` would get a
+        # mean-radius diameter and no ``scale_nm`` — the #197 bug again, for a
+        # file that differs only in capitalisation.
+        declared_unit = meta_unit.strip().lower() if isinstance(meta_unit, str) else None
+        # JD-A-002: only a supported unit may pass. The parser stores the
+        # author-written unit verbatim (``#unit=NM`` exists in the wild) and
+        # defaults to ``"nm"`` when the header omits it, so the accepted
+        # vocabulary after normalisation is exactly these two values.
+        # Anything else — ``um``, ``mm``, ``angstrom`` … — used to fall
+        # through the ``dimensionless`` check into the nm path, silently
+        # importing a geometry that is orders of magnitude off scale with
+        # ``scale_nm=1.0``. Reject it before anything is created.
+        if declared_unit is not None and declared_unit not in ("nm", "dimensionless"):
+            raise drf_serializers.ValidationError(
+                {
+                    "csv_data": (
+                        f"Unsupported unit '{declared_unit}': "
+                        "unit must be nm or dimensionless"
+                    )
+                }
+            )
         if (
             isinstance(meta_diameter, (int, float))
             and not isinstance(meta_diameter, bool)
             and meta_diameter > 0
         ):
             params[PARAM_KEY_DIAMETER] = float(meta_diameter)
-        elif meta_unit == "dimensionless":
+        elif declared_unit == "dimensionless":
             # Import a normalized-radius geometry: use the historical default
             # diameter so downstream nm-scaling stays sensible.
             from .services.params import DEFAULT_DIAMETER_NM
@@ -337,6 +373,25 @@ class SimulationViewSet(viewsets.ModelViewSet):
         else:
             mean_radius = float(np.mean(geometry_array[:, 3]))
             params[PARAM_KEY_DIAMETER] = 2.0 * mean_radius
+
+        # #197 (S2): an import whose geometry is already in nm must not be
+        # rescaled by its own mean radius. Both shims read ``scale_nm`` first
+        # (same priority, same acceptance rule), so the import pins the
+        # engine→nm factor at 1.0. The physical diameter above is untouched:
+        # the parameters panel keeps telling the real diameter (2 × mean
+        # radius), and a dimensionless import keeps the default-diameter path
+        # by carrying no ``scale_nm`` at all (S3).
+        if fmt == "mat":
+            # ``.mat`` has no metadata dict: mat_parser.py documents that all
+            # distances share the radius column's physical unit, so the array
+            # is never dimensionless — it is already in the file's unit.
+            params[PARAM_KEY_SCALE_NM] = 1.0
+        elif declared_unit == "dimensionless":
+            # Caller-supplied parameters cannot override the import's declared
+            # unit: normalized geometry uses the default diameter-derived scale.
+            params.pop(PARAM_KEY_SCALE_NM, None)
+        else:
+            params[PARAM_KEY_SCALE_NM] = 1.0
         params["source"] = source_stamp
         params["original_filename"] = original_filename or ""
         params["original_format"] = fmt if fmt in ("csv", "mat") else "csv"
@@ -464,7 +519,9 @@ class SimulationViewSet(viewsets.ModelViewSet):
 
         # Try Celery, fall back to sync execution in development
         try:
-            result = run_simulation_task.delay(str(simulation.id))
+            result = dispatch_simulation_task(
+                run_simulation_task, simulation.id, simulation.algorithm
+            )
             # Store task ID for cancellation
             simulation.task_id = result.id
             simulation.save(update_fields=["task_id"])
@@ -1523,12 +1580,13 @@ class SimulationViewSet(viewsets.ModelViewSet):
         - points_per_sphere: int (default: 100) - surface points per particle
         - precision: int (default: 18) - bits per dimension (max: 21)
         - windowed: only the literal "true" engages the windowed estimator
-          (R8); absent or any other value keeps the response byte-identical
-          to pre-change.
+          (R8); absent or any other value keeps the legacy estimator and omits
+          the windowed block while publishing additive `fit_window`,
+          `window_source`, and `effective_levels` audit fields.
 
         Returns fractal dimension estimate with statistics and log-log data.
         With windowed=true the flat dict additionally gains
-        "box_counting_windowed" with the R2 11-key schema.
+        "box_counting_windowed" with the R2 13-key schema.
         """
         simulation = self.get_object()
 
@@ -1582,7 +1640,18 @@ class SimulationViewSet(viewsets.ModelViewSet):
             "log_values": result.log_values.tolist(),
             "residuals": result.residuals.tolist(),
             "linear_region_start": result.linear_region_start,
+            # Maps effective fit-window indices onto the possibly truncated
+            # log arrays: offset = effective_levels - len(log_scales).
+            "effective_levels": result.effective_levels,
             "execution_time_ms": result.execution_time_ms,
+            # Same None guard as the persisted producer in tasks.py: the window
+            # is None whenever the fit had fewer than three effective levels, which
+            # is the COMMON case. Without this, list(None) raises and the direct
+            # endpoint returns no analysis at all instead of fit_window: null.
+            "fit_window": (
+                list(result.fit_window) if result.fit_window is not None else None
+            ),
+            "window_source": result.window_source,
             "parameters": {
                 "points_per_sphere": points_per_sphere,
                 "precision": precision,
@@ -1949,7 +2018,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         # was closed with one of three children created (measured, #152).
         for sim in simulations_created:
             try:
-                result = run_simulation_task.delay(str(sim.id))
+                result = dispatch_simulation_task(
+                    run_simulation_task, sim.id, sim.algorithm
+                )
                 sim.task_id = result.id
                 sim.save(update_fields=["task_id"])
             except Exception as e:
@@ -1984,6 +2055,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 "parameters": sim.parameters,
                 "seed": sim.seed,
                 "execution_time_ms": sim.execution_time_ms,
+                "partial": bool((sim.metrics or {}).get("budget_exhausted", False)),
             }
             if sim.metrics:
                 result_data.update(
@@ -2032,6 +2104,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         completed = study.simulations.filter(status="completed").count()
         failed = study.simulations.filter(status="failed").count()
         running = study.simulations.filter(status__in=["queued", "running"]).count()
+        partial = sum(result["partial"] for result in results)
 
         return Response(
             {
@@ -2050,6 +2123,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     "completed": completed,
                     "failed": failed,
                     "running": running,
+                    "partial": partial,
                 },
                 "results": results,
             }
@@ -2172,9 +2246,18 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     elif win_status == "error":
                         errors += 1
 
+            partial_simulation_ids = [
+                str(sim.id)
+                for sim in group["sims"]
+                if bool((sim.metrics or {}).get("budget_exhausted", False))
+            ]
             configs.append(
                 {
-                    "config": group["config"],
+                    "config": {
+                        **group["config"],
+                        "partial_count": len(partial_simulation_ids),
+                        "partial_simulation_ids": partial_simulation_ids,
+                    },
                     "estimators": {
                         "rg": self._estimator_stats(rg_values),
                         "bc_legacy": self._estimator_stats(bc_legacy_values),
@@ -2278,6 +2361,7 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 ]
             )
 
+        header.append("Partial")
         wrow(header)
 
         # Data rows
@@ -2287,9 +2371,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 # mixed-version batch produces correct values throughout.
                 rg_scale_nm = get_scale_factor_nm(sim.parameters)
                 rg_nm = sim.metrics.get("radius_of_gyration", 0) * rg_scale_nm
-                # radius_nm = diameter / 2 = scale factor. Matches verify-rg
-                # convention where ``Rg_nm = Rg_engine * scale_factor_nm``.
-                radius_nm = rg_scale_nm
+                # Physical primary-particle radius is independent from an explicit
+                # engine→nm scale (nm imports carry scale_nm=1 with diameter=2r).
+                radius_nm = get_primary_particle_diameter_nm(sim.parameters) / 2.0
                 row = (
                     [
                         str(sim.id),
@@ -2375,6 +2459,9 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                     else:
                         row.extend(["", "", "", "", "", ""])
 
+                row.append(
+                    str(bool((sim.metrics or {}).get("budget_exhausted", False))).lower()
+                )
                 wrow(row)
 
         output.seek(0)
@@ -2418,8 +2505,19 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
         # `force` is accepted in the body but never persisted (R1/R2.3): pop
         # it before the shared key validation, which enforces the persisted
-        # shape {points_per_sphere, precision, windowed} (R1.2).
-        force = bool(body.get("force", False))
+        # shape {points_per_sphere, precision, windowed} (R1.2). JD-B-001
+        # (ledger 1b7fb42e): unlike `windowed` (validated inside the shared
+        # dict gate), force must be type-checked here — bool("false") is
+        # truthy, so a JSON string "false" would silently force a re-run
+        # and overwrite existing blocks, or flip a matching recovery into
+        # a supersede, instead of failing like the sibling key does.
+        raw_force = body.get("force", False)
+        if raw_force is not None and not isinstance(raw_force, bool):
+            return Response(
+                {"error": "force must be a boolean"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        force = bool(raw_force)
         body_wo_force = {k: v for k, v in body.items() if k != "force"}
 
         # Get parameters from request
@@ -2435,6 +2533,13 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
                 {"error": "Invalid parameters"},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        points_per_sphere_explicit = "points_per_sphere" in body_wo_force
+        precision_explicit = "precision" in body_wo_force
+        windowed_explicit = windowed is not None
+        # `force` is never persisted, but it does change what a run executes,
+        # so an explicit value still conflicts with a stored payload.
+        force_explicit = "force" in body
 
         # Shared validation with the study serializer (R1.2): the FULL body
         # (minus `force`) is validated against the persisted shape — unknown
@@ -2472,56 +2577,346 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
             persisted_params["windowed"] = study_params["windowed"]
         effective_windowed = bool(persisted_params.get("windowed", False))
 
-        # Update study to enable box-counting for future reference. Fix
-        # round 2 (fresh-pass JD-B-NEW-001): this save happens AFTER the
-        # in-flight guard — a 409-rejected double-submit must not overwrite
-        # the study's stored params with the rejected request's values.
-        study.include_box_counting = True
-        study.box_counting_params = persisted_params
-
-        # JD-B-006: per-study double-submit guard — a second POST while a
-        # box-counting run is in flight is rejected with 409. The marker is
-        # a synthetic entry in the Celery result backend (NOT Django cache:
-        # LocMemCache is per-process — spec-review B1).
-        in_flight_task_id = _bc_in_flight_task_id(study)
-        if in_flight_task_id is not None:
-            return Response(
-                {
-                    "detail": (
-                        "A box-counting run is already in flight for this study"
-                    ),
-                    "task_id": in_flight_task_id,
-                },
-                status=status.HTTP_409_CONFLICT,
-            )
-        study.save(update_fields=["include_box_counting", "box_counting_params"])
-
         # Work set: completed simulations WITH geometry — the same filter as
         # the processing loop (R3, spec-review M8). Geometry-less sims do NOT
         # count toward the sync/async boundary.
-        work_set = study.simulations.filter(
+        total = study.simulations.filter(
             status="completed",
             geometry__isnull=False,
-        )
-        total = work_set.count()
+        ).count()
 
-        if total > BC_ASYNC_THRESHOLD:
-            task = run_box_counting_async.delay(
-                str(study.id),
-                points_per_sphere,
-                precision,
-                effective_windowed,
-                force,
+        reserved_task_id: str | None = None
+        dispatch_payload: dict[str, Any] | None = None
+        publisher_lease_started_at: Any = None
+        recovered_dispatch = False
+        previous_include_box_counting = study.include_box_counting
+        previous_box_counting_params = study.box_counting_params
+        previous_dispatch = (
+            study.box_counting_task_id,
+            study.box_counting_task_state,
+            study.box_counting_task_payload,
+            study.box_counting_task_reserved_at,
+        )
+
+        with transaction.atomic():
+            locked_study = ParametricStudy.objects.select_for_update().get(pk=study.pk)
+            if (
+                windowed is None
+                and isinstance(locked_study.box_counting_params, dict)
+                and "windowed" in locked_study.box_counting_params
+            ):
+                persisted_params["windowed"] = locked_study.box_counting_params[
+                    "windowed"
+                ]
+                effective_windowed = bool(persisted_params["windowed"])
+
+            # T18: the durable row is the sole admission authority. Only its
+            # state and `box_counting_task_reserved_at` decide in-flight-ness;
+            # no result-backend read participates here (R1), except the one
+            # bridging case below for a claim carrying no lease timestamp at
+            # all (pre-T18 deploy window, R6).
+            durable_task_id = locked_study.box_counting_task_id
+            durable_state = locked_study.box_counting_task_state
+            stored_payload = locked_study.box_counting_task_payload
+            reserved_at = locked_study.box_counting_task_reserved_at
+            now = timezone.now()
+            # JD-B-001: pristine locked-row snapshot for every rollback
+            # below — captured BEFORE any retirement, so a failed
+            # reservation or broker publish for the fresh recovery id
+            # restores the expired claim itself (retryable recovery with
+            # its stored payload), not merely the `cancelled` tombstone.
+            previous_include_box_counting = locked_study.include_box_counting
+            previous_box_counting_params = locked_study.box_counting_params
+            previous_dispatch = (
+                locked_study.box_counting_task_id,
+                locked_study.box_counting_task_state,
+                locked_study.box_counting_task_payload,
+                locked_study.box_counting_task_reserved_at,
             )
-            # F2: surface the 202-time total to the status endpoint before
-            # the worker picks the task up. Best-effort: the task re-stamps
-            # its meta via update_state once it starts, and the final return
-            # value lands under SUCCESS.
-            _stamp_bc_dispatch_meta(task, total)
-            # JD-B-006: stamp the per-study in-flight marker (best-effort).
-            _stamp_bc_inflight_marker(task, str(study.id))
+
+            if (
+                durable_task_id
+                and reserved_at is not None
+                and durable_state in ("pending", "dispatched", "running")
+            ):
+                is_running = durable_state == "running"
+                # R2 (three phases, each with its own bound — collapsing
+                # `pending` into the queued bound is explicitly wrong: it
+                # would keep a study blocked for 65 minutes after a
+                # publisher crash the 30-second lease resolves in seconds).
+                # `pending` means a publisher is reserving and enqueueing
+                # right now, which lasts seconds, so it keeps the existing
+                # 30-second publisher lease. `dispatched` means the broker
+                # accepted the message, which may wait the whole queue, so
+                # it expires after the broker's own queue expiry plus grace
+                # — Celery discards the message itself by then. `running`
+                # expires after the hard runtime plus the same grace —
+                # Celery hard-kills the worker by then. All three are
+                # derived from the existing settings constants; no
+                # composite lease and no result-backend read.
+                if durable_state == "pending":
+                    lease_seconds = _BC_PENDING_LEASE_SECONDS
+                elif is_running:
+                    lease_seconds = _BC_RUNNING_LEASE_SECONDS
+                else:
+                    lease_seconds = _BC_QUEUED_LEASE_SECONDS
+                if (now - reserved_at).total_seconds() <= lease_seconds:
+                    return _bc_in_flight_response(durable_task_id)
+
+                # Expired. JD-B-001 (product decision, superseding T18
+                # R3's same-id reuse): recovery NEVER re-publishes under
+                # the original task id. Celery enforces `expires` in the
+                # worker main process — `maybe_expire()` adds the expired
+                # id to the shared revoked LimitedSet and the strategy
+                # drops every later delivery — so after a drained expired
+                # original, a same-id republish is silently discarded: the
+                # 202 would promise a run nobody executes while the study
+                # cycles 409 for the queue lease. An expired claim is
+                # therefore always retired below and re-dispatched under a
+                # fresh uuid4 id; what differs is only WHICH parameters
+                # run. A stored payload that does not conflict with
+                # explicitly supplied parameters is recovered (the
+                # caller's original intent governs what runs); a running
+                # claim is never reused — reusing its id risks a
+                # split-brain — and a conflicting claim is superseded by
+                # the caller's own parameters (R4).
+                can_recover = False
+                if (
+                    not is_running
+                    and isinstance(stored_payload, dict)
+                    and all(
+                        key in stored_payload
+                        for key in (
+                            "points_per_sphere",
+                            "precision",
+                            "windowed",
+                            "force",
+                        )
+                    )
+                ):
+                    sp_ppsphere = int(stored_payload["points_per_sphere"])
+                    sp_precision = int(stored_payload["precision"])
+                    sp_windowed = bool(stored_payload["windowed"])
+                    sp_force = bool(stored_payload["force"])
+                    conflict = (
+                        (
+                            points_per_sphere_explicit
+                            and sp_ppsphere != points_per_sphere
+                        )
+                        or (precision_explicit and sp_precision != precision)
+                        or (windowed_explicit and sp_windowed != windowed)
+                        or (force_explicit and sp_force != force)
+                    )
+                    can_recover = not conflict
+
+                if can_recover:
+                    # JD-B-001: the stored payload does not conflict, so
+                    # the run's effective parameters are the recovered
+                    # ones — the response discloses them, and `recovered`
+                    # means "your parameters were recovered and a fresh
+                    # run dispatched", never a same-id republish.
+                    assert isinstance(stored_payload, dict)
+                    recovered_dispatch = True
+                    points_per_sphere = int(stored_payload["points_per_sphere"])
+                    precision = int(stored_payload["precision"])
+                    effective_windowed = bool(stored_payload["windowed"])
+                    force = bool(stored_payload["force"])
+
+                # R4/R5 + JD-B-001: retire with a transactional tombstone
+                # — every expired claim, recovered or superseded. The
+                # matching update wins only if nothing has touched this
+                # exact lease since we read it — a concurrent worker claim
+                # always refreshes the lease and wins (409). The retired
+                # id's result-backend release is best-effort and must
+                # never run while this transaction is open, so it is
+                # deferred to `transaction.on_commit` and may fail
+                # harmlessly: no admission decision depends on it, and the
+                # old id may be poisoned worker-side (Celery's `expires`
+                # revocation), so its records must never block the fresh
+                # dispatch.
+                if not _release_bc_db_dispatch(
+                    str(study.id),
+                    durable_task_id,
+                    reserved_at,
+                    expected_state=durable_state,
+                ):
+                    return _bc_in_flight_response(durable_task_id)
+
+                def _release_retired_backend_records(
+                    tid: str = durable_task_id,
+                ) -> None:
+                    _clear_bc_dispatch_reservation(_bc_result_backend(), tid)
+
+                transaction.on_commit(_release_retired_backend_records)
+                locked_study.box_counting_task_state = "cancelled"
+                locked_study.box_counting_task_reserved_at = None
+            elif (
+                durable_task_id
+                and reserved_at is None
+                and durable_state in ("pending", "dispatched", "running")
+            ):
+                # R6: a durable claim with no lease timestamp at all predates
+                # this change's worker (which always stamps one on claim), so
+                # it is judged the same way the empty-row bridge below judges
+                # a run dispatched before this change: by the legacy marker,
+                # bound by the same queue+runtime+grace lifetime and failing
+                # closed on an unreadable backend. This guards an existing
+                # tracked claim regardless of the new request's size.
+                try:
+                    marker_task_id = _bc_in_flight_task_id(locked_study)
+                except _BCBackendUnavailable:
+                    return Response(
+                        {"detail": "Unable to verify box-counting run state"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+                if marker_task_id is not None:
+                    return _bc_in_flight_response(marker_task_id)
+            elif not durable_task_id and total > BC_ASYNC_THRESHOLD:
+                # R6/R7: the durable row is genuinely empty (never dispatched
+                # by this change). The sole remaining marker read guards only
+                # the same async-sized admission a legacy run could ever have
+                # been dispatched under — a synchronous run below the
+                # threshold still needs no result backend at all (R7).
+                try:
+                    marker_task_id = _bc_in_flight_task_id(locked_study)
+                except _BCBackendUnavailable:
+                    return Response(
+                        {"detail": "Unable to verify box-counting run state"},
+                        status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    )
+                if marker_task_id is not None:
+                    return _bc_in_flight_response(marker_task_id)
+            # else: `finished`, `cancelled` (supersede/recovery) or
+            # `failed` (the worker's own L65 burial tombstone), or an empty
+            # row at/under the threshold, never block (R1/R7).
+
+            # JD-B-001: a recovered claim is always re-dispatched
+            # asynchronously under a fresh id — the claim being recovered
+            # was an async claim — so the 202 can keep disclosing every
+            # effective parameter. A brand-new request below the threshold
+            # still runs synchronously (R7).
+            if recovered_dispatch or total > BC_ASYNC_THRESHOLD:
+                reserved_task_id = str(uuid.uuid4())
+                dispatch_payload = {
+                    "points_per_sphere": points_per_sphere,
+                    "precision": precision,
+                    "windowed": effective_windowed,
+                    "force": force,
+                }
+                publisher_lease_started_at = timezone.now()
+                locked_study.box_counting_task_id = reserved_task_id
+                locked_study.box_counting_task_state = "pending"
+                locked_study.box_counting_task_payload = dispatch_payload
+                locked_study.box_counting_task_reserved_at = (
+                    publisher_lease_started_at
+                )
+            if not recovered_dispatch:
+                locked_study.include_box_counting = True
+                locked_study.box_counting_params = persisted_params
+                update_fields = ["include_box_counting", "box_counting_params"]
+                if reserved_task_id is not None:
+                    update_fields.extend(
+                        [
+                            "box_counting_task_id",
+                            "box_counting_task_state",
+                            "box_counting_task_payload",
+                            "box_counting_task_reserved_at",
+                        ]
+                    )
+                locked_study.save(update_fields=update_fields)
+            elif reserved_task_id is not None:
+                # JD-B-001: a recovery re-dispatch reserves the fresh
+                # claim but never rewrites the study's persisted
+                # parameters — the recovered payload's values already are
+                # the persisted ones.
+                locked_study.save(
+                    update_fields=[
+                        "box_counting_task_id",
+                        "box_counting_task_state",
+                        "box_counting_task_payload",
+                        "box_counting_task_reserved_at",
+                    ]
+                )
+
+        if reserved_task_id is not None and dispatch_payload is not None:
+            result_backend = _bc_result_backend()
+            if not _reserve_bc_dispatch(
+                result_backend,
+                reserved_task_id,
+                str(study.id),
+                total,
+            ):
+                _rollback_bc_db_dispatch(
+                    str(study.id),
+                    reserved_task_id,
+                    previous_include_box_counting,
+                    previous_box_counting_params,
+                    previous_dispatch,
+                )
+                return Response(
+                    {"detail": "Unable to reserve box-counting run"},
+                    status=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            try:
+                cast(Any, run_box_counting_async).apply_async(
+                    args=(
+                        str(study.id),
+                        points_per_sphere,
+                        precision,
+                        effective_windowed,
+                        force,
+                    ),
+                    task_id=reserved_task_id,
+                    expires=_BC_QUEUE_MAX_AGE_SECONDS,
+                )
+            except BaseException:
+                if recovered_dispatch:
+                    # JD-B-001: on an unambiguous pre-publish failure the
+                    # fresh id has no records and no worker can have
+                    # claimed it. But `apply_async` raising does NOT prove
+                    # the broker never accepted the message — a
+                    # connection drop after publish-and-claim races here
+                    # too. The rollback matches only this just-written
+                    # `pending` row, so when a worker already flipped it
+                    # to `running` the update affects zero rows and that
+                    # run is live: its records must NOT be terminalized,
+                    # or the study would hold an unpollable claim whose
+                    # owner records report SUCCESS (audit finding 1).
+                    rolled_back = _rollback_bc_db_dispatch(
+                        str(study.id),
+                        reserved_task_id,
+                        previous_include_box_counting,
+                        previous_box_counting_params,
+                        previous_dispatch,
+                    )
+                    if rolled_back:
+                        _clear_bc_dispatch_reservation(result_backend, reserved_task_id)
+                elif _release_bc_db_dispatch(
+                    str(study.id), reserved_task_id, publisher_lease_started_at
+                ):
+                    _clear_bc_dispatch_reservation(result_backend, reserved_task_id)
+                raise
+            _mark_bc_db_dispatch_published(str(study.id), reserved_task_id)
+            if recovered_dispatch:
+                # T18 R3 disclosure preserved under the JD-B-001 fresh-id
+                # policy: `recovered` means the caller's parameters were
+                # recovered and a fresh run dispatched, with the fresh
+                # task id disclosed alongside every effective parameter,
+                # `force` included.
+                return Response(
+                    {
+                        "task_id": reserved_task_id,
+                        "total": total,
+                        "recovered": True,
+                        "points_per_sphere": points_per_sphere,
+                        "precision": precision,
+                        "windowed": effective_windowed,
+                        "force": force,
+                    },
+                    status=status.HTTP_202_ACCEPTED,
+                )
             return Response(
-                {"task_id": task.id, "total": total},
+                {"task_id": reserved_task_id, "total": total},
                 status=status.HTTP_202_ACCEPTED,
             )
 
@@ -2558,16 +2953,20 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
         - every branch returns the canonical shape (F2); non-terminal Celery
           states (REVOKED/RETRY/...) map to ``failed`` instead of leaking
           verbatim outside the union.
-        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): the dispatch path
-          stamps PROGRESS meta carrying ``total`` immediately after
-          ``delay()`` (F2), so a PENDING without meta can only be a
-          never-dispatched or expired task id — never a legitimately queued
-          run.
+        - a bare ``PENDING`` maps to ``failed`` (JD-B-004): reservation
+          stamps PROGRESS meta carrying ``total`` before ``apply_async`` (F2),
+          so PENDING can only mean a never-dispatched or expired task id.
         """
         # F1: object-permission gate — must run before touching AsyncResult.
-        self.get_object()
+        study = self.get_object()
+        task_id = str(kwargs["task_id"])
+        if not _bc_task_belongs_to_study(task_id, str(study.id)):
+            return Response(
+                {"detail": "Not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
 
-        result = AsyncResult(kwargs["task_id"])
+        result = AsyncResult(task_id)
         state = result.state
         meta = result.info if isinstance(result.info, dict) else {}
 
@@ -2700,23 +3099,199 @@ from rest_framework.decorators import api_view, permission_classes  # noqa: E402
 # Box-counting async run helpers (R3/D5 — judgment-day fix round A)
 # ============================================================================
 
-#: Synthetic result-backend id prefix for the per-study in-flight marker
-#: (JD-B-006). The marker lives in the Celery result backend, NOT Django
-#: cache: LocMemCache is per-process and invisible across the Gunicorn
-#: workers (spec-review B1/M1).
+#: Celery result-backend keys; Django's LocMemCache is process-local.
+#: `_BC_INFLIGHT_PREFIX` is read ONLY by `_bc_in_flight_task_id` (T18 R6's
+#: sole remaining marker read, for the pre-T18 deploy-window bridge) and is
+#: never written by a new dispatch; `_BC_OWNER_PREFIX` is the preserved
+#: status-ownership record read by `_bc_task_belongs_to_study` (R7).
 _BC_INFLIGHT_PREFIX = "bc-inflight-"
+_BC_OWNER_PREFIX = "bc-owner-"
+_BC_QUEUE_MAX_AGE_SECONDS = 60 * 60
+_BC_EXECUTION_HARD_LIMIT_SECONDS = int(settings.CELERY_TASK_TIME_LIMIT)
+_BC_GRACE_SECONDS = 5 * 60
+#: T18 R2 — three phases, three independent bounds (NOT a composite): a
+#: `pending` row means a publisher is reserving and enqueueing right now,
+#: which lasts seconds, so it keeps the pre-T18 30-second publisher lease.
+#: Collapsing `pending` into the queued bound below is explicitly wrong:
+#: it would keep a study blocked for 65 minutes after a publisher crash
+#: this lease resolves in seconds.
+_BC_PENDING_LEASE_SECONDS = 30
+#: T18 R2 — a queued claim (`dispatched`) outlives the broker's own queue
+#: expiry (Celery itself discards an older message) plus grace.
+_BC_QUEUED_LEASE_SECONDS = _BC_QUEUE_MAX_AGE_SECONDS + _BC_GRACE_SECONDS
+#: T18 R2 — a `running` claim outlives the hard execution limit (Celery
+#: itself hard-kills a worker still running past it) plus the same grace.
+#: This replaces the single composite 7,500-second lease, which only
+#: existed because a bare marker could not distinguish the two phases.
+_BC_RUNNING_LEASE_SECONDS = _BC_EXECUTION_HARD_LIMIT_SECONDS + _BC_GRACE_SECONDS
+#: Sole remaining purpose (T18 R6): bound a pre-T18 legacy marker's OWN
+#: staleness for the deploy-window bridge. Not a durable-row admission
+#: lease — those are the two phase leases above.
+_BC_LEGACY_MARKER_STALE_AFTER_SECONDS = (
+    _BC_QUEUE_MAX_AGE_SECONDS
+    + _BC_EXECUTION_HARD_LIMIT_SECONDS
+    + _BC_GRACE_SECONDS
+)
+
+
+class _BCBackendUnavailable(RuntimeError):
+    """The cross-process reservation state could not be read safely."""
+
+
+def _bc_in_flight_response(task_id: str) -> Response:
+    return Response(
+        {
+            "detail": "A box-counting run is already in flight for this study",
+            "task_id": task_id,
+        },
+        status=status.HTTP_409_CONFLICT,
+    )
+
+
+def _bc_result_backend() -> Any:
+    from .tasks import run_box_counting_async
+
+    return cast(Any, run_box_counting_async).backend
+
+
+def _clear_bc_dispatch_reservation(backend: Any, task_id: str) -> None:
+    """Best-effort release of a task's status-ownership records. T18
+    removed `bc-inflight-<study_id>` as something a new dispatch ever
+    writes (R8), so there is nothing study-scoped left to clear here —
+    only the preserved per-task progress stub and owner record (R7). A
+    failure here is swallowed: no admission decision depends on it (R5).
+    """
+    for result_id in (f"{_BC_OWNER_PREFIX}{task_id}", task_id):
+        try:
+            backend.store_result(result_id, None, state="SUCCESS")
+        except Exception:  # noqa: BLE001 — cleanup must not hide root failure
+            logger.debug("box-counting reservation cleanup skipped", exc_info=True)
+
+
+def _release_bc_db_dispatch(
+    study_id: str,
+    task_id: str,
+    reserved_at: Any,
+    *,
+    expected_state: str = "pending",
+) -> bool:
+    """Matching-only retirement of a claim to a `cancelled` tombstone.
+    Matches only the exact lease we read: any legitimate transition
+    (a worker claim always refreshes the lease per T18 R2) changes
+    `box_counting_task_reserved_at`, so a concurrent winner always makes
+    this a no-op instead of clobbering their claim.
+    """
+    updated = ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state=expected_state,
+        box_counting_task_reserved_at=reserved_at,
+    ).update(
+        box_counting_task_state="cancelled",
+        box_counting_task_reserved_at=None,
+    )
+    return updated == 1
+
+
+def _rollback_bc_db_dispatch(
+    study_id: str,
+    task_id: str,
+    include_box_counting: bool,
+    box_counting_params: Any,
+    previous_dispatch: tuple[Any, Any, Any, Any],
+) -> bool:
+    """Restore the just-written `pending` row to the expired claim the
+    atomic block retired. Returns whether the rollback happened: a zero-
+    row update means a worker already claimed the task (state flipped to
+    `running`), and that run's records must be left untouched."""
+    updated = ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state="pending",
+    ).update(
+        include_box_counting=include_box_counting,
+        box_counting_params=box_counting_params,
+        box_counting_task_id=previous_dispatch[0],
+        box_counting_task_state=previous_dispatch[1],
+        box_counting_task_payload=previous_dispatch[2],
+        box_counting_task_reserved_at=previous_dispatch[3],
+    )
+    return updated == 1
+
+
+def _mark_bc_db_dispatch_published(study_id: str, task_id: str) -> None:
+    """T18 R2: stamp `box_counting_task_reserved_at` again when the
+    dispatch is marked published, so the dispatched phase is timed from
+    its own start rather than inheriting the reservation timestamp. The
+    filter matches either queued state (`pending` for a brand-new
+    dispatch or a JD-B-001 recovery's fresh claim, `dispatched` if a
+    concurrent publish mark already landed) so both paths restart the
+    same clock; a worker that has already claimed the task (state
+    `running`) always wins and this becomes a harmless no-op.
+    """
+    ParametricStudy.objects.filter(
+        pk=study_id,
+        box_counting_task_id=task_id,
+        box_counting_task_state__in=["pending", "dispatched"],
+    ).update(
+        box_counting_task_state="dispatched",
+        box_counting_task_reserved_at=timezone.now(),
+    )
+
+
+def _reserve_bc_dispatch(
+    backend: Any,
+    task_id: str,
+    study_id: str,
+    total: int,
+) -> bool:
+    """Stamp the preserved progress/status-ownership records (R7) for a
+    brand-new task id before it is handed to the broker. T18 removes
+    `bc-inflight-<study_id>` from this write entirely (R8): admission no
+    longer needs it. Every dispatch — brand-new or JD-B-001 recovery —
+    now uses a fresh task id with no history, so the terminalizing
+    cleanup on a failed write is always safe.
+    """
+    dispatched_at = time.time()
+    records = {
+        task_id: {
+            "current": 0,
+            "total": total,
+            "progress": 0.0,
+            "dispatched_at": dispatched_at,
+        },
+        f"{_BC_OWNER_PREFIX}{task_id}": {"task_id": task_id, "study_id": study_id},
+    }
+    try:
+        for result_id, payload in records.items():
+            backend.store_result(result_id, payload, state="PROGRESS")
+    except Exception:  # noqa: BLE001 — never dispatch without full reservation
+        logger.warning("box-counting dispatch reservation failed", exc_info=True)
+        _clear_bc_dispatch_reservation(backend, task_id)
+        return False
+    return True
+
+
+def _bc_task_belongs_to_study(task_id: str, study_id: str) -> bool:
+    try:
+        owner = AsyncResult(f"{_BC_OWNER_PREFIX}{task_id}")
+        meta = owner.info if isinstance(owner.info, dict) else {}
+        return (
+            owner.state == "PROGRESS"
+            and meta.get("task_id") == task_id
+            and meta.get("study_id") == study_id
+        )
+    except Exception:  # noqa: BLE001 — missing ownership fails closed
+        logger.debug("box-counting owner lookup failed", exc_info=True)
+        return False
 
 
 def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
-    """Return the id of the box-counting task currently in flight for
-    ``study``, or ``None`` (JD-B-006).
-
-    The marker is stamped at dispatch (see :func:`_stamp_bc_inflight_marker`)
-    and released by the task itself when it finishes. A marker whose
-    referenced task has already reached a terminal state (SUCCESS/FAILURE/
-    REVOKED) is stale and does NOT block a new run. Best-effort: any backend
-    failure degrades to "nothing in flight" — the guard must never break the
-    run path.
+    """Return the id of a legacy box-counting task in flight for study, per
+    the T18 R6 deploy-window bridge. This is the sole remaining
+    result-backend read that participates in admission, and only reached
+    when the durable row carries no usable lease (R6). Fails closed like
+    every other reservation read.
     """
     try:
         marker = AsyncResult(f"{_BC_INFLIGHT_PREFIX}{study.id}")
@@ -2724,64 +3299,40 @@ def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
             return None
         meta = marker.info if isinstance(marker.info, dict) else {}
         task_id = meta.get("task_id")
-        if not task_id:
+        if not task_id or meta.get("study_id") != str(study.id):
             return None
-        # Fix round 2 (fresh-pass JD-B-NEW-002): a worker hard death
-        # (SIGKILL/OOM) never runs the task's ``finally`` release and never
-        # reaches a terminal state, so the marker would block new runs until
-        # RESULT_EXPIRES. Stamp a wall-clock dispatch time and treat markers
-        # older than one hour as stale (generous vs the 30-min poller
-        # deadline and the 16-48 min worst-case run ceiling).
-        dispatched_at = meta.get("dispatched_at")
-        if isinstance(dispatched_at, (int, float)):
-            import time as _time
-
-            if _time.time() - float(dispatched_at) > 3600:
-                return None
         if AsyncResult(str(task_id)).state in ("SUCCESS", "FAILURE", "REVOKED"):
             return None
+        # A worker hard death never runs its ``finally`` release. The task
+        # expires after the bounded queue age, so it is safe to release an
+        # otherwise nonterminal marker after queue + execution + grace.
+        # JD-A-002 (ledger 1b7fb42e): production at the deploy base stamps
+        # markers WITHOUT ``dispatched_at`` (that field arrived with the
+        # T15-era task-id stub), so the bound must still apply to them —
+        # a stranded pre-upgrade marker would otherwise block the study
+        # with 409 until CELERY_RESULT_EXPIRES (86,400 s) instead of the
+        # 3,900 s this bridge promises. A missing timestamp falls back to
+        # the marker's own RESULT creation, which production stamps at
+        # dispatch; either clock bounds the same deploy window.
+        # JD-A-002 (ledger 1b7fb42e): production markers carry no
+        # ``dispatched_at``, so a missing timestamp can never prove the
+        # marker fresh. The deploy window this bridge guards lasts
+        # minutes (worker-before-web); a marker that cannot be dated
+        # is far more likely a stranded pre-upgrade marker than a live
+        # one, and refusing it forever (409 until CELERY_RESULT_EXPIRES)
+        # is worse than releasing it: admission falls through to the
+        # durable row, which is the sole authority anyway.
+        dispatched_at = meta.get("dispatched_at")
+        if not (
+            isinstance(dispatched_at, (int, float))
+            and time.time() - float(dispatched_at)
+            <= _BC_LEGACY_MARKER_STALE_AFTER_SECONDS
+        ):
+            return None
         return str(task_id)
-    except Exception:  # noqa: BLE001 — guard must never break the run path
-        logger.debug("box-counting in-flight marker check failed", exc_info=True)
-        return None
-
-
-def _stamp_bc_dispatch_meta(task: Any, total: int) -> None:
-    """Stamp the freshly dispatched task with initial PROGRESS meta (F2).
-
-    Surfaces the 202-time ``total`` to the status endpoint before the worker
-    picks the task up (the frontend learns ``total`` at 202 time; the status
-    endpoint must echo it instead of 0). Best-effort: the task re-stamps its
-    meta via ``update_state`` once it starts, and the final return value
-    lands under SUCCESS.
-    """
-    try:
-        task.backend.store_result(
-            task.id,
-            {
-                "current": 0,
-                "total": total,
-                "progress": 0.0,
-                # Fix round 2 (fresh-pass JD-B-NEW-002): wall-clock dispatch
-                # time for the stale-marker bound (worker hard death).
-                "dispatched_at": time.time(),
-            },
-            state="PROGRESS",
-        )
-    except Exception:  # noqa: BLE001 — stamping must never break dispatch
-        logger.debug("box-counting dispatch stamping skipped", exc_info=True)
-
-
-def _stamp_bc_inflight_marker(task: Any, study_id: str) -> None:
-    """Stamp the per-study in-flight marker (JD-B-006). Best-effort."""
-    try:
-        task.backend.store_result(
-            f"{_BC_INFLIGHT_PREFIX}{study_id}",
-            {"task_id": task.id, "study_id": study_id},
-            state="PROGRESS",
-        )
-    except Exception:  # noqa: BLE001 — stamping must never break dispatch
-        logger.debug("box-counting in-flight marker stamping skipped", exc_info=True)
+    except Exception as exc:  # noqa: BLE001 — reservation must fail closed
+        logger.warning("box-counting in-flight marker check failed", exc_info=True)
+        raise _BCBackendUnavailable from exc
 
 
 @api_view(["GET"])

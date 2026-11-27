@@ -1,6 +1,5 @@
 """Base Django settings for pyAgloGen3D."""
 
-import os
 from pathlib import Path
 from typing import Any
 
@@ -188,8 +187,13 @@ CELERY_ACCEPT_CONTENT = ["json"]
 CELERY_TASK_SERIALIZER = "json"
 CELERY_RESULT_SERIALIZER = "json"
 CELERY_TIMEZONE = TIME_ZONE
+# Preserve the existing ceiling for projection, FRAKTAL, import, optical, and
+# other worker jobs. Tunable-CC receives its shorter #310 safety net explicitly
+# when it is dispatched, rather than shrinking the defaults for every task.
 CELERY_TASK_TIME_LIMIT = 3600
 CELERY_TASK_SOFT_TIME_LIMIT = 3300
+CELERY_TUNABLE_CC_TASK_TIME_LIMIT = 600
+CELERY_TUNABLE_CC_TASK_SOFT_TIME_LIMIT = 540
 CELERY_BROKER_CONNECTION_RETRY_ON_STARTUP = True
 CELERY_RESULT_EXPIRES = 86400
 

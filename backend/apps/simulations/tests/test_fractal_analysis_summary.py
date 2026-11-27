@@ -265,9 +265,17 @@ class TestR5FractalAnalysisSummary:
 
         configs = response.data["configs"]
         assert len(configs) == 2
-        # Config mirrors sim.parameters restricted to parameter_grid keys
-        assert configs[0]["config"] == {"n_particles": 100}
-        assert configs[1]["config"] == {"n_particles": 200}
+        # Config keeps grouping parameters and adds explicit partial metadata.
+        assert configs[0]["config"] == {
+            "n_particles": 100,
+            "partial_count": 0,
+            "partial_simulation_ids": [],
+        }
+        assert configs[1]["config"] == {
+            "n_particles": 200,
+            "partial_count": 0,
+            "partial_simulation_ids": [],
+        }
 
         rg_small = configs[0]["estimators"]["rg"]
         assert rg_small["n"] == 2

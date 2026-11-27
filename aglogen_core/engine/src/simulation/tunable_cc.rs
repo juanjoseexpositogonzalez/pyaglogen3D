@@ -232,6 +232,11 @@ pub struct TunableCcParams {
     pub seed_type: SeedType,
     pub max_rotation_attempts: usize,
     pub max_particle_selection_attempts: usize,
+    /// Deterministic cap on merge evaluations, particle-selection retries, and
+    /// rotation attempts. Defaults to 300,000,000 operations: calibrated at
+    /// roughly 2.0–2.8 million operations/s, or about 110–150 seconds. `None`
+    /// preserves the unbounded legacy behavior.
+    pub operation_budget: Option<u64>,
     /// Maximum number of retry attempts per merge step before falling back
     /// to ballistic merge. Each retry selects a new random sub-cluster pair
     /// and samples fresh azimuth + elevation (spec R3).
@@ -264,12 +269,75 @@ impl Default for TunableCcParams {
             seed_type: SeedType::default(),
             max_rotation_attempts: 50,
             max_particle_selection_attempts: 25,
+            // 300M / 2.0–2.8M operations/s ≈ 110–150 seconds (T3 calibration).
+            operation_budget: Some(300_000_000),
             max_merge_retries: 100,
             sintering: SinteringDistribution::default(),
             dpo_distribution: DpoDistribution::default(),
             target_kf_distribution: TargetKfDistribution::default(),
         }
     }
+}
+
+/// Tracks the deterministic operation budget for a Tunable CC run.
+struct OperationBudget {
+    limit: Option<u64>,
+    used: u64,
+    exhausted: bool,
+}
+
+impl OperationBudget {
+    fn new(limit: Option<u64>) -> Self {
+        Self {
+            limit,
+            used: 0,
+            exhausted: false,
+        }
+    }
+
+    /// Charges one operation and reports whether work may continue.
+    fn consume(&mut self) -> bool {
+        self.consume_many(1)
+    }
+
+    /// Charges a deterministic batch of operations before the work executes.
+    fn consume_many(&mut self, count: u64) -> bool {
+        if self.exhausted {
+            return false;
+        }
+
+        match self.limit {
+            None => {
+                self.used = self.used.saturating_add(count);
+                true
+            }
+            Some(limit) => {
+                let remaining = limit.saturating_sub(self.used);
+                if count >= remaining {
+                    self.used = limit;
+                    self.exhausted = true;
+                    false
+                } else {
+                    self.used += count;
+                    true
+                }
+            }
+        }
+    }
+}
+
+/// At most five Cartesian particle comparisons are admitted per budget operation.
+/// Phase 0 covered the approved N=500 fixtures and the public R25 N=2000 matrix.
+/// Quantum 4 still reached 303,364,437 operations, so five is the smallest integer
+/// that preserves the 300M default while bounding the previously hidden pair work.
+const PAIR_COMPARISONS_PER_OPERATION: u64 = 5;
+
+fn consume_pair_comparison(operations: &mut OperationBudget, comparisons: &mut u64) -> bool {
+    if *comparisons % PAIR_COMPARISONS_PER_OPERATION == 0 && !operations.consume() {
+        return false;
+    }
+    *comparisons = comparisons.saturating_add(1);
+    true
 }
 
 impl TunableCcParams {
@@ -545,7 +613,25 @@ fn check_overlap(
     cluster2: &TunableCluster,
     sintering_coeff: f64,
 ) -> bool {
-    // Quick bounding sphere check first (use sintered distance)
+    check_overlap_with_budget(cluster1, cluster2, sintering_coeff, None)
+        .expect("an unbounded overlap scan cannot exhaust")
+}
+
+fn check_overlap_budgeted(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    operations: &mut OperationBudget,
+) -> Option<bool> {
+    check_overlap_with_budget(cluster1, cluster2, sintering_coeff, Some(operations))
+}
+
+fn check_overlap_with_budget(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    mut operations: Option<&mut OperationBudget>,
+) -> Option<bool> {
     let dist = cluster1
         .center_of_mass
         .distance_to(&cluster2.center_of_mass);
@@ -555,20 +641,26 @@ fn check_overlap(
         sintering_coeff,
     );
     if dist > bounding_contact + 1e-6 {
-        return false;
+        return Some(false);
     }
 
-    // Detailed particle-level check with sintering
+    let mut pair_comparisons = 0;
     for p1 in &cluster1.particles {
         for p2 in &cluster2.particles {
+            if operations.as_deref_mut().is_some_and(|budget| {
+                !consume_pair_comparison(budget, &mut pair_comparisons)
+            }) {
+                return None;
+            }
+
             let d = p1.center.distance_to(&p2.center);
             let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
             if d < contact_dist - 1e-6 {
-                return true;
+                return Some(true);
             }
         }
     }
-    false
+    Some(false)
 }
 
 /// Relative tolerance accepted when validating inter-cluster contact.
@@ -588,6 +680,25 @@ fn has_intercluster_contact(
     cluster2: &TunableCluster,
     sintering_coeff: f64,
 ) -> bool {
+    has_intercluster_contact_with_budget(cluster1, cluster2, sintering_coeff, None)
+        .expect("an unbounded contact scan cannot exhaust")
+}
+
+fn has_intercluster_contact_budgeted(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    operations: &mut OperationBudget,
+) -> Option<bool> {
+    has_intercluster_contact_with_budget(cluster1, cluster2, sintering_coeff, Some(operations))
+}
+
+fn has_intercluster_contact_with_budget(
+    cluster1: &TunableCluster,
+    cluster2: &TunableCluster,
+    sintering_coeff: f64,
+    mut operations: Option<&mut OperationBudget>,
+) -> Option<bool> {
     let dist = cluster1
         .center_of_mass
         .distance_to(&cluster2.center_of_mass);
@@ -598,22 +709,29 @@ fn has_intercluster_contact(
     );
     let bounding_tolerance = intercluster_contact_tolerance(bounding_contact);
     if dist > bounding_contact + bounding_tolerance {
-        return false;
+        return Some(false);
     }
 
+    let mut pair_comparisons = 0;
     for p1 in &cluster1.particles {
         for p2 in &cluster2.particles {
+            if operations.as_deref_mut().is_some_and(|budget| {
+                !consume_pair_comparison(budget, &mut pair_comparisons)
+            }) {
+                return None;
+            }
+
             let d = p1.center.distance_to(&p2.center);
             let contact_dist = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
             let tolerance = intercluster_contact_tolerance(contact_dist);
 
             if d <= contact_dist + tolerance {
-                return true;
+                return Some(true);
             }
         }
     }
 
-    false
+    Some(false)
 }
 
 /// Rotate vector v around axis by angle (in radians) using Rodrigues' formula.
@@ -673,6 +791,7 @@ fn select_contact_particles<R: Rng>(
     required_distance: f64,
     sintering_coeff: f64,
     rng: &mut R,
+    operations: &mut OperationBudget,
 ) -> Option<(usize, usize)> {
     // Shuffle candidates for randomness
     let mut candidates1 = la1.to_vec();
@@ -680,8 +799,13 @@ fn select_contact_particles<R: Rng>(
     candidates1.shuffle(rng);
     candidates2.shuffle(rng);
 
+    let mut pair_comparisons = 0;
     for &m1 in &candidates1 {
         for &m2 in &candidates2 {
+            if !consume_pair_comparison(operations, &mut pair_comparisons) {
+                return None;
+            }
+
             let p1 = &cluster1.particles[m1];
             let p2 = &cluster2.particles[m2];
 
@@ -786,12 +910,18 @@ fn resolve_overlap_by_rotation<R: Rng>(
     max_attempts: usize,
     sintering_coeff: f64,
     rng: &mut R,
+    operations: &mut OperationBudget,
 ) -> bool {
     // Rotation axis: line from cluster2 CoM through particle m2
     let p2_pos = cluster2.particles[m2].center;
     let rotation_axis = (p2_pos - cluster2.center_of_mass).normalize();
 
     for _ in 0..max_attempts {
+        // Each rotation attempt is part of the deterministic budget.
+        if !operations.consume() {
+            return false;
+        }
+
         // Random rotation angle
         let angle = rng.gen_range(0.0..2.0 * PI);
 
@@ -799,13 +929,73 @@ fn resolve_overlap_by_rotation<R: Rng>(
         let mut test_cluster = cluster2.clone();
         test_cluster.rotate_around_axis(rotation_axis, angle, test_cluster.center_of_mass);
 
-        if !check_overlap(cluster1, &test_cluster, sintering_coeff) {
-            *cluster2 = test_cluster;
-            return true;
+        match check_overlap_budgeted(cluster1, &test_cluster, sintering_coeff, operations) {
+            Some(false) => {
+                *cluster2 = test_cluster;
+                return true;
+            }
+            Some(true) => {}
+            None => return false,
         }
     }
 
     false
+}
+
+/// Outcome of validating one positioned cluster pair under the operation budget.
+enum BudgetedPlacement {
+    Valid,
+    Invalid,
+    Exhausted,
+}
+
+fn validate_positioned_clusters<R: Rng>(
+    cluster1: &TunableCluster,
+    cluster2: &mut TunableCluster,
+    contact_particle2: usize,
+    max_rotation_attempts: usize,
+    sintering_coeff: f64,
+    rng: &mut R,
+    operations: &mut OperationBudget,
+) -> BudgetedPlacement {
+    let Some(has_contact) =
+        has_intercluster_contact_budgeted(cluster1, cluster2, sintering_coeff, operations)
+    else {
+        return BudgetedPlacement::Exhausted;
+    };
+    if !has_contact {
+        return BudgetedPlacement::Invalid;
+    }
+
+    let Some(has_overlap) = check_overlap_budgeted(cluster1, cluster2, sintering_coeff, operations)
+    else {
+        return BudgetedPlacement::Exhausted;
+    };
+    if !has_overlap {
+        return BudgetedPlacement::Valid;
+    }
+
+    if !resolve_overlap_by_rotation(
+        cluster1,
+        cluster2,
+        contact_particle2,
+        max_rotation_attempts,
+        sintering_coeff,
+        rng,
+        operations,
+    ) {
+        return if operations.exhausted {
+            BudgetedPlacement::Exhausted
+        } else {
+            BudgetedPlacement::Invalid
+        };
+    }
+
+    match has_intercluster_contact_budgeted(cluster1, cluster2, sintering_coeff, operations) {
+        Some(true) => BudgetedPlacement::Valid,
+        Some(false) => BudgetedPlacement::Invalid,
+        None => BudgetedPlacement::Exhausted,
+    }
 }
 
 /// Fallback: merge clusters using ballistic-like approach with sintering support.
@@ -814,6 +1004,7 @@ fn merge_ballistic<R: Rng>(
     cluster2: &mut TunableCluster,
     sintering_coeff: f64,
     rng: &mut R,
+    operation_budget: &mut OperationBudget,
 ) -> bool {
     // Position cluster2 far from cluster1
     let launch_dist = cluster1.bounding_radius + cluster2.bounding_radius * 3.0;
@@ -853,6 +1044,9 @@ fn merge_ballistic<R: Rng>(
             let mut min_cd = f64::INFINITY;
             for p1 in &cluster1.particles {
                 for p2 in &cluster2.particles {
+                    if !operation_budget.consume() {
+                        return false;
+                    }
                     let cd = sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
                     if cd < min_cd {
                         min_cd = cd;
@@ -875,6 +1069,9 @@ fn merge_ballistic<R: Rng>(
                 let mut delta = None;
                 'search: for p1 in &cluster1.particles {
                     for p2 in &cluster2.particles {
+                        if !operation_budget.consume() {
+                            return false;
+                        }
                         let dist = p1.center.distance_to(&p2.center);
                         let contact_dist =
                             sintered_contact_distance(p1.radius, p2.radius, sintering_coeff);
@@ -896,6 +1093,11 @@ fn merge_ballistic<R: Rng>(
             if let Some(d) = snap_delta {
                 if d.length() > 1e-14 {
                     cluster2.translate(d);
+                }
+                let pair_count = (cluster1.particles.len() as u64)
+                    .saturating_mul(cluster2.particles.len() as u64);
+                if !operation_budget.consume_many(pair_count) {
+                    return false;
                 }
                 if !check_overlap(cluster1, cluster2, sintering_coeff) {
                     return true;
@@ -1180,8 +1382,13 @@ pub fn run_tunable_cc_internal(
     //   [Phase 3 flag=false]: Legacy random pair + retry + ballistic (Phase 2)
     let mut iterations = 0;
     let max_iterations = params.n_particles * 1000;
+    let mut operation_budget = OperationBudget::new(params.operation_budget);
 
     while clusters.len() > 1 && iterations < max_iterations {
+        // Count each merge evaluation before selecting a pair.
+        if !operation_budget.consume() {
+            break;
+        }
         iterations += 1;
 
         let sintering_coeff = params.sintering.sample(&mut rng);
@@ -1199,7 +1406,12 @@ pub fn run_tunable_cc_internal(
                 &mut rng,
                 use_low_df_fix,
                 use_high_df_fix,
+                Some(&mut operation_budget),
             );
+
+            if operation_budget.exhausted {
+                break;
+            }
 
             match smart_result {
                 SmartPairResult::Feasible(pair) => {
@@ -1220,6 +1432,11 @@ pub fn run_tunable_cc_internal(
                     // Try placement up to max_merge_retries (fresh direction each time)
                     let mut attempt_succeeded = false;
                     for attempt in 0..=params.max_merge_retries {
+                        // Each retry evaluates a candidate merge.
+                        if !operation_budget.consume() {
+                            break;
+                        }
+
                         // Re-clone for each attempt to get fresh positioning
                         let mut imp_try = clusters[impacted_idx].clone();
                         let mut imr_try = clusters[impactor_idx].clone();
@@ -1236,6 +1453,11 @@ pub fn run_tunable_cc_internal(
 
                         let mut inner_success = false;
                         for _ in 0..params.max_particle_selection_attempts {
+                            // Each particle-selection retry is budgeted.
+                            if !operation_budget.consume() {
+                                break;
+                            }
+
                             if let Some((m1, m2)) = select_contact_particles(
                                 &imp_try,
                                 &imr_try,
@@ -1244,6 +1466,7 @@ pub fn run_tunable_cc_internal(
                                 required_distance,
                                 sintering_coeff,
                                 &mut rng,
+                                &mut operation_budget,
                             ) {
                                 let positioned = position_clusters_for_contact(
                                     &mut imp_try,
@@ -1255,37 +1478,23 @@ pub fn run_tunable_cc_internal(
                                     &mut rng,
                                 );
                                 if positioned {
-                                    let has_contact = has_intercluster_contact(
+                                    match validate_positioned_clusters(
                                         &imp_try,
-                                        &imr_try,
+                                        &mut imr_try,
+                                        m2,
+                                        params.max_rotation_attempts,
                                         sintering_coeff,
-                                    );
-                                    if has_contact
-                                        && !check_overlap(&imp_try, &imr_try, sintering_coeff)
-                                    {
-                                        inner_success = true;
-                                        impacted = imp_try;
-                                        impactor = imr_try;
-                                        break;
-                                    } else if has_contact
-                                        && resolve_overlap_by_rotation(
-                                            &imp_try,
-                                            &mut imr_try,
-                                            m2,
-                                            params.max_rotation_attempts,
-                                            sintering_coeff,
-                                            &mut rng,
-                                        )
-                                        && has_intercluster_contact(
-                                            &imp_try,
-                                            &imr_try,
-                                            sintering_coeff,
-                                        )
-                                    {
-                                        inner_success = true;
-                                        impacted = imp_try;
-                                        impactor = imr_try;
-                                        break;
+                                        &mut rng,
+                                        &mut operation_budget,
+                                    ) {
+                                        BudgetedPlacement::Valid => {
+                                            inner_success = true;
+                                            impacted = imp_try;
+                                            impactor = imr_try;
+                                            break;
+                                        }
+                                        BudgetedPlacement::Invalid => {}
+                                        BudgetedPlacement::Exhausted => break,
                                     }
                                 }
                             }
@@ -1299,7 +1508,9 @@ pub fn run_tunable_cc_internal(
                         retries_this_merge = attempt;
                     }
 
-                    if attempt_succeeded {
+                    if operation_budget.exhausted {
+                        // Stop cleanly with the aggregate before the budgeted attempt.
+                    } else if attempt_succeeded {
                         // Tunable merge succeeded
                         tunable_merges += 1;
                         let actual_distance = impacted
@@ -1344,6 +1555,7 @@ pub fn run_tunable_cc_internal(
                             rp,
                             sintering_coeff,
                             &mut rng,
+                            &mut operation_budget,
                         );
 
                         if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1375,13 +1587,19 @@ pub fn run_tunable_cc_internal(
                             merge_count += 1;
                             clusters.push(merged);
                             merge_success = true;
-                        } else {
+                        } else if !operation_budget.exhausted {
                             // March-inward failed → pure ballistic fallback.
                             // Tag as "ballistic" (not "adaptive") so we know it failed.
                             let imp_b = clusters[impacted_idx].clone();
                             let mut imr_b = clusters[impactor_idx].clone();
 
-                            if merge_ballistic(&imp_b, &mut imr_b, sintering_coeff, &mut rng) {
+                            if merge_ballistic(
+                                &imp_b,
+                                &mut imr_b,
+                                sintering_coeff,
+                                &mut rng,
+                                &mut operation_budget,
+                            ) {
                                 ballistic_merges += 1;
                                 let actual_distance =
                                     imp_b.center_of_mass.distance_to(&imr_b.center_of_mass);
@@ -1456,6 +1674,7 @@ pub fn run_tunable_cc_internal(
                         rp,
                         sintering_coeff,
                         &mut rng,
+                        &mut operation_budget,
                     );
 
                     if let Some((imp_m, imr_m, actual_distance)) = march_result {
@@ -1494,14 +1713,19 @@ pub fn run_tunable_cc_internal(
                         merge_count += 1;
                         clusters.push(merged);
                         merge_success = true;
-                    } else {
+                    } else if !operation_budget.exhausted {
                         // March-inward failed → pure ballistic fallback.
-                        ballistic_merges += 1;
-
                         let imp = clusters[impacted_idx].clone();
                         let mut imr = clusters[impactor_idx].clone();
 
-                        if merge_ballistic(&imp, &mut imr, sintering_coeff, &mut rng) {
+                        if merge_ballistic(
+                            &imp,
+                            &mut imr,
+                            sintering_coeff,
+                            &mut rng,
+                            &mut operation_budget,
+                        ) {
+                            ballistic_merges += 1;
                             let actual_distance =
                                 imp.center_of_mass.distance_to(&imr.center_of_mass);
 
@@ -1543,6 +1767,11 @@ pub fn run_tunable_cc_internal(
 
             // Retry loop: each retry picks a NEW random pair (R3 spec)
             for attempt in 0..=params.max_merge_retries {
+                // Each retry evaluates a candidate merge.
+                if !operation_budget.consume() {
+                    break;
+                }
+
                 // Select two clusters randomly (fresh pair each attempt)
                 let indices: Vec<usize> = (0..clusters.len()).collect();
                 let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
@@ -1590,6 +1819,11 @@ pub fn run_tunable_cc_internal(
                 // Inner particle-selection loop (within this attempt)
                 let mut attempt_succeeded = false;
                 for _ in 0..params.max_particle_selection_attempts {
+                    // Each particle-selection retry is budgeted.
+                    if !operation_budget.consume() {
+                        break;
+                    }
+
                     if let Some((m1, m2)) = select_contact_particles(
                         &impacted,
                         &impactor,
@@ -1598,6 +1832,7 @@ pub fn run_tunable_cc_internal(
                         required_distance,
                         sintering_coeff,
                         &mut rng,
+                        &mut operation_budget,
                     ) {
                         let positioned = position_clusters_for_contact(
                             &mut impacted,
@@ -1610,26 +1845,21 @@ pub fn run_tunable_cc_internal(
                         );
 
                         if positioned {
-                            let has_contact =
-                                has_intercluster_contact(&impacted, &impactor, sintering_coeff);
-
-                            if has_contact && !check_overlap(&impacted, &impactor, sintering_coeff)
-                            {
-                                attempt_succeeded = true;
-                                break;
-                            } else if has_contact
-                                && resolve_overlap_by_rotation(
-                                    &impacted,
-                                    &mut impactor,
-                                    m2,
-                                    params.max_rotation_attempts,
-                                    sintering_coeff,
-                                    &mut rng,
-                                )
-                                && has_intercluster_contact(&impacted, &impactor, sintering_coeff)
-                            {
-                                attempt_succeeded = true;
-                                break;
+                            match validate_positioned_clusters(
+                                &impacted,
+                                &mut impactor,
+                                m2,
+                                params.max_rotation_attempts,
+                                sintering_coeff,
+                                &mut rng,
+                                &mut operation_budget,
+                            ) {
+                                BudgetedPlacement::Valid => {
+                                    attempt_succeeded = true;
+                                    break;
+                                }
+                                BudgetedPlacement::Invalid => {}
+                                BudgetedPlacement::Exhausted => break,
                             }
                         }
                     }
@@ -1684,7 +1914,7 @@ pub fn run_tunable_cc_internal(
             }
 
             // Ballistic fallback after all retries exhausted (R3 scenario 3.3)
-            if !merge_success {
+            if !merge_success && !operation_budget.exhausted {
                 // Pick a fresh pair for ballistic
                 let indices: Vec<usize> = (0..clusters.len()).collect();
                 let selected: Vec<&usize> = indices.choose_multiple(&mut rng, 2).collect();
@@ -1704,7 +1934,13 @@ pub fn run_tunable_cc_internal(
                 let ballistic_n1 = impacted.n_particles();
                 let ballistic_n2 = impactor.n_particles();
 
-                if merge_ballistic(&impacted, &mut impactor, sintering_coeff, &mut rng) {
+                if merge_ballistic(
+                    &impacted,
+                    &mut impactor,
+                    sintering_coeff,
+                    &mut rng,
+                    &mut operation_budget,
+                ) {
                     ballistic_merges += 1;
 
                     // R16: Measure actual COM-COM distance for ballistic merge.
@@ -1787,11 +2023,7 @@ pub fn run_tunable_cc_internal(
     // the tracing/logging infrastructure.
 
     // Collect final result
-    let final_particles: Vec<Sphere> = if clusters.is_empty() {
-        Vec::new()
-    } else {
-        clusters.remove(0).particles
-    };
+    let final_particles = take_final_particles(&mut clusters, operation_budget.exhausted);
 
     let coords: Vec<[f64; 3]> = final_particles
         .iter()
@@ -1834,6 +2066,8 @@ pub fn run_tunable_cc_internal(
         coordination_std: coord_std,
         execution_time_ms,
         seed,
+        budget_exhausted: operation_budget.exhausted,
+        operations_used: operation_budget.used,
         anisotropy: inertia.anisotropy,
         asphericity: inertia.asphericity,
         acylindricity: inertia.acylindricity,
@@ -1848,6 +2082,23 @@ pub fn run_tunable_cc_internal(
         target_kf_used: Some(target_kf_used),
         merge_trace,
     })
+}
+
+fn take_final_particles(
+    clusters: &mut Vec<TunableCluster>,
+    budget_exhausted: bool,
+) -> Vec<Sphere> {
+    if budget_exhausted {
+        clusters
+            .iter()
+            .max_by_key(|cluster| cluster.n_particles())
+            .map(|cluster| cluster.particles.clone())
+            .unwrap_or_default()
+    } else if clusters.is_empty() {
+        Vec::new()
+    } else {
+        clusters.remove(0).particles
+    }
 }
 
 /// Calculate Df and kf from Rg evolution using power law fitting.
@@ -1947,7 +2198,30 @@ pub(crate) enum MarchResult {
 /// # Returns
 /// * `MarchResult::Distance(d)` — first contact at COM-COM distance `d`
 /// * `MarchResult::NoContact` — no contact achievable in the range
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) fn find_first_contact_distance(
+    spheres_a: &[Sphere],
+    spheres_b: &[Sphere],
+    direction: &Vector3,
+    d_start: f64,
+    d_floor: f64,
+    rp: f64,
+    sintering_coeff: f64,
+) -> MarchResult {
+    let mut operation_budget = OperationBudget::new(None);
+    find_first_contact_distance_budgeted(
+        spheres_a,
+        spheres_b,
+        direction,
+        d_start,
+        d_floor,
+        rp,
+        sintering_coeff,
+        &mut operation_budget,
+    )
+}
+
+fn find_first_contact_distance_budgeted(
     spheres_a: &[Sphere],
     spheres_b: &[Sphere],
     direction: &Vector3,
@@ -1955,6 +2229,7 @@ pub(crate) fn find_first_contact_distance(
     d_floor: f64,
     _rp: f64,
     sintering_coeff: f64,
+    operation_budget: &mut OperationBudget,
 ) -> MarchResult {
     // Safety: d_start must be > d_floor
     if d_start <= d_floor {
@@ -1983,6 +2258,9 @@ pub(crate) fn find_first_contact_distance(
 
     for sa in spheres_a {
         for sb in spheres_b {
+            if !operation_budget.consume() {
+                return MarchResult::NoContact;
+            }
             let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
             let v = sa.center - sb.center; // vector from sb to sa
             let v_dot_dir = v.dot(direction);
@@ -2039,6 +2317,9 @@ pub(crate) fn find_first_contact_distance(
         let mut has_overlap = false;
         for sa in spheres_a {
             for sb in spheres_b {
+                if !operation_budget.consume() {
+                    return MarchResult::NoContact;
+                }
                 let sb_center = sb.center + offset;
                 let dist = sa.center.distance_to(&sb_center);
                 let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
@@ -2062,6 +2343,9 @@ pub(crate) fn find_first_contact_distance(
         let mut max_safe_d = d;
         for sa in spheres_a {
             for sb in spheres_b {
+                if !operation_budget.consume() {
+                    return MarchResult::NoContact;
+                }
                 let contact_dist = sintered_contact_distance(sa.radius, sb.radius, sintering_coeff);
                 let v = sa.center - sb.center;
                 let v_dot_dir = v.dot(direction);
@@ -2105,6 +2389,7 @@ fn march_inward_merge<R: Rng>(
     rp: f64,
     sintering_coeff: f64,
     rng: &mut R,
+    operation_budget: &mut OperationBudget,
 ) -> Option<(TunableCluster, TunableCluster, f64)> {
     let max_achievable = compute_max_achievable_distance(cluster1, cluster2);
 
@@ -2151,7 +2436,7 @@ fn march_inward_merge<R: Rng>(
         let (dx, dy, dz) = sample_merge_direction(rng);
         let direction = Vector3::new(dx, dy, dz);
 
-        let march = find_first_contact_distance(
+        let march = find_first_contact_distance_budgeted(
             &spheres_a_centered,
             &spheres_b_centered,
             &direction,
@@ -2159,7 +2444,12 @@ fn march_inward_merge<R: Rng>(
             d_floor,
             rp,
             sintering_coeff,
+            operation_budget,
         );
+
+        if operation_budget.exhausted {
+            return None;
+        }
 
         if let MarchResult::Distance(d) = march {
             match &best_result {
@@ -2189,12 +2479,19 @@ fn march_inward_merge<R: Rng>(
         .collect();
     let mut c2 = TunableCluster::from_particles(positioned_particles);
 
-    // Verify physical contact + no overlap
-    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
-        && !check_overlap(cluster1, &c2, sintering_coeff)
-    {
-        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
-        return Some((cluster1.clone(), c2, actual));
+    // Verify physical contact + no overlap.
+    let pair_count = (cluster1.particles.len() as u64).saturating_mul(c2.particles.len() as u64);
+    if !operation_budget.consume_many(pair_count) {
+        return None;
+    }
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
+        if !check_overlap(cluster1, &c2, sintering_coeff) {
+            let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+            return Some((cluster1.clone(), c2, actual));
+        }
     }
 
     // March found a COM distance but exact placement has slight misalignment.
@@ -2206,12 +2503,18 @@ fn march_inward_merge<R: Rng>(
     for _ in 0..max_nudge {
         c2.translate(trajectory * step);
 
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
         if check_overlap(cluster1, &c2, sintering_coeff) {
             // Overshot into overlap — back off one step
             c2.translate(trajectory * (-step));
             break;
         }
 
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
         if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
             let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
             return Some((cluster1.clone(), c2, actual));
@@ -2219,11 +2522,17 @@ fn march_inward_merge<R: Rng>(
     }
 
     // Last check after nudging
-    if has_intercluster_contact(cluster1, &c2, sintering_coeff)
-        && !check_overlap(cluster1, &c2, sintering_coeff)
-    {
-        let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
-        return Some((cluster1.clone(), c2, actual));
+    if !operation_budget.consume_many(pair_count) {
+        return None;
+    }
+    if has_intercluster_contact(cluster1, &c2, sintering_coeff) {
+        if !operation_budget.consume_many(pair_count) {
+            return None;
+        }
+        if !check_overlap(cluster1, &c2, sintering_coeff) {
+            let actual = cluster1.center_of_mass.distance_to(&c2.center_of_mass);
+            return Some((cluster1.clone(), c2, actual));
+        }
     }
 
     None
@@ -2289,7 +2598,9 @@ pub(crate) fn find_feasible_pairs(
     sintering_coeff: f64,
     use_low_df_fix: bool,
     use_high_df_fix: bool,
+    operation_budget: Option<&mut OperationBudget>,
 ) -> Vec<PairCandidate> {
+    let mut operation_budget = operation_budget;
     // Threshold factor is computed once (R3, scenario 3.9): each pair's
     // required distance is multiplied by this factor before comparison.
     let bounding_threshold_factor: f64 = if use_low_df_fix { 0.5 } else { 1.0 };
@@ -2299,6 +2610,13 @@ pub(crate) fn find_feasible_pairs(
 
     for i in 0..k {
         for j in (i + 1)..k {
+            if operation_budget
+                .as_deref_mut()
+                .is_some_and(|budget| !budget.consume())
+            {
+                return feasible;
+            }
+
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
             let required =
@@ -2361,7 +2679,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     rng: &mut R,
     use_low_df_fix: bool,
     use_high_df_fix: bool,
+    operation_budget: Option<&mut OperationBudget>,
 ) -> SmartPairResult {
+    let mut operation_budget = operation_budget;
     let feasible = find_feasible_pairs(
         clusters,
         target_df,
@@ -2370,7 +2690,12 @@ pub(crate) fn select_pair_smart<R: Rng>(
         sintering_coeff,
         use_low_df_fix,
         use_high_df_fix,
+        operation_budget.as_deref_mut(),
     );
+
+    if operation_budget.as_ref().is_some_and(|budget| budget.exhausted) {
+        return SmartPairResult::NoCandidates;
+    }
 
     if !feasible.is_empty() {
         let chosen = feasible.choose(rng).unwrap().clone();
@@ -2383,6 +2708,13 @@ pub(crate) fn select_pair_smart<R: Rng>(
 
     for i in 0..k {
         for j in (i + 1)..k {
+            if operation_budget
+                .as_deref_mut()
+                .is_some_and(|budget| !budget.consume())
+            {
+                return SmartPairResult::NoCandidates;
+            }
+
             let n1 = clusters[i].n_particles();
             let n2 = clusters[j].n_particles();
             let required =
@@ -2414,7 +2746,9 @@ pub(crate) fn select_pair_smart<R: Rng>(
     }
 
     match best {
-        Some(max_achievable_pair) => SmartPairResult::AllInfeasible { max_achievable_pair },
+        Some(max_achievable_pair) => SmartPairResult::AllInfeasible {
+            max_achievable_pair,
+        },
         None => SmartPairResult::NoCandidates,
     }
 }
@@ -2486,6 +2820,7 @@ pub(crate) fn emit_no_feasible_pair_entry(step: usize, pool_size: usize) -> Merg
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rand::{rngs::StdRng, SeedableRng};
 
     fn particles_form_connected_graph(
         coordinates: &[[f64; 3]],
@@ -2566,11 +2901,378 @@ mod tests {
             ..Default::default()
         };
 
-        let r1 = run_tunable_cc_internal(params.clone(), 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params.clone(), 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.seed, r2.seed);
+    }
+
+    #[test]
+    fn operation_budget_default_preserves_baseline() {
+        assert_eq!(
+            TunableCcParams::default().operation_budget,
+            Some(300_000_000)
+        );
+
+        let params = TunableCcParams {
+            n_particles: 10,
+            target_df: 1.8,
+            target_kf: 1.3,
+            ..Default::default()
+        };
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+
+        // Floating-point equality is NOT portable across instruction sets: arm64
+        // and x86-64 can fuse multiply-add differently, so the last bits of a
+        // pinned value differ while the algorithm is byte-identical. This test
+        // failed exactly that way in CI (x86-64) while passing locally (arm64).
+        //
+        // The tolerance is three orders of magnitude tighter than any real change
+        // could produce, and the hard guarantee that the numeric path did not move
+        // is separate and structural: this change deletes no line of it.
+        fn close(actual: f64, expected: f64, what: &str) {
+            assert!(
+                (actual - expected).abs() < 1e-9,
+                "{what}: got {actual}, expected {expected}"
+            );
+        }
+        fn close_all(actual: &[f64], expected: &[f64], what: &str) {
+            assert_eq!(actual.len(), expected.len(), "{what}: length");
+            for (i, (a, e)) in actual.iter().zip(expected).enumerate() {
+                close(*a, *e, &format!("{what}[{i}]"));
+            }
+        }
+
+        close(
+            result.fractal_dimension,
+            2.26903772584001,
+            "fractal_dimension",
+        );
+        close(result.fractal_dimension_std, 0.05, "fractal_dimension_std");
+        close(result.prefactor, 0.7857052094847528, "prefactor");
+        close(result.porosity, 0.957457611829695, "porosity");
+        close(result.coordination_mean, 1.8, "coordination_mean");
+        close(
+            result.coordination_std,
+            0.7483314773547883,
+            "coordination_std",
+        );
+        close(result.anisotropy, 2.9556464131382802, "anisotropy");
+        close(result.asphericity, 0.21291355657276076, "asphericity");
+        close(result.acylindricity, 0.2031190438741277, "acylindricity");
+        close_all(
+            &result.principal_moments,
+            &[28.69342695154503, 64.93774458171018, 84.80762444997933],
+            "principal_moments",
+        );
+        close_all(
+            &result.rg_evolution,
+            &[2.2635773456923, 2.9082772754370625, 3.0857640543569964],
+            "rg_evolution",
+        );
+        // Counts and identities stay exact: they are integers or literals.
+        assert_eq!(result.rg_evolution_n, vec![5, 9, 10]);
+        assert_eq!(result.radii, vec![1.0; 10]);
+        let expected_coords: [[f64; 3]; 10] = [
+            [-1.4829694310875317, 0.2470289522892426, -4.143905935103276],
+            [-0.7900252138755577, 2.0260735342169753, -4.739580919760233],
+            [-0.3797695582593783, 2.8657215372434295, -2.9713384228021305],
+            [
+                -1.9917804579733254,
+                -1.6634175658583767,
+                -3.8417380343972716,
+            ],
+            [1.3109076528435257, 2.6113255800973922, -4.009073102209672],
+            [-3.481711170208275, 1.483774599548204, -1.505425837791918],
+            [-3.5547205469869123, 1.8924847386997017, 0.451006029934931],
+            [-2.2366308883503065, 2.1236576864629226, -2.933825196097914],
+            [-5.336612159510587, 1.9491271463930666, -0.9199437056731783],
+            [-3.0880852052091194, 3.742042883552954, 1.0526460813892626],
+        ];
+        for (i, (got, want)) in result
+            .coordinates
+            .iter()
+            .zip(expected_coords.iter())
+            .enumerate()
+        {
+            close_all(got, want, &format!("coordinates[{i}]"));
+        }
+        assert_eq!(result.merge_trace.len(), 3);
+        assert!(!result.budget_exhausted);
+    }
+
+    #[test]
+    fn operation_budget_marks_tiny_budget_as_exhausted() {
+        let params = TunableCcParams {
+            n_particles: 100,
+            operation_budget: Some(100),
+            ..Default::default()
+        };
+
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("a budget-exhausted simulation should return a partial aggregate");
+
+        assert!(result.budget_exhausted);
+        assert!(result.operations_used >= 100);
+    }
+
+    #[test]
+    fn operation_budget_meters_smart_pair_scan_before_any_merge() {
+        let result = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 20,
+                operation_budget: Some(5),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budget-exhausted simulation should return a partial aggregate");
+
+        assert!(result.budget_exhausted);
+        assert_eq!(result.operations_used, 5);
+        assert!(
+            result.merge_trace.is_empty(),
+            "the O(k²) pair scan must consume this budget before a merge is attempted"
+        );
+    }
+
+    #[test]
+    fn operation_budget_stops_adaptive_and_ballistic_fallback_pair_scans() {
+        let cluster = |x: f64| {
+            TunableCluster::from_particles(vec![
+                Sphere::new(Vector3::new(x, 0.0, 0.0), 1.0),
+                Sphere::new(Vector3::new(x, 2.0, 0.0), 1.0),
+                Sphere::new(Vector3::new(x, 4.0, 0.0), 1.0),
+            ])
+        };
+        let impacted = cluster(0.0);
+        let impactor = cluster(10.0);
+
+        let mut adaptive_rng = StdRng::seed_from_u64(42);
+        let mut adaptive_budget = OperationBudget::new(Some(2));
+        let adaptive = march_inward_merge(
+            &impacted,
+            &impactor,
+            5.0,
+            1.0,
+            1.0,
+            &mut adaptive_rng,
+            &mut adaptive_budget,
+        );
+
+        assert!(adaptive.is_none());
+        assert!(adaptive_budget.exhausted);
+        assert_eq!(adaptive_budget.used, 2);
+
+        let mut ballistic_rng = StdRng::seed_from_u64(42);
+        let mut ballistic_budget = OperationBudget::new(Some(2));
+        let mut ballistic_impactor = impactor.clone();
+        let ballistic = merge_ballistic(
+            &impacted,
+            &mut ballistic_impactor,
+            1.0,
+            &mut ballistic_rng,
+            &mut ballistic_budget,
+        );
+
+        assert!(!ballistic);
+        assert!(ballistic_budget.exhausted);
+        assert_eq!(ballistic_budget.used, 2);
+    }
+
+    fn scan_test_cluster(size: usize, y: f64) -> TunableCluster {
+        TunableCluster::from_particles(
+            (0..size).map(|index| Sphere::new(Vector3::new(index as f64 * 10.0, y, 0.0), 1.0)).collect())
+    }
+
+    #[test]
+    fn operation_budget_meters_contact_particle_candidate_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let candidates: Vec<usize> = (0..8).collect();
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        let exhausted = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &candidates,
+            &candidates,
+            1_000.0,
+            1.0,
+            &mut rng,
+            &mut exact_budget,
+        );
+        assert!(exhausted.is_none());
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert!(select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &candidates,
+            &candidates,
+            1_000.0,
+            1.0,
+            &mut rng,
+            &mut permitted_budget,
+        )
+        .is_none());
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_intercluster_contact_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        assert_eq!(
+            has_intercluster_contact_budgeted(&cluster1, &cluster2, 1.0, &mut exact_budget),
+            None
+        );
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert_eq!(
+            has_intercluster_contact_budgeted(&cluster1, &cluster2, 1.0, &mut permitted_budget),
+            Some(false)
+        );
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_overlap_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let cluster2 = scan_test_cluster(8, 5.0);
+        let mut exact_budget = OperationBudget::new(Some(13));
+        assert_eq!(
+            check_overlap_budgeted(&cluster1, &cluster2, 1.0, &mut exact_budget),
+            None
+        );
+        assert!(exact_budget.exhausted);
+        assert_eq!(exact_budget.used, 13);
+        let mut permitted_budget = OperationBudget::new(Some(14));
+        assert_eq!(
+            check_overlap_budgeted(&cluster1, &cluster2, 1.0, &mut permitted_budget),
+            Some(false)
+        );
+        assert!(!permitted_budget.exhausted);
+        assert_eq!(permitted_budget.used, 13);
+    }
+
+    #[test]
+    fn operation_budget_meters_rotation_overlap_scan() {
+        let cluster1 = scan_test_cluster(8, 0.0);
+        let mut cluster2 = scan_test_cluster(8, 5.0);
+        let mut rng = StdRng::seed_from_u64(42);
+        let mut budget = OperationBudget::new(Some(14));
+        assert!(!resolve_overlap_by_rotation(
+            &cluster1,
+            &mut cluster2,
+            0,
+            1,
+            1.0,
+            &mut rng,
+            &mut budget,
+        ));
+        assert!(budget.exhausted);
+        assert_eq!(budget.used, 14);
+    }
+
+    #[test]
+    fn budget_exhaustion_returns_the_largest_accumulated_cluster() {
+        let cluster = |size: usize, x: f64| {
+            TunableCluster::from_particles(
+                (0..size)
+                    .map(|offset| {
+                        Sphere::new(Vector3::new(x + offset as f64, 0.0, 0.0), 1.0)
+                    })
+                    .collect(),
+            )
+        };
+        let mut clusters = vec![cluster(1, 0.0), cluster(4, 10.0), cluster(2, 20.0)];
+
+        let particles = take_final_particles(&mut clusters, true);
+
+        assert_eq!(
+            particles.len(),
+            4,
+            "a budget-exhausted result must return the largest accumulated cluster"
+        );
+    }
+
+    #[test]
+    fn operation_budget_is_deterministic() {
+        let params = TunableCcParams {
+            n_particles: 100,
+            operation_budget: Some(100),
+            ..Default::default()
+        };
+
+        let first = run_tunable_cc_internal(params.clone(), 42, None)
+            .expect("budgeted simulation should run");
+        let second =
+            run_tunable_cc_internal(params, 42, None).expect("budgeted simulation should run");
+
+        assert_eq!(first.coordinates, second.coordinates);
+        assert_eq!(first.radii, second.radii);
+        assert_eq!(first.rg_evolution, second.rg_evolution);
+        assert_eq!(first.rg_evolution_n, second.rg_evolution_n);
+        assert_eq!(first.fractal_dimension, second.fractal_dimension);
+        assert_eq!(first.prefactor, second.prefactor);
+        assert_eq!(first.porosity, second.porosity);
+        assert_eq!(first.coordination_mean, second.coordination_mean);
+        assert_eq!(first.coordination_std, second.coordination_std);
+        assert_eq!(first.anisotropy, second.anisotropy);
+        assert_eq!(first.asphericity, second.asphericity);
+        assert_eq!(first.acylindricity, second.acylindricity);
+        assert_eq!(first.principal_moments, second.principal_moments);
+        assert_eq!(first.principal_axes, second.principal_axes);
+        assert_eq!(first.tunable_merges, second.tunable_merges);
+        assert_eq!(first.ballistic_merges, second.ballistic_merges);
+        assert_eq!(first.adaptive_merges, second.adaptive_merges);
+        assert_eq!(
+            first.no_feasible_pair_events,
+            second.no_feasible_pair_events
+        );
+        assert_eq!(first.max_retries_per_merge, second.max_retries_per_merge);
+        assert_eq!(first.budget_exhausted, second.budget_exhausted);
+        assert_eq!(first.operations_used, 100);
+        assert_eq!(second.operations_used, 100);
+        assert_eq!(first.operations_used, second.operations_used);
+    }
+
+    #[test]
+    fn operation_budget_usage_is_monotonic() {
+        let smaller = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 100,
+                operation_budget: Some(100),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budgeted simulation should run");
+        let larger = run_tunable_cc_internal(
+            TunableCcParams {
+                n_particles: 100,
+                operation_budget: Some(200),
+                ..Default::default()
+            },
+            42,
+            None,
+        )
+        .expect("budgeted simulation should run");
+
+        assert!(larger.operations_used >= smaller.operations_used);
     }
 
     #[test]
@@ -2582,7 +3284,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Should produce all particles
         assert_eq!(result.coordinates.len(), 50);
@@ -2602,7 +3305,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 456, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 456, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Verify no particles overlap
         for i in 0..result.coordinates.len() {
@@ -2634,7 +3338,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 321, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 321, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert!(
             particles_form_connected_graph(&result.coordinates, &result.radii, 1.0),
@@ -2659,7 +3364,8 @@ mod tests {
                 dpo_distribution: DpoDistribution::Uniform { min: 0.8, max: 1.2 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= 0.8 - 1e-10 && dpo <= 1.2 + 1e-10,
@@ -2697,7 +3403,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
 
         // The Rg evolution should have enough data points for a fit
@@ -2764,7 +3471,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Must still produce all particles (simulation completes)
         assert_eq!(result.coordinates.len(), 20);
@@ -2792,7 +3500,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Fields exist and are sensible
         let total_merges = result.tunable_merges + result.ballistic_merges;
@@ -2816,7 +3525,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 777, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 777, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         // For small N with standard params, most merges should succeed via tunable path
@@ -3655,6 +4365,7 @@ mod tests {
         let mut rng = create_rng(42);
         let rp = 1.0;
         let sintering_coeff = 0.9;
+        let mut operations = OperationBudget::new(None);
 
         // Two monomer clusters
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
@@ -3672,6 +4383,7 @@ mod tests {
             1.9,
             sintering_coeff,
             &mut rng,
+            &mut operations,
         );
         assert!(
             result.is_none(),
@@ -3686,6 +4398,7 @@ mod tests {
         use crate::common::rng::create_rng;
         let mut rng = create_rng(42);
         let rp = 1.0;
+        let mut operations = OperationBudget::new(None);
 
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
         let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
@@ -3694,7 +4407,16 @@ mod tests {
         let la2 = vec![0usize];
 
         // required_distance = 1.9: bare contact_dist = 2.0 >= 1.9 → must accept
-        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.9, 1.0, &mut rng);
+        let result = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &la1,
+            &la2,
+            1.9,
+            1.0,
+            &mut rng,
+            &mut operations,
+        );
         assert!(
             result.is_some(),
             "With bare contact_dist=2.0 and required_distance=1.9, must accept"
@@ -3708,6 +4430,7 @@ mod tests {
         use crate::common::rng::create_rng;
         let mut rng = create_rng(42);
         let rp = 1.0;
+        let mut operations = OperationBudget::new(None);
 
         let cluster1 = TunableCluster::new(Sphere::new(Vector3::zero(), rp));
         let cluster2 = TunableCluster::new(Sphere::new(Vector3::new(5.0, 0.0, 0.0), rp));
@@ -3716,7 +4439,16 @@ mod tests {
         let la2 = vec![0usize];
 
         // required_distance = 1.7: sintered contact_dist = 1.8 >= 1.7 → must accept
-        let result = select_contact_particles(&cluster1, &cluster2, &la1, &la2, 1.7, 0.9, &mut rng);
+        let result = select_contact_particles(
+            &cluster1,
+            &cluster2,
+            &la1,
+            &la2,
+            1.7,
+            0.9,
+            &mut rng,
+            &mut operations,
+        );
         assert!(
             result.is_some(),
             "With sintered contact_dist=1.8 and required_distance=1.7, must accept"
@@ -3761,7 +4493,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.coordinates.len(),
             20,
@@ -3822,7 +4555,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 20);
         assert!(
             result.ballistic_merges > 0 || result.adaptive_merges > 0,
@@ -3904,7 +4638,8 @@ mod tests {
             n_particles: 10,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(
             result.dpo_used,
             Some(1.0),
@@ -3932,8 +4667,10 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params1, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         assert_eq!(r1.fractal_dimension, r2.fractal_dimension);
@@ -3962,8 +4699,10 @@ mod tests {
         };
         let params2 = params1.clone();
 
-        let r1 = run_tunable_cc_internal(params1, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params2, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params1, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params2, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.dpo_used, r2.dpo_used);
         assert_eq!(r1.target_kf_used, r2.target_kf_used);
@@ -3989,7 +4728,8 @@ mod tests {
                 dpo_distribution: DpoDistribution::Normal { mean, std: std_dev },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let dpo = result.dpo_used.unwrap();
             assert!(
                 dpo >= lower && dpo <= upper,
@@ -4014,7 +4754,8 @@ mod tests {
                 },
                 ..Default::default()
             };
-            let result = run_tunable_cc_internal(params, seed, None).expect("tunable_cc should run for a valid payload");
+            let result = run_tunable_cc_internal(params, seed, None)
+                .expect("tunable_cc should run for a valid payload");
             let kf = result.target_kf_used.unwrap();
             assert!(
                 kf >= kf_min && kf <= kf_max,
@@ -4089,7 +4830,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         // Must produce all 10 particles (not 1, not collapsed)
         assert_eq!(
@@ -4147,7 +4889,8 @@ mod tests {
             ..Default::default()
         };
 
-        let result = run_tunable_cc_internal(params, 123, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 123, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
 
         let sintered_cd = sintered_contact_distance(rp, rp, sintering_coeff); // 1.8
@@ -4204,7 +4947,8 @@ mod tests {
             seed_type: SeedType::Dimers,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 10);
         // n_initial_clusters - 1 merges (5 dimers → 4 merges)
         assert_eq!(
@@ -4225,7 +4969,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty(), "Trace must not be empty");
 
         // At least some should be tunable
@@ -4277,7 +5022,8 @@ mod tests {
             max_merge_retries: 5,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert_eq!(result.coordinates.len(), 50);
 
         // Phase 3: fallback merges are tagged "adaptive" instead of "ballistic"
@@ -4315,7 +5061,8 @@ mod tests {
             max_merge_retries: max_retries,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
                 entry.retries <= max_retries,
@@ -4335,7 +5082,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         assert!(!result.merge_trace.is_empty());
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert!(
@@ -4360,7 +5108,8 @@ mod tests {
             target_kf: 1.3,
             ..Default::default()
         };
-        let result = run_tunable_cc_internal(params, 42, None).expect("tunable_cc should run for a valid payload");
+        let result = run_tunable_cc_internal(params, 42, None)
+            .expect("tunable_cc should run for a valid payload");
         for (i, entry) in result.merge_trace.iter().enumerate() {
             assert_eq!(
                 entry.step, i,
@@ -4389,8 +5138,10 @@ mod tests {
             ..Default::default() // default sintering is Fixed(1.0)
         };
 
-        let r1 = run_tunable_cc_internal(params_sintered, 42, None).expect("tunable_cc should run for a valid payload");
-        let r2 = run_tunable_cc_internal(params_baseline, 42, None).expect("tunable_cc should run for a valid payload");
+        let r1 = run_tunable_cc_internal(params_sintered, 42, None)
+            .expect("tunable_cc should run for a valid payload");
+        let r2 = run_tunable_cc_internal(params_baseline, 42, None)
+            .expect("tunable_cc should run for a valid payload");
 
         assert_eq!(r1.coordinates.len(), r2.coordinates.len());
         for (i, (c1, c2)) in r1.coordinates.iter().zip(r2.coordinates.iter()).enumerate() {
@@ -4456,7 +5207,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false, None);
         // 3 clusters → C(3,2) = 3 pairs total, all should be feasible
         assert_eq!(
             feasible.len(),
@@ -4481,7 +5232,9 @@ mod tests {
         let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
         // With n1=50, n2=50, df=1.4, the required distance is very large
         // but bounding_radius ≈ 1.0 (all at origin) → bounding_sum ≈ 2.0
-        let feasible = find_feasible_pairs(&clusters, 1.4, 1.3, 1.0, 1.0, false, false);
+        let feasible = find_feasible_pairs(
+            &clusters, 1.4, 1.3, 1.0, 1.0, false, false, None,
+        );
         assert_eq!(
             feasible.len(),
             0,
@@ -4509,7 +5262,7 @@ mod tests {
         let df = 1.8;
         let kf = 1.3;
         let rp = 1.0;
-        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false);
+        let feasible = find_feasible_pairs(&clusters, df, kf, rp, 1.0, false, false, None);
         // Pair (0,1) = monomer+monomer → feasible at Df=1.8
         // Pair (0,2) and (1,2) = monomer+100-compact → infeasible
         assert!(
@@ -4543,7 +5296,9 @@ mod tests {
             TunableCluster::new(Sphere::new(Vector3::new(0.0, 10.0, 0.0), 1.0)),
         ];
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
         match result {
             SmartPairResult::Feasible(pair) => {
                 assert!(pair.required_distance > 0.0);
@@ -4572,7 +5327,9 @@ mod tests {
 
         let clusters = vec![make_compact_cluster(50), make_compact_cluster(50)];
 
-        let result = select_pair_smart(&clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.4, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
         match result {
             SmartPairResult::AllInfeasible {
                 max_achievable_pair,
@@ -4606,7 +5363,9 @@ mod tests {
         let mut rng = create_rng(42);
         let clusters: Vec<TunableCluster> = Vec::new();
 
-        let result = select_pair_smart(&clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false);
+        let result = select_pair_smart(
+            &clusters, 1.8, 1.3, 1.0, 1.0, &mut rng, false, false, None,
+        );
 
         match result {
             SmartPairResult::NoCandidates => {}

@@ -98,9 +98,12 @@ span_nm        = span_padded * scale_factor_nm  # engine-unit → nm conversion
 pixels_per_100nm = (100 * img_size) / span_nm
 ```
 
-where `scale_factor_nm = primary_particle_diameter_nm / 2` (the engine's length unit),
-`img_size` is the square canvas pixel dimension, and the 1.04 factor matches the
-renderer's 2% padding applied symmetrically on each side of the longer axis.
+where `scale_factor_nm` is the engine-unit → nm conversion resolved exactly as the
+runtime resolves it (`get_scale_factor_nm`): `scale_nm` first — a positive finite
+`parameters.scale_nm` means the geometry is already in nm and pins the factor —
+and `primary_particle_diameter_nm / 2` only as the fallback (the engine's length
+unit). `img_size` is the square canvas pixel dimension, and the 1.04 factor matches
+the renderer's 2% padding applied symmetrically on each side of the longer axis.
 
 **AND** the 3D axis-aligned bounding box SHALL NOT be used for per-direction scale computation.
 
