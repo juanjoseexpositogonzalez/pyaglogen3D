@@ -577,3 +577,69 @@ class TestWorkerClaimBurial:
         assert result.state == "FAILURE"
         with pytest.raises(RuntimeError, match="worker failed"):
             result.get()
+
+
+@pytest.mark.django_db
+class TestLegacyAdoptionDeployWindow:
+    """JD-A-001 (ledger 1b7fb42e): production at the deploy base never
+    wrote `bc-owner-<task_id>` (born in T15) but DID stamp
+    `bc-inflight-<study_id>` with `{task_id, study_id}` at dispatch. A
+    pre-upgrade message queued across the deploy carries no owner record;
+    the study marker naming this delivery is equally valid adoption proof."""
+
+    def _run_delivery(self, study: ParametricStudy, marker: Any, owner: Any) -> Any:
+        task_runner = cast(Any, run_box_counting_async)
+        task_runner.push_request(id="task-legacy-queued")
+
+        def fake_async_result(result_id: str) -> Any:
+            if str(result_id).startswith("bc-owner"):
+                return owner
+            return marker
+
+        try:
+            with (
+                patch(
+                    "apps.simulations.tasks.run_box_counting_for_study",
+                    return_value={"total": 1, "processed": 1, "skipped": 0, "failed": 0},
+                ),
+                patch(
+                    "celery.app.task.Task.AsyncResult",
+                    side_effect=fake_async_result,
+                ),
+                patch(
+                    "apps.simulations.tasks.AsyncResult", return_value=marker
+                ),
+            ):
+                return task_runner.run(str(study.id), 100, 18, False, False)
+        finally:
+            task_runner.pop_request()
+
+    def test_marker_without_owner_adopts_the_delivery(
+        self, user: Any, project: Project
+    ) -> None:
+        study = _make_study(project)
+        _make_sim(project, study, with_geometry=True)
+        marker = MagicMock(
+            state="PROGRESS",
+            info={"task_id": "task-legacy-queued", "study_id": str(study.id)},
+        )
+        owner = MagicMock(state="PENDING", info=None)  # production never wrote it
+
+        result = self._run_delivery(study, marker, owner)
+
+        assert result == {"total": 1, "processed": 1, "skipped": 0, "failed": 0}
+        study.refresh_from_db()
+        assert study.box_counting_task_id == "task-legacy-queued"
+        assert study.box_counting_task_state == "finished"
+
+    def test_neither_owner_nor_marker_ignores_the_delivery(
+        self, user: Any, project: Project
+    ) -> None:
+        """The counter-guard: with neither an owner record nor a matching
+        study marker, a delivery adopts nothing (fail-closed unchanged)."""
+        study = _make_study(project)
+        marker = MagicMock(state="PENDING", info=None)
+        owner = MagicMock(state="PENDING", info=None)
+
+        with pytest.raises(Ignore):
+            self._run_delivery(study, marker, owner)

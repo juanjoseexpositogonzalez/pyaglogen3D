@@ -9,6 +9,7 @@ from uuid import UUID
 import numpy as np
 from celery import Task, shared_task
 from celery.exceptions import Ignore, SoftTimeLimitExceeded
+from celery.result import AsyncResult
 from celery.signals import task_revoked
 from django.conf import settings
 from django.db import transaction
@@ -1242,6 +1243,31 @@ def run_box_counting_for_study(
     return results
 
 
+def _bc_legacy_marker_names_delivery(task_id: str, study_id: str) -> bool:
+    """JD-A-001 (ledger 1b7fb42e): pre-T15 dispatch evidence.
+
+    Production at the deploy base stamps the per-study marker
+    ``bc-inflight-<study_id>`` (not ``bc-owner-<task_id>``, which was
+    born in the T15 change) with ``{task_id, study_id}``. A pre-upgrade
+    message queued across the deploy carries no owner record, but its
+    dispatch stamped exactly this marker, so the marker naming this
+    delivery is equally valid adoption proof. Best-effort: an unreadable
+    backend adopts nothing (the caller already fails closed on the
+    owner lookup; a False here just falls through to Ignore).
+    """
+    try:
+        marker = AsyncResult(f"bc-inflight-{study_id}")
+        meta = marker.info if isinstance(marker.info, dict) else {}
+    except Exception:  # noqa: BLE001 - marker read is best-effort
+        logger.warning("box-counting legacy marker lookup failed", exc_info=True)
+        return False
+    return (
+        marker.state == "PROGRESS"
+        and meta.get("task_id") == task_id
+        and meta.get("study_id") == study_id
+    )
+
+
 def _bury_box_counting_claim(
     task_id: Any,
     args: Any,
@@ -1362,10 +1388,23 @@ def run_box_counting_async(
                 except Exception:  # noqa: BLE001 — legacy adoption fails closed
                     logger.warning("box-counting legacy owner lookup failed", exc_info=True)
                     raise Ignore() from None
-                if (
-                    owner.state != "PROGRESS"
-                    or owner_meta.get("task_id") != task_id
-                    or owner_meta.get("study_id") != study_id
+                # JD-A-001 (ledger 1b7fb42e): production at the deploy
+                # base never wrote `bc-owner-<task_id>` — that record
+                # was born in the T15 change — but it DID stamp the
+                # per-study marker `bc-inflight-<study_id>` at dispatch
+                # with exactly this task id. A pre-upgrade message queued
+                # across the deploy would otherwise be silently discarded
+                # here, so the study marker is an equally valid adoption
+                # proof: a pre-T15 dispatch stamped it with the same task
+                # id and study id this delivery carries.
+                owner_names_delivery = (
+                    owner.state == "PROGRESS"
+                    and owner_meta.get("task_id") == task_id
+                    and owner_meta.get("study_id") == study_id
+                )
+                if not (
+                    owner_names_delivery
+                    or _bc_legacy_marker_names_delivery(task_id, study_id)
                 ):
                     raise Ignore()
             # Legacy queued messages created before the durable dispatch

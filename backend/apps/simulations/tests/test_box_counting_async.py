@@ -1761,11 +1761,20 @@ class TestDoubleSubmitGuard:
             _make_sim(project, study, with_geometry=True)
         client = _authed_client(user)
 
+        import time as _time
+
         fake_cls = _fake_async_result_factory(
             {
                 f"bc-inflight-{study.id}": {
                     "state": "PROGRESS",
-                    "info": {"task_id": "task-real-1", "study_id": str(study.id)},
+                    "info": {
+                        "task_id": "task-real-1",
+                        "study_id": str(study.id),
+                        # JD-A-002: only a marker carrying a fresh, readable
+                        # dispatched_at can prove liveness and block (409);
+                        # an undatable marker is released instead.
+                        "dispatched_at": _time.time(),
+                    },
                 },
                 "task-real-1": {"state": "PROGRESS", "info": None},
             }
@@ -1944,6 +1953,73 @@ class TestDoubleSubmitGuard:
             task_id="task-stamp-1",
             expires=3600,
         )
+
+
+# ── Ledger 1b7fb42e — deploy-window and force-typing corrections ──────
+
+
+@pytest.mark.django_db
+class TestDeployWindowAndForceTyping:
+    """Corrections for frozen release ledger 1b7fb42e: the deploy-window
+    marker must go stale even without `dispatched_at` (JD-A-002), and a
+    JSON-string `force` must be rejected, not coerced to True (JD-B-001)."""
+
+    def test_legacy_marker_without_dispatched_at_goes_stale_at_the_bounded_lease(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-A-002: production stamps markers WITHOUT `dispatched_at`.
+        An undatable marker cannot prove liveness, so the bridge releases
+        it instead of blocking the study with 409 until
+        CELERY_RESULT_EXPIRES (86,400 s); only a marker carrying a fresh,
+        readable `dispatched_at` may block (its sibling witness in
+        TestDoubleSubmitGuard pins that half)."""
+        study = _make_study(project)
+        for _ in range(31):
+            _make_sim(project, study, with_geometry=True)
+        marker_states = {
+            f"bc-inflight-{study.id}": {
+                "state": "PROGRESS",
+                "info": {"task_id": "task-legacy", "study_id": str(study.id)},
+            },
+            "task-legacy": {"state": "PROGRESS", "info": {}},
+        }
+        fake_cls = _fake_async_result_factory(marker_states)
+        client = _authed_client(user)
+
+        with (
+            patch("apps.simulations.views.AsyncResult", fake_cls),
+            patch(
+                "apps.simulations.tasks.run_box_counting_async.apply_async"
+            ) as mock_apply_async,
+        ):
+            response = client.post(_run_url(study), {}, format="json")
+
+        # El marker huérfano ya no bloquea: la admisión procede.
+        assert response.status_code == 202
+        mock_apply_async.assert_called_once()
+
+    def test_force_as_json_string_is_rejected_not_coerced(
+        self, user: User, project: Project
+    ) -> None:
+        """JD-B-001: bool("false") is truthy, so a JSON string
+        `"force": "false"` would silently force a re-run (or flip a
+        matching recovery into a supersede) instead of failing with 400
+        the way the sibling key `windowed` does."""
+        study = _make_study(project)
+        for _ in range(5):
+            _make_sim(project, study, with_geometry=True)
+        client = _authed_client(user)
+
+        with patch("aglogen_core.box_counting_agglomerate") as mock_bc:
+            response = client.post(
+                _run_url(study), {"force": "false"}, format="json"
+            )
+
+        assert response.status_code == 400
+        assert response.data["error"] == "force must be a boolean"
+        mock_bc.assert_not_called()
+        study.refresh_from_db()
+        assert study.box_counting_params is None
 
 
 # ── L65 — the worker's own burial releases the study ──────────────────

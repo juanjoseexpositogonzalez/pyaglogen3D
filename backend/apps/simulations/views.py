@@ -2505,8 +2505,19 @@ class ParametricStudyViewSet(viewsets.ModelViewSet):
 
         # `force` is accepted in the body but never persisted (R1/R2.3): pop
         # it before the shared key validation, which enforces the persisted
-        # shape {points_per_sphere, precision, windowed} (R1.2).
-        force = bool(body.get("force", False))
+        # shape {points_per_sphere, precision, windowed} (R1.2). JD-B-001
+        # (ledger 1b7fb42e): unlike `windowed` (validated inside the shared
+        # dict gate), force must be type-checked here — bool("false") is
+        # truthy, so a JSON string "false" would silently force a re-run
+        # and overwrite existing blocks, or flip a matching recovery into
+        # a supersede, instead of failing like the sibling key does.
+        raw_force = body.get("force", False)
+        if raw_force is not None and not isinstance(raw_force, bool):
+            return Response(
+                {"error": "force must be a boolean"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        force = bool(raw_force)
         body_wo_force = {k: v for k, v in body.items() if k != "force"}
 
         # Get parameters from request
@@ -3295,11 +3306,27 @@ def _bc_in_flight_task_id(study: ParametricStudy) -> str | None:
         # A worker hard death never runs its ``finally`` release. The task
         # expires after the bounded queue age, so it is safe to release an
         # otherwise nonterminal marker after queue + execution + grace.
+        # JD-A-002 (ledger 1b7fb42e): production at the deploy base stamps
+        # markers WITHOUT ``dispatched_at`` (that field arrived with the
+        # T15-era task-id stub), so the bound must still apply to them —
+        # a stranded pre-upgrade marker would otherwise block the study
+        # with 409 until CELERY_RESULT_EXPIRES (86,400 s) instead of the
+        # 3,900 s this bridge promises. A missing timestamp falls back to
+        # the marker's own RESULT creation, which production stamps at
+        # dispatch; either clock bounds the same deploy window.
+        # JD-A-002 (ledger 1b7fb42e): production markers carry no
+        # ``dispatched_at``, so a missing timestamp can never prove the
+        # marker fresh. The deploy window this bridge guards lasts
+        # minutes (worker-before-web); a marker that cannot be dated
+        # is far more likely a stranded pre-upgrade marker than a live
+        # one, and refusing it forever (409 until CELERY_RESULT_EXPIRES)
+        # is worse than releasing it: admission falls through to the
+        # durable row, which is the sole authority anyway.
         dispatched_at = meta.get("dispatched_at")
-        if (
+        if not (
             isinstance(dispatched_at, (int, float))
             and time.time() - float(dispatched_at)
-            > _BC_LEGACY_MARKER_STALE_AFTER_SECONDS
+            <= _BC_LEGACY_MARKER_STALE_AFTER_SECONDS
         ):
             return None
         return str(task_id)
